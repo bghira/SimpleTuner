@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import logging
 import os
 import platform
 import plistlib
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .hardware_service import detect_gpu_inventory
 
@@ -28,14 +30,21 @@ except Exception:  # pragma: no cover - optional dependency in CPU-only environm
 class SystemStatusService:
     """Expose basic system statistics for display in the Web UI."""
 
+    def __init__(self) -> None:
+        self._offload_cache: Dict[str, Any] = {}
+
     def get_status(self) -> Dict[str, Any]:
         """Collect system metrics for the API response."""
-        return {
+        status = {
             "timestamp": time.time(),
             "load_avg_5min": self._get_load_average_5min(),
             "memory_percent": self._get_memory_percent(),
             "gpus": self._get_gpu_utilisation(),
         }
+        offload = self._get_deepspeed_offload_usage()
+        if offload:
+            status["deepspeed_offload"] = offload
+        return status
 
     def _get_load_average_5min(self) -> Optional[float]:
         try:
@@ -155,6 +164,140 @@ class SystemStatusService:
                 utilisation_values.append(None)
 
         return utilisation_values or None
+
+    def _get_deepspeed_offload_usage(self) -> Optional[Dict[str, Any]]:
+        try:
+            from simpletuner.simpletuner_sdk.api_state import APIState
+        except Exception:
+            return None
+
+        config = APIState.get_state("training_config")
+        if not isinstance(config, dict):
+            return None
+
+        ds_config_raw = (
+            config.get("deepspeed_config")
+            or config.get("--deepspeed_config")
+            or config.get("hf_deepspeed_config")
+            or config.get("--hf_deepspeed_config")
+        )
+
+        ds_config = self._coerce_mapping(ds_config_raw)
+        if not isinstance(ds_config, dict):
+            return None
+
+        zero_cfg = ds_config.get("zero_optimization")
+        if not isinstance(zero_cfg, dict):
+            return None
+
+        offload_param_cfg = zero_cfg.get("offload_param")
+        if not isinstance(offload_param_cfg, dict):
+            return None
+
+        device = str(offload_param_cfg.get("device", "")).lower() or None
+        stage = self._coerce_int(zero_cfg.get("stage"))
+
+        explicit_path = (
+            config.get("offload_param_path")
+            or config.get("--offload_param_path")
+            or offload_param_cfg.get("nvme_path")
+            or offload_param_cfg.get("path")
+        )
+        offload_path = self._normalize_path(explicit_path)
+        if not offload_path:
+            return None
+
+        size_bytes, file_count = self._measure_directory(offload_path)
+
+        return {
+            "path": offload_path,
+            "size_bytes": size_bytes,
+            "file_count": file_count,
+            "device": device,
+            "stage": stage,
+        }
+
+    def _normalize_path(self, path_candidate: Any) -> Optional[str]:
+        if not path_candidate or isinstance(path_candidate, (bool, int, float)):
+            return None
+        if isinstance(path_candidate, str):
+            candidate = path_candidate.strip()
+            if not candidate or candidate.lower() == "none":
+                return None
+            try:
+                return os.path.abspath(os.path.expanduser(candidate))
+            except Exception:
+                return None
+        return None
+
+    @staticmethod
+    def _coerce_int(value: Any) -> Optional[int]:
+        try:
+            if value is None or value == "":
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _coerce_mapping(self, raw: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):
+            text = raw.strip()
+            if not text:
+                return None
+            try:
+                return json.loads(text)
+            except Exception:
+                try:
+                    parsed = ast.literal_eval(text)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except Exception:
+                    return None
+        return None
+
+    def _measure_directory(self, path: str) -> Tuple[Optional[int], Optional[int]]:
+        cache = self._offload_cache
+        now = time.time()
+        cache_valid = (
+            isinstance(cache, dict)
+            and cache.get("path") == path
+            and isinstance(cache.get("timestamp"), (int, float))
+            and now - cache["timestamp"] < 5
+        )
+        if cache_valid:
+            return cache.get("size_bytes"), cache.get("file_count")
+
+        total_size = 0
+        file_count = 0
+        try:
+            if not os.path.isdir(path):
+                size = None
+                count = None
+            else:
+                for root, _dirs, files in os.walk(path):
+                    for filename in files:
+                        full_path = os.path.join(root, filename)
+                        try:
+                            stat = os.stat(full_path)
+                        except OSError:
+                            continue
+                        total_size += stat.st_size
+                        file_count += 1
+                size = total_size
+                count = file_count
+        except Exception:
+            size = None
+            count = None
+
+        self._offload_cache = {
+            "path": path,
+            "size_bytes": size,
+            "file_count": count,
+            "timestamp": now,
+        }
+        return size, count
 
     def _get_nvidia_gpu_utilisation(self) -> Optional[List[Optional[float]]]:
         if platform.system() == "Darwin":

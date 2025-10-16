@@ -381,7 +381,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         maximum_image_size
         and output["config"]["resolution_type"] == "area"
-        and maximum_image_size > 20
+        and maximum_image_size >= 20
         and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
     ):
         raise ValueError(
@@ -399,7 +399,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         target_downsample_size
         and output["config"]["resolution_type"] == "area"
-        and target_downsample_size > 20
+        and target_downsample_size >= 20
         and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
     ):
         raise ValueError(

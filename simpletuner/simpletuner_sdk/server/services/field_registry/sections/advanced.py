@@ -1213,6 +1213,139 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="fsdp_enable",
+            arg_name="--fsdp_enable",
+            ui_label="Enable FSDP v2",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            default_value=False,
+            help_text="Enable PyTorch Fully Sharded Data Parallel v2 (DTensor-based) via Accelerate.",
+            tooltip="Activates FSDP2 for single-node multi-GPU runs. Mutually exclusive with DeepSpeed.",
+            importance=ImportanceLevel.ADVANCED,
+            order=12,
+            dependencies=[FieldDependency(field="model_type", operator="equals", value="full", action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_version",
+            arg_name="--fsdp_version",
+            ui_label="FSDP Version",
+            field_type=FieldType.NUMBER,
+            tab="hardware",
+            section="accelerate",
+            default_value=2,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Valid FSDP versions are 1 or 2"),
+                ValidationRule(ValidationRuleType.MAX, value=2, message="Only FSDP v2 is supported"),
+            ],
+            help_text="Select FSDP API version. Version 2 enables the DTensor-backed implementation.",
+            tooltip="SimpleTuner defaults to FSDP2. FSDP1 is deprecated and may be removed in a future release.",
+            importance=ImportanceLevel.ADVANCED,
+            order=13,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_reshard_after_forward",
+            arg_name="--fsdp_reshard_after_forward",
+            ui_label="Reshard After Forward",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            default_value=True,
+            help_text="Release parameter shards after each forward pass (equivalent to FULL_SHARD in FSDP1).",
+            tooltip="Keeps memory usage low at the cost of extra communication. Disable to keep params sharded across backward only.",
+            importance=ImportanceLevel.ADVANCED,
+            order=14,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_state_dict_type",
+            arg_name="--fsdp_state_dict_type",
+            ui_label="Checkpoint Format",
+            field_type=FieldType.SELECT,
+            tab="hardware",
+            section="accelerate",
+            default_value="SHARDED_STATE_DICT",
+            choices=[
+                {"value": "SHARDED_STATE_DICT", "label": "Sharded (recommended)"},
+                {"value": "FULL_STATE_DICT", "label": "Full state dict"},
+            ],
+            help_text="Controls how checkpoints are saved when using FSDP2.",
+            tooltip="Sharded checkpoints are fast and memory efficient. Full checkpoints gather weights on rank 0.",
+            importance=ImportanceLevel.ADVANCED,
+            order=15,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_cpu_ram_efficient_loading",
+            arg_name="--fsdp_cpu_ram_efficient_loading",
+            ui_label="CPU RAM Efficient Loading",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            default_value=False,
+            help_text="Load checkpoints on rank 0 before broadcasting shards when resuming with FSDP2.",
+            tooltip="Reduces peak host memory usage at the cost of a synchronization barrier.",
+            importance=ImportanceLevel.ADVANCED,
+            order=16,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_auto_wrap_policy",
+            arg_name="--fsdp_auto_wrap_policy",
+            ui_label="Auto Wrap Policy",
+            field_type=FieldType.SELECT,
+            tab="hardware",
+            section="accelerate",
+            default_value="TRANSFORMER_BASED_WRAP",
+            choices=[
+                {"value": "TRANSFORMER_BASED_WRAP", "label": "Transformer based (recommended)"},
+                {"value": "SIZE_BASED_WRAP", "label": "Size based"},
+                {"value": "NO_WRAP", "label": "No wrap"},
+            ],
+            help_text="Configure how FSDP decides which modules to shard.",
+            tooltip="Transformer based works for most HF transformer models. Size based lets you control wrapping via parameter counts.",
+            importance=ImportanceLevel.ADVANCED,
+            order=17,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_transformer_layer_cls_to_wrap",
+            arg_name="--fsdp_transformer_layer_cls_to_wrap",
+            ui_label="Transformer Classes to Wrap",
+            field_type=FieldType.TEXT,
+            tab="hardware",
+            section="accelerate",
+            default_value=None,
+            placeholder="TransformerBlock,DiffusionTransformerLayer",
+            help_text="Comma separated list of layer class names to wrap when using transformer auto wrap.",
+            tooltip="Overrides Accelerate's automatic class detection. Leave blank unless validation errors request a specific layer class.",
+            importance=ImportanceLevel.ADVANCED,
+            order=18,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
     # Training Num Processes
     registry._add_field(
         ConfigField(

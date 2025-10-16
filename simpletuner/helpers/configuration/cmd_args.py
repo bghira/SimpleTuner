@@ -733,6 +733,60 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error(str(parse_error))
             raise
 
+    if getattr(args, "fsdp_enable", False):
+        if args.deepspeed_config not in (None, "", "None", False):
+            raise ValueError("Cannot enable FSDP when a DeepSpeed configuration is also provided.")
+
+        try:
+            args.fsdp_version = int(args.fsdp_version)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid --fsdp_version value: {args.fsdp_version}")
+
+        if args.fsdp_version not in (1, 2):
+            raise ValueError("--fsdp_version must be either 1 or 2.")
+        if args.fsdp_version == 1:
+            warning_log("FSDP v1 is deprecated. Please prefer --fsdp_version=2 for DTensor-based FSDP.")
+
+        state_dict_type = str(args.fsdp_state_dict_type or "").strip().upper()
+        if state_dict_type == "":
+            state_dict_type = "SHARDED_STATE_DICT"
+        valid_state_dict_types = {"SHARDED_STATE_DICT", "FULL_STATE_DICT"}
+        if state_dict_type not in valid_state_dict_types:
+            raise ValueError(
+                f"Invalid --fsdp_state_dict_type '{args.fsdp_state_dict_type}'. "
+                f"Expected one of {sorted(valid_state_dict_types)}."
+            )
+        args.fsdp_state_dict_type = state_dict_type
+
+        auto_wrap_policy = str(args.fsdp_auto_wrap_policy or "").strip().upper()
+        auto_wrap_mapping = {
+            "TRANSFORMER_BASED_WRAP": "transformer_based_wrap",
+            "SIZE_BASED_WRAP": "size_based_wrap",
+            "NO_WRAP": "no_wrap",
+            "NONE": None,
+        }
+        if auto_wrap_policy in auto_wrap_mapping:
+            args.fsdp_auto_wrap_policy = auto_wrap_mapping[auto_wrap_policy]
+        elif auto_wrap_policy:
+            # Allow custom callables configured via dotted path without transformation.
+            args.fsdp_auto_wrap_policy = args.fsdp_auto_wrap_policy
+        else:
+            args.fsdp_auto_wrap_policy = "transformer_based_wrap"
+
+        transformer_cls = args.fsdp_transformer_layer_cls_to_wrap
+        if transformer_cls in (None, "", "None"):
+            args.fsdp_transformer_layer_cls_to_wrap = None
+        else:
+            if isinstance(transformer_cls, (list, tuple)):
+                values = [str(entry).strip() for entry in transformer_cls]
+            else:
+                values = [entry.strip() for entry in str(transformer_cls).split(",")]
+            filtered_values = [entry for entry in values if entry]
+            args.fsdp_transformer_layer_cls_to_wrap = filtered_values or None
+    else:
+        # When FSDP is disabled, normalise auxiliary options so downstream logic can rely on None/False.
+        args.fsdp_transformer_layer_cls_to_wrap = None
+
     if not args.data_backend_config:
         from simpletuner.helpers.training.state_tracker import StateTracker
 

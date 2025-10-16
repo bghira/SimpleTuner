@@ -212,6 +212,23 @@ class ImageBackendConfig(BaseBackendConfig):
             baseline = 1.0
 
         self.resolution = (pixel_edge_value * pixel_edge_value) / baseline
+
+        def _convert_pixel_edge_to_megapixels(value: Optional[Union[int, float]]) -> Optional[Union[int, float]]:
+            if value in (None, ""):
+                return value
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                return value
+            if numeric_value <= 0 or numeric_value <= 10:
+                return value
+            return (numeric_value * numeric_value) / 1_000_000.0
+
+        for field_name in ("maximum_image_size", "minimum_image_size", "target_downsample_size"):
+            current_value = getattr(self, field_name, None)
+            converted_value = _convert_pixel_edge_to_megapixels(current_value)
+            setattr(self, field_name, converted_value)
+
         self.resolution_type = "area"
 
     def apply_defaults(self, args: Dict[str, Any]) -> None:

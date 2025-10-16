@@ -2057,12 +2057,46 @@ function trainerComponent() {
                       };
                   })
                 : [];
+            const offloadRaw = data.deepspeed_offload;
+            const offload = offloadRaw && typeof offloadRaw === 'object'
+                ? {
+                      path: typeof offloadRaw.path === 'string' ? offloadRaw.path : null,
+                      size_bytes:
+                          typeof offloadRaw.size_bytes === 'number' && Number.isFinite(offloadRaw.size_bytes)
+                              ? offloadRaw.size_bytes
+                              : null,
+                      file_count:
+                          typeof offloadRaw.file_count === 'number' && Number.isFinite(offloadRaw.file_count)
+                              ? offloadRaw.file_count
+                              : null,
+                      device: typeof offloadRaw.device === 'string' ? offloadRaw.device : null,
+                      stage:
+                          typeof offloadRaw.stage === 'number' && Number.isFinite(offloadRaw.stage)
+                              ? offloadRaw.stage
+                              : null,
+                  }
+                : null;
             return {
                 load_avg_5min: loadValue,
                 memory_percent: memoryValue,
                 gpus,
+                deepspeed_offload: offload,
                 timestamp: typeof data.timestamp === 'number' && Number.isFinite(data.timestamp) ? data.timestamp : null,
             };
+        },
+        formatBytes(bytes, precision = 1) {
+            const value = typeof bytes === 'number' && Number.isFinite(bytes) ? bytes : null;
+            if (value === null || value < 0) {
+                return '—';
+            }
+            if (value === 0) {
+                return '0 B';
+            }
+            const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+            const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+            const scaled = value / (1024 ** exponent);
+            const formatted = scaled >= 100 ? Math.round(scaled) : scaled.toFixed(precision);
+            return `${formatted} ${units[exponent]}`;
         },
         isDocumentVisible() {
             return (
@@ -2107,6 +2141,30 @@ function trainerComponent() {
                     tooltip: trimmedName || displayLabel,
                 });
             });
+            const offloadInfo = this.systemStatus.deepspeed_offload;
+            if (offloadInfo && offloadInfo.size_bytes !== null) {
+                const deviceLabel = offloadInfo.device
+                    ? offloadInfo.device.toUpperCase()
+                    : 'Offload';
+                const tooltipParts = [];
+                if (offloadInfo.path) {
+                    tooltipParts.push(`Path: ${offloadInfo.path}`);
+                }
+                if (offloadInfo.stage !== null) {
+                    tooltipParts.push(`ZeRO stage ${offloadInfo.stage}`);
+                }
+                if (offloadInfo.file_count !== null) {
+                    tooltipParts.push(`${offloadInfo.file_count} files`);
+                }
+                const tooltip = tooltipParts.join(' • ') || 'DeepSpeed offload directory usage';
+                items.push({
+                    key: 'deepspeed-offload',
+                    label: deviceLabel === 'OFFLOAD' ? 'Offload' : deviceLabel,
+                    value: offloadInfo.size_bytes,
+                    formatted: this.formatBytes(offloadInfo.size_bytes),
+                    tooltip,
+                });
+            }
             return items;
         },
         get hasSystemStatus() {

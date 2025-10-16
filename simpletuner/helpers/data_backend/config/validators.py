@@ -68,7 +68,7 @@ def validate_image_size_constraints(
     if maximum_image_size:
         if (
             resolution_type == "area"
-            and maximum_image_size > 20
+            and maximum_image_size >= 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
@@ -83,7 +83,7 @@ def validate_image_size_constraints(
     if target_downsample_size:
         if (
             resolution_type == "area"
-            and target_downsample_size > 20
+            and target_downsample_size >= 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(

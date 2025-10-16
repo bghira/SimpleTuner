@@ -380,7 +380,7 @@ class TestImageBackendConfig(unittest.TestCase):
         backend_dict = {
             "id": "image_test",
             "type": "local",
-            "maximum_image_size": 15,  # Too large for area type
+            "maximum_image_size": 20,  # Too large for area type
             "target_downsample_size": 5,
             "resolution_type": "area",
         }

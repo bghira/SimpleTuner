@@ -62,7 +62,7 @@ class BaseBackendConfig(ABC):
         if (
             self.maximum_image_size
             and self.resolution_type == "area"
-            and self.maximum_image_size > 20
+            and self.maximum_image_size >= 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
@@ -81,7 +81,7 @@ class BaseBackendConfig(ABC):
         if (
             self.target_downsample_size
             and self.resolution_type == "area"
-            and self.target_downsample_size > 20
+            and self.target_downsample_size >= 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(

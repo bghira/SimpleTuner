@@ -631,6 +631,7 @@ class Validation:
         embed_cache,
         ema_model,
         is_deepspeed: bool = False,
+        is_fsdp: bool = False,
         model_evaluator=None,
         trainable_parameters=None,
     ):
@@ -664,6 +665,7 @@ class Validation:
         self.validation_resolutions = get_validation_resolutions() if not self.deepfloyd_stage2 else [(256, 256)]
         self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.deepspeed = is_deepspeed
+        self.fsdp = is_fsdp
         if is_deepspeed:
             if args.use_ema:
                 if args.ema_validation != "none":

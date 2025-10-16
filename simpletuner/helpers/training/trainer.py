@@ -94,7 +94,7 @@ import diffusers
 import torch
 import torch.nn.functional as F
 import transformers
-from accelerate import Accelerator, DeepSpeedPlugin
+from accelerate import Accelerator, DeepSpeedPlugin, FullyShardedDataParallelPlugin
 from accelerate.utils import DistributedType, set_seed
 from torch.distributions import Beta
 
@@ -285,9 +285,17 @@ class Trainer:
                 dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
             )
 
+            fsdp_plugin = None
+            if getattr(self.config, "fsdp_enable", False):
+                fsdp_plugin = self._load_fsdp_plugin()
             deepspeed_plugin = None
-            if hasattr(self.config, "deepspeed_config"):
+            if fsdp_plugin is None and hasattr(self.config, "deepspeed_config"):
                 deepspeed_plugin = self._load_deepspeed_plugin()
+            if fsdp_plugin is not None and deepspeed_plugin is not None:
+                raise ValueError("Cannot enable both FSDP and DeepSpeed in the same run.")
+            if fsdp_plugin is not None:
+                fsdp_plugin = self._prepare_fsdp_plugin_for_accelerator(fsdp_plugin)
+                accelerator_kwargs["fsdp_plugin"] = fsdp_plugin
             if deepspeed_plugin is not None:
                 accelerator_kwargs["deepspeed_plugin"] = deepspeed_plugin
 
@@ -303,6 +311,10 @@ class Trainer:
                 else:
                     raise
             self._setup_accelerator_barrier_guard()
+        fsdp_active = False
+        if self.accelerator and hasattr(self.accelerator, "state"):
+            fsdp_active = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
+        setattr(self.config, "use_fsdp", fsdp_active)
         safety_check(args=self.config, accelerator=self.accelerator)
 
         if self.config.lr_scale:
@@ -377,10 +389,78 @@ class Trainer:
                 if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
                     logger.debug("Skipping accelerator.wait_for_everyone(); distributed process group not initialised.")
                     return
-            return original_wait_for_everyone(*args, **kwargs)
+        return original_wait_for_everyone(*args, **kwargs)
 
         self.accelerator.wait_for_everyone = _safe_wait_for_everyone
         setattr(self.accelerator, "_simpletuner_safe_wait_installed", True)
+
+    def _load_fsdp_plugin(self):
+        if not getattr(self.config, "fsdp_enable", False):
+            return None
+
+        deepspeed_config = getattr(self.config, "deepspeed_config", None)
+        if deepspeed_config not in (None, "", "None", False):
+            raise ValueError("FSDP and DeepSpeed cannot be enabled simultaneously.")
+
+        fsdp_version = getattr(self.config, "fsdp_version", 2) or 2
+        reshard_after_forward = getattr(self.config, "fsdp_reshard_after_forward", True)
+        cpu_ram_efficient_loading = getattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
+        state_dict_type = getattr(self.config, "fsdp_state_dict_type", None)
+        auto_wrap_policy = getattr(self.config, "fsdp_auto_wrap_policy", None)
+        transformer_cls = getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+
+        plugin_kwargs = {
+            "fsdp_version": fsdp_version,
+            "reshard_after_forward": reshard_after_forward,
+            "cpu_ram_efficient_loading": cpu_ram_efficient_loading,
+        }
+
+        resolved_state_dict_display = None
+        if state_dict_type:
+            state_dict_mapping = {
+                "SHARDED_STATE_DICT": "sharded_state_dict",
+                "FULL_STATE_DICT": "full_state_dict",
+            }
+            resolved_state_dict = state_dict_mapping.get(state_dict_type.upper(), state_dict_type)
+            resolved_state_dict_display = resolved_state_dict
+            plugin_kwargs["state_dict_type"] = resolved_state_dict
+
+        if auto_wrap_policy:
+            plugin_kwargs["auto_wrap_policy"] = auto_wrap_policy
+
+        if transformer_cls:
+            plugin_kwargs["transformer_cls_names_to_wrap"] = transformer_cls
+
+        logger.info(
+            "FSDP v%s configuration detected; enabling FullyShardedDataParallelPlugin%s.",
+            fsdp_version,
+            f" (reshard_after_forward={reshard_after_forward})" if fsdp_version >= 2 else "",
+        )
+        plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
+
+        if resolved_state_dict_display:
+            setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
+            setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
+            plugin.state_dict_type = resolved_state_dict_display
+
+        if auto_wrap_policy and callable(getattr(plugin, "auto_wrap_policy", None)):
+            setattr(plugin, "_auto_wrap_policy_callable", plugin.auto_wrap_policy)
+            setattr(plugin, "auto_wrap_policy_display", auto_wrap_policy)
+            plugin.auto_wrap_policy = auto_wrap_policy
+
+        return plugin
+
+    @staticmethod
+    def _prepare_fsdp_plugin_for_accelerator(fsdp_plugin: FullyShardedDataParallelPlugin) -> FullyShardedDataParallelPlugin:
+        if hasattr(fsdp_plugin, "_state_dict_type_enum"):
+            fsdp_plugin.state_dict_type = getattr(fsdp_plugin, "_state_dict_type_enum")
+        elif isinstance(getattr(fsdp_plugin, "state_dict_type", None), str):
+            fsdp_plugin.set_state_dict_type(fsdp_plugin.state_dict_type)
+
+        if hasattr(fsdp_plugin, "_auto_wrap_policy_callable"):
+            fsdp_plugin.auto_wrap_policy = getattr(fsdp_plugin, "_auto_wrap_policy_callable")
+
+        return fsdp_plugin
 
     def _finalize_deepspeed_config_auto_values(self, model) -> None:
         if not self.accelerator or model is None:
@@ -1692,6 +1772,9 @@ class Trainer:
         ):
             logger.warning("Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation.")
             self.config.validation_disable = True
+        if getattr(self.config, "use_fsdp", False) and getattr(self.config, "fsdp_reshard_after_forward", True):
+            logger.warning("Cannot run validations with FSDP reshard-after-forward enabled. Disabling validation.")
+            self.config.validation_disable = True
         self.evaluation = None
         if self.config.validation_disable:
             return
@@ -1713,6 +1796,7 @@ class Trainer:
             ema_model=self.ema_model,
             model_evaluator=model_evaluator,
             is_deepspeed=self.config.use_deepspeed_optimizer,
+            is_fsdp=self.config.use_fsdp,
         )
         if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
