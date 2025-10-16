@@ -1087,6 +1087,29 @@ class FactoryRegistry:
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         text_embed_count = 0
 
+        total_text_backends = sum(
+            1
+            for backend in data_backend_config
+            if backend.get("dataset_type") == "text_embeds"
+            and not backend.get("disabled", False)
+            and not backend.get("disable", False)
+        )
+        webhook_handler = None
+        if getattr(self.accelerator, "is_main_process", False):
+            webhook_handler = StateTracker.get_webhook_handler()
+            if webhook_handler and total_text_backends > 0:
+                webhook_handler.send_lifecycle_stage(
+                    stage_key="init_text_embed_cache",
+                    stage_label="Loading text embedding cache",
+                    stage_status="running",
+                    message="Loading text embedding cache(s)...",
+                    progress_current=0,
+                    progress_total=total_text_backends,
+                    progress_percent=0,
+                )
+
+        processed_text_backends = 0
+
         for backend in data_backend_config:
             dataset_type = backend.get("dataset_type", None)
             if dataset_type is None or dataset_type != "text_embeds":
@@ -1194,11 +1217,34 @@ class FactoryRegistry:
 
             self.text_embed_backends[init_backend["id"]] = init_backend
 
+            processed_text_backends += 1
+            if webhook_handler and total_text_backends > 0:
+                webhook_handler.send_lifecycle_stage(
+                    stage_key="init_text_embed_cache",
+                    stage_label="Loading text embedding cache",
+                    stage_status="running",
+                    message=f"Configured text embedding cache for `{init_backend['id']}`",
+                    progress_current=processed_text_backends,
+                    progress_total=total_text_backends,
+                    progress_percent=(processed_text_backends / total_text_backends) * 100,
+                )
+
         self.metrics["backend_counts"]["text_embeds"] = text_embed_count
         self._log_performance_metrics(
             "text_embed_config_complete",
             {"text_embed_backends_created": text_embed_count, "default_backend_id": self.default_text_embed_backend_id},
         )
+
+        if webhook_handler and total_text_backends > 0:
+            webhook_handler.send_lifecycle_stage(
+                stage_key="init_text_embed_cache",
+                stage_label="Loading text embedding cache",
+                stage_status="completed",
+                message="Text embedding cache initialisation complete",
+                progress_current=total_text_backends,
+                progress_total=total_text_backends,
+                progress_percent=100,
+            )
 
         self._validate_text_embed_backends()
 

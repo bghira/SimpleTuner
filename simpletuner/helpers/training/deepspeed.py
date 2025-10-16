@@ -100,7 +100,13 @@ def prepare_model_for_deepspeed(accelerator, args):
                 logger.info("Using DeepSpeed optimizer (CPUAdam with CPU offload).")
             else:
                 optimizer_type = "FusedAdam"
-                logger.info("Using DeepSpeed optimizer (FusedAdam).")
+                try:
+                    from deepspeed.ops.adam import FusedAdam as _FusedAdam  # noqa: F401
+                except (ImportError, AttributeError):
+                    optimizer_type = "Adam"
+                    logger.warning("FusedAdam not available in this DeepSpeed build; falling back to Adam.")
+                else:
+                    logger.info("Using DeepSpeed optimizer (FusedAdam).")
             accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = {
                 "type": optimizer_type,
                 "params": {

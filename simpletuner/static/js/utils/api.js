@@ -67,4 +67,3 @@
 
     global.ApiClient = ApiClient;
 })(window);
-
