@@ -1506,7 +1506,7 @@ function environmentsTabComponent() {
                 <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Create Environment</h5>
                 <button type="button" class="btn-close" aria-label="Close" @click="closeCreateEnvironmentModal()"></button>
             </div>
-            <div x-data="createEnvironmentFormComponent()"
+            <div x-data="createEnvironmentFormComponent({ autoLoad: false })"
                  x-ref="createEnvironmentForm"
                  @environment-created="handleEnvironmentCreated($event.detail)"
                  @environment-form-cancel="closeCreateEnvironmentModal()">

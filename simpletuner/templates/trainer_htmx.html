@@ -3735,7 +3735,7 @@ function trainerComponent() {
                 </template>
                 <template x-if="activeOnboardingStep && activeOnboardingStep.input_type === 'environment'">
                     <div class="environment-onboarding">
-                        <div x-data="createEnvironmentFormComponent({ resetOnSuccess: false })"
+                        <div x-data="createEnvironmentFormComponent({ resetOnSuccess: false, autoLoad: false })"
                              x-ref="onboardingEnvironmentForm"
                              @environment-created="handleOnboardingEnvironmentCreated($event.detail)">
                             <div x-show="loadingInitialData" class="alert alert-info d-flex align-items-center gap-2">

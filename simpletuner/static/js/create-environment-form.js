@@ -72,6 +72,7 @@
                 this.selectedDataloaderPath = "";
                 this.exampleLocked = false;
                 this.error = "";
+                this.loadingInitialData = false;
             },
 
             async prepareForDisplay(preset = {}) {
@@ -414,4 +415,3 @@
 
     global.createEnvironmentFormComponent = createEnvironmentFormComponent;
 })(window);
-
