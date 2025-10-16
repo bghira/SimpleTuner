@@ -18,8 +18,6 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import huggingface_hub
-from accelerate.logging import get_logger as accelerate_get_logger
-
 import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
@@ -58,33 +56,32 @@ from simpletuner.helpers.webhooks.events import (
 )
 from simpletuner.simpletuner_sdk.api_state import APIState
 
-def _safe_get_logger(name: str, *, default_level: str = "INFO"):
-    env_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level)
+
+def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
+    level_value = os.environ.get(env_var, os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level)) if env_var else os.environ.get(
+        "SIMPLETUNER_LOG_LEVEL", default_level
+    )
     try:
-        return accelerate_get_logger(name, log_level=env_level)
-    except RuntimeError:
-        fallback_logger = logging.getLogger(name)
-        try:
-            numeric_level = logging._nameToLevel.get(env_level.upper(), None)
-            if numeric_level is None:
-                numeric_level = int(env_level)
-        except Exception:
-            numeric_level = logging.INFO
-        fallback_logger.setLevel(numeric_level)
-        if not fallback_logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-            fallback_logger.addHandler(handler)
-        fallback_logger.propagate = False
-        return fallback_logger
+        numeric_level = logging._nameToLevel.get(level_value.upper(), None)
+        if numeric_level is None:
+            numeric_level = int(level_value)
+    except Exception:
+        numeric_level = logging.INFO
+
+    logger_instance = logging.getLogger(name)
+    logger_instance.setLevel(numeric_level)
+    if not logger_instance.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        logger_instance.addHandler(handler)
+    logger_instance.propagate = False
+    return logger_instance
 
 
-logger = _safe_get_logger("SimpleTuner")
-filelock_logger = _safe_get_logger("filelock", default_level="WARNING")
-connection_logger = _safe_get_logger("urllib3.connectionpool", default_level="WARNING")
-training_logger = _safe_get_logger(
-    "training-loop", default_level=os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO")
-)
+logger = _setup_logger("SimpleTuner")
+filelock_logger = _setup_logger("filelock", default_level="WARNING")
+connection_logger = _setup_logger("urllib3.connectionpool", default_level="WARNING")
+training_logger = _setup_logger("training-loop", env_var="SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
 
 
 import accelerate
