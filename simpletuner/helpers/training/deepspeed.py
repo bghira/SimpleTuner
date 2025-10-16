@@ -110,13 +110,16 @@ def prepare_model_for_deepspeed(accelerator, args):
 
         use_deepspeed_optimizer = True
         optimizer_config = accelerator.state.deepspeed_plugin.deepspeed_config.get("optimizer")
+
+        user_supplied_optimizer = bool(optimizer_config)
         if optimizer_config:
             opt_type = str(optimizer_config.get("type", "")).lower()
             if opt_type == "fusedadam" and not can_use_fused:
                 logger.warning("FusedAdam not supported on this platform; falling back to Adam.")
                 optimizer_config["type"] = "Adam"
                 accelerator.state.deepspeed_plugin.deepspeed_config["optimizer"] = optimizer_config
-        if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
+
+        if not user_supplied_optimizer:
             optimizer_offload = zero_config.get("offload_optimizer", {})
             offload_device = str(optimizer_offload.get("device", "")).lower()
             if offload_device == "cpu":

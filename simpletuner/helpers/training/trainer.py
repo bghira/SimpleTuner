@@ -3487,6 +3487,8 @@ def run_trainer_job(config):
     except Exception as exc:
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
+            from simpletuner.simpletuner_sdk.api_state import APIState
+
             webhook_handler.send(
                 message=f"Training job failed to start: {exc}",
                 message_level="error",
@@ -3494,6 +3496,7 @@ def run_trainer_job(config):
             payload = {"status": "training_failed", "error": str(exc)}
             try:
                 import traceback
+
                 payload["traceback"] = traceback.format_exc()
             except Exception:
                 pass
@@ -3503,6 +3506,11 @@ def run_trainer_job(config):
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
             )
+            try:
+                APIState.set_state("training_status", "failed")
+                APIState.set_state("current_job_id", None)
+            except Exception:
+                pass
         APIState.set_state("training_status", "failed")
         raise
 
@@ -3522,6 +3530,8 @@ def run_trainer_job(config):
     except Exception as e:
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
+            from simpletuner.simpletuner_sdk.api_state import APIState
+
             webhook_handler.send(
                 message=f"Training job failed to start: {e}",
                 message_level="error",
@@ -3529,6 +3539,7 @@ def run_trainer_job(config):
             payload = {"status": "training_failed", "error": str(e)}
             try:
                 import traceback
+
                 payload["traceback"] = traceback.format_exc()
             except Exception:
                 pass
@@ -3538,6 +3549,11 @@ def run_trainer_job(config):
                 message_level="error",
                 job_id=StateTracker.get_job_id(),
             )
+            try:
+                APIState.set_state("training_status", "failed")
+                APIState.set_state("current_job_id", None)
+            except Exception:
+                pass
         raise e
 
     def _abort_monitor():
