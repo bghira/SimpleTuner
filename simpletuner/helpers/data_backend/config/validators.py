@@ -68,11 +68,11 @@ def validate_image_size_constraints(
     if maximum_image_size:
         if (
             resolution_type == "area"
-            and maximum_image_size > 10
+            and maximum_image_size > 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
-                f"(id={backend_id}) maximum_image_size must be less than 10 megapixels when resolution_type is 'area'."
+                f"(id={backend_id}) maximum_image_size must be less than 20 megapixels when resolution_type is 'area'."
             )
         elif resolution_type == "pixel" and maximum_image_size < 512 and "deepfloyd" not in model_type:
             raise ValueError(
@@ -83,11 +83,11 @@ def validate_image_size_constraints(
     if target_downsample_size:
         if (
             resolution_type == "area"
-            and target_downsample_size > 10
+            and target_downsample_size > 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
-                f"(id={backend_id}) target_downsample_size must be less than 10 megapixels when resolution_type is 'area'."
+                f"(id={backend_id}) target_downsample_size must be less than 20 megapixels when resolution_type is 'area'."
             )
         elif resolution_type == "pixel" and target_downsample_size < 512 and "deepfloyd" not in model_type:
             raise ValueError(

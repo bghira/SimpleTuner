@@ -380,11 +380,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         maximum_image_size
         and output["config"]["resolution_type"] == "area"
-        and maximum_image_size > 10
+        and maximum_image_size > 20
         and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
     ):
         raise ValueError(
-            f"(id={backend['id']}) maximum_image_size must be less than 10 megapixels when resolution_type is 'area'."
+            f"(id={backend['id']}) maximum_image_size must be less than 20 megapixels when resolution_type is 'area'."
         )
     elif (
         maximum_image_size
@@ -398,11 +398,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         target_downsample_size
         and output["config"]["resolution_type"] == "area"
-        and target_downsample_size > 10
+        and target_downsample_size > 20
         and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
     ):
         raise ValueError(
-            f"(id={backend['id']}) target_downsample_size must be less than 10 megapixels when resolution_type is 'area'."
+            f"(id={backend['id']}) target_downsample_size must be less than 20 megapixels when resolution_type is 'area'."
         )
     elif (
         target_downsample_size

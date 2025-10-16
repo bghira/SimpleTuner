@@ -390,7 +390,7 @@ class TestImageBackendConfig(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             config.validate(self.args)
 
-        self.assertIn("maximum_image_size must be less than 10 megapixels", str(context.exception))
+        self.assertIn("maximum_image_size must be less than 20 megapixels", str(context.exception))
 
     def test_validate_maximum_image_size_pixel_too_small(self):
         """Test validation fails with maximum_image_size too small for pixel type"""

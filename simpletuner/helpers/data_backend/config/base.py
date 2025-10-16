@@ -62,11 +62,11 @@ class BaseBackendConfig(ABC):
         if (
             self.maximum_image_size
             and self.resolution_type == "area"
-            and self.maximum_image_size > 10
+            and self.maximum_image_size > 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
-                f"When a data backend is configured to use `'resolution_type':area`, `maximum_image_size` must be less than 10 megapixels. You may have accidentally entered {self.maximum_image_size} pixels, instead of megapixels."
+                f"When a data backend is configured to use `'resolution_type':area`, `maximum_image_size` must be less than 20 megapixels. You may have accidentally entered {self.maximum_image_size} pixels, instead of megapixels."
             )
         elif (
             self.maximum_image_size
@@ -81,11 +81,11 @@ class BaseBackendConfig(ABC):
         if (
             self.target_downsample_size
             and self.resolution_type == "area"
-            and self.target_downsample_size > 10
+            and self.target_downsample_size > 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
-                f"When a data backend is configured to use `'resolution_type':area`, `target_downsample_size` must be less than 10 megapixels. You may have accidentally entered {self.target_downsample_size} pixels, instead of megapixels."
+                f"When a data backend is configured to use `'resolution_type':area`, `target_downsample_size` must be less than 20 megapixels. You may have accidentally entered {self.target_downsample_size} pixels, instead of megapixels."
             )
         elif (
             self.target_downsample_size
