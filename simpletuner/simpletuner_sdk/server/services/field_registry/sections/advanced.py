@@ -1527,13 +1527,116 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             default_value="no",
             choices=[
                 {"value": "no", "label": "Disabled"},
-                {"value": "inductor", "label": "Torch Dynamo (inductor)"},
+                {"value": "inductor", "label": "Inductor"},
+                {"value": "eager", "label": "Eager"},
+                {"value": "aot_eager", "label": "AOT Eager"},
+                {"value": "aot_ts_nvfuser", "label": "AOT TS NVFuser"},
+                {"value": "nvprims_nvfuser", "label": "NVPrims NVFuser"},
+                {"value": "cudagraphs", "label": "CUDAGraphs"},
+                {"value": "ofi", "label": "OFI"},
+                {"value": "fx2trt", "label": "FX2TRT"},
+                {"value": "onnxrt", "label": "ONNX Runtime"},
+                {"value": "tensorrt", "label": "TensorRT"},
+                {"value": "ipex", "label": "Intel IPEX"},
+                {"value": "tvm", "label": "TVM"},
+                {"value": "hpu_backend", "label": "Habana (HPU)"},
             ],
-            help_text="Selects the torch.compile backend used when falling back to command-line accelerate flags.",
-            tooltip="Use only when `i_know_what_i_am_doing` is enabled. Prefer managing `dynamo_config` within accelerate YAML for multi-node DeepSpeed setups.",
+            help_text="Selects the torch.compile backend Accelerate should use for TorchDynamo compilation.",
+            tooltip="Enable only after confirming your hardware supports the selected backend. Prefer Accelerate YAML overrides for multi-node DeepSpeed setups.",
             dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
             importance=ImportanceLevel.EXPERIMENTAL,
             order=50,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="dynamo_mode",
+            arg_name="--dynamo_mode",
+            ui_label="Torch Dynamo Mode",
+            field_type=FieldType.SELECT,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value="",
+            choices=[
+                {"value": "", "label": "Auto (Accelerate default)"},
+                {"value": "default", "label": "default"},
+                {"value": "reduce-overhead", "label": "reduce-overhead"},
+                {"value": "max-autotune", "label": "max-autotune"},
+                {"value": "max-autotune-no-cudagraphs", "label": "max-autotune-no-cudagraphs"},
+            ],
+            help_text="Optional torch.compile optimisation profile passed to TorchDynamo.",
+            tooltip="Auto lets Accelerate pick the best mode. Reduce overhead minimises compile time, max-autotune searches for the fastest kernels.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=51,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="dynamo_fullgraph",
+            arg_name="--dynamo_fullgraph",
+            ui_label="Full-Graph Compilation",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=False,
+            help_text="Request full graph compilation from torch.compile instead of per-region lowering.",
+            tooltip="May improve steady-state throughput at the cost of longer initial compile times.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=52,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="dynamo_dynamic",
+            arg_name="--dynamo_dynamic",
+            ui_label="Dynamic Shapes Support",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=False,
+            help_text="Enable dynamic shape guards when compiling with torch.compile.",
+            tooltip="Turn on only if your model receives tensors with varying shapes between steps.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=53,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="dynamo_use_regional_compilation",
+            arg_name="--dynamo_use_regional_compilation",
+            ui_label="Use Regional Compilation",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=False,
+            help_text="Compile repeated model blocks individually to reduce cold-start time.",
+            tooltip="Recommended for large transformer style models. Keeps runtime close to full graph with significantly faster compilation.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=54,
         )
     )
 

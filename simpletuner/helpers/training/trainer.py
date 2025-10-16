@@ -95,7 +95,14 @@ import torch
 import torch.nn.functional as F
 import transformers
 from accelerate import Accelerator, DeepSpeedPlugin, FullyShardedDataParallelPlugin
-from accelerate.utils import DistributedType, ParallelismConfig, TorchContextParallelConfig, set_seed
+from accelerate.utils import (
+    DistributedType,
+    DynamoBackend,
+    ParallelismConfig,
+    TorchContextParallelConfig,
+    TorchDynamoPlugin,
+    set_seed,
+)
 from torch.distributions import Beta
 
 from simpletuner.configure import model_classes
@@ -248,9 +255,41 @@ class Trainer:
         if num_machines_value not in (None, ""):
             os.environ["TRAINING_NUM_MACHINES"] = str(num_machines_value)
 
+        def _resolve_dynamo_backend(candidate: object) -> DynamoBackend | None:
+            if isinstance(candidate, DynamoBackend):
+                return candidate
+            text = str(candidate or "").strip()
+            if not text:
+                return None
+            normalised = text.replace("-", "_").upper()
+            if normalised in {"DISABLED", "NONE"}:
+                normalised = "NO"
+            try:
+                return DynamoBackend[normalised]
+            except KeyError as exc:
+                raise ValueError(f"Unsupported Torch Dynamo backend '{candidate}'.") from exc
+
+        def _coerce_flag(value: object) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return value != 0
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            return False
+
         dynamo_backend_value = getattr(self.config, "dynamo_backend", None)
-        if dynamo_backend_value not in (None, ""):
-            os.environ["TRAINING_DYNAMO_BACKEND"] = str(dynamo_backend_value)
+        try:
+            resolved_dynamo_backend = _resolve_dynamo_backend(dynamo_backend_value)
+        except ValueError:
+            raise
+
+        dynamo_backend_env = "no"
+        if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
+            dynamo_backend_env = resolved_dynamo_backend.value.lower()
+        elif isinstance(dynamo_backend_value, str) and dynamo_backend_value.strip():
+            dynamo_backend_env = dynamo_backend_value.strip().lower()
+        os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
 
         report_to_value = getattr(self.config, "report_to", None)
         if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
@@ -282,7 +321,7 @@ class Trainer:
                 log_with=report_to,
                 project_config=self.config.accelerator_project_config,
                 kwargs_handlers=accelerator_custom_config,
-                dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
+                dynamo_backend=dynamo_backend_env,
             )
 
             fsdp_plugin = None
@@ -298,6 +337,42 @@ class Trainer:
                 accelerator_kwargs["fsdp_plugin"] = fsdp_plugin
             if deepspeed_plugin is not None:
                 accelerator_kwargs["deepspeed_plugin"] = deepspeed_plugin
+
+            dynamo_plugin = None
+            if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
+                plugin_kwargs: Dict[str, object] = {"backend": resolved_dynamo_backend}
+
+                mode_value = getattr(self.config, "dynamo_mode", None)
+                if isinstance(mode_value, str):
+                    mode_text = mode_value.strip().lower()
+                    if mode_text and mode_text not in {"auto", "default"}:
+                        plugin_kwargs["mode"] = mode_text
+                    elif mode_text == "default":
+                        plugin_kwargs["mode"] = "default"
+                elif mode_value:
+                    plugin_kwargs["mode"] = str(mode_value)
+
+                if _coerce_flag(getattr(self.config, "dynamo_fullgraph", None)):
+                    plugin_kwargs["fullgraph"] = True
+                if _coerce_flag(getattr(self.config, "dynamo_dynamic", None)):
+                    plugin_kwargs["dynamic"] = True
+                if _coerce_flag(getattr(self.config, "dynamo_use_regional_compilation", None)):
+                    plugin_kwargs["use_regional_compilation"] = True
+
+                dynamo_plugin = TorchDynamoPlugin(**plugin_kwargs)
+                accelerator_kwargs["dynamo_plugin"] = dynamo_plugin
+
+                flag_details = []
+                if "mode" in plugin_kwargs:
+                    flag_details.append(f"mode={plugin_kwargs['mode']}")
+                if plugin_kwargs.get("fullgraph"):
+                    flag_details.append("fullgraph")
+                if plugin_kwargs.get("dynamic"):
+                    flag_details.append("dynamic")
+                if plugin_kwargs.get("use_regional_compilation"):
+                    flag_details.append("regional")
+                extras = f" ({', '.join(flag_details)})" if flag_details else ""
+                logger.info("Torch Dynamo enabled (backend=%s)%s.", resolved_dynamo_backend.value.lower(), extras)
 
             context_parallel_size_raw = getattr(self.config, "context_parallel_size", None)
             context_parallel_strategy_raw = getattr(self.config, "context_parallel_comm_strategy", None)

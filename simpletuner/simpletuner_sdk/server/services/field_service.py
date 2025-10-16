@@ -1507,6 +1507,22 @@ class FieldService:
                     extra_classes.append("field-disabled")
                 _append_hint(disable_reason)
 
+        if field.name in {
+            "dynamo_mode",
+            "dynamo_fullgraph",
+            "dynamo_dynamic",
+            "dynamo_use_regional_compilation",
+        }:
+            backend_value = self._get_config_value(config_values, "dynamo_backend")
+            if backend_value is None and isinstance(raw_config, dict):
+                backend_value = raw_config.get("dynamo_backend") or raw_config.get("--dynamo_backend")
+            backend_text = str(backend_value or "").strip().lower()
+            if backend_text in {"", "no", "disabled", "none"}:
+                field_dict["disabled"] = True
+                if "field-disabled" not in extra_classes:
+                    extra_classes.append("field-disabled")
+                _append_hint("Select a Torch Dynamo backend to configure these options.")
+
         field_dict["extra_classes"] = " ".join(extra_classes)
 
         return field_dict
