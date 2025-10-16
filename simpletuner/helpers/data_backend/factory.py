@@ -1570,7 +1570,8 @@ class FactoryRegistry:
                     )
                     return
 
-        self.accelerator.wait_for_everyone()
+        if getattr(self.accelerator, "num_processes", 1) > 1:
+            self.accelerator.wait_for_everyone()
         if (
             not backend.get("auto_generated", False)
             and backend.get("conditioning_type", None) is not None
@@ -1583,7 +1584,8 @@ class FactoryRegistry:
             if not self.accelerator.is_main_process:
                 info_log(f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses.")
                 init_backend["metadata_backend"].reload_cache()
-            self.accelerator.wait_for_everyone()
+            if getattr(self.accelerator, "num_processes", 1) > 1:
+                self.accelerator.wait_for_everyone()
             if init_backend["metadata_backend"].has_single_underfilled_bucket():
                 raise Exception(
                     f"Cannot train using a dataset that has a single bucket with fewer than {self.args.train_batch_size} images."
@@ -1937,7 +1939,8 @@ class FactoryRegistry:
                         f"(id={init_backend['id']}) Skipping VAE cache discovery because data directory was not found: {init_backend.get('instance_data_dir')}"
                     )
                     return
-            self.accelerator.wait_for_everyone()
+            if getattr(self.accelerator, "num_processes", 1) > 1:
+                self.accelerator.wait_for_everyone()
         all_image_files = StateTracker.get_image_files(
             data_backend_id=init_backend["id"],
             retry_limit=3,  # some filesystems maybe take longer to make it available.
@@ -1990,7 +1993,8 @@ class FactoryRegistry:
                 )
                 return
 
-        self.accelerator.wait_for_everyone()
+        if getattr(self.accelerator, "num_processes", 1) > 1:
+            self.accelerator.wait_for_everyone()
         if not self.accelerator.is_main_process:
             try:
                 init_backend["metadata_backend"].load_image_metadata()
@@ -1999,7 +2003,8 @@ class FactoryRegistry:
                     f"(id={init_backend['id']}) Skipping metadata load because data directory was not found: {init_backend.get('instance_data_dir')}"
                 )
                 return
-        self.accelerator.wait_for_everyone()
+        if getattr(self.accelerator, "num_processes", 1) > 1:
+            self.accelerator.wait_for_everyone()
 
     def _connect_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> bool:
         """Connect conditioning datasets to their main datasets."""
@@ -2182,7 +2187,8 @@ class FactoryRegistry:
                 logger.info(f"Executing VAE cache update..")
                 init_backend["vaecache"].process_buckets()
             logger.debug(f"Encoding images during training: {self.args.vae_cache_ondemand}")
-            self.accelerator.wait_for_everyone()
+            if getattr(self.accelerator, "num_processes", 1) > 1:
+                self.accelerator.wait_for_everyone()
 
         move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
         init_backend_debug_info = {
