@@ -255,13 +255,9 @@ class ConfigStore:
 
             # Default model config
             default_config = {
-                "--model_type": "lora",
-                "--model_family": "flux",
-                "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
                 "--output_dir": output_dir,
                 "--train_batch_size": 1,
                 "--learning_rate": 0.0001,
-                "--max_train_steps": 1000,
                 "--checkpointing_steps": 100,
                 "--seed": 42,
                 "--resolution": 1024,

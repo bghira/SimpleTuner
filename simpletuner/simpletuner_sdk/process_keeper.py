@@ -136,7 +136,9 @@ try:
     logger.info("Function loaded successfully")
 except Exception as e:
     logger.error(f"Failed to import function: {{e}}")
-    send_event("error", {{"message": f"Import error: {{e}}"}})
+    import_error = f"Import error: {{e}}"
+    send_event("error", {{"message": import_error}})
+    send_event("state", {{"status": "failed", "message": import_error}})
     sys.exit(1)
 
 # Load config from JSON string
@@ -210,15 +212,16 @@ except SystemExit as exc:
         exit_message = "Training process exited during configuration. Check the logs above for details."
     logger.error(f"Training terminated via SystemExit: {{exit_message}}")
     send_event("error", {{"message": exit_message, "exit_code": exit_code}})
-    send_event("state", {{"status": "failed"}})
+    send_event("state", {{"status": "failed", "message": exit_message, "exit_code": exit_code}})
     raise
 except Exception as e:
     logger.error(f"Function error: {{e}}")
     import traceback
     traceback_str = traceback.format_exc()
     logger.error(traceback_str)
-    send_event("error", {{"message": str(e)}})
-    send_event("state", {{"status": "failed"}})
+    error_message = str(e)
+    send_event("error", {{"message": error_message, "traceback": traceback_str}})
+    send_event("state", {{"status": "failed", "message": error_message}})
 
 logger.info("Subprocess exiting")
 '''

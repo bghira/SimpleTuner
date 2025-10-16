@@ -511,7 +511,8 @@ class EventHandler {
             }
         }
 
-        return this.escapeHtml(message);
+        const escaped = this.escapeHtml(message || '');
+        return escaped.replace(/\n/g, '<br>');
     }
 
     updateProgressDisplay() {
@@ -613,7 +614,7 @@ class EventHandler {
                 window.trainerUI?.showToast('Training completed successfully!', 'success');
                 break;
             case 'fatal_error':
-                window.trainerUI?.showToast('Fatal error occurred during training!', 'error');
+                window.trainerUI?.showToast(this.formatEnhancedMessage(event) || 'Fatal error occurred during training!', 'error');
                 break;
             case 'checkpoint_saved':
                 window.trainerUI?.showToast('Checkpoint saved', 'info');
@@ -936,12 +937,14 @@ class EventHandler {
     }
 
     formatStateMessage(status, data) {
+        const detailRaw = data?.message || data?.detail || data?.error;
+        const detail = typeof detailRaw === 'string' ? detailRaw.trim() : detailRaw;
         const messages = {
             'starting': 'Training process starting...',
             'running': 'Training is running',
             'completed': 'Training completed successfully',
-            'failed': 'Training failed',
-            'aborted': 'Training was aborted',
+            'failed': detail ? `Training failed: ${detail}` : 'Training failed',
+            'aborted': detail ? `Training was aborted: ${detail}` : 'Training was aborted',
             'aborting': 'Aborting training...',
             'paused': 'Training paused',
             'resumed': 'Training resumed',
