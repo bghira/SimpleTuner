@@ -67,33 +67,32 @@ def prepare_model_for_deepspeed(accelerator, args):
         and hasattr(accelerator.state, "deepspeed_plugin")
         and getattr(accelerator.state, "deepspeed_plugin") is not None
     ):
-        offload_param = accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"]
-        accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"]["pin_memory"] = True
-        if offload_param["device"] == "nvme":
-            if offload_param["nvme_path"] == "none":
-                if args.offload_param_path is None:
-                    raise ValueError(
-                        f"DeepSpeed is using {offload_param['device']} but nvme_path is not specified. The configuration has '{offload_param['nvme_path']}' for 'nvme_path'."
-                    )
-                else:
-                    offload_buffer = 100000000.0
-                    if args.model_family in ["flux"]:
-                        # flux is big
-                        offload_buffer = 131600000.0
+        zero_config = accelerator.state.deepspeed_plugin.deepspeed_config.get("zero_optimization") or {}
+        offload_param = zero_config.get("offload_param")
+
+        if isinstance(offload_param, dict):
+            offload_param.setdefault("pin_memory", True)
+            if offload_param.get("device") == "nvme":
+                if str(offload_param.get("nvme_path", "none")).lower() == "none":
+                    if args.offload_param_path is None:
+                        raise ValueError(
+                            f"DeepSpeed is using {offload_param['device']} but nvme_path is not specified. "
+                            f"The configuration has '{offload_param['nvme_path']}' for 'nvme_path'."
+                        )
+                    offload_buffer = 131600000.0 if args.model_family in ["flux"] else 100000000.0
                     logger.info(f"Attempting to allocate {offload_buffer} size byte buffer.")
-                    accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"][
-                        "buffer_size"
-                    ] = offload_buffer
-                    accelerator.state.deepspeed_plugin.deepspeed_config["zero_optimization"]["offload_param"][
-                        "nvme_path"
-                    ] = args.offload_param_path
-            logger.info(
-                f"Using DeepSpeed NVMe offload at {accelerator.state.deepspeed_plugin.deepspeed_config['zero_optimization']['offload_param']['nvme_path']}."
-            )
+                    offload_param["buffer_size"] = offload_buffer
+                    offload_param["nvme_path"] = args.offload_param_path
+
+                logger.info(
+                    "Using DeepSpeed NVMe offload at %s.",
+                    offload_param.get("nvme_path", "<unspecified>"),
+                )
+        else:
+            logger.debug("DeepSpeed config missing zero_optimization.offload_param; skipping NVMe pin configuration.")
 
         use_deepspeed_optimizer = True
         if "optimizer" not in accelerator.state.deepspeed_plugin.deepspeed_config:
-            zero_config = accelerator.state.deepspeed_plugin.deepspeed_config.get("zero_optimization", {})
             optimizer_offload = zero_config.get("offload_optimizer", {})
             offload_device = str(optimizer_offload.get("device", "")).lower()
             if offload_device == "cpu":
