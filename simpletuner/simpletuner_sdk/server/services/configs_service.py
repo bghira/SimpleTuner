@@ -1196,6 +1196,15 @@ class ConfigsService:
                 if config_key in json_path_fields:
                     converted_value = ConfigsService._resolve_under_base(configs_dir, converted_value)
 
+            if config_key in {"--deepspeed_config", "deepspeed_config"} and isinstance(converted_value, str):
+                trimmed = converted_value.strip()
+                if trimmed and (trimmed.startswith("{") or trimmed.startswith("[")):
+                    try:
+                        converted_value = json.loads(trimmed)
+                    except json.JSONDecodeError:
+                        # Keep original string if parsing fails; validation will surface errors later
+                        pass
+
             config_dict[config_key] = converted_value
 
         return ConfigsService._migrate_legacy_keys(config_dict)

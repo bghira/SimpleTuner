@@ -1,3 +1,4 @@
+import ast
 import copy
 import glob
 import hashlib
@@ -79,7 +80,7 @@ import diffusers
 import torch
 import torch.nn.functional as F
 import transformers
-from accelerate import Accelerator
+from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import set_seed
 from torch.distributions import Beta
 
@@ -270,6 +271,12 @@ class Trainer:
                 dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
             )
 
+            deepspeed_plugin = None
+            if hasattr(self.config, "deepspeed_config"):
+                deepspeed_plugin = self._load_deepspeed_plugin()
+            if deepspeed_plugin is not None:
+                accelerator_kwargs["deepspeed_plugin"] = deepspeed_plugin
+
             try:
                 self.accelerator = Accelerator(**accelerator_kwargs)
             except ValueError as err:
@@ -327,6 +334,148 @@ class Trainer:
             accelerate_accelerator.is_bf16_available = _always_true
         except ImportError:
             logger.warning("Failed to patch Accelerate bf16 guard; proceeding without override.")
+
+    def _load_deepspeed_plugin(self):
+        raw_config = getattr(self.config, "deepspeed_config", None)
+        if raw_config in (None, "", "None", False):
+            return None
+
+        try:
+            normalized = self._normalize_deepspeed_config(raw_config)
+        except ValueError as error:
+            logger.error(str(error))
+            raise
+
+        if normalized is None:
+            return None
+
+        self._apply_deepspeed_overrides(normalized)
+        self.config.deepspeed_config = normalized
+
+        plugin_kwargs = {
+            "hf_ds_config": normalized,
+            "gradient_accumulation_steps": getattr(self.config, "gradient_accumulation_steps", 1),
+        }
+
+        zero_stage = self._extract_zero_stage(normalized)
+        if zero_stage is not None:
+            plugin_kwargs["zero_stage"] = zero_stage
+
+        offload_param_path = getattr(self.config, "offload_param_path", None)
+        if offload_param_path:
+            expanded_offload_path = os.path.expanduser(str(offload_param_path))
+            zero_config = normalized.get("zero_optimization")
+            if isinstance(zero_config, dict):
+                if self._uses_nvme(zero_config.get("offload_param")):
+                    plugin_kwargs.setdefault("offload_param_nvme_path", expanded_offload_path)
+                if self._uses_nvme(zero_config.get("offload_optimizer")):
+                    plugin_kwargs.setdefault("offload_optimizer_nvme_path", expanded_offload_path)
+
+        logger.info(
+            "DeepSpeed configuration detected; enabling DeepSpeedPlugin%s.",
+            f" (ZeRO stage {zero_stage})" if zero_stage is not None else "",
+        )
+        return DeepSpeedPlugin(**plugin_kwargs)
+
+    @staticmethod
+    def _uses_nvme(section):
+        if not isinstance(section, dict):
+            return False
+        device = section.get("device")
+        if isinstance(device, str):
+            return device.lower() == "nvme"
+        return False
+
+    def _apply_deepspeed_overrides(self, config_dict: dict) -> None:
+        if not isinstance(config_dict, dict):
+            return
+
+        if "deepspeed_config_file" in config_dict:
+            # User is delegating configuration to an external DeepSpeed JSON file.
+            # Respect their settings and avoid mutating the inline dictionary.
+            return
+
+        train_batch_size = getattr(self.config, "train_batch_size", None)
+        if train_batch_size is not None and "train_micro_batch_size_per_gpu" not in config_dict:
+            config_dict["train_micro_batch_size_per_gpu"] = train_batch_size
+
+        grad_accum = getattr(self.config, "gradient_accumulation_steps", None)
+        if grad_accum is not None and "gradient_accumulation_steps" not in config_dict:
+            config_dict["gradient_accumulation_steps"] = grad_accum
+
+        offload_param_path = getattr(self.config, "offload_param_path", None)
+        if not offload_param_path:
+            return
+
+        zero_config = config_dict.get("zero_optimization")
+        if not isinstance(zero_config, dict):
+            return
+
+        expanded_path = os.path.expanduser(str(offload_param_path))
+        for key in ("offload_param", "offload_optimizer"):
+            section = zero_config.get(key)
+            if isinstance(section, dict) and self._uses_nvme(section):
+                section.setdefault("nvme_path", expanded_path)
+
+    @staticmethod
+    def _extract_zero_stage(config_dict: dict) -> Optional[int]:
+        if not isinstance(config_dict, dict):
+            return None
+
+        candidates = []
+        if "zero_stage" in config_dict:
+            candidates.append(config_dict.get("zero_stage"))
+
+        zero_config = config_dict.get("zero_optimization")
+        if isinstance(zero_config, dict):
+            candidates.append(zero_config.get("stage"))
+
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                return int(candidate)
+            except (TypeError, ValueError):
+                continue
+
+        return None
+
+    @staticmethod
+    def _normalize_deepspeed_config(raw_config):
+        if raw_config in (None, "", "None", False):
+            return None
+
+        if isinstance(raw_config, (dict, list)):
+            return raw_config
+
+        if isinstance(raw_config, Path):
+            raw_config = str(raw_config)
+
+        if isinstance(raw_config, str):
+            candidate = raw_config.strip()
+            if not candidate:
+                return None
+
+            if candidate.startswith("{") or candidate.startswith("["):
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError as json_error:
+                    try:
+                        return ast.literal_eval(candidate)
+                    except (ValueError, SyntaxError) as ast_error:
+                        raise ValueError(f"Could not parse --deepspeed_config JSON payload: {ast_error}") from ast_error
+
+            expanded_path = os.path.expanduser(candidate)
+            if os.path.isfile(expanded_path):
+                try:
+                    with open(expanded_path, "r", encoding="utf-8") as handle:
+                        return json.load(handle)
+                except json.JSONDecodeError as file_error:
+                    raise ValueError(f"DeepSpeed config at {expanded_path} is invalid JSON: {file_error}") from file_error
+
+            raise ValueError(f"DeepSpeed config value '{raw_config}' is neither valid JSON nor an existing file.")
+
+        raise ValueError(f"Unsupported type for --deepspeed_config: {type(raw_config)}")
 
     def run(self):
         try:

@@ -601,6 +601,9 @@ def cmd_server(args) -> int:
     os.environ["SIMPLETUNER_WEBHOOK_HOST"] = host
     os.environ["SIMPLETUNER_WEBHOOK_PORT"] = str(port)
 
+    # Disable colored logging in web server mode to prevent ANSI escape codes in HTML
+    os.environ["SIMPLETUNER_WEB_MODE"] = "1"
+
     # Set SSL certificate paths for service worker
     if ssl_config:
         os.environ["SIMPLETUNER_SSL_KEYFILE"] = ssl_config["keyfile"]

@@ -504,6 +504,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Only used when DeepSpeed ZeRO offloading is enabled; ignored otherwise.",
             importance=ImportanceLevel.ADVANCED,
             order=13,
+            dependencies=[FieldDependency(field="model_type", operator="equals", value="full", action="show")],
         )
     )
 

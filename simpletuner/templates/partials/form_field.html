@@ -14,6 +14,7 @@
 {% set custom_component = field.custom_component or '' %}
 {% set uses_custom_label = custom_component == 'merge_environment_toggle' %}
 {% set is_toggle_field = field_type in ['checkbox', 'toggle'] %}
+{% set is_deepspeed_field = field_id == 'deepspeed_config' %}
 {% if field.min is defined %}
     {% set field_min = field.min %}
 {% elif min is defined %}
@@ -43,9 +44,12 @@
 
     <!-- Label -->
     {% if not uses_custom_label %}
+    {% if is_deepspeed_field %}
+    <div class="d-flex align-items-center gap-2">
+    {% endif %}
     <label id="{{ field_id }}__title"
            {% if not is_toggle_field %}for="{{ field_id }}"{% endif %}
-           class="form-label d-flex align-items-center gap-1">
+           class="form-label d-flex align-items-center gap-1{% if is_deepspeed_field %} mb-0 flex-grow-1{% endif %}">
         <span>{{ field_label }}</span>
         {% if field_required %}
             <span class="text-danger">*</span>
@@ -64,6 +68,15 @@
         </button>
         {% endif %}
     </label>
+    {% if is_deepspeed_field %}
+            <button type="button"
+                    class="deepspeed-launch-btn"
+                    data-target-field="{{ field_id }}"
+                    onclick="if (window.launchDeepSpeedBuilderButton) { window.launchDeepSpeedBuilderButton(this); } else if (window.openDeepSpeedBuilderFromButton) { window.openDeepSpeedBuilderFromButton(this); } else { console.warn('DeepSpeed builder not loaded'); }">
+                <span class="btn-icon">🧙</span> DeepSpeed Builder
+            </button>
+    </div>
+    {% endif %}
     {% endif %}
 
     <!-- Input Field -->

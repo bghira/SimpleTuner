@@ -1,4 +1,5 @@
 import argparse
+import ast
 import json
 import logging
 import os
@@ -56,6 +57,46 @@ _ARG_PARSER_CACHE: Optional[argparse.ArgumentParser] = None
 
 BOOL_TRUE_STRINGS = {"1", "true", "yes", "y", "on"}
 BOOL_FALSE_STRINGS = {"0", "false", "no", "n", "off"}
+
+
+def _parse_json_like_option(raw_value, option_name: str):
+    """
+    Normalize config options that accept rich JSON structures or file references.
+    """
+    if raw_value in (None, "", "None"):
+        return None
+
+    if isinstance(raw_value, (dict, list)):
+        return raw_value
+
+    if isinstance(raw_value, str):
+        candidate = raw_value.strip()
+        if not candidate:
+            return None
+
+        if candidate.startswith("{") or candidate.startswith("["):
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as json_error:
+                try:
+                    return ast.literal_eval(candidate)
+                except (ValueError, SyntaxError) as ast_error:
+                    raise ValueError(
+                        f"Could not parse {option_name} as JSON."
+                        f" json.loads error: {json_error}; ast.literal_eval error: {ast_error}"
+                    ) from ast_error
+
+        expanded_path = os.path.expanduser(candidate)
+        if os.path.isfile(expanded_path):
+            try:
+                with open(expanded_path, "r", encoding="utf-8") as handle:
+                    return json.load(handle)
+            except json.JSONDecodeError as file_error:
+                raise ValueError(f"Could not load {option_name} from {expanded_path}: {file_error}") from file_error
+
+        return candidate
+
+    return raw_value
 
 
 def _parse_bool_flag(value):
@@ -242,8 +283,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.controlnet_custom_config is not None and type(args.controlnet_custom_config) is str:
         if args.controlnet_custom_config.startswith("{"):
             try:
-                import ast
-
                 args.controlnet_custom_config = ast.literal_eval(args.controlnet_custom_config)
             except Exception as e:
                 logger.error(f"Could not load controlnet_custom_config: {e}")
@@ -252,8 +291,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         print(f"DEBUG: webhook_config at start = {args.webhook_config} (type: {type(args.webhook_config)})")
         # Handle different types of webhook_config
         # First, check if it's an AST object using isinstance (the proper way)
-        import ast
-
         if isinstance(args.webhook_config, (ast.AST, ast.Name, ast.Call, ast.Dict, ast.List, ast.Constant)):
             # This is an AST object - this indicates a configuration parsing error
             logger.error("webhook_config is an AST object - this indicates a configuration error")
@@ -375,8 +412,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):
             try:
-                import ast
-
                 args.tread_config = ast.literal_eval(args.tread_config)
             except Exception as e:
                 logger.error(f"Could not load tread_config: {e}")
@@ -686,12 +721,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.distillation_config is not None:
         if args.distillation_config.startswith("{"):
             try:
-                import ast
-
                 args.distillation_config = ast.literal_eval(args.distillation_config)
             except Exception as e:
                 logger.error(f"Could not load distillation_config: {e}")
                 raise
+
+    if hasattr(args, "deepspeed_config"):
+        try:
+            args.deepspeed_config = _parse_json_like_option(args.deepspeed_config, "deepspeed_config")
+        except ValueError as parse_error:
+            logger.error(str(parse_error))
+            raise
 
     if not args.data_backend_config:
         from simpletuner.helpers.training.state_tracker import StateTracker

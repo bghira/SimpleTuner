@@ -8,6 +8,7 @@
 {% set custom_component = field.custom_component|default('') %}
 {% set uses_custom_label = custom_component == 'merge_environment_toggle' %}
 {% set is_toggle_field = field_type in ['checkbox', 'toggle'] %}
+{% set is_deepspeed_field = field_name == 'deepspeed_config' or field_id == 'deepspeed_config' %}
 
 <div class="{{ col_class }} mb-3 {{ field.extra_classes|default('') }}"
      x-on:input="$store.trainer.markFormDirty()"
@@ -18,22 +19,34 @@
 
     <!-- Field Label -->
     {% if not uses_custom_label %}
-    <label id="{{ field_id }}__title"
-           {% if not is_toggle_field %}for="{{ field_id }}"{% endif %}
-           class="form-label">
-        {{ field.label }}
-        {% if field.required %}
-        <span class="text-danger">*</span>
-        {% endif %}
+    {% if is_deepspeed_field %}
+    <div class="d-flex align-items-center justify-content-between gap-2">
+    {% endif %}
+        <label id="{{ field_id }}__title"
+               {% if not is_toggle_field %}for="{{ field_id }}"{% endif %}
+               class="form-label{% if is_deepspeed_field %} mb-0{% endif %}">
+            {{ field.label }}
+            {% if field.required %}
+            <span class="text-danger">*</span>
+            {% endif %}
 
-        <!-- Help Icon with Tooltip -->
-        {% if field.description or field.cmd_args_help %}
-        <i class="fas fa-question-circle text-muted ms-1"
-           data-bs-toggle="tooltip"
-           data-bs-placement="top"
-           title="{{ field.cmd_args_help|default(field.description) }}"></i>
+            <!-- Help Icon with Tooltip -->
+            {% if field.description or field.cmd_args_help %}
+            <i class="fas fa-question-circle text-muted ms-1"
+               data-bs-toggle="tooltip"
+               data-bs-placement="top"
+               title="{{ field.cmd_args_help|default(field.description) }}"></i>
+            {% endif %}
+        </label>
+        {% if is_deepspeed_field %}
+            <button type="button"
+                    class="deepspeed-launch-btn"
+                    data-target-field="{{ field_id }}"
+                    onclick="if (window.launchDeepSpeedBuilderButton) { window.launchDeepSpeedBuilderButton(this); } else if (window.openDeepSpeedBuilderFromButton) { window.openDeepSpeedBuilderFromButton(this); } else { console.warn('DeepSpeed builder not loaded'); }">
+                <span class="btn-icon">🧙</span> DeepSpeed Builder
+            </button>
+        </div>
         {% endif %}
-    </label>
     {% endif %}
 
     <!-- Field Input based on type -->

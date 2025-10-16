@@ -187,6 +187,109 @@
                         Quantization options are not available for this model configuration.
                     </div>
                 </div>
+
+                <div class="mt-4" x-show="answers.model_type === 'full'" x-transition>
+                    <h6 class="wizard-question-small">DeepSpeed Configuration</h6>
+                    <p class="text-muted small">
+                        Configure Hugging Face Accelerate's DeepSpeed integration. Choose the ZeRO stage and optional offload targets. Advanced tweaks remain available from the Hardware &gt; Accelerate tab after finishing the wizard.
+                    </p>
+
+                    <div class="btn-group w-100 mb-3" role="group" aria-label="DeepSpeed Stage">
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                :class="{ 'active': answers.deepspeed_preset === 'disabled' }"
+                                @click.prevent="selectDeepSpeedPreset('disabled')">
+                            Disabled
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                :class="{ 'active': answers.deepspeed_preset === 'stage1' }"
+                                @click.prevent="selectDeepSpeedPreset('stage1')">
+                            ZeRO Stage 1
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                :class="{ 'active': answers.deepspeed_preset === 'stage2' }"
+                                @click.prevent="selectDeepSpeedPreset('stage2')">
+                            ZeRO Stage 2
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                :class="{ 'active': answers.deepspeed_preset === 'stage3' }"
+                                @click.prevent="selectDeepSpeedPreset('stage3')">
+                            ZeRO Stage 3
+                        </button>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Parameter Offload</label>
+                            <select class="form-select"
+                                    x-model="answers.deepspeed_offload_param"
+                                    @change="updateDeepSpeedConfig()"
+                                    :disabled="answers.deepspeed_preset === 'disabled'">
+                                <option value="none">None</option>
+                                <option value="cpu">CPU</option>
+                                <option value="nvme">NVMe</option>
+                            </select>
+                            <div class="form-text">NVMe requires a fast disk path; CPU keeps tensors in host memory.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Optimizer Offload</label>
+                            <select class="form-select"
+                                    x-model="answers.deepspeed_offload_optimizer"
+                                    @change="updateDeepSpeedConfig()"
+                                    :disabled="answers.deepspeed_preset === 'disabled'">
+                                <option value="none">None</option>
+                                <option value="cpu">CPU</option>
+                                <option value="nvme">NVMe</option>
+                            </select>
+                            <div class="form-text">Optimizer offload reduces GPU memory at the cost of host or disk bandwidth.</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3"
+                         x-show="answers.deepspeed_preset !== 'disabled' && (answers.deepspeed_offload_param === 'nvme' || answers.deepspeed_offload_optimizer === 'nvme')">
+                        <label class="form-label">NVMe Offload Path</label>
+                        <input type="text"
+                               class="form-control"
+                               placeholder="/mnt/nvme/simpletuner"
+                               :disabled="answers.deepspeed_preset === 'disabled'"
+                               :value="answers.deepspeed_offload_path"
+                               @input="answers.deepspeed_offload_path = $event.target.value; updateDeepSpeedConfig()">
+                        <div class="form-text">Matches <code>--offload_param_path</code>. Leave blank to require a path before training starts.</div>
+                    </div>
+
+                    <div class="form-check mt-3"
+                         x-show="answers.deepspeed_preset === 'stage3'">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="deepspeed-zero3-init"
+                               x-model="answers.deepspeed_zero3_init"
+                               @change="updateDeepSpeedConfig()">
+                        <label class="form-check-label" for="deepspeed-zero3-init">
+                            Enable zero.Init for ZeRO Stage 3 (build massive models)
+                        </label>
+                    </div>
+
+                    <div class="mt-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">Generated DeepSpeed JSON</label>
+                            <button type="button"
+                                    class="btn btn-outline-primary btn-sm"
+                                    @click.prevent="openDeepSpeedBuilder()">
+                                DeepSpeed Builder
+                            </button>
+                        </div>
+                        <textarea id="training-wizard-deepspeed-config"
+                                  class="d-none"
+                                  x-init="registerDeepSpeedBuilderField($el)"></textarea>
+                        <pre class="bg-body-tertiary p-3 rounded small mb-2" x-text="answers.deepspeed_config ? answers.deepspeed_config : 'DeepSpeed disabled for this run.'"></pre>
+                        <div class="form-text">
+                            The wizard keeps this JSON in sync. Advanced edits can be made directly from the Hardware tab after closing the wizard.
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Step 4: Publishing -->

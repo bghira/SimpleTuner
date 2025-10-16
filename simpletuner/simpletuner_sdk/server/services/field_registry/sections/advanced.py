@@ -1195,6 +1195,24 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="deepspeed_config",
+            arg_name="--deepspeed_config",
+            ui_label="DeepSpeed Config (JSON)",
+            field_type=FieldType.TEXTAREA,
+            tab="hardware",
+            section="accelerate",
+            default_value=None,
+            placeholder='{"zero_optimization": {"stage": 2}}',
+            help_text="Custom DeepSpeed configuration JSON. Leave blank to rely on Accelerate defaults.",
+            tooltip="Accepts raw JSON or a path to a JSON file. The training wizard can generate starter configs for common ZeRO stages.",
+            importance=ImportanceLevel.ADVANCED,
+            order=11,
+            dependencies=[FieldDependency(field="model_type", operator="equals", value="full", action="show")],
+        )
+    )
+
     # Training Num Processes
     registry._add_field(
         ConfigField(

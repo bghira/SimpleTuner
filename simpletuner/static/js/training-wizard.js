@@ -50,6 +50,7 @@ function trainingWizardComponent() {
         quantizationLoading: false,
         modelDetailsCache: {},
         pendingDatasetPlan: null,  // Holds dataset plan from dataset wizard when using deferred commit
+        deepspeedBaseConfig: null,
         answers: {
             model_family: null,
             model_flavour: null,
@@ -80,8 +81,26 @@ function trainingWizardComponent() {
             model_card_note: '',
             model_card_safe_for_work: false,
             model_card_private: false,
+            offload_param_path: null,
+            deepspeed_preset: 'disabled',
+            deepspeed_offload_param: 'none',
+            deepspeed_offload_optimizer: 'none',
+            deepspeed_offload_path: '',
+            deepspeed_zero3_init: false,
+            deepspeed_config: null,
             createNewDataset: false  // Track whether user chose to create new dataset
         },
+        uiOnlyAnswerKeys: [
+            'createNewDataset',
+            'deepspeed_preset',
+            'deepspeed_offload_param',
+            'deepspeed_offload_optimizer',
+            'deepspeed_offload_path',
+            'deepspeed_zero3_init'
+        ],
+        deepspeedBuilderField: null,
+        _deepspeedBuilderHandler: null,
+        _handlingDeepSpeedBuilderUpdate: false,
 
         // Configuration
         modelFamilyOptions: [],
@@ -409,6 +428,22 @@ function trainingWizardComponent() {
                         this.answers.model_card_private = modelCardPrivate === true || modelCardPrivate === 'true' || modelCardPrivate === '1';
                     }
 
+                    const rawDeepSpeedConfig = config.deepspeed_config ?? config['--deepspeed_config'];
+                    if (rawDeepSpeedConfig !== undefined) {
+                        this.inferDeepSpeedFromConfig(rawDeepSpeedConfig);
+                    } else {
+                        this.inferDeepSpeedFromConfig(null);
+                    }
+
+                    const offloadPathValue = config.offload_param_path ?? config['--offload_param_path'];
+                    if (offloadPathValue !== undefined && offloadPathValue !== null && String(offloadPathValue).trim() !== '') {
+                        const normalizedPath = String(offloadPathValue).trim();
+                        this.answers.offload_param_path = normalizedPath;
+                        if (!this.answers.deepspeed_offload_path) {
+                            this.answers.deepspeed_offload_path = normalizedPath;
+                        }
+                    }
+
                     console.log('[TRAINING WIZARD] Loaded current config:', this.answers);
                 }
             } catch (error) {
@@ -468,6 +503,8 @@ function trainingWizardComponent() {
 
             // Re-check dataset on open
             this.checkDataset();
+
+            this.updateDeepSpeedConfig();
         },
 
         async loadModelFamilies() {
@@ -666,6 +703,14 @@ function trainingWizardComponent() {
                         this.answers.base_model_precision = 'int8-quanto';
                     }
                     await this.loadQuantizationOptions();
+                    this.answers.deepspeed_preset = 'disabled';
+                    this.answers.deepspeed_offload_param = 'none';
+                    this.answers.deepspeed_offload_optimizer = 'none';
+                    this.answers.deepspeed_offload_path = '';
+                    this.answers.deepspeed_zero3_init = false;
+                    this.answers.deepspeed_config = null;
+                    this.answers.offload_param_path = null;
+                    this.deepspeedBaseConfig = null;
                 } else {
                     this.answers.base_model_precision = 'no_change';
                     this.answers.quantize_via = 'accelerator';
@@ -673,8 +718,16 @@ function trainingWizardComponent() {
                         this.answers[`text_encoder_${i}_precision`] = 'no_change';
                     }
                     await this.loadQuantizationOptions();
+                    if (this.answers.deepspeed_preset === 'disabled') {
+                        this.answers.deepspeed_preset = 'stage2';
+                    }
+                    if (this.answers.deepspeed_offload_param === 'none') {
+                        this.answers.deepspeed_offload_param = 'cpu';
+                    }
                 }
             }
+
+            this.updateDeepSpeedConfig();
         },
 
         async loadLoggingProviders() {
@@ -1066,18 +1119,40 @@ function trainingWizardComponent() {
 
             console.log('[TRAINING WIZARD] Applying answers to trainer store...', this.answers);
 
+            this.updateDeepSpeedConfig();
+            const uiOnlySet = new Set(this.uiOnlyAnswerKeys || []);
+
             // Update config values, formValueStore, AND activeEnvironmentConfig
             Object.entries(this.answers).forEach(([key, value]) => {
                 if (key === 'lora_rank' && this.answers.model_type !== 'lora') {
                     return;
                 }
-                if (value !== null && value !== undefined && key !== 'enable_validations' && key !== 'createNewDataset') {
+                if (value === null || value === undefined) {
                     const fieldName = `--${key}`;
+                    if (trainerStore.configValues) {
+                        delete trainerStore.configValues[key];
+                        delete trainerStore.configValues[fieldName];
+                    }
+                    if (trainerStore.formValueStore) {
+                        delete trainerStore.formValueStore[fieldName];
+                    }
+                    if (trainerStore.activeEnvironmentConfig) {
+                        delete trainerStore.activeEnvironmentConfig[key];
+                        delete trainerStore.activeEnvironmentConfig[fieldName];
+                    }
+                    return;
+                }
+
+                if (key !== 'enable_validations' && !uiOnlySet.has(key)) {
+                    const fieldName = `--${key}`;
+                    const storeValue = key === 'deepspeed_config'
+                        ? this.getDeepSpeedConfigStoreValue(value)
+                        : value;
 
                     // 1. Update configValues
                     if (trainerStore.configValues) {
-                        trainerStore.configValues[key] = value;
-                        trainerStore.configValues[fieldName] = value;
+                        trainerStore.configValues[key] = storeValue;
+                        trainerStore.configValues[fieldName] = storeValue;
                     }
 
                     // 2. Update formValueStore (used by ensureCompleteFormData)
@@ -1090,11 +1165,11 @@ function trainingWizardComponent() {
 
                     // 3. Update activeEnvironmentConfig (this is what appendConfigValuesToFormData uses!)
                     if (trainerStore.activeEnvironmentConfig) {
-                        trainerStore.activeEnvironmentConfig[key] = value;
-                        trainerStore.activeEnvironmentConfig[fieldName] = value;
+                        trainerStore.activeEnvironmentConfig[key] = storeValue;
+                        trainerStore.activeEnvironmentConfig[fieldName] = storeValue;
                     }
 
-                    console.log(`[TRAINING WIZARD] Updated ${fieldName} = ${value}`);
+                    console.log(`[TRAINING WIZARD] Updated ${fieldName}`, storeValue);
                 }
             });
 
@@ -1378,6 +1453,362 @@ function trainingWizardComponent() {
             }
             const isLora = this.answers.model_type === 'lora';
             return isLora ? preset.loraLearningRate : preset.fullLearningRate;
+        },
+
+        registerDeepSpeedBuilderField(field) {
+            if (!field) {
+                return;
+            }
+            this.deepspeedBuilderField = field;
+            if (typeof window.ensureDeepSpeedBuilderAssets === 'function') {
+                window.ensureDeepSpeedBuilderAssets();
+            }
+            if (!this._deepspeedBuilderHandler) {
+                this._deepspeedBuilderHandler = event => {
+                    const value = event?.target?.value ?? '';
+                    this.handleDeepSpeedBuilderInput(value);
+                };
+            }
+            field.removeEventListener('input', this._deepspeedBuilderHandler);
+            field.removeEventListener('change', this._deepspeedBuilderHandler);
+            field.addEventListener('input', this._deepspeedBuilderHandler);
+            field.addEventListener('change', this._deepspeedBuilderHandler);
+            this.syncDeepSpeedBuilderField();
+        },
+
+        syncDeepSpeedBuilderField() {
+            if (!this.deepspeedBuilderField) {
+                return;
+            }
+            const current = typeof this.answers.deepspeed_config === 'string'
+                ? this.answers.deepspeed_config
+                : '';
+            if (this.deepspeedBuilderField.value !== current) {
+                this.deepspeedBuilderField.value = current;
+            }
+        },
+
+        getDeepSpeedConfigStoreValue(rawValue) {
+            if (rawValue === null || rawValue === undefined || rawValue === '') {
+                return null;
+            }
+
+            if (typeof rawValue === 'object') {
+                try {
+                    return JSON.parse(JSON.stringify(rawValue));
+                } catch {
+                    return rawValue;
+                }
+            }
+
+            if (typeof rawValue !== 'string') {
+                return rawValue;
+            }
+
+            const trimmed = rawValue.trim();
+            if (!trimmed) {
+                return null;
+            }
+
+            if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                try {
+                    return JSON.parse(trimmed);
+                } catch (error) {
+                    console.warn('[TRAINING WIZARD] Failed to parse DeepSpeed JSON for store value:', error);
+                    return trimmed;
+                }
+            }
+
+            return trimmed;
+        },
+
+        openDeepSpeedBuilder() {
+            if (!this.deepspeedBuilderField) {
+                const fallbackField = document.getElementById('training-wizard-deepspeed-config');
+                if (fallbackField) {
+                    this.registerDeepSpeedBuilderField(fallbackField);
+                }
+            }
+
+            if (!this.deepspeedBuilderField) {
+                console.warn('[TRAINING WIZARD] DeepSpeed builder field not available.');
+                window.showToast?.('DeepSpeed builder input not ready yet.', 'warning');
+                return;
+            }
+
+            this.syncDeepSpeedBuilderField();
+
+            const target = this.deepspeedBuilderField.id || this.deepspeedBuilderField;
+            if (typeof window.launchDeepSpeedBuilder === 'function') {
+                window.launchDeepSpeedBuilder(target);
+            } else if (typeof window.openDeepSpeedBuilder === 'function') {
+                window.openDeepSpeedBuilder(target);
+            } else if (typeof window.openDeepSpeedBuilderFromButton === 'function') {
+                window.openDeepSpeedBuilderFromButton(this.deepspeedBuilderField);
+            } else {
+                console.warn('[TRAINING WIZARD] DeepSpeed builder script not yet loaded.');
+                window.showToast?.('DeepSpeed builder is still loading. Please try again in a moment.', 'warning');
+            }
+        },
+
+        handleDeepSpeedBuilderInput(rawValue) {
+            if (this._handlingDeepSpeedBuilderUpdate) {
+                return;
+            }
+            this._handlingDeepSpeedBuilderUpdate = true;
+            try {
+                if (rawValue === null || rawValue === undefined) {
+                    this.inferDeepSpeedFromConfig(null);
+                    return;
+                }
+                if (typeof rawValue === 'string' && !rawValue.trim()) {
+                    this.inferDeepSpeedFromConfig(null);
+                    return;
+                }
+                this.inferDeepSpeedFromConfig(rawValue);
+            } finally {
+                this._handlingDeepSpeedBuilderUpdate = false;
+                this.syncDeepSpeedBuilderField();
+            }
+        },
+
+        selectDeepSpeedPreset(preset) {
+            this.answers.deepspeed_preset = preset;
+
+            if (preset === 'disabled') {
+                this.answers.deepspeed_offload_param = 'none';
+                this.answers.deepspeed_offload_optimizer = 'none';
+                this.answers.deepspeed_offload_path = '';
+                this.answers.deepspeed_zero3_init = false;
+                this.deepspeedBaseConfig = null;
+                this.updateDeepSpeedConfig();
+                return;
+            }
+
+            if (preset === 'stage1') {
+                if (this.answers.deepspeed_offload_param !== 'nvme') {
+                    this.answers.deepspeed_offload_param = 'none';
+                }
+                if (this.answers.deepspeed_offload_optimizer !== 'nvme') {
+                    this.answers.deepspeed_offload_optimizer = 'none';
+                }
+                this.answers.deepspeed_zero3_init = false;
+            } else if (preset === 'stage2') {
+                if (this.answers.deepspeed_offload_param === 'none') {
+                    this.answers.deepspeed_offload_param = 'cpu';
+                }
+            } else if (preset === 'stage3') {
+                if (this.answers.deepspeed_offload_param === 'none') {
+                    this.answers.deepspeed_offload_param = 'cpu';
+                }
+            }
+
+            if (preset !== 'stage3') {
+                this.answers.deepspeed_zero3_init = false;
+            }
+
+            this.updateDeepSpeedConfig();
+        },
+
+        updateDeepSpeedConfig() {
+            if (this.answers.model_type !== 'full') {
+                this.answers.deepspeed_config = null;
+                this.answers.offload_param_path = null;
+                this.syncDeepSpeedBuilderField();
+                return;
+            }
+
+            const stageMap = { stage1: 1, stage2: 2, stage3: 3 };
+            const preset = this.answers.deepspeed_preset || 'disabled';
+            const stage = stageMap[preset] || null;
+
+            if (
+                preset === 'disabled' &&
+                typeof this.answers.deepspeed_config === 'string' &&
+                this.answers.deepspeed_config.trim() &&
+                !this.answers.deepspeed_config.trim().startsWith('{') &&
+                !this.answers.deepspeed_config.trim().startsWith('[')
+            ) {
+                this.syncDeepSpeedBuilderField();
+                return;
+            }
+
+            if (!stage) {
+                this.answers.deepspeed_config = null;
+                this.answers.offload_param_path = null;
+                this.syncDeepSpeedBuilderField();
+                return;
+            }
+
+            const baseConfig = this.deepspeedBaseConfig
+                ? JSON.parse(JSON.stringify(this.deepspeedBaseConfig))
+                : {};
+
+            const zeroConfig = { ...(baseConfig.zero_optimization || {}) };
+            zeroConfig.stage = stage;
+
+            const offloadParam = (this.answers.deepspeed_offload_param || 'none').toLowerCase();
+            const offloadOptimizer = (this.answers.deepspeed_offload_optimizer || 'none').toLowerCase();
+            const offloadPath = (this.answers.deepspeed_offload_path || '').trim();
+
+            if (offloadParam !== 'none') {
+                zeroConfig.offload_param = {
+                    ...(zeroConfig.offload_param || {}),
+                    device: offloadParam,
+                    pin_memory: true
+                };
+                if (offloadParam === 'nvme') {
+                    zeroConfig.offload_param.nvme_path = offloadPath || 'none';
+                } else {
+                    delete zeroConfig.offload_param.nvme_path;
+                }
+            } else {
+                delete zeroConfig.offload_param;
+            }
+
+            if (offloadOptimizer !== 'none') {
+                zeroConfig.offload_optimizer = {
+                    ...(zeroConfig.offload_optimizer || {}),
+                    device: offloadOptimizer
+                };
+                if (offloadOptimizer === 'nvme') {
+                    zeroConfig.offload_optimizer.nvme_path = offloadPath || 'none';
+                } else {
+                    delete zeroConfig.offload_optimizer.nvme_path;
+                }
+            } else {
+                delete zeroConfig.offload_optimizer;
+            }
+
+            baseConfig.zero_optimization = zeroConfig;
+
+            const microBatch = Number(this.answers.train_batch_size);
+            if (Number.isFinite(microBatch) && microBatch > 0) {
+                baseConfig.train_micro_batch_size_per_gpu = microBatch;
+            }
+
+            const gradAccum = Number(this.answers.gradient_accumulation_steps);
+            if (Number.isFinite(gradAccum) && gradAccum > 0) {
+                baseConfig.gradient_accumulation_steps = gradAccum;
+            }
+
+            if (stage === 3) {
+                baseConfig.zero3_init_flag = !!this.answers.deepspeed_zero3_init;
+            } else {
+                delete baseConfig.zero3_init_flag;
+                this.answers.deepspeed_zero3_init = false;
+            }
+
+            this.deepspeedBaseConfig = baseConfig;
+            this.answers.deepspeed_config = JSON.stringify(baseConfig, null, 2);
+            this.answers.offload_param_path =
+                offloadParam === 'nvme' || offloadOptimizer === 'nvme'
+                    ? (offloadPath ? offloadPath : null)
+                    : null;
+            this.syncDeepSpeedBuilderField();
+        },
+
+        inferDeepSpeedFromConfig(rawValue) {
+            if (rawValue === null || rawValue === undefined || rawValue === '') {
+                this.deepspeedBaseConfig = null;
+                this.answers.deepspeed_preset = 'disabled';
+                this.answers.deepspeed_offload_param = 'none';
+                this.answers.deepspeed_offload_optimizer = 'none';
+                this.answers.deepspeed_offload_path = '';
+                this.answers.deepspeed_zero3_init = false;
+                this.answers.offload_param_path = null;
+                this.answers.deepspeed_config = null;
+                this.syncDeepSpeedBuilderField();
+                return;
+            }
+
+            let parsedConfig = null;
+            if (typeof rawValue === 'string') {
+                const trimmed = rawValue.trim();
+                if (!trimmed) {
+                    this.inferDeepSpeedFromConfig(null);
+                    return;
+                }
+                try {
+                    parsedConfig = JSON.parse(trimmed);
+                } catch (error) {
+                    console.warn('[TRAINING WIZARD] Could not parse DeepSpeed config JSON:', error);
+                    this.deepspeedBaseConfig = null;
+                    this.answers.deepspeed_config = trimmed;
+                    this.answers.deepspeed_preset = 'disabled';
+                    this.answers.deepspeed_offload_param = 'none';
+                    this.answers.deepspeed_offload_optimizer = 'none';
+                    this.answers.deepspeed_offload_path = '';
+                    this.answers.deepspeed_zero3_init = false;
+                    this.answers.offload_param_path = null;
+                    this.syncDeepSpeedBuilderField();
+                    return;
+                }
+            } else if (typeof rawValue === 'object') {
+                try {
+                    parsedConfig = JSON.parse(JSON.stringify(rawValue));
+                } catch {
+                    parsedConfig = rawValue;
+                }
+            }
+
+            if (!parsedConfig || typeof parsedConfig !== 'object') {
+                this.deepspeedBaseConfig = null;
+                this.answers.deepspeed_config = null;
+                this.answers.deepspeed_preset = 'disabled';
+                this.answers.deepspeed_offload_param = 'none';
+                this.answers.deepspeed_offload_optimizer = 'none';
+                this.answers.deepspeed_offload_path = '';
+                this.answers.deepspeed_zero3_init = false;
+                this.answers.offload_param_path = null;
+                this.syncDeepSpeedBuilderField();
+                return;
+            }
+
+            this.deepspeedBaseConfig = parsedConfig;
+
+            const zeroConfig = typeof parsedConfig.zero_optimization === 'object' && parsedConfig.zero_optimization
+                ? parsedConfig.zero_optimization
+                : {};
+            const stageValue = zeroConfig.stage ?? parsedConfig.zero_stage;
+            let preset = 'disabled';
+            const numericStage = Number(stageValue);
+            if (Number.isInteger(numericStage)) {
+                if (numericStage >= 3) {
+                    preset = 'stage3';
+                } else if (numericStage === 2) {
+                    preset = 'stage2';
+                } else if (numericStage === 1) {
+                    preset = 'stage1';
+                }
+            }
+            this.answers.deepspeed_preset = preset;
+
+            const paramDevice = typeof zeroConfig.offload_param?.device === 'string'
+                ? zeroConfig.offload_param.device.toLowerCase()
+                : 'none';
+            const optimizerDevice = typeof zeroConfig.offload_optimizer?.device === 'string'
+                ? zeroConfig.offload_optimizer.device.toLowerCase()
+                : 'none';
+
+            this.answers.deepspeed_offload_param = paramDevice || 'none';
+            this.answers.deepspeed_offload_optimizer = optimizerDevice || 'none';
+
+            const pathCandidates = [
+                zeroConfig.offload_param?.nvme_path,
+                zeroConfig.offload_optimizer?.nvme_path,
+                parsedConfig.offload_param_path,
+            ];
+            const resolvedPath = pathCandidates.find(
+                entry => typeof entry === 'string' && entry.trim() && entry.trim().toLowerCase() !== 'none'
+            ) || '';
+
+            this.answers.deepspeed_offload_path = resolvedPath;
+            this.answers.offload_param_path = resolvedPath || null;
+            this.answers.deepspeed_zero3_init = Boolean(parsedConfig.zero3_init_flag);
+            this.answers.deepspeed_config = JSON.stringify(parsedConfig, null, 2);
+
+            this.updateDeepSpeedConfig();
         },
 
         getLoraRankIndex() {

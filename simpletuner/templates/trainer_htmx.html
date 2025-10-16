@@ -3219,6 +3219,15 @@ function trainerComponent() {
                     return { kind: 'single', value };
                 }
 
+                if (typeof value === 'object') {
+                    try {
+                        return { kind: 'single', value: JSON.stringify(value) };
+                    } catch (error) {
+                        console.warn('[TRAINER] Failed to serialize object value for', name, error);
+                        return null;
+                    }
+                }
+
                 return null;
             };
 
@@ -3280,7 +3289,16 @@ function trainerComponent() {
                     return { kind: 'single', value };
                 }
 
-                return null;
+                if (typeof value === 'object') {
+                    try {
+                        return { kind: 'single', value: JSON.stringify(value, null, 2) };
+                    } catch (error) {
+                        console.warn('[TRAINER] Failed to serialize object value for seed store', name, error);
+                        return { kind: 'single', value: '' };
+                    }
+                }
+
+                return { kind: 'single', value: '' };
             };
 
             const baseStore = {};
@@ -4591,5 +4609,6 @@ if (window.shouldUseModules && window.shouldUseModules()) {
 
 <!-- Include Training Wizard Modal -->
 {% include 'partials/training_wizard_modal.html' %}
+{% include 'partials/deepspeed_builder_modal.html' %}
 
 {% endblock %}
