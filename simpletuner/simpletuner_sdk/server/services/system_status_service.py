@@ -66,6 +66,7 @@ class SystemStatusService:
         devices = (inventory or {}).get("devices") or []
         results: List[Dict[str, Any]] = []
         mac_utilisation: Optional[List[Optional[float]]] = None
+        nvidia_fallback: Optional[List[Optional[float]]] = None
 
         if backend == "mps":
             mac_utilisation = self._get_macos_gpu_utilisation()
@@ -87,7 +88,7 @@ class SystemStatusService:
                 except Exception:
                     logger.debug("Failed to read CUDA utilisation for device %s", index, exc_info=True)
                     utilisation = None
-            elif backend == "mps" and mac_utilisation:
+            if utilisation is None and backend == "mps" and mac_utilisation:
                 target_idx: Optional[int] = None
                 if isinstance(index, int) and 0 <= index < len(mac_utilisation):
                     target_idx = index
@@ -95,6 +96,17 @@ class SystemStatusService:
                     target_idx = position
                 if target_idx is not None:
                     utilisation = mac_utilisation[target_idx]
+            if utilisation is None and backend == "cuda":
+                if nvidia_fallback is None:
+                    nvidia_fallback = self._get_nvidia_gpu_utilisation()
+                if nvidia_fallback:
+                    target_idx = None
+                    if isinstance(index, int) and 0 <= index < len(nvidia_fallback):
+                        target_idx = index
+                    elif 0 <= position < len(nvidia_fallback):
+                        target_idx = position
+                    if target_idx is not None:
+                        utilisation = nvidia_fallback[target_idx]
 
             results.append(
                 {
@@ -140,6 +152,44 @@ class SystemStatusService:
             if isinstance(value, (int, float)):
                 utilisation_values.append(round(float(value), 1))
             else:
+                utilisation_values.append(None)
+
+        return utilisation_values or None
+
+    def _get_nvidia_gpu_utilisation(self) -> Optional[List[Optional[float]]]:
+        if platform.system() == "Darwin":
+            return None
+
+        try:
+            completed = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError) as exc:
+            logger.debug("Unable to query GPU utilisation via nvidia-smi: %s", exc, exc_info=True)
+            return None
+
+        lines = completed.stdout.strip().splitlines()
+        if not lines:
+            return None
+
+        utilisation_values: List[Optional[float]] = []
+        for line in lines:
+            text = line.strip()
+            if not text:
+                utilisation_values.append(None)
+                continue
+            try:
+                utilisation_values.append(round(float(text), 1))
+            except ValueError:
+                logger.debug("Discarding unexpected nvidia-smi output: %s", text)
                 utilisation_values.append(None)
 
         return utilisation_values or None
