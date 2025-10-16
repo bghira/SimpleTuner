@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import huggingface_hub
-from accelerate.logging import get_logger
+from accelerate.logging import get_logger as accelerate_get_logger
 
 import wandb
 from simpletuner.helpers import log_format  # noqa
@@ -58,21 +58,33 @@ from simpletuner.helpers.webhooks.events import (
 )
 from simpletuner.simpletuner_sdk.api_state import APIState
 
-logger = get_logger("SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+def _safe_get_logger(name: str, *, default_level: str = "INFO"):
+    env_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level)
+    try:
+        return accelerate_get_logger(name, log_level=env_level)
+    except RuntimeError:
+        fallback_logger = logging.getLogger(name)
+        try:
+            numeric_level = logging._nameToLevel.get(env_level.upper(), None)
+            if numeric_level is None:
+                numeric_level = int(env_level)
+        except Exception:
+            numeric_level = logging.INFO
+        fallback_logger.setLevel(numeric_level)
+        if not fallback_logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+            fallback_logger.addHandler(handler)
+        fallback_logger.propagate = False
+        return fallback_logger
 
-filelock_logger = get_logger("filelock")
-connection_logger = get_logger("urllib3.connectionpool")
-training_logger = get_logger("training-loop")
 
-# More important logs.
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
-logger.setLevel(target_level)
-training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO")
-training_logger.setLevel(training_logger_level)
-
-# Less important logs.
-filelock_logger.setLevel("WARNING")
-connection_logger.setLevel("WARNING")
+logger = _safe_get_logger("SimpleTuner")
+filelock_logger = _safe_get_logger("filelock", default_level="WARNING")
+connection_logger = _safe_get_logger("urllib3.connectionpool", default_level="WARNING")
+training_logger = _safe_get_logger(
+    "training-loop", default_level=os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO")
+)
 
 
 import accelerate
