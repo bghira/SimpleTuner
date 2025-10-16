@@ -284,6 +284,21 @@
                placeholder="{{ field_placeholder }}"
                {% if field_required %}required{% endif %}
                {% if field_disabled %}disabled{% endif %}>
+        {% if field_id == 'fsdp_transformer_layer_cls_to_wrap' %}
+            <div class="mt-2 d-flex flex-wrap align-items-center gap-2" id="fsdp-detection-actions">
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        id="fsdp-detect-blocks">
+                    <i class="fas fa-search me-1"></i> Detect Blocks
+                </button>
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm d-none"
+                        id="fsdp-refresh-blocks">
+                    <i class="fas fa-sync-alt me-1"></i> Refresh Detection
+                </button>
+                <div class="text-muted small" id="fsdp-detection-status"></div>
+            </div>
+        {% endif %}
 
     {% elif field_type == 'number' %}
         <input type="number"

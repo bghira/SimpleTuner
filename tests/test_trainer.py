@@ -3,13 +3,12 @@
 import importlib.machinery as machinery
 import sys
 import time
-import unittest
 import types
+import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
-
 from accelerate import FullyShardedDataParallelPlugin
 
 

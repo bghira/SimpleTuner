@@ -14,6 +14,8 @@
         this.modelFlavours = {}; // Cache model flavour responses by family
         this.modelDetails = {}; // Cache model metadata keyed by family
         this._modelDetailsRequestToken = null;
+        this.fsdpModal = null;
+        this.fsdpDetectionData = null;
         this.init();
     }
 
@@ -689,6 +691,282 @@
         } else if (!cancelBtn) {
             console.error('Cancel button not found');
         }
+
+        this.setupFsdpDetection();
+    }
+
+    setupFsdpDetection() {
+        const detectBtn = document.getElementById('fsdp-detect-blocks');
+        const refreshBtn = document.getElementById('fsdp-refresh-blocks');
+        const applyBtn = document.getElementById('fsdp-apply-selection');
+
+        if (detectBtn && !detectBtn.dataset.listenerAdded) {
+            detectBtn.addEventListener('click', () => this.handleFsdpDetection(false));
+            detectBtn.dataset.listenerAdded = 'true';
+        }
+
+        if (refreshBtn && !refreshBtn.dataset.listenerAdded) {
+            refreshBtn.addEventListener('click', () => this.handleFsdpDetection(true));
+            refreshBtn.dataset.listenerAdded = 'true';
+        }
+
+        if (applyBtn && !applyBtn.dataset.listenerAdded) {
+            applyBtn.addEventListener('click', () => this.applyFsdpSelection());
+            applyBtn.dataset.listenerAdded = 'true';
+        }
+    }
+
+    async handleFsdpDetection(forceRefresh = false) {
+        const statusEl = document.getElementById('fsdp-detection-status');
+        const detectBtn = document.getElementById('fsdp-detect-blocks');
+        const refreshBtn = document.getElementById('fsdp-refresh-blocks');
+        const modal = this.getFsdpModal();
+        const spinner = document.getElementById('fsdp-detect-spinner');
+        const content = document.getElementById('fsdp-detect-content');
+        const errorBox = document.getElementById('fsdp-detect-error');
+
+        const modelFamilyEl = document.getElementById('model_family');
+        const modelFamily = modelFamilyEl ? modelFamilyEl.value.trim() : '';
+
+        if (!modelFamily) {
+            this.showToast('Select a model family before detecting FSDP blocks.', 'warning');
+            return;
+        }
+
+        const pretrainedEl = document.getElementById('pretrained_model_name_or_path');
+        const transformerEl = document.getElementById('pretrained_transformer_model_name_or_path');
+        const flavourEl = document.getElementById('model_flavour');
+
+        const payload = {
+            pretrained_model: (pretrainedEl && pretrainedEl.value.trim()) || (transformerEl && transformerEl.value.trim()) || '',
+            model_flavour: flavourEl ? flavourEl.value.trim() : '',
+            force_refresh: forceRefresh,
+        };
+
+        if (statusEl) {
+            const action = forceRefresh ? 'Refreshing' : 'Detecting';
+            statusEl.textContent = `${action} blocks for ${modelFamily}...`;
+        }
+
+        if (detectBtn) {
+            detectBtn.disabled = true;
+        }
+        if (refreshBtn) {
+            refreshBtn.disabled = true;
+        }
+
+        if (spinner) {
+            spinner.classList.remove('d-none');
+        }
+        if (content) {
+            content.classList.add('d-none');
+        }
+        if (errorBox) {
+            errorBox.classList.add('d-none');
+            errorBox.textContent = '';
+        }
+
+        if (modal) {
+            modal.show();
+        }
+
+        try {
+            const endpoint = `${this.apiBaseUrl}/api/models/${encodeURIComponent(modelFamily)}/fsdp-blocks`;
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                },
+                credentials: 'include',
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                let detail = 'Failed to detect FSDP blocks.';
+                try {
+                    const data = await response.json();
+                    detail = data?.detail || detail;
+                } catch (parseError) {
+                    // ignore JSON parse errors
+                }
+                throw new Error(detail);
+            }
+
+            const data = await response.json();
+            this.fsdpDetectionData = data;
+            this.populateFsdpDetectionModal(data);
+
+            if (statusEl) {
+                const source = data.cached ? 'cached result' : 'fresh detection';
+                statusEl.textContent = `Loaded ${data.transformer_classes?.length || 0} classes (${source}).`;
+            }
+
+            if (refreshBtn) {
+                refreshBtn.classList.remove('d-none');
+            }
+        } catch (error) {
+            console.error('FSDP detection failed:', error);
+            if (errorBox) {
+                errorBox.textContent = error.message || 'Failed to detect FSDP blocks.';
+                errorBox.classList.remove('d-none');
+            }
+            if (statusEl) {
+                statusEl.textContent = 'Detection failed. See details for more information.';
+            }
+        } finally {
+            if (spinner) {
+                spinner.classList.add('d-none');
+            }
+            if (content) {
+                content.classList.remove('d-none');
+            }
+            if (detectBtn) {
+                detectBtn.disabled = false;
+            }
+            if (refreshBtn) {
+                refreshBtn.disabled = false;
+            }
+        }
+    }
+
+    populateFsdpDetectionModal(data) {
+        const rowsEl = document.getElementById('fsdp-detect-rows');
+        const metadataEl = document.getElementById('fsdp-detect-metadata');
+        const noSplitContainer = document.getElementById('fsdp-no-split-container');
+        const noSplitTemplate = document.getElementById('fsdp-no-split-template');
+        const noSplitList = document.getElementById('fsdp-no-split-list');
+        const field = document.getElementById('fsdp_transformer_layer_cls_to_wrap');
+        const existing = field ? field.value.split(',').map((s) => s.trim()).filter(Boolean) : [];
+
+        if (rowsEl) {
+            rowsEl.innerHTML = '';
+        }
+
+        const classes = Array.isArray(data.transformer_classes) ? data.transformer_classes : [];
+
+        if (metadataEl) {
+            const total = data.total_parameter_count || 0;
+            const formatter = new Intl.NumberFormat();
+            const parts = [
+                `Model: ${data.model_family || 'unknown'}`,
+                data.pretrained_model ? `Source: ${data.pretrained_model}` : null,
+                `Total parameters considered: ${formatter.format(total)}`,
+            ].filter(Boolean);
+            metadataEl.textContent = parts.join(' • ');
+        }
+
+        if (rowsEl) {
+            const formatter = new Intl.NumberFormat();
+            classes.forEach((entry, index) => {
+                const className = entry.class_name;
+                const checkboxId = `fsdp-detect-class-${index}`;
+                const isSelected = existing.includes(className);
+
+                const row = document.createElement('tr');
+
+                const selectCell = document.createElement('td');
+                selectCell.className = 'align-middle';
+                selectCell.innerHTML = `
+                    <input type="checkbox" class="form-check-input" id="${checkboxId}"
+                        value="${className}" ${isSelected ? 'checked' : ''}>
+                `;
+
+                const classCell = document.createElement('td');
+                classCell.className = 'align-middle fw-semibold';
+                classCell.textContent = className;
+
+                const occurrencesCell = document.createElement('td');
+                occurrencesCell.className = 'align-middle text-center';
+                occurrencesCell.textContent = entry.occurrences ?? '-';
+
+                const paramsCell = document.createElement('td');
+                paramsCell.className = 'align-middle text-end';
+                paramsCell.textContent = formatter.format(entry.total_params ?? 0);
+
+                const exampleCell = document.createElement('td');
+                exampleCell.className = 'align-middle';
+                const samples = Array.isArray(entry.sample_paths) ? entry.sample_paths.slice(0, 3) : [];
+                exampleCell.textContent = samples.join(', ') || '—';
+
+                row.appendChild(selectCell);
+                row.appendChild(classCell);
+                row.appendChild(occurrencesCell);
+                row.appendChild(paramsCell);
+                row.appendChild(exampleCell);
+
+                rowsEl.appendChild(row);
+            });
+        }
+
+        if (noSplitContainer && noSplitList) {
+            const modules = Array.isArray(data.no_split_modules) ? data.no_split_modules : [];
+            if (modules.length) {
+                noSplitList.innerHTML = '';
+                modules.forEach((moduleName) => {
+                    const badge = document.createElement('span');
+                    badge.className = 'badge bg-secondary me-1 mb-1';
+                    badge.textContent = moduleName;
+                    noSplitList.appendChild(badge);
+                });
+                noSplitContainer.classList.remove('d-none');
+            } else {
+                noSplitList.innerHTML = '';
+                noSplitContainer.classList.add('d-none');
+            }
+        }
+    }
+
+    applyFsdpSelection() {
+        const checkboxes = Array.from(document.querySelectorAll('#fsdp-detect-rows input[type="checkbox"]'));
+        const selected = checkboxes
+            .filter((input) => input.checked)
+            .map((input) => input.value)
+            .filter((value) => typeof value === 'string' && value.trim().length > 0);
+
+        const field = document.getElementById('fsdp_transformer_layer_cls_to_wrap');
+        if (field) {
+            field.value = selected.join(',');
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+            field.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        if (window.Alpine?.store) {
+            const trainerStore = window.Alpine.store('trainer');
+            if (trainerStore && typeof trainerStore.markFormDirty === 'function') {
+                trainerStore.markFormDirty();
+            }
+        }
+
+        const modal = this.getFsdpModal();
+        if (modal) {
+            modal.hide();
+        }
+
+        const statusEl = document.getElementById('fsdp-detection-status');
+        if (statusEl) {
+            if (selected.length) {
+                statusEl.textContent = `Selected ${selected.length} block class${selected.length === 1 ? '' : 'es'}.`;
+            } else {
+                statusEl.textContent = 'Cleared FSDP block selection.';
+            }
+        }
+    }
+
+    getFsdpModal() {
+        if (!window.bootstrap) {
+            return null;
+        }
+        if (!this.fsdpModal) {
+            const modalEl = document.getElementById('fsdpBlockModal');
+            if (modalEl) {
+                this.fsdpModal = new window.bootstrap.Modal(modalEl, {
+                    backdrop: 'static',
+                    keyboard: true,
+                });
+            }
+        }
+        return this.fsdpModal;
     }
 
     async handleValidate() {

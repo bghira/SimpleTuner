@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from ..services.webui_state import WebUIStateStore
 from .custom_section_service import CUSTOM_SECTION_SERVICE
 from .dataset_service import build_data_backend_choices
+from .hardware_service import detect_gpu_inventory
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class TabService:
                 icon="fas fa-microchip",
                 template="form_tab.html",
                 description="Accelerate launch, distributed compute, and worker tuning",
-                extra_context_handler=None,
+                extra_context_handler=self._hardware_tab_context,
             ),
             TabType.MODEL: TabConfig(
                 id="model-config",
@@ -281,6 +282,39 @@ class TabService:
             ],
             "event_interval_options": [3, 5, 10, 15, 30, 60],
         }
+        return context
+
+    def _hardware_tab_context(
+        self, context: Dict[str, Any], fields: List[Dict[str, Any]], config_values: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Adjust hardware tab based on detected capabilities."""
+
+        inventory = detect_gpu_inventory()
+        capabilities = inventory.get("capabilities", {}) or {}
+
+        context["hardware_capabilities"] = capabilities
+        context["gpu_inventory"] = inventory
+
+        def _filter_by_prefix(prefixes: List[str]) -> None:
+            if not prefixes:
+                return
+            fields[:] = [field for field in fields if not any(field.get("id", "").startswith(prefix) for prefix in prefixes)]
+
+        if not capabilities.get("supports_deepspeed", False):
+            _filter_by_prefix(["deepspeed_"])
+
+        if not capabilities.get("supports_fsdp", False):
+            _filter_by_prefix(["fsdp_"])
+
+        sections = context.get("sections")
+        if sections:
+            filtered_sections: List[Dict[str, Any]] = []
+            for section in sections:
+                section_id = section.get("id")
+                if section_id and any(field.get("section_id") == section_id for field in fields):
+                    filtered_sections.append(section)
+            context["sections"] = filtered_sections
+
         return context
 
     def _datasets_tab_context(

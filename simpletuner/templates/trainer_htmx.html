@@ -4904,6 +4904,58 @@ window.showToast = window.showToast || function(message, type) {
 };
 </script>
 
+<!-- FSDP Block Detection Modal -->
+<div class="modal fade" id="fsdpBlockModal" tabindex="-1" aria-labelledby="fsdpBlockModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="fsdpBlockModalLabel">Detected Transformer Blocks</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="fsdp-detect-spinner" class="d-none text-center my-3">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Detecting blocks...</span>
+                    </div>
+                    <p class="mt-2 mb-0 text-muted">Analyzing model architecture...</p>
+                </div>
+                <div id="fsdp-detect-error" class="alert alert-danger d-none" role="alert"></div>
+                <div id="fsdp-detect-content">
+                    <p class="text-muted small" id="fsdp-detect-metadata"></p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle" id="fsdp-detect-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Select</th>
+                                    <th scope="col">Class</th>
+                                    <th scope="col">Occurrences</th>
+                                    <th scope="col">Total Params</th>
+                                    <th scope="col">Examples</th>
+                                </tr>
+                            </thead>
+                            <tbody id="fsdp-detect-rows">
+                                <!-- Rows populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="fsdp-no-split-container" class="mt-3 d-none">
+                        <h6 class="fw-semibold">Detected _no_split_modules</h6>
+                        <p class="text-muted small mb-1">
+                            Accelerate detected the following modules that should not be split across ranks:
+                        </p>
+                        <div class="badge bg-secondary me-1 mb-1" id="fsdp-no-split-template" style="display: none;"></div>
+                        <div id="fsdp-no-split-list"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" id="fsdp-apply-selection">Apply Selection</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script src="/static/js/modules/tab-navigation.js" defer></script>
 
 <!-- Load search module for sidebar search functionality -->

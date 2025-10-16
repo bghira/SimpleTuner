@@ -85,12 +85,7 @@ class SystemStatusService:
             name = device.get("name") or f"GPU {index if index is not None else '?'}"
             utilisation: Optional[float] = None
 
-            if (
-                backend == "cuda"
-                and index is not None
-                and torch is not None
-                and hasattr(torch.cuda, "utilization")
-            ):
+            if backend == "cuda" and index is not None and torch is not None and hasattr(torch.cuda, "utilization"):
                 try:
                     if torch.cuda.is_available():  # type: ignore[attr-defined]
                         utilisation = float(torch.cuda.utilization(index))  # type: ignore[attr-defined]

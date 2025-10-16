@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
 from simpletuner.helpers.models.all import get_model_flavour_choices
+from simpletuner.simpletuner_sdk.server.services.fsdp_service import FSDP_SERVICE, FSDPServiceError
 from simpletuner.simpletuner_sdk.server.services.models_service import MODELS_SERVICE, ModelRegistry, ModelServiceError
 
 _MODEL_FAMILY_SENTINEL = ModelRegistry.model_families()
@@ -117,3 +118,24 @@ async def evaluate_model_requirements(payload: Dict[str, Any]):
     metadata = payload.get("metadata") or {}
 
     return _call_service(MODELS_SERVICE.evaluate_requirements, model_family, model_config, metadata)
+
+
+@router.post("/api/models/{model_family}/fsdp-blocks")
+@router.post("/models/{model_family}/fsdp-blocks")
+async def detect_fsdp_blocks(model_family: str, payload: Dict[str, Any]):
+    """Detect transformer block classes for FSDP auto-wrap assistance."""
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    try:
+        result = FSDP_SERVICE.detect_block_classes(
+            model_family,
+            pretrained_model=payload.get("pretrained_model") or payload.get("pretrained_path"),
+            model_flavour=payload.get("model_flavour") or payload.get("model_flavor"),
+            force_refresh=bool(payload.get("force_refresh", False)),
+        )
+    except FSDPServiceError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
+
+    return result

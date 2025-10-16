@@ -105,6 +105,8 @@ def detect_gpu_inventory() -> Dict[str, Any]:
     if not detected:
         backend = backend or "cpu"
 
+    capabilities = _derive_capabilities(backend)
+
     return {
         "detected": detected,
         "backend": backend,
@@ -112,4 +114,30 @@ def detect_gpu_inventory() -> Dict[str, Any]:
         "count": count,
         "optimal_processes": optimal_processes,
         "visible_device_ids": visible_env,
+        "capabilities": capabilities,
+    }
+
+
+def _derive_capabilities(backend: Optional[str]) -> Dict[str, bool]:
+    supports_cuda = backend == "cuda"
+    supports_mps = backend == "mps"
+    supports_rocm = False
+
+    if supports_cuda:
+        try:
+            import torch  # type: ignore
+
+            supports_rocm = bool(getattr(torch.version, "hip", None))
+        except Exception:
+            supports_rocm = False
+
+    supports_deepspeed = supports_cuda and not supports_rocm
+    supports_fsdp = supports_cuda and not supports_rocm
+
+    return {
+        "supports_cuda": supports_cuda,
+        "supports_mps": supports_mps,
+        "supports_rocm": supports_rocm,
+        "supports_deepspeed": supports_deepspeed,
+        "supports_fsdp": supports_fsdp,
     }

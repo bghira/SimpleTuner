@@ -1,8 +1,8 @@
 import shutil
 import sys
+import tempfile
 import types
 import unittest
-import tempfile
 
 
 def _ensure_torchao_stub():

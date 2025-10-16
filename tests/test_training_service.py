@@ -87,6 +87,13 @@ class TrainingServiceTests(unittest.TestCase):
                         "devices": [{"index": 0}, {"index": 1}],
                         "count": 2,
                         "optimal_processes": 2,
+                        "capabilities": {
+                            "supports_cuda": True,
+                            "supports_mps": False,
+                            "supports_rocm": False,
+                            "supports_deepspeed": True,
+                            "supports_fsdp": True,
+                        },
                     },
                 )
             )
