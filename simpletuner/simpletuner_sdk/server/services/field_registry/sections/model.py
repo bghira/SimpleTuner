@@ -458,7 +458,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
             dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
             help_text="Checkpoint every N transformer blocks (leave blank to disable)",
-            tooltip="Higher values save more memory but increase compute. Clear this field to turn off partial checkpointing (only supported for SDXL/Flux).",
+            tooltip="Higher values save more memory but increase compute. Clear this field to turn off partial checkpointing (supported for Flux, Sana, SDXL, SD3, and Chroma).",
             importance=ImportanceLevel.ADVANCED,
             order=16,
         )

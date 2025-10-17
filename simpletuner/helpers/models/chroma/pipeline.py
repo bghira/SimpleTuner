@@ -529,6 +529,10 @@ class ChromaPipeline(
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
+        skip_guidance_layers: Optional[List[int]] = None,
+        skip_layer_guidance_scale: float = 2.8,
+        skip_layer_guidance_stop: float = 0.2,
+        skip_layer_guidance_start: float = 0.01,
     ):
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
@@ -548,8 +552,11 @@ class ChromaPipeline(
 
         self._guidance_scale = guidance_scale
         self._joint_attention_kwargs = joint_attention_kwargs
+        self._skip_layer_guidance_scale = skip_layer_guidance_scale
         self._current_timestep = None
         self._interrupt = False
+        if skip_guidance_layers is not None and not isinstance(skip_guidance_layers, list):
+            skip_guidance_layers = list(skip_guidance_layers)
 
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
@@ -581,6 +588,8 @@ class ChromaPipeline(
             max_sequence_length=max_sequence_length,
             lora_scale=lora_scale,
         )
+        original_prompt_embeds = prompt_embeds
+        original_text_ids = text_ids
 
         num_channels_latents = self.transformer.config.in_channels // 4
         latents, latent_image_ids = self.prepare_latents(
@@ -682,6 +691,7 @@ class ChromaPipeline(
                 )[0]
 
                 if self.do_classifier_free_guidance:
+                    noise_pred_text = noise_pred
                     if negative_image_embeds is not None:
                         self._joint_attention_kwargs["ip_adapter_image_embeds"] = negative_image_embeds
                     neg_noise_pred = self.transformer(
@@ -694,7 +704,28 @@ class ChromaPipeline(
                         joint_attention_kwargs=self.joint_attention_kwargs,
                         return_dict=False,
                     )[0]
-                    noise_pred = neg_noise_pred + guidance_scale * (noise_pred - neg_noise_pred)
+                    if image_embeds is not None:
+                        self._joint_attention_kwargs["ip_adapter_image_embeds"] = image_embeds
+                    noise_pred = neg_noise_pred + guidance_scale * (noise_pred_text - neg_noise_pred)
+
+                    should_skip_layers = (
+                        skip_guidance_layers is not None
+                        and i > num_inference_steps * skip_layer_guidance_start
+                        and i < num_inference_steps * skip_layer_guidance_stop
+                    )
+                    if should_skip_layers:
+                        skip_noise_pred = self.transformer(
+                            hidden_states=latents,
+                            timestep=timestep / 1000,
+                            encoder_hidden_states=original_prompt_embeds,
+                            txt_ids=original_text_ids,
+                            img_ids=latent_image_ids,
+                            attention_mask=attention_mask,
+                            joint_attention_kwargs=self.joint_attention_kwargs,
+                            return_dict=False,
+                            skip_layers=skip_guidance_layers,
+                        )[0]
+                        noise_pred = noise_pred + (noise_pred_text - skip_noise_pred) * self._skip_layer_guidance_scale
 
                 latents_dtype = latents.dtype
                 latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
@@ -711,6 +742,8 @@ class ChromaPipeline(
 
                     latents = callback_outputs.pop("latents", latents)
                     prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    if skip_guidance_layers is not None:
+                        original_prompt_embeds = prompt_embeds
 
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()

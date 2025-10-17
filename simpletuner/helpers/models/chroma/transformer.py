@@ -425,6 +425,13 @@ class ChromaTransformer2DModel(
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        """
+        Sets how often gradient checkpointing should be applied when enabled.
+        """
+        self.gradient_checkpointing_interval = interval
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
@@ -462,6 +469,7 @@ class ChromaTransformer2DModel(
         return_dict: bool = True,
         controlnet_blocks_repeat: bool = False,
         force_keep_mask: Optional[torch.Tensor] = None,
+        skip_layers: Optional[List[int]] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -508,6 +516,7 @@ class ChromaTransformer2DModel(
             joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
 
         txt_len = encoder_hidden_states.shape[1]
+        skip_layers_set = set(skip_layers) if skip_layers is not None else None
 
         routes = self._tread_routes or []
         router = self._tread_router
@@ -535,6 +544,7 @@ class ChromaTransformer2DModel(
             ]
 
         for index_block, block in enumerate(self.transformer_blocks):
+            actual_index = global_idx
             img_offset = 3 * len(self.single_transformer_blocks)
             txt_offset = img_offset + 6 * len(self.transformer_blocks)
             img_modulation = img_offset + 6 * index_block
@@ -571,7 +581,35 @@ class ChromaTransformer2DModel(
                 )
                 current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if skip_layers_set is not None and actual_index in skip_layers_set:
+                if controlnet_block_samples is not None:
+                    interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
+                    interval_control = int(np.ceil(interval_control))
+                    if controlnet_blocks_repeat:
+                        hidden_states = hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
+                    else:
+                        hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
+
+                if routing_now and route_ptr < len(routes) and actual_index == routes[route_ptr]["end_layer_idx"]:
+                    hidden_states = router.end_route(
+                        hidden_states,
+                        tread_mask_info,
+                        original_x=saved_tokens,
+                    )
+                    routing_now = False
+                    route_ptr += 1
+                    current_rope = image_rotary_emb
+
+                global_idx += 1
+                continue
+
+            use_checkpoint = (
+                torch.is_grad_enabled()
+                and self.gradient_checkpointing
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+            )
+
+            if use_checkpoint:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     block,
                     hidden_states,
@@ -615,6 +653,7 @@ class ChromaTransformer2DModel(
         txt_len = encoder_hidden_states.shape[1]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
+            actual_index = global_idx
             start_idx = 3 * index_block
             temb = pooled_temb[:, start_idx : start_idx + 3]
 
@@ -661,7 +700,49 @@ class ChromaTransformer2DModel(
                 )
                 current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if skip_layers_set is not None and actual_index in skip_layers_set:
+                if controlnet_single_block_samples is not None:
+                    interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
+                    interval_control = int(np.ceil(interval_control))
+                    hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
+                        hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+                        + controlnet_single_block_samples[index_block // interval_control]
+                    )
+
+                if routing_now and route_ptr < len(routes) and actual_index == routes[route_ptr]["end_layer_idx"]:
+                    text_tok = hidden_states[:, :txt_len, :]
+                    img_tok_r = hidden_states[:, txt_len:, :]
+                    img_tok = router.end_route(
+                        img_tok_r,
+                        tread_mask_info,
+                        original_x=saved_tokens,
+                    )
+                    hidden_states = torch.cat([text_tok, img_tok], dim=1)
+
+                    routing_now = False
+                    route_ptr += 1
+
+                    if attention_mask is not None:
+                        pad = torch.zeros(
+                            attention_mask.size(0),
+                            img_tok.size(1),
+                            device=attention_mask.device,
+                            dtype=attention_mask.dtype,
+                        )
+                        attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
+
+                    current_rope = image_rotary_emb
+
+                global_idx += 1
+                continue
+
+            use_checkpoint = (
+                torch.is_grad_enabled()
+                and self.gradient_checkpointing
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+            )
+
+            if use_checkpoint:
                 hidden_states = self._gradient_checkpointing_func(
                     block,
                     hidden_states,
