@@ -145,6 +145,7 @@ class TrainerPage(BasePage):
                           return Promise.resolve(jsonResponse({
                             requiresConditioningDataset: false,
                             requiresConditioningLatents: false,
+                            requiresConditioningImageEmbeds: false,
                             requiresConditioningValidationInputs: false,
                             requiresValidationEditCaptions: false,
                             supportsConditioningGenerators: false,

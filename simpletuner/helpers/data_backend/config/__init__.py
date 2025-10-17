@@ -5,12 +5,14 @@ from .base import BaseBackendConfig
 from .image import ImageBackendConfig
 from .image_embed import ImageEmbedBackendConfig
 from .text_embed import TextEmbedBackendConfig
+from .conditioning_image_embed import ConditioningImageEmbedBackendConfig
 
 __all__ = [
     "BaseBackendConfig",
     "ImageBackendConfig",
     "TextEmbedBackendConfig",
     "ImageEmbedBackendConfig",
+    "ConditioningImageEmbedBackendConfig",
     "validators",
     "create_backend_config",
 ]
@@ -23,6 +25,8 @@ def create_backend_config(backend_dict: dict, args: dict) -> BaseBackendConfig:
         return TextEmbedBackendConfig.from_dict(backend_dict, args)
     elif dataset_type == "image_embeds":
         return ImageEmbedBackendConfig.from_dict(backend_dict, args)
+    elif dataset_type == "conditioning_image_embeds":
+        return ConditioningImageEmbedBackendConfig.from_dict(backend_dict, args)
     elif dataset_type in ["image", "conditioning", "eval", "video"]:
         return ImageBackendConfig.from_dict(backend_dict, args)
     else:

@@ -181,6 +181,9 @@ class ModelFoundation(ABC):
     def requires_conditioning_latents(self) -> bool:
         return False
 
+    def requires_conditioning_image_embeds(self) -> bool:
+        return False
+
     def requires_validation_edit_captions(self) -> bool:
         """
         Some edit / in-painting models want the *reference* image plus the
@@ -971,6 +974,8 @@ class ModelFoundation(ABC):
             batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
         if isinstance(batch.get("conditioning_latents"), list) and len(batch["conditioning_latents"]) > 0:
             batch["conditioning_latents"] = batch["conditioning_latents"][0]
+        if isinstance(batch.get("conditioning_image_embeds"), list) and len(batch["conditioning_image_embeds"]) > 0:
+            batch["conditioning_image_embeds"] = batch["conditioning_image_embeds"][0]
         return batch
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
@@ -1016,6 +1021,10 @@ class ModelFoundation(ABC):
         encoder_attention_mask = batch.get("encoder_attention_mask")
         if encoder_attention_mask is not None and hasattr(encoder_attention_mask, "to"):
             batch["encoder_attention_mask"] = encoder_attention_mask.to(**target_device_kwargs)
+
+        conditioning_image_embeds = batch.get("conditioning_image_embeds")
+        if conditioning_image_embeds is not None and hasattr(conditioning_image_embeds, "to"):
+            batch["conditioning_image_embeds"] = conditioning_image_embeds.to(**target_device_kwargs)
 
         # Sample noise
         noise = torch.randn_like(batch["latents"])

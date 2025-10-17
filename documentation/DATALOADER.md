@@ -49,8 +49,8 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `dataset_type`
 
-- **Values:** `image` | `video` | `text_embeds` | `image_embeds` | `conditioning`
-- **Description:** `image` and `video` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one. When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
+- **Values:** `image` | `video` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **Description:** `image` and `video` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, `image_embeds` contain the VAE latents (when a model uses one), and `conditioning_image_embeds` store cached conditioning image embeddings (such as CLIP vision features). When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
 - **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 - **Note:** Don't combine images and video in a **single** dataset. Split them out.
 
@@ -68,6 +68,11 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 - **Only applies to `dataset_type=image`**
 - If unset, the VAE outputs will be stored on the image backend. Otherwise, you may set this to the `id` of an `image_embeds` dataset, and the VAE outputs will be stored there instead. Allows associating the image_embed dataset to the image data.
+
+### `conditioning_image_embeds`
+
+- **Applies to `dataset_type=image` and `dataset_type=video`**
+- When a model reports `requires_conditioning_image_embeds`, set this to the `id` of a `conditioning_image_embeds` dataset to store cached conditioning image embeddings (for example, CLIP vision features for Wan 2.2 I2V). If unset, the cache will be written alongside the training dataset's cache directory.
 
 ### `type`
 
@@ -430,7 +435,8 @@ In order, the lines behave as follows:
     "probability": 1.0,
     "repeats": 0,
     "text_embeds": "alt-embed-cache",
-    "image_embeds": "vae-embeds-example"
+    "image_embeds": "vae-embeds-example",
+    "conditioning_image_embeds": "conditioning-embeds-example"
   },
   {
     "id": "another-special-name-for-another-backend",
@@ -450,6 +456,12 @@ In order, the lines behave as follows:
       "type": "local",
       "dataset_type": "image_embeds",
       "disabled": false,
+  },
+  {
+      "id": "conditioning-embeds-example",
+      "type": "local",
+      "dataset_type": "conditioning_image_embeds",
+      "disabled": false
   },
   {
     "id": "an example backend for text embeds.",

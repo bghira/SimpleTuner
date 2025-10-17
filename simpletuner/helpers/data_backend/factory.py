@@ -72,6 +72,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
@@ -221,6 +222,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         return output
     elif backend.get("dataset_type", None) == "image_embeds":
         # no overrides for image embed backends
+        return output
+    elif backend.get("dataset_type", None) == "conditioning_image_embeds":
         return output
     else:
         if "caption_filter_list" in backend:
@@ -950,6 +953,7 @@ class FactoryRegistry:
 
         self.text_embed_backends = {}
         self.image_embed_backends = {}
+        self.conditioning_image_embed_backends = {}
         self.data_backends = {}
         self.default_text_embed_backend_id = None
 
@@ -958,7 +962,12 @@ class FactoryRegistry:
             "factory_type": "new",
             "initialization_time": 0,
             "memory_usage": {"start": 0, "peak": 0, "end": 0},
-            "backend_counts": {"text_embeds": 0, "image_embeds": 0, "data_backends": 0},
+            "backend_counts": {
+                "text_embeds": 0,
+                "image_embeds": 0,
+                "conditioning_image_embeds": 0,
+                "data_backends": 0,
+            },
             "configuration_time": 0,
             "build_time": 0,
         }
@@ -1365,6 +1374,55 @@ class FactoryRegistry:
             init_backend["vaecache"].discover_all_files()
             self.image_embed_backends[init_backend["id"]] = init_backend
 
+        self.metrics["backend_counts"]["image_embeds"] = len(self.image_embed_backends)
+
+    def configure_conditioning_image_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """Configure conditioning image embedding backends."""
+        for backend in data_backend_config:
+            dataset_type = backend.get("dataset_type", None)
+            if dataset_type is None or dataset_type != "conditioning_image_embeds":
+                continue
+
+            if backend.get("disabled", False) or backend.get("disable", False):
+                info_log(f"Skipping disabled conditioning image embed backend {backend['id']} in config file.")
+                continue
+
+            info_log(f'Configuring conditioning image embed backend: {backend["id"]}')
+
+            config = create_backend_config(backend, vars(self.args))
+            config.validate(vars(self.args))
+
+            init_backend = init_backend_config(backend, self.args, self.accelerator)
+            existing_config = StateTracker.get_data_backend_config(init_backend["id"])
+            if existing_config is not None and existing_config != {}:
+                raise ValueError(f"You can only have one backend named {init_backend['id']}")
+            StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+
+            if backend["type"] == "local":
+                config = create_backend_config(backend, vars(self.args))
+                builder = create_backend_builder(backend["type"], self.accelerator, self.args)
+                init_backend["data_backend"] = builder.build(config)
+            elif backend["type"] == "aws":
+                config = create_backend_config(backend, vars(self.args))
+                builder = create_backend_builder(backend["type"], self.accelerator, self.args)
+                init_backend["data_backend"] = builder.build(config)
+            elif backend["type"] == "csv":
+                raise ValueError("Cannot use CSV backend for conditioning image embed storage.")
+            else:
+                raise ValueError(f"Unknown data backend type: {backend['type']}")
+
+            init_backend["cache_dir"] = backend.get("cache_dir", self.args.cache_dir_vae)
+            preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
+            if not preserve_data_backend_cache and self.accelerator.is_local_main_process:
+                StateTracker.delete_cache_files(
+                    data_backend_id=init_backend["id"],
+                    preserve_data_backend_cache=preserve_data_backend_cache,
+                )
+
+            self.conditioning_image_embed_backends[init_backend["id"]] = init_backend
+
+        self.metrics["backend_counts"]["conditioning_image_embeds"] = len(self.conditioning_image_embed_backends)
+
     def _prevalidate_backend_ids(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Validate that data backends provide unique, non-empty identifiers before configuration."""
         try:
@@ -1536,6 +1594,18 @@ class FactoryRegistry:
                 )
             image_embed_data_backend = self.image_embed_backends[image_embed_backend_id]
         return image_embed_data_backend
+
+    def _get_conditioning_image_embed_backend(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> Dict[str, Any]:
+        """Get the conditioning image embed backend or use the main backend."""
+        conditioning_embed_backend_id = backend.get("conditioning_image_embeds", None)
+        conditioning_embed_backend = init_backend
+        if conditioning_embed_backend_id is not None:
+            if conditioning_embed_backend_id not in self.conditioning_image_embed_backends:
+                raise ValueError(
+                    f"Could not find conditioning image embed backend ID in multidatabackend config: {conditioning_embed_backend_id}"
+                )
+            conditioning_embed_backend = self.conditioning_image_embed_backends[conditioning_embed_backend_id]
+        return conditioning_embed_backend
 
     def _configure_metadata_backend(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Configure the metadata backend."""
@@ -1961,6 +2031,87 @@ class FactoryRegistry:
         )
         generator.generate_dataset()
 
+    def _configure_conditioning_image_embed_cache(
+        self,
+        backend: Dict[str, Any],
+        init_backend: Dict[str, Any],
+        conditioning_image_embed_backend: Dict[str, Any],
+    ) -> None:
+        """Configure conditioning image embed cache for the backend."""
+        cache_dir = backend.get(
+            "cache_dir_conditioning_image_embeds",
+            conditioning_image_embed_backend.get("cache_dir", backend.get("cache_dir_vae", None)),
+        )
+
+        if not cache_dir:
+            default_root = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
+            cache_dir = os.path.join(default_root, "conditioning_image_embeds", init_backend["id"])
+
+        info_log(f"(id={init_backend['id']}) Creating conditioning image embed cache: cache_dir={cache_dir}")
+
+        conditioning_embed_batch_size = backend.get(
+            "conditioning_image_embed_batch_size",
+            getattr(self.args, "conditioning_image_embed_batch_size", self.args.vae_batch_size),
+        )
+
+        init_backend["conditioning_image_embed_cache"] = ImageEmbedCache(
+            id=init_backend["id"],
+            dataset_type=init_backend["dataset_type"],
+            model=self.model,
+            accelerator=self.accelerator,
+            metadata_backend=init_backend["metadata_backend"],
+            image_data_backend=init_backend["data_backend"],
+            cache_data_backend=conditioning_image_embed_backend["data_backend"],
+            instance_data_dir=init_backend.get("instance_data_dir", ""),
+            cache_dir=cache_dir,
+            write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
+            read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
+            embed_batch_size=conditioning_embed_batch_size,
+            hash_filenames=init_backend["config"].get("hash_filenames", True),
+        )
+        init_backend["conditioning_image_embed_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
+
+        if self.accelerator.is_local_main_process:
+            try:
+                init_backend["conditioning_image_embed_cache"].discover_all_files()
+            except FileNotFoundError:
+                warning_log(
+                    f"(id={init_backend['id']}) Skipping conditioning image embed cache discovery because data directory was not found: {init_backend.get('instance_data_dir')}"
+                )
+                return
+        if self._is_multi_process():
+            self.accelerator.wait_for_everyone()
+
+        all_image_files = StateTracker.get_image_files(
+            data_backend_id=init_backend["id"],
+            retry_limit=3,
+        )
+        if all_image_files is None:
+            from simpletuner.helpers.training import image_file_extensions
+
+            logger.debug("No image file cache available, retrieving fresh for conditioning embeds")
+            try:
+                all_image_files = init_backend["data_backend"].list_files(
+                    instance_data_dir=init_backend["instance_data_dir"],
+                    file_extensions=image_file_extensions,
+                )
+            except FileNotFoundError:
+                warning_log(
+                    f"(id={init_backend['id']}) Skipping conditioning embed cache file discovery because data directory was not found: {init_backend.get('instance_data_dir')}"
+                )
+                return
+            all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=init_backend["id"])
+
+        init_backend["conditioning_image_embed_cache"].build_embed_filename_map(all_image_files=all_image_files)
+
+        if not self.args.vae_cache_ondemand:
+            pending_files = init_backend["conditioning_image_embed_cache"].discover_unprocessed_files()
+            logger.info(f"Conditioning image embed cache has {len(pending_files)} unprocessed files.")
+            if pending_files:
+                init_backend["conditioning_image_embed_cache"].process_files(pending_files)
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
+
     def _configure_vae_cache(
         self,
         backend: Dict[str, Any],
@@ -2212,6 +2363,7 @@ class FactoryRegistry:
         data_backend_is_mock = hasattr(init_backend["data_backend"], "_mock_children")
 
         image_embed_data_backend = self._get_image_embed_backend(backend, init_backend)
+        conditioning_image_embed_backend = self._get_conditioning_image_embed_backend(backend, init_backend)
 
         self._configure_metadata_backend(backend, init_backend)
 
@@ -2253,6 +2405,17 @@ class FactoryRegistry:
                 vae_cache_dir_paths,
                 text_embed_cache_dir_paths,
                 conditioning_type,
+            )
+
+        if (
+            self.model.requires_conditioning_image_embeds()
+            and init_backend.get("dataset_type") in ["image", "video"]
+            and conditioning_type not in ["mask"]
+        ):
+            self._configure_conditioning_image_embed_cache(
+                backend,
+                init_backend,
+                conditioning_image_embed_backend,
             )
 
         self._handle_error_scanning_and_metadata(backend, init_backend, conditioning_type)
@@ -2305,6 +2468,7 @@ class FactoryRegistry:
             - 'data_backends': Dictionary of configured data backends
             - 'text_embed_backends': Dictionary of text embedding backends
             - 'image_embed_backends': Dictionary of image embedding backends
+            - 'conditioning_image_embed_backends': Dictionary of conditioning image embedding backends
             - 'default_text_embed_backend_id': ID of default text embedding backend
 
         Example:
@@ -2319,12 +2483,14 @@ class FactoryRegistry:
 
         self.configure_text_embed_backends(data_backend_config)
         self.configure_image_embed_backends(data_backend_config)
+        self.configure_conditioning_image_embed_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
 
         result = {
             "data_backends": StateTracker.get_data_backends(),
             "text_embed_backends": self.text_embed_backends,
             "image_embed_backends": self.image_embed_backends,
+            "conditioning_image_embed_backends": self.conditioning_image_embed_backends,
             "default_text_embed_backend_id": self.default_text_embed_backend_id,
         }
 
@@ -2334,6 +2500,7 @@ class FactoryRegistry:
                 "backends_configured": len(result["data_backends"]),
                 "text_embed_backends": len(result["text_embed_backends"]),
                 "image_embed_backends": len(result["image_embed_backends"]),
+                "conditioning_image_embed_backends": len(result["conditioning_image_embed_backends"]),
             },
         )
 
@@ -2478,6 +2645,7 @@ def configure_multi_databackend_new(
 
     factory.configure_text_embed_backends(data_backend_config)
     factory.configure_image_embed_backends(data_backend_config)
+    factory.configure_conditioning_image_embed_backends(data_backend_config)
     factory.configure_data_backends(data_backend_config)
 
     factory._log_performance_metrics("implementation_complete")
@@ -2486,6 +2654,7 @@ def configure_multi_databackend_new(
         "data_backends": StateTracker.get_data_backends(),
         "text_embed_backends": factory.text_embed_backends,
         "image_embed_backends": factory.image_embed_backends,
+        "conditioning_image_embed_backends": factory.conditioning_image_embed_backends,
         "default_text_embed_backend_id": factory.default_text_embed_backend_id,
     }
 

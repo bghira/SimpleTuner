@@ -93,6 +93,9 @@ class Wan(VideoModelFoundation):
         super().__init__(config, accelerator)
         self._wan_cached_stage_modules: Dict[str, WanTransformer3DModel] = {}
 
+    def requires_conditioning_image_embeds(self) -> bool:
+        return self._wan_stage_info() is not None
+
     def setup_model_flavour(self):
         super().setup_model_flavour()
         stage_info = self._wan_stage_info()
@@ -293,6 +296,11 @@ class Wan(VideoModelFoundation):
             "timestep": prepared_batch["timesteps"],
             "return_dict": False,
         }
+
+        if prepared_batch.get("conditioning_image_embeds") is not None:
+            wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch[
+                "conditioning_image_embeds"
+            ].to(self.config.weight_dtype)
 
         # For masking with TREAD, avoid dropping any tokens that are in the mask
         if (

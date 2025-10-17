@@ -134,6 +134,9 @@ class ModelsService:
             "overrides_requires_conditioning_latents": self._is_method_overridden(
                 model_cls, "requires_conditioning_latents"
             ),
+            "overrides_requires_conditioning_image_embeds": self._is_method_overridden(
+                model_cls, "requires_conditioning_image_embeds"
+            ),
             "overrides_requires_conditioning_validation_inputs": self._is_method_overridden(
                 model_cls, "requires_conditioning_validation_inputs"
             ),
@@ -219,6 +222,7 @@ class ModelsService:
 
         requires_dataset = bool(_safe_call("requires_conditioning_dataset", False))
         requires_latents = bool(_safe_call("requires_conditioning_latents", False))
+        requires_image_embeds = bool(_safe_call("requires_conditioning_image_embeds", False))
         requires_validation_inputs = bool(_safe_call("requires_conditioning_validation_inputs", False))
         requires_edit_captions = bool(_safe_call("requires_validation_edit_captions", False))
         dataset_type = _safe_call("conditioning_validation_dataset_type", "conditioning")
@@ -228,6 +232,7 @@ class ModelsService:
         return {
             "requires_conditioning_dataset": requires_dataset,
             "requires_conditioning_latents": requires_latents,
+            "requires_conditioning_image_embeds": requires_image_embeds,
             "requires_conditioning_validation_inputs": requires_validation_inputs,
             "requires_validation_edit_captions": requires_edit_captions,
             "conditioning_dataset_type": dataset_type,
