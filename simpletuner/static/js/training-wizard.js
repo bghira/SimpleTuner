@@ -55,6 +55,9 @@ function trainingWizardComponent() {
             model_family: null,
             model_flavour: null,
             model_type: 'lora',  // Default to LoRA
+            training_length_mode: 'epochs',
+            num_train_epochs: 1,
+            max_train_steps: 0,
             push_to_hub: false,  // Default to keeping files local
             push_checkpoints_to_hub: null,
             checkpointing_steps: 100,  // Default to 100 steps
@@ -96,7 +99,8 @@ function trainingWizardComponent() {
             'deepspeed_offload_param',
             'deepspeed_offload_optimizer',
             'deepspeed_offload_path',
-            'deepspeed_zero3_init'
+            'deepspeed_zero3_init',
+            'training_length_mode'
         ],
         deepspeedBuilderField: null,
         _deepspeedBuilderHandler: null,
@@ -130,9 +134,27 @@ function trainingWizardComponent() {
                 validate: function() { return this.answers.model_type !== null; }
             },
             {
+                id: 'training-duration',
+                label: 'Duration',
+                title: 'Training Configuration Wizard - Step 4: Training Duration',
+                required: true,
+                validate: function() {
+                    const mode = this.answers.training_length_mode;
+                    if (mode === 'epochs') {
+                        const epochs = Number(this.answers.num_train_epochs);
+                        return Number.isFinite(epochs) && epochs > 0;
+                    }
+                    if (mode === 'steps') {
+                        const steps = Number(this.answers.max_train_steps);
+                        return Number.isFinite(steps) && steps > 0;
+                    }
+                    return false;
+                }
+            },
+            {
                 id: 'publishing',
                 label: 'Publishing',
-                title: 'Training Configuration Wizard - Step 4: Publishing',
+                title: 'Training Configuration Wizard - Step 5: Publishing',
                 required: false,
                 validate: function() {
                     if (this.answers.push_to_hub) {
@@ -144,14 +166,14 @@ function trainingWizardComponent() {
             {
                 id: 'checkpoints',
                 label: 'Checkpoints',
-                title: 'Training Configuration Wizard - Step 5: Checkpoints',
+                title: 'Training Configuration Wizard - Step 6: Checkpoints',
                 required: true,
                 validate: function() { return this.answers.checkpointing_steps > 0; }
             },
             {
                 id: 'validations-enable',
                 label: 'Validations',
-                title: 'Training Configuration Wizard - Step 6: Validations',
+                title: 'Training Configuration Wizard - Step 7: Validations',
                 required: true,
                 validate: function() {
                     if (this.answers.enable_validations === null) {
@@ -172,21 +194,21 @@ function trainingWizardComponent() {
             {
                 id: 'logging',
                 label: 'Logging',
-                title: 'Training Configuration Wizard - Step 7: Logging',
+                title: 'Training Configuration Wizard - Step 8: Logging',
                 required: false,
                 validate: function() { return true; }
             },
             {
                 id: 'dataset',
                 label: 'Dataset',
-                title: 'Training Configuration Wizard - Step 8: Dataset',
+                title: 'Training Configuration Wizard - Step 9: Dataset',
                 required: true,
                 validate: function() { return this.hasExistingDataset || this.datasetConfigured; }
             },
             {
                 id: 'advanced',
                 label: 'Advanced',
-                title: 'Training Configuration Wizard - Step 9: Advanced Settings',
+                title: 'Training Configuration Wizard - Step 10: Advanced Settings',
                 required: false,
                 validate: function() {
                     if (this.advancedMode === 'manual') {
@@ -339,6 +361,24 @@ function trainingWizardComponent() {
                     if (config.model_family) this.answers.model_family = config.model_family;
                     if (config.model_flavour) this.answers.model_flavour = config.model_flavour;
                     if (config.model_type) this.answers.model_type = config.model_type;
+                    const rawEpochs = config.num_train_epochs ?? config['--num_train_epochs'];
+                    const parsedEpochs = rawEpochs !== undefined && rawEpochs !== null && rawEpochs !== ''
+                        ? Number(rawEpochs)
+                        : null;
+                    if (parsedEpochs !== null && Number.isFinite(parsedEpochs) && parsedEpochs > 0) {
+                        this.answers.training_length_mode = 'epochs';
+                        this.answers.num_train_epochs = parsedEpochs;
+                        this.answers.max_train_steps = 0;
+                    }
+                    const rawSteps = config.max_train_steps ?? config['--max_train_steps'];
+                    const parsedSteps = rawSteps !== undefined && rawSteps !== null && rawSteps !== ''
+                        ? Number(rawSteps)
+                        : null;
+                    if (parsedSteps !== null && Number.isFinite(parsedSteps) && parsedSteps > 0) {
+                        this.answers.training_length_mode = 'steps';
+                        this.answers.max_train_steps = Math.floor(parsedSteps);
+                        this.answers.num_train_epochs = 0;
+                    }
                     if (config.push_to_hub !== undefined) {
                         this.answers.push_to_hub = config.push_to_hub === true || config.push_to_hub === 'true';
                     }
@@ -1113,6 +1153,7 @@ function trainingWizardComponent() {
 
             console.log('[TRAINING WIZARD] Applying answers to trainer store...', this.answers);
 
+            this.syncTrainingDuration();
             this.updateDeepSpeedConfig();
             const uiOnlySet = new Set(this.uiOnlyAnswerKeys || []);
 
@@ -1702,6 +1743,37 @@ function trainingWizardComponent() {
             this.syncDeepSpeedBuilderField();
         },
 
+        syncTrainingDuration() {
+            const mode = this.answers.training_length_mode === 'steps' ? 'steps' : 'epochs';
+            this.answers.training_length_mode = mode;
+
+            const parseEpochs = (value) => {
+                if (typeof value === 'number') {
+                    return Number.isFinite(value) && value > 0 ? value : 0;
+                }
+                const parsed = Number(value);
+                return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+            };
+
+            const parseSteps = (value) => {
+                if (typeof value === 'number') {
+                    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+                }
+                const parsed = parseInt(value, 10);
+                return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+            };
+
+            if (mode === 'epochs') {
+                const epochs = parseEpochs(this.answers.num_train_epochs);
+                this.answers.num_train_epochs = epochs;
+                this.answers.max_train_steps = 0;
+            } else {
+                const steps = parseSteps(this.answers.max_train_steps);
+                this.answers.max_train_steps = steps;
+                this.answers.num_train_epochs = 0;
+            }
+        },
+
         inferDeepSpeedFromConfig(rawValue) {
             if (rawValue === null || rawValue === undefined || rawValue === '') {
                 this.deepspeedBaseConfig = null;
@@ -1819,6 +1891,23 @@ function trainingWizardComponent() {
             const idx = Math.min(Math.max(parseInt(index), 0), this.loraRankOptions.length - 1);
             const value = this.loraRankOptions[idx] || 16;
             this.answers.lora_rank = value;
+        },
+
+        getTrainingDurationSummary() {
+            const mode = this.answers.training_length_mode === 'steps' ? 'steps' : 'epochs';
+            if (mode === 'steps') {
+                const steps = Number(this.answers.max_train_steps);
+                if (Number.isFinite(steps) && steps > 0) {
+                    return `${steps} steps (epochs auto-calculated)`;
+                }
+                return 'Steps not set';
+            }
+            const epochs = Number(this.answers.num_train_epochs);
+            if (!Number.isFinite(epochs) || epochs <= 0) {
+                return 'Epochs not set';
+            }
+            const display = Number.isInteger(epochs) ? epochs.toString() : epochs.toFixed(2).replace(/\.?0+$/, '');
+            return `${display} epochs (steps auto-calculated)`;
         },
 
         formatLearningRate(value) {

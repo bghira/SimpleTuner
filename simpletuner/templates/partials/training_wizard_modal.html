@@ -292,7 +292,80 @@
                 </div>
             </div>
 
-            <!-- Step 4: Publishing -->
+            <!-- Step 4: Training Duration -->
+            <div x-show="currentStep.id === 'training-duration'" class="wizard-step-content">
+                <h6 class="wizard-question">How long should training run?</h6>
+                <p class="text-muted mb-3">
+                    Choose whether to stop after a set number of <strong>epochs</strong> (full passes through your dataset) or a fixed number of <strong>steps</strong> (individual optimizer updates).
+                </p>
+                <div class="alert alert-info small">
+                    <i class="fas fa-info-circle me-2"></i>
+                    When you pick epochs, SimpleTuner will automatically calculate the matching step count once your dataset size is known.
+                </div>
+
+                <div class="row g-3 mt-1">
+                    <div class="col-md-6">
+                        <div class="wizard-option-card h-100"
+                             :class="{ 'selected': answers.training_length_mode === 'epochs' }"
+                             @click="answers.training_length_mode = 'epochs'">
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="radio"
+                                       id="training-length-epochs"
+                                       value="epochs"
+                                       x-model="answers.training_length_mode">
+                                <label class="form-check-label fw-semibold" for="training-length-epochs">
+                                    Train for a number of epochs
+                                </label>
+                            </div>
+                            <p class="text-muted small mt-2 mb-3">
+                                One epoch equals one full pass over every sample. Helpful when you want consistent coverage of the dataset.
+                            </p>
+                            <label class="form-label">Epochs to run</label>
+                            <input type="number"
+                                   min="1"
+                                   step="0.25"
+                                   class="form-control"
+                                   x-model="answers.num_train_epochs"
+                                   @focus="answers.training_length_mode = 'epochs'">
+                            <div class="form-text">
+                                Steps will be derived automatically from dataset size and batch settings.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="wizard-option-card h-100"
+                             :class="{ 'selected': answers.training_length_mode === 'steps' }"
+                             @click="answers.training_length_mode = 'steps'">
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="radio"
+                                       id="training-length-steps"
+                                       value="steps"
+                                       x-model="answers.training_length_mode">
+                                <label class="form-check-label fw-semibold" for="training-length-steps">
+                                    Train for a fixed number of steps
+                                </label>
+                            </div>
+                            <p class="text-muted small mt-2 mb-3">
+                                A step is one optimizer update (forward + backward). Great for matching published schedules or quick experiments.
+                            </p>
+                            <label class="form-label">Maximum steps</label>
+                            <input type="number"
+                                   min="1"
+                                   step="1"
+                                   class="form-control"
+                                   x-model="answers.max_train_steps"
+                                   @focus="answers.training_length_mode = 'steps'">
+                            <div class="form-text">
+                                When steps are set, epochs will be inferred so training stops exactly at this count.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Publishing -->
             <div x-show="currentStep.id === 'publishing'" class="wizard-step-content">
                 <h6 class="wizard-question">Do you want to publish your model to Hugging Face Hub?</h6>
                 <p class="text-muted mb-4">Automatically upload your trained model when complete.</p>
@@ -364,7 +437,7 @@
                 </div>
             </div>
 
-            <!-- Step 5: Checkpoint Frequency -->
+            <!-- Step 6: Checkpoint Frequency -->
             <div x-show="currentStep.id === 'checkpoints'" class="wizard-step-content">
                 <h6 class="wizard-question">How often should checkpoints be saved?</h6>
                 <p class="text-muted mb-4">Checkpoints let you resume training and pick the best model version.</p>
@@ -388,7 +461,7 @@
                 </div>
             </div>
 
-            <!-- Step 6: Validations -->
+            <!-- Step 7: Validations -->
             <div x-show="currentStep.id === 'validations-enable'" class="wizard-step-content">
                 <h6 class="wizard-question">Do you want to run validations during training?</h6>
                 <p class="text-muted mb-4">Validations generate sample images to monitor training progress.</p>
@@ -480,7 +553,7 @@
                 </div>
             </div>
 
-            <!-- Step 7: Logging Platform -->
+            <!-- Step 8: Logging Platform -->
             <div x-show="currentStep.id === 'logging'" class="wizard-step-content">
                 <h6 class="wizard-question">Enable logging to external platform?</h6>
                 <p class="text-muted mb-4">Track metrics, losses, and generated images externally (optional).</p>
@@ -524,7 +597,7 @@
                 </div>
             </div>
 
-            <!-- Step 8: Dataset Configuration -->
+            <!-- Step 9: Dataset Configuration -->
             <div x-show="currentStep.id === 'dataset'" class="wizard-step-content">
                 <h6 class="wizard-question">Configure your training dataset</h6>
 
@@ -549,7 +622,7 @@
                 </div>
             </div>
 
-            <!-- Step 9: Advanced Settings -->
+            <!-- Step 10: Advanced Settings -->
             <div x-show="currentStep.id === 'advanced'" class="wizard-step-content">
                 <h6 class="wizard-question">Configure learning rate and optimizer?</h6>
                 <p class="text-muted mb-4">Pick a preset tailored to your training mode or adjust the values manually.</p>
@@ -651,6 +724,11 @@
                         <span x-text="answers.model_type || 'Not set'"></span>
                         <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 2 : 1)">Edit</button>
                     </div>
+                    <div class="review-item">
+                        <label>Duration:</label>
+                        <span x-text="getTrainingDurationSummary()"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 3 : 2)">Edit</button>
+                    </div>
                     <div class="review-item" x-show="answers.model_type === 'lora'">
                         <label>LoRA Rank:</label>
                         <span x-text="answers.lora_rank"></span>
@@ -669,42 +747,42 @@
                     <div class="review-item">
                         <label>Publishing:</label>
                         <span x-text="answers.push_to_hub ? 'Enabled' : 'Disabled'"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 3 : 2)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 4 : 3)">Edit</button>
                     </div>
                     <div class="review-item">
                         <label>Training Params:</label>
                         <span x-text="`${answers.train_batch_size || 2} batch × ${answers.gradient_accumulation_steps || 1} grad accum | ${answers.optimizer || 'Optimizer not set'}`"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 8 : 7)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 9 : 8)">Edit</button>
                     </div>
                     <div class="review-item" x-show="answers.push_to_hub">
                         <label>Hub Repository:</label>
                         <span x-text="answers.hub_model_id || 'Not set'"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 3 : 2)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 4 : 3)">Edit</button>
                     </div>
                     <div class="review-item">
                         <label>Checkpoints:</label>
                         <span x-text="`Every ${answers.checkpointing_steps || 500} steps`"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 4 : 3)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 5 : 4)">Edit</button>
                     </div>
                     <div class="review-item">
                         <label>Validations:</label>
                         <span x-text="answers.enable_validations ? `Enabled (every ${answers.validation_steps || 100} steps)` : 'Disabled'"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 5 : 4)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
                     </div>
                     <div class="review-item" x-show="answers.enable_validations">
                         <label>Validation Prompt:</label>
                         <span x-text="answers.validation_prompt || 'Not set'" class="text-truncate" style="max-width: 300px;"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 5 : 4)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
                     </div>
                     <div class="review-item">
                         <label>Logging:</label>
                         <span x-text="loggingSummary"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 7 : 6)">Edit</button>
                     </div>
                     <div class="review-item">
                         <label>Dataset:</label>
                         <span x-text="hasExistingDataset || datasetConfigured ? 'Configured' : 'Not configured'"></span>
-                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 7 : 6)">Edit</button>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 8 : 7)">Edit</button>
                     </div>
                 </div>
 
