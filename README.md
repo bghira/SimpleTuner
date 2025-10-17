@@ -7,6 +7,9 @@
 If you'd like to join our community, we can be found [on Discord](https://discord.gg/JGkSwEbjRb) via Terminus Research Group.
 If you have any questions, please feel free to reach out to us there.
 
+<img width="1944" height="1657" alt="image" src="https://github.com/user-attachments/assets/af3a24ec-7347-4ddf-8edf-99818a246de1" />
+
+
 ## Table of Contents
 
 - [Design Philosophy](#design-philosophy)
@@ -46,11 +49,12 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 
 ### Core Training Features
 
+- **User-friendly web UI** - Manage your entire training lifecycle through a sleek dashboard
 - **Multi-GPU training** - Distributed training across multiple GPUs with automatic optimization
 - **Advanced caching** - Image, video, and caption embeddings cached to disk for faster training
 - **Aspect bucketing** - Support for varied image/video sizes and aspect ratios
 - **Memory optimization** - Most models trainable on 24G GPU, many on 16G with optimizations
-- **DeepSpeed integration** - Train large models on smaller GPUs with gradient checkpointing and optimizer state offload
+- **DeepSpeed & FSDP2 integration** - Train large models on smaller GPUs with optim/grad/parameter sharding, context parallel attention, gradient checkpointing, and optimizer state offload
 - **S3 training** - Train directly from cloud storage (Cloudflare R2, Wasabi S3)
 - **EMA support** - Exponential moving average weights for improved stability and quality
 
