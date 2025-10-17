@@ -15,7 +15,9 @@ from simpletuner.helpers.configuration.registry import (
     make_override_rule,
 )
 from simpletuner.helpers.models.chroma import pack_latents, prepare_latent_image_ids, unpack_latents
+from simpletuner.helpers.models.chroma.controlnet import ChromaControlNetModel
 from simpletuner.helpers.models.chroma.pipeline import ChromaPipeline
+from simpletuner.helpers.models.chroma.pipeline_controlnet import ChromaControlNetPipeline
 from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -44,6 +46,7 @@ class Chroma(ImageModelFoundation):
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: ChromaPipeline,
+        PipelineTypes.CONTROLNET: ChromaControlNetPipeline,
     }
 
     DEFAULT_MODEL_FLAVOUR = "base"
@@ -64,6 +67,8 @@ class Chroma(ImageModelFoundation):
     }
 
     def requires_conditioning_latents(self) -> bool:
+        if self.config.controlnet or self.config.control:
+            return True
         return False
 
     def tread_init(self):
@@ -92,7 +97,30 @@ class Chroma(ImageModelFoundation):
 
         logger.info("TREAD training is enabled")
 
+    def controlnet_init(self):
+        """
+        Initialize the Chroma ControlNet module.
+        """
+        logger.info("Creating the Chroma ControlNet...")
+
+        if getattr(self.config, "controlnet_model_name_or_path", None):
+            logger.info("Loading ControlNet weights from %s", self.config.controlnet_model_name_or_path)
+            self.controlnet = ChromaControlNetModel.from_pretrained(
+                self.config.controlnet_model_name_or_path,
+                torch_dtype=self.config.weight_dtype,
+            )
+        else:
+            logger.info("Initializing ControlNet weights from base transformer.")
+            base_transformer = self.unwrap_model(self.model)
+            if base_transformer is None:
+                raise ValueError("Base transformer must be initialized before creating the ControlNet.")
+            self.controlnet = ChromaControlNetModel.from_transformer(base_transformer)
+
+        self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
+
     def requires_conditioning_validation_inputs(self) -> bool:
+        if self.config.controlnet or self.config.control:
+            return True
         return False
 
     def _encode_prompts(self, prompts: List[str], is_negative_prompt: bool = False):
@@ -329,6 +357,114 @@ class Chroma(ImageModelFoundation):
                 transformer_kwargs["force_keep_mask"] = force_keep
 
         model_pred = self.model(**transformer_kwargs)[0]
+
+        return {
+            "model_prediction": unpack_latents(
+                model_pred,
+                height=prepared_batch["latents"].shape[2] * 8,
+                width=prepared_batch["latents"].shape[3] * 8,
+                vae_scale_factor=16,
+            )
+        }
+
+    def controlnet_predict(self, prepared_batch: dict) -> dict:
+        conditioning_latents = prepared_batch.get("conditioning_latents")
+        if conditioning_latents is None:
+            raise ValueError("conditioning_latents must be provided for ControlNet training")
+
+        batch_size, _, height, width = conditioning_latents.shape
+
+        packed_controlnet_cond = pack_latents(
+            conditioning_latents,
+            batch_size=batch_size,
+            num_channels_latents=conditioning_latents.shape[1],
+            height=height,
+            width=width,
+        ).to(device=self.accelerator.device, dtype=self.config.base_weight_dtype)
+
+        packed_noisy_latents = pack_latents(
+            prepared_batch["noisy_latents"],
+            batch_size=batch_size,
+            num_channels_latents=prepared_batch["noisy_latents"].shape[1],
+            height=height,
+            width=width,
+        ).to(device=self.accelerator.device, dtype=self.config.base_weight_dtype)
+
+        img_ids = prepare_latent_image_ids(
+            batch_size,
+            height,
+            width,
+            self.accelerator.device,
+            self.config.weight_dtype,
+        )
+        if img_ids.dim() == 2:
+            img_ids = img_ids.unsqueeze(0).expand(batch_size, -1, -1)
+
+        timesteps = (
+            torch.tensor(prepared_batch["timesteps"], device=self.accelerator.device).expand(batch_size)
+            / self.noise_schedule.config.num_train_timesteps
+        )
+
+        text_ids = torch.zeros(
+            prepared_batch["prompt_embeds"].shape[1],
+            3,
+            device=self.accelerator.device,
+            dtype=self.config.base_weight_dtype,
+        )
+
+        attention_mask = prepared_batch.get("encoder_attention_mask")
+        if attention_mask is None:
+            raise ValueError(
+                "No attention mask was found for Chroma ControlNet training. Regenerate your text embedding cache to include masks."
+            )
+        if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
+            attention_mask = attention_mask.squeeze(1)
+
+        conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
+
+        controlnet_block_samples, controlnet_single_block_samples = self.controlnet(
+            hidden_states=packed_noisy_latents,
+            controlnet_cond=packed_controlnet_cond,
+            conditioning_scale=conditioning_scale,
+            encoder_hidden_states=prepared_batch["prompt_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            timestep=timesteps,
+            txt_ids=text_ids,
+            img_ids=img_ids,
+            attention_mask=attention_mask,
+            joint_attention_kwargs=None,
+            return_dict=False,
+        )
+
+        transformer_kwargs = {
+            "hidden_states": packed_noisy_latents,
+            "timestep": timesteps,
+            "encoder_hidden_states": prepared_batch["prompt_embeds"].to(
+                device=self.accelerator.device,
+                dtype=self.config.base_weight_dtype,
+            ),
+            "txt_ids": text_ids,
+            "img_ids": img_ids,
+            "attention_mask": attention_mask,
+            "joint_attention_kwargs": None,
+            "return_dict": False,
+        }
+
+        if controlnet_block_samples is not None:
+            transformer_kwargs["controlnet_block_samples"] = [
+                sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+                for sample in controlnet_block_samples
+            ]
+
+        if controlnet_single_block_samples is not None:
+            transformer_kwargs["controlnet_single_block_samples"] = [
+                sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+                for sample in controlnet_single_block_samples
+            ]
+
+        model_pred = self.get_trained_component(base_model=True)(**transformer_kwargs)[0]
 
         return {
             "model_prediction": unpack_latents(
