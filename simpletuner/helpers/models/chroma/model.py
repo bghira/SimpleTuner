@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 
 import torch
 from diffusers import AutoencoderKL
+from torch.nn import functional as F
 from transformers import T5EncoderModel, T5TokenizerFast
 
 from simpletuner.helpers.configuration.registry import (
@@ -64,6 +65,32 @@ class Chroma(ImageModelFoundation):
 
     def requires_conditioning_latents(self) -> bool:
         return False
+
+    def tread_init(self):
+        """
+        Initialize the TREAD router for Chroma training.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled")
 
     def requires_conditioning_validation_inputs(self) -> bool:
         return False
@@ -252,8 +279,7 @@ class Chroma(ImageModelFoundation):
             img_ids = img_ids.unsqueeze(0).expand(batch_size, -1, -1)
 
         timesteps = (
-            torch.tensor(prepared_batch["timesteps"], device=self.accelerator.device)
-            .expand(batch_size)
+            torch.tensor(prepared_batch["timesteps"], device=self.accelerator.device).expand(batch_size)
             / self.noise_schedule.config.num_train_timesteps
         )
 
@@ -264,6 +290,14 @@ class Chroma(ImageModelFoundation):
             dtype=self.config.base_weight_dtype,
         )
 
+        attention_mask = prepared_batch.get("encoder_attention_mask")
+        if attention_mask is None:
+            raise ValueError(
+                "No attention mask was found for Chroma training. Regenerate your text embedding cache to include masks."
+            )
+        if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
+            attention_mask = attention_mask.squeeze(1)
+
         transformer_kwargs = {
             "hidden_states": packed_noisy_latents,
             "timestep": timesteps,
@@ -273,10 +307,26 @@ class Chroma(ImageModelFoundation):
             ),
             "txt_ids": text_ids,
             "img_ids": img_ids,
-            "attention_mask": None,
+            "attention_mask": attention_mask,
             "joint_attention_kwargs": None,
             "return_dict": False,
         }
+
+        if (
+            getattr(self.config, "tread_config", None) is not None
+            and self.config.tread_config is not None
+            and "conditioning_pixel_values" in prepared_batch
+            and prepared_batch["conditioning_pixel_values"] is not None
+            and prepared_batch.get("conditioning_type") in ("mask", "segmentation")
+        ):
+            with torch.no_grad():
+                h_tokens = prepared_batch["latents"].shape[2] // 2
+                w_tokens = prepared_batch["latents"].shape[3] // 2
+                mask_img = prepared_batch["conditioning_pixel_values"]
+                mask_img = (mask_img.sum(1, keepdim=True) / 3 + 1) / 2
+                mask_lat = F.interpolate(mask_img, size=(h_tokens, w_tokens), mode="area")
+                force_keep = mask_lat.flatten(2).squeeze(1) > 0.5
+                transformer_kwargs["force_keep_mask"] = force_keep
 
         model_pred = self.model(**transformer_kwargs)[0]
 
@@ -309,10 +359,9 @@ class Chroma(ImageModelFoundation):
             )
             batch["sigmas"] = adjusted
             batch["timesteps"] = adjusted * 1000.0
-            batch["noisy_latents"] = (
-                (1 - adjusted).view(-1, 1, 1, 1) * batch["latents"]
-                + adjusted.view(-1, 1, 1, 1) * batch["input_noise"]
-            )
+            batch["noisy_latents"] = (1 - adjusted).view(-1, 1, 1, 1) * batch["latents"] + adjusted.view(
+                -1, 1, 1, 1
+            ) * batch["input_noise"]
             self.expand_sigmas(batch)
         return batch
 

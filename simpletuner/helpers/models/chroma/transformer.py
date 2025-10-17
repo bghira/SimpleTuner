@@ -1,7 +1,7 @@
 # Copyright 2025 Black Forest Labs, The HuggingFace Team and loadstone-rock.
 # Licensed under the Apache License, Version 2.0 (the "License").
 
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -20,6 +20,8 @@ from diffusers.utils.import_utils import is_torch_npu_available
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+from simpletuner.helpers.training.tread import TREADRouter
 
 
 class ChromaAdaLayerNormZeroPruned(nn.Module):
@@ -149,14 +151,10 @@ class ChromaCombinedTimestepTextProjEmbeddings(nn.Module):
         batch_size = timestep.shape[0]
 
         timesteps_proj = self.time_proj(timestep).to(dtype=timestep.dtype)
-        guidance_proj = self.guidance_proj(torch.tensor([0] * batch_size)).to(
-            dtype=timestep.dtype, device=timestep.device
-        )
+        guidance_proj = self.guidance_proj(torch.tensor([0] * batch_size)).to(dtype=timestep.dtype, device=timestep.device)
 
         mod_proj = self.mod_proj.to(dtype=timesteps_proj.dtype, device=timesteps_proj.device).repeat(batch_size, 1, 1)
-        timestep_guidance = (
-            torch.cat([timesteps_proj, guidance_proj], dim=1).unsqueeze(1).repeat(1, mod_index_length, 1)
-        )
+        timestep_guidance = torch.cat([timesteps_proj, guidance_proj], dim=1).unsqueeze(1).repeat(1, mod_index_length, 1)
         input_vec = torch.cat([timestep_guidance, mod_proj], dim=-1)
         return input_vec.to(timestep.dtype)
 
@@ -360,6 +358,8 @@ class ChromaTransformer2DModel(
     _no_split_modules = ["ChromaTransformerBlock", "ChromaSingleTransformerBlock"]
     _repeated_blocks = ["ChromaTransformerBlock", "ChromaSingleTransformerBlock"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
 
     @register_to_config
     def __init__(
@@ -426,6 +426,28 @@ class ChromaTransformer2DModel(
 
         self.gradient_checkpointing = False
 
+    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
+        self._tread_router = router
+        self._tread_routes = routes
+
+    @staticmethod
+    def _route_rope(rope, info, keep_len: int, batch: int):
+        """
+        Apply the router's shuffle and slice to rotary embeddings.
+
+        Accepts either a tensor of shape (S, D) or a tuple (cos, sin).
+        Returns a batched tensor (B, keep_len, D) or tuple of tensors.
+        """
+
+        def _route_one(r: torch.Tensor) -> torch.Tensor:
+            rB = r.unsqueeze(0).expand(batch, -1, -1)
+            shuf = torch.take_along_dim(rB, info.ids_shuffle.unsqueeze(-1).expand_as(rB), dim=1)
+            return shuf[:, :keep_len, :]
+
+        if isinstance(rope, tuple):
+            return tuple(_route_one(r) for r in rope)
+        return _route_one(rope)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -439,6 +461,7 @@ class ChromaTransformer2DModel(
         controlnet_single_block_samples=None,
         return_dict: bool = True,
         controlnet_blocks_repeat: bool = False,
+        force_keep_mask: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -484,6 +507,33 @@ class ChromaTransformer2DModel(
             ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
             joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
 
+        txt_len = encoder_hidden_states.shape[1]
+
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        global_idx = 0
+        current_rope = image_rotary_emb
+
+        if routes:
+            total_layers = len(self.transformer_blocks) + len(self.single_transformer_blocks)
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
         for index_block, block in enumerate(self.transformer_blocks):
             img_offset = 3 * len(self.single_transformer_blocks)
             txt_offset = img_offset + 6 * len(self.transformer_blocks)
@@ -496,9 +546,39 @@ class ChromaTransformer2DModel(
                 ),
                 dim=1,
             )
+
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                mask_for_stage = force_keep_mask
+                if mask_for_stage is not None and mask_for_stage.shape[1] != hidden_states.shape[1]:
+                    mask_for_stage = mask_for_stage[:, -hidden_states.shape[1] :]
+                tread_mask_info = router.get_mask(
+                    hidden_states,
+                    mask_ratio=mask_ratio,
+                    force_keep=mask_for_stage,
+                )
+                saved_tokens = hidden_states.clone()
+                hidden_states = router.start_route(hidden_states, tread_mask_info)
+                routing_now = True
+
+                text_rope_b = tuple(r[:txt_len].unsqueeze(0).expand(hidden_states.size(0), -1, -1) for r in image_rotary_emb)
+                image_only_rope = tuple(r[txt_len:] for r in image_rotary_emb)
+                img_rope_r = self._route_rope(
+                    image_only_rope,
+                    tread_mask_info,
+                    keep_len=hidden_states.size(1),
+                    batch=hidden_states.size(0),
+                )
+                current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
+
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
-                    block, hidden_states, encoder_hidden_states, temb, image_rotary_emb, attention_mask
+                    block,
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    current_rope,
+                    attention_mask,
                 )
 
             else:
@@ -506,7 +586,7 @@ class ChromaTransformer2DModel(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     temb=temb,
-                    image_rotary_emb=image_rotary_emb,
+                    image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
@@ -515,29 +595,85 @@ class ChromaTransformer2DModel(
                 interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
                 interval_control = int(np.ceil(interval_control))
                 if controlnet_blocks_repeat:
-                    hidden_states = (
-                        hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
-                    )
+                    hidden_states = hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
                 else:
                     hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
+
+            if routing_now and route_ptr < len(routes) and global_idx == routes[route_ptr]["end_layer_idx"]:
+                hidden_states = router.end_route(
+                    hidden_states,
+                    tread_mask_info,
+                    original_x=saved_tokens,
+                )
+                routing_now = False
+                route_ptr += 1
+                current_rope = image_rotary_emb
+
+            global_idx += 1
+
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+        txt_len = encoder_hidden_states.shape[1]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
             start_idx = 3 * index_block
             temb = pooled_temb[:, start_idx : start_idx + 3]
+
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+
+                text_tok = hidden_states[:, :txt_len, :]
+                img_tok = hidden_states[:, txt_len:, :]
+
+                fkm = None
+                if force_keep_mask is not None:
+                    if force_keep_mask.shape[1] == img_tok.shape[1]:
+                        fkm = force_keep_mask
+                    elif force_keep_mask.shape[1] == txt_len + img_tok.shape[1]:
+                        fkm = force_keep_mask[:, txt_len:]
+                    else:
+                        fkm = force_keep_mask[:, -img_tok.shape[1] :]
+                tread_mask_info = router.get_mask(
+                    img_tok,
+                    mask_ratio=mask_ratio,
+                    force_keep=fkm,
+                )
+                saved_tokens = img_tok.clone()
+                img_tok = router.start_route(img_tok, tread_mask_info)
+
+                hidden_states = torch.cat([text_tok, img_tok], dim=1)
+                routing_now = True
+
+                if attention_mask is not None:
+                    pad = torch.zeros(
+                        attention_mask.size(0),
+                        img_tok.size(1),
+                        device=attention_mask.device,
+                        dtype=attention_mask.dtype,
+                    )
+                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
+
+                text_rope_b = tuple(r[:txt_len].unsqueeze(0).expand(img_tok.size(0), -1, -1) for r in image_rotary_emb)
+                img_rope_r = self._route_rope(
+                    tuple(r[txt_len:] for r in image_rotary_emb),
+                    tread_mask_info,
+                    keep_len=img_tok.size(1),
+                    batch=img_tok.size(0),
+                )
+                current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
+
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 hidden_states = self._gradient_checkpointing_func(
                     block,
                     hidden_states,
                     temb,
-                    image_rotary_emb,
+                    current_rope,
                 )
 
             else:
                 hidden_states = block(
                     hidden_states=hidden_states,
                     temb=temb,
-                    image_rotary_emb=image_rotary_emb,
+                    image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
@@ -549,6 +685,33 @@ class ChromaTransformer2DModel(
                     hidden_states[:, encoder_hidden_states.shape[1] :, ...]
                     + controlnet_single_block_samples[index_block // interval_control]
                 )
+
+            if routing_now and route_ptr < len(routes) and global_idx == routes[route_ptr]["end_layer_idx"]:
+                text_tok = hidden_states[:, :txt_len, :]
+                img_tok_r = hidden_states[:, txt_len:, :]
+
+                img_tok = router.end_route(
+                    img_tok_r,
+                    tread_mask_info,
+                    original_x=saved_tokens,
+                )
+                hidden_states = torch.cat([text_tok, img_tok], dim=1)
+
+                routing_now = False
+                route_ptr += 1
+
+                if attention_mask is not None:
+                    pad = torch.zeros(
+                        attention_mask.size(0),
+                        img_tok.size(1),
+                        device=attention_mask.device,
+                        dtype=attention_mask.dtype,
+                    )
+                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
+
+                current_rope = image_rotary_emb
+
+            global_idx += 1
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
 

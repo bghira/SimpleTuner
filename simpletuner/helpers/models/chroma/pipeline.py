@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
-import torch
 import PIL.Image
+import torch
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import FluxIPAdapterMixin, FluxLoraLoaderMixin, FromSingleFileMixin, TextualInversionLoaderMixin
 from diffusers.models import AutoencoderKL
@@ -19,7 +19,6 @@ from diffusers.utils import (
     deprecate,
     is_torch_xla_available,
     logging,
-    replace_example_docstring,
     scale_lora_layers,
     unscale_lora_layers,
 )
@@ -42,33 +41,6 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 @dataclass
 class ChromaPipelineOutput(BaseOutput):
     images: Union[List[PIL.Image.Image], np.ndarray]
-
-
-EXAMPLE_DOC_STRING = """
-    Examples:
-        ```py
-        >>> import torch
-        >>> from diffusers import ChromaPipeline
-
-        >>> model_id = "lodestones/Chroma"
-        >>> ckpt_path = "https://huggingface.co/lodestones/Chroma/blob/main/chroma-unlocked-v37.safetensors"
-        >>> transformer = ChromaTransformer2DModel.from_single_file(ckpt_path, torch_dtype=torch.bfloat16)
-        >>> pipe = ChromaPipeline.from_pretrained(
-        ...     model_id,
-        ...     transformer=transformer,
-        ...     torch_dtype=torch.bfloat16,
-        ... )
-        >>> pipe.enable_model_cpu_offload()
-        >>> prompt = [
-        ...     "A high-fashion close-up portrait of a blonde woman in clear sunglasses. The image uses a bold teal and red color split for dramatic lighting. The background is a simple teal-green. The photo is sharp and well-composed, and is designed for viewing with anaglyph 3D glasses for optimal effect. It looks professionally done."
-        ... ]
-        >>> negative_prompt = [
-        ...     "low quality, ugly, unfinished, out of focus, deformed, disfigure, blurry, smudged, restricted palette, flat colors"
-        ... ]
-        >>> image = pipe(prompt, negative_prompt=negative_prompt).images[0]
-        >>> image.save("chroma.png")
-        ```
-"""
 
 
 def calculate_shift(
@@ -255,9 +227,7 @@ class ChromaPipeline(
         if do_classifier_free_guidance:
             if negative_prompt_embeds is None:
                 negative_prompt = negative_prompt or ""
-                negative_prompt = (
-                    batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
-                )
+                negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
 
                 if prompt is not None and type(prompt) is not type(negative_prompt):
                     raise TypeError(
@@ -304,9 +274,7 @@ class ChromaPipeline(
         image_embeds = image_embeds.repeat_interleave(num_images_per_prompt, dim=0)
         return image_embeds
 
-    def prepare_ip_adapter_image_embeds(
-        self, ip_adapter_image, ip_adapter_image_embeds, device, num_images_per_prompt
-    ):
+    def prepare_ip_adapter_image_embeds(self, ip_adapter_image, ip_adapter_image_embeds, device, num_images_per_prompt):
         image_embeds = []
         if ip_adapter_image_embeds is None:
             if not isinstance(ip_adapter_image, list):
@@ -402,9 +370,7 @@ class ChromaPipeline(
 
         latent_image_id_height, latent_image_id_width, latent_image_id_channels = latent_image_ids.shape
 
-        latent_image_ids = latent_image_ids.reshape(
-            latent_image_id_height * latent_image_id_width, latent_image_id_channels
-        )
+        latent_image_ids = latent_image_ids.reshape(latent_image_id_height * latent_image_id_width, latent_image_id_channels)
 
         return latent_image_ids.to(device=device, dtype=dtype)
 
@@ -537,7 +503,6 @@ class ChromaPipeline(
         return self._interrupt
 
     @torch.no_grad()
-    @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
@@ -595,9 +560,7 @@ class ChromaPipeline(
 
         device = self._execution_device
 
-        lora_scale = (
-            self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
-        )
+        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         (
             prompt_embeds,
             text_ids,

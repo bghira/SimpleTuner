@@ -86,9 +86,9 @@ Chroma uses the same dataloader format as Flux. Refer to the [general tutorial](
 ## Training options specific to Chroma
 
 - `flux_lora_target`: controls which transformer modules receive LoRA adapters (`all`, `all+ffs`, `context`, `tiny`, etc.). The defaults mirror Flux and work well for most cases.
-- `flux_guidance_mode`: `constant` or `random-range`. Guidance embeds are optional for Chroma but can stabilise validation renders.
-- `flux_attention_masked_training`: enable if your text embeds were cached with padding masks; disables when unset.
-- `flow_schedule_shift`/`flow_schedule_auto_shift`: available but usually **not** required—Chroma applies a quadratic tail boost internally.
+- `flux_guidance_mode`: `constant` works well; Chroma does not expose a guidance range.
+- Attention masking is always enabled – ensure your text embedding cache was generated with padding masks (default behaviour in current SimpleTuner releases).
+- Schedule shift options (`flow_schedule_shift` / `flow_schedule_auto_shift`) are not needed for Chroma—the helper already boosts tail timesteps automatically.
 - `flux_t5_padding`: set to `zero` if you prefer to zero padded tokens before masking.
 
 ## Automatic tail timestep sampling
@@ -108,4 +108,4 @@ Flux used a log-normal schedule that under-sampled high-noise / low-noise extrem
 - **Training diverges early**: ensure gradient checkpointing is on, lower `learning_rate` to `1e-4`, and verify captions are diverse.
 - **Validation repeats the same pose**: lengthen prompts; flow-matching models collapse when prompt variety is low.
 
-For advanced topics—DeepSpeed, FSDP2, TREAD, evaluation metrics—see the shared guides linked throughout the README.
+For advanced topics—DeepSpeed, FSDP2, evaluation metrics—see the shared guides linked throughout the README.
