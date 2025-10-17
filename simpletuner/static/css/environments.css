@@ -1,0 +1,54 @@
+/* Environments Tab Styles - Aligned with unified theme */
+/* Cards in this tab inherit from trainer-core.css unified styling */
+
+/* Lycoris Editor Styles */
+.lycoris-editor {
+    margin-top: var(--spacing-lg);
+}
+
+.lycoris-algorithm-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.lycoris-algorithm-option {
+    padding: var(--spacing-md);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.lycoris-algorithm-option:hover {
+    border-color: var(--accent-purple);
+}
+
+.lycoris-algorithm-option.selected {
+    border-color: var(--accent-purple);
+    background: rgba(102, 126, 234, 0.1);
+}
+
+.lycoris-params-section {
+    margin-top: var(--spacing-lg);
+}
+
+.lycoris-json-preview {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-md);
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: var(--typography-font-family-mono);
+    font-size: var(--typography-font-size-xs);
+    color: var(--accent-cyan);
+}
+
+.lycoris-warning {
+    color: var(--warning-text);
+    background: rgba(245, 158, 11, 0.1);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    font-size: var(--typography-font-size-sm);
+}

@@ -1,9 +1,11 @@
 import unittest
-from PIL import Image
-import numpy as np
-from helpers.image_manipulation.training_sample import TrainingSample
-from helpers.training.state_tracker import StateTracker
 from unittest.mock import MagicMock
+
+import numpy as np
+from PIL import Image
+
+from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class TestTrainingSample(unittest.TestCase):
@@ -15,9 +17,7 @@ class TestTrainingSample(unittest.TestCase):
         self.image_metadata = {"original_size": (1024, 768)}
 
         # Assume StateTracker and other helpers are correctly set up to return meaningful values
-        StateTracker.set_args(
-            MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2)
-        )
+        StateTracker.set_args(MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2))
         StateTracker.get_data_backend_config = MagicMock(
             return_value={
                 "crop": True,
@@ -55,9 +55,7 @@ class TestTrainingSample(unittest.TestCase):
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
-        self.assertEqual(
-            sample.current_size, (1024, 768), "Size was not correct before prepare."
-        )
+        self.assertEqual(sample.current_size, (1024, 768), "Size was not correct before prepare.")
         sample.prepare()
         self.assertEqual(
             sample.image.size,
@@ -95,18 +93,14 @@ class TestTrainingSample(unittest.TestCase):
         original_aspect = round(sample.original_size[0] / sample.original_size[1], 2)
         sample.prepare()
         processed_aspect = round(sample.image.size[0] / sample.image.size[1], 2)
-        self.assertEqual(
-            processed_aspect, 1.38
-        )  # when 64px divisible, we're at 1.38 now.
+        self.assertEqual(processed_aspect, 1.38)  # when 64px divisible, we're at 1.38 now.
 
     def test_return_tensor(self):
         """Test tensor conversion if requested."""
         sample = TrainingSample(self.image, self.data_backend_id, self.image_metadata)
         prepared_sample = sample.prepare(return_tensor=True)
         # Check if returned object is a tensor (mock or check type if actual tensor transformation is applied)
-        self.assertTrue(
-            isinstance(prepared_sample.aspect_ratio, float)
-        )  # Placeholder check
+        self.assertTrue(isinstance(prepared_sample.aspect_ratio, float))  # Placeholder check
 
     # -----------------------
     # New Tests for Video Data
@@ -168,9 +162,7 @@ class TestTrainingSample(unittest.TestCase):
         final_shape = sample.image.shape
         # E.g. [5, newH, newW, 3]
         self.assertEqual(final_shape[-1], 3)
-        self.assertEqual(
-            final_shape[1], final_shape[2], "Video should be square in H/W"
-        )
+        self.assertEqual(final_shape[1], final_shape[2], "Video should be square in H/W")
 
     def test_video_random_crop(self):
         """
@@ -240,9 +232,7 @@ class TestTrainingSample(unittest.TestCase):
         """
         self.default_config["crop"] = False
         # To avoid forcing squares, let's not set 'crop_aspect' to 'square'
-        self.default_config["crop_aspect"] = (
-            "preserve"  # or something that your code interprets as no forced square
-        )
+        self.default_config["crop_aspect"] = "preserve"  # or something that your code interprets as no forced square
         self.default_config["resolution"] = 256
 
         sample = TrainingSample(
@@ -300,9 +290,7 @@ class TestTrainingSample(unittest.TestCase):
         """
         # Suppose we have logic that snaps to multiples of 64.
         self.default_config["crop"] = False
-        self.default_config["resolution"] = (
-            999  # something that won't be a multiple of 64
-        )
+        self.default_config["resolution"] = 999  # something that won't be a multiple of 64
         # We'll pretend there's some internal code that rounds final sizes to multiples of 64.
 
         sample = TrainingSample(
@@ -321,9 +309,7 @@ class TestTrainingSample(unittest.TestCase):
         )
 
         # Check multiples of 64
-        self.assertEqual(
-            final_w % 64, 0, f"Expected width to be multiple of 64, got {final_w}"
-        )
+        self.assertEqual(final_w % 64, 0, f"Expected width to be multiple of 64, got {final_w}")
         self.assertTrue(
             final_h % 64
             in [
@@ -353,9 +339,7 @@ class TestTrainingSample(unittest.TestCase):
         sample.prepare()
         final_frames, final_h, final_w, final_c = sample.image.shape
 
-        self.assertEqual(
-            final_frames, 5, "Should preserve frame count in no-crop scenario."
-        )
+        self.assertEqual(final_frames, 5, "Should preserve frame count in no-crop scenario.")
         self.assertEqual(final_c, 3, "Color channels should remain 3.")
         final_aspect = round(final_w / final_h, 2)
         self.assertAlmostEqual(
@@ -379,9 +363,7 @@ class TestTrainingSample(unittest.TestCase):
         self.default_config["resolution"] = 256
         # 2000×1500 => aspect ~1.333
         huge_img = Image.new("RGB", (2000, 1500), "white")
-        sample = TrainingSample(
-            huge_img, self.data_backend_id, {"original_size": (2000, 1500)}
-        )
+        sample = TrainingSample(huge_img, self.data_backend_id, {"original_size": (2000, 1500)})
         sample.prepare()
 
         final_w, final_h = sample.image.size
@@ -397,9 +379,7 @@ class TestTrainingSample(unittest.TestCase):
             actual_ratio,
             f"Aspect ratio must be preserved for no-crop: {sample.__dict__}",
         )
-        self.assertNotEqual(
-            sample.aspect_ratio, 1.0, "Should not force a square shape in this case."
-        )
+        self.assertNotEqual(sample.aspect_ratio, 1.0, "Should not force a square shape in this case.")
 
     def test_no_crop_small_image_upscale_only_if_configured(self):
         """
@@ -410,9 +390,7 @@ class TestTrainingSample(unittest.TestCase):
         self.default_config["resolution"] = 512
         # 128×96 => aspect ~1.333
         small_img = Image.new("RGB", (128, 96), "white")
-        sample = TrainingSample(
-            small_img, self.data_backend_id, {"original_size": (128, 96)}
-        )
+        sample = TrainingSample(small_img, self.data_backend_id, {"original_size": (128, 96)})
         sample.prepare()
 
         final_w, final_h = sample.image.size
@@ -431,16 +409,12 @@ class TestTrainingSample(unittest.TestCase):
             actual_ratio,
             f"Aspect ratio must be preserved for no-crop upscaling.",
         )
-        self.assertNotEqual(
-            sample.aspect_ratio, 1.0, "Should not force a square shape in this case."
-        )
+        self.assertNotEqual(sample.aspect_ratio, 1.0, "Should not force a square shape in this case.")
 
     def test_image_square_crop_preserves_square_input(self):
         """Test that square cropping works correctly."""
         square_img = Image.new("RGB", (1024, 1024), "white")
-        sample = TrainingSample(
-            square_img, self.data_backend_id, {"original_size": (1024, 1024)}
-        )
+        sample = TrainingSample(square_img, self.data_backend_id, {"original_size": (1024, 1024)})
 
         sample.prepare()
         # The image should be cropped to a square shape
@@ -461,9 +435,7 @@ class TestTrainingSample(unittest.TestCase):
                 "resolution_type": "pixel",
             }
         )
-        sample = TrainingSample(
-            random_img, self.data_backend_id, {"original_size": (800, 600)}
-        )
+        sample = TrainingSample(random_img, self.data_backend_id, {"original_size": (800, 600)})
 
         sample.prepare()
         # The image should be cropped to a square shape
@@ -477,15 +449,13 @@ class TestTrainingSample(unittest.TestCase):
         we get exactly 1024x1024 images with aspect ratio 1.0, not 1056x1056.
         """
         # Mock StateTracker methods to prevent file operations
-        StateTracker.get_args = MagicMock(return_value=MagicMock(
-            aspect_bucket_alignment=64,
-            aspect_bucket_rounding=2,
-            output_dir="/tmp"
-        ))
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
         StateTracker.set_resolution_by_aspect = MagicMock()
         StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
         StateTracker._save_to_disk = MagicMock()
-        
+
         # Configure for area-based resolution with square crop
         StateTracker.get_data_backend_config = MagicMock(
             return_value={
@@ -498,16 +468,16 @@ class TestTrainingSample(unittest.TestCase):
                 "maximum_image_size": 1.048576,
             }
         )
-        
+
         # Test with various input sizes
         test_cases = [
             (1920, 1080),  # 16:9
             (3883, 5825),  # Portrait
             (5787, 3858),  # Landscape
             (1024, 1024),  # Already square
-            (800, 600),    # 4:3
+            (800, 600),  # 4:3
         ]
-        
+
         for width, height in test_cases:
             with self.subTest(input_size=(width, height)):
                 test_img = Image.new("RGB", (width, height), "white")
@@ -517,39 +487,39 @@ class TestTrainingSample(unittest.TestCase):
                     {"original_size": (width, height)},
                     model=MagicMock(
                         MAXIMUM_CANVAS_SIZE=None,
-                        get_transforms=MagicMock(return_value=lambda x: x)
+                        get_transforms=MagicMock(return_value=lambda x: x),
                     ),
                 )
-                
+
                 prepared = sample.prepare()
-                
+
                 # Check that the target size is exactly 1024x1024
                 self.assertEqual(
                     sample.target_size,
                     (1024, 1024),
-                    f"Target size should be 1024x1024, not {sample.target_size}"
+                    f"Target size should be 1024x1024, not {sample.target_size}",
                 )
-                
+
                 # Check that the final image is exactly 1024x1024
                 self.assertEqual(
                     sample.image.size,
                     (1024, 1024),
-                    f"Image size should be 1024x1024, not {sample.image.size}"
+                    f"Image size should be 1024x1024, not {sample.image.size}",
                 )
-                
+
                 # Check that aspect ratio is exactly 1.0
                 self.assertEqual(
                     prepared.aspect_ratio,
                     1.0,
-                    f"Aspect ratio should be exactly 1.0, not {prepared.aspect_ratio}"
+                    f"Aspect ratio should be exactly 1.0, not {prepared.aspect_ratio}",
                 )
-                
+
                 # Double-check by calculating aspect ratio from dimensions
                 calculated_aspect = round(sample.image.size[0] / sample.image.size[1], 2)
                 self.assertEqual(
                     calculated_aspect,
                     1.0,
-                    f"Calculated aspect ratio should be 1.0, not {calculated_aspect}"
+                    f"Calculated aspect ratio should be 1.0, not {calculated_aspect}",
                 )
 
     def test_pixel_resolution_calculations(self):
@@ -557,24 +527,22 @@ class TestTrainingSample(unittest.TestCase):
         Test that pixel_resolution is calculated correctly for area-based resolutions.
         """
         # Mock StateTracker to prevent file operations
-        StateTracker.get_args = MagicMock(return_value=MagicMock(
-            aspect_bucket_alignment=64,
-            aspect_bucket_rounding=2,
-            output_dir="/tmp"
-        ))
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
         StateTracker.set_resolution_by_aspect = MagicMock()
         StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
         StateTracker._save_to_disk = MagicMock()
-        
+
         test_cases = [
-            (0.25, 512),   # 0.25 megapixels -> 512x512
-            (0.5, 768),    # 0.5 megapixels -> 768x768
-            (1.0, 1024),   # 1.0 megapixels -> 1024x1024
+            (0.25, 512),  # 0.25 megapixels -> 512x512
+            (0.5, 768),  # 0.5 megapixels -> 768x768
+            (1.0, 1024),  # 1.0 megapixels -> 1024x1024
             (1.048576, 1024),  # ~1.0 megapixels -> 1024x1024
-            (2.0, 1536),   # 2.0 megapixels -> 1536x1536
-            (4.0, 2048),   # 4.0 megapixels -> 2048x2048
+            (2.0, 1536),  # 2.0 megapixels -> 1536x1536
+            (4.0, 2048),  # 4.0 megapixels -> 2048x2048
         ]
-        
+
         for resolution, expected_pixel_res in test_cases:
             with self.subTest(resolution=resolution):
                 StateTracker.get_data_backend_config = MagicMock(
@@ -586,17 +554,17 @@ class TestTrainingSample(unittest.TestCase):
                         "resolution_type": "area",
                     }
                 )
-                
+
                 sample = TrainingSample(
                     self.test_image,
                     self.data_backend_id,
                     self.test_metadata,
                 )
-                
+
                 self.assertEqual(
                     sample.pixel_resolution,
                     expected_pixel_res,
-                    f"Resolution {resolution} should map to {expected_pixel_res}px, not {sample.pixel_resolution}px"
+                    f"Resolution {resolution} should map to {expected_pixel_res}px, not {sample.pixel_resolution}px",
                 )
 
     def test_square_crop_batch_consistency(self):
@@ -605,15 +573,13 @@ class TestTrainingSample(unittest.TestCase):
         when using square crop, preventing the VAE cache error.
         """
         # Mock StateTracker to prevent file operations
-        StateTracker.get_args = MagicMock(return_value=MagicMock(
-            aspect_bucket_alignment=64,
-            aspect_bucket_rounding=2,
-            output_dir="/tmp"
-        ))
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
         StateTracker.set_resolution_by_aspect = MagicMock()
         StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
         StateTracker._save_to_disk = MagicMock()
-        
+
         StateTracker.get_data_backend_config = MagicMock(
             return_value={
                 "crop": True,
@@ -625,7 +591,7 @@ class TestTrainingSample(unittest.TestCase):
                 "maximum_image_size": 1.048576,
             }
         )
-        
+
         # Create a batch of images with different sizes
         batch_images = [
             Image.new("RGB", (1920, 1080), "white"),
@@ -634,10 +600,10 @@ class TestTrainingSample(unittest.TestCase):
             Image.new("RGB", (800, 600), "white"),
             Image.new("RGB", (4475, 6709), "white"),
         ]
-        
+
         aspect_ratios = []
         sizes = []
-        
+
         for i, img in enumerate(batch_images):
             sample = TrainingSample(
                 img,
@@ -645,38 +611,32 @@ class TestTrainingSample(unittest.TestCase):
                 {"original_size": img.size},
                 model=MagicMock(
                     MAXIMUM_CANVAS_SIZE=None,
-                    get_transforms=MagicMock(return_value=lambda x: x)
+                    get_transforms=MagicMock(return_value=lambda x: x),
                 ),
             )
-            
+
             prepared = sample.prepare()
             aspect_ratios.append(prepared.aspect_ratio)
             sizes.append(sample.image.size)
-        
+
         # All aspect ratios should be exactly 1.0
         for i, ar in enumerate(aspect_ratios):
-            self.assertEqual(
-                ar,
-                1.0,
-                f"Image {i} has aspect ratio {ar}, expected 1.0"
-            )
-        
+            self.assertEqual(ar, 1.0, f"Image {i} has aspect ratio {ar}, expected 1.0")
+
         # All sizes should be exactly (1024, 1024)
         for i, size in enumerate(sizes):
-            self.assertEqual(
-                size,
-                (1024, 1024),
-                f"Image {i} has size {size}, expected (1024, 1024)"
-            )
-        
+            self.assertEqual(size, (1024, 1024), f"Image {i} has size {size}, expected (1024, 1024)")
+
         # Verify that VAE cache check would pass
         first_aspect = aspect_ratios[0]
         for i, ar in enumerate(aspect_ratios[1:], 1):
             self.assertEqual(
                 ar,
                 first_aspect,
-                f"Image {i} aspect ratio {ar} doesn't match first image {first_aspect}"
+                f"Image {i} aspect ratio {ar} doesn't match first image {first_aspect}",
             )
+
+
 # Helper mock classes and functions
 class MockCropper:
     def __init__(self, image, image_metadata):

@@ -2,7 +2,7 @@
 
 ## Details
 
-- **Hub link**: [ptx0/photo-concept-bucket](https://huggingface.co/datasets/ptx0/photo-concept-bucket)
+- **Hub link**: [bghira/photo-concept-bucket](https://huggingface.co/datasets/bghira/photo-concept-bucket)
 - **Description**: ~567,000 high quality photographs across dense concept distribution, captioned with CogVLM.
 - **Caption format(s)**: Parquet
 
@@ -15,7 +15,7 @@ An example script for downloading the dataset is provided, but you must ensure y
 To download the captions and URL list:
 
 ```bash
-huggingface-cli download --repo-type=dataset ptx0/photo-concept-bucket --local-dir=/home/user/training/photo-concept-bucket
+huggingface-cli download --repo-type=dataset bghira/photo-concept-bucket --local-dir=/home/user/training/photo-concept-bucket
 ```
 
 Place this file into `/home/user/training/photo-concept-bucket`:
@@ -52,7 +52,7 @@ def download_and_save(row):
     img_url = row['url']
     caption = row['cogvlm_caption']
     img_id = row['id']
-    
+
     try:
         # Download the image
         img_response = requests.get(img_url)
@@ -60,7 +60,7 @@ def download_and_save(row):
             img = Image.open(BytesIO(img_response.content))
             img_path = os.path.join(output_dir, f"{img_id}.png")
             img.save(img_path)
-        
+
         # Write the caption to a text file
         caption_path = os.path.join(output_dir, f"{img_id}.txt")
         with open(caption_path, 'w') as caption_file:

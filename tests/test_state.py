@@ -1,5 +1,6 @@
 import unittest
-from helpers.multiaspect.state import BucketStateManager
+
+from simpletuner.helpers.multiaspect.state import BucketStateManager
 
 
 class TestBucketStateManager(unittest.TestCase):

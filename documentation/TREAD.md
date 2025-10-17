@@ -89,7 +89,7 @@ Multiple routing windows with different selection ratios:
 ## Compatibility
 
 ### Supported Models
-- **FLUX and Wan** - Currently the only supported model families
+- **FLUX Dev/Kontext, Wan, AuraFlow, PixArt, and SD3** - Currently the only supported model families
 - Future support planned for other diffusion transformers
 
 ### Works Well With
@@ -274,12 +274,12 @@ Community contributions and testing results are welcome to help improve TREAD su
 
 ```bibtex
 @misc{krause2025treadtokenroutingefficient,
-      title={TREAD: Token Routing for Efficient Architecture-agnostic Diffusion Training}, 
+      title={TREAD: Token Routing for Efficient Architecture-agnostic Diffusion Training},
       author={Felix Krause and Timy Phan and Vincent Tao Hu and Björn Ommer},
       year={2025},
       eprint={2501.04765},
       archivePrefix={arXiv},
       primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2501.04765}, 
+      url={https://arxiv.org/abs/2501.04765},
 }
 ```

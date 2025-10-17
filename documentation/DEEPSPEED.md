@@ -1,8 +1,9 @@
 # DeepSpeed offload / multi-GPU training
 
-SimpleTuner v0.7 includes preliminary support for training SDXL using DeepSpeed ZeRO stages 1 through 3.
+SimpleTuner v0.7 introduced preliminary support for training SDXL using DeepSpeed ZeRO stages 1 through 3.
+In v3.0, this support has been greatly improved, with a WebUI configuration builder, improved optimizer support, and better offload management.
 
-> ⚠️ Stable Diffusion 3 support for DeepSpeed is not tested, and will be unlikely to work without modification.
+> ⚠️ DeepSpeed is not available on macOS (MPS) or ROCm systems.
 
 **Training SDXL 1.0 on 9237MiB of VRAM**:
 ```
@@ -17,7 +18,7 @@ SimpleTuner v0.7 includes preliminary support for training SDXL using DeepSpeed 
 |  0%   43C    P2   100W / 450W |   9237MiB / 24564MiB |    100%      Default |
 |                               |                      |                  N/A |
 +-------------------------------+----------------------+----------------------+
-                                                                               
+
 +-----------------------------------------------------------------------------+
 | Processes:                                                                  |
 |  GPU   GI   CI        PID   Type   Process name                  GPU Memory |
@@ -77,7 +78,94 @@ The 16-bit model parameters are partitioned across the processes. ZeRO-3 will au
 
 The [official tutorial](https://www.deepspeed.ai/tutorials/zero/) is very well-structured and includes many scenarios not outlined here.
 
-DeepSpeed is supported by 🤗Accelerate, and can be easily enabled through `accelerate config`:
+### Method 1: WebUI Configuration Builder (Recommended)
+
+SimpleTuner now provides a user-friendly WebUI for DeepSpeed configuration:
+
+1. Navigate to the SimpleTuner WebUI
+2. Switch to the **Hardware** tab and open the **Accelerate & Distributed** section
+3. Click the **DeepSpeed Builder** button next to the `DeepSpeed Config (JSON)` field
+4. Use the interactive interface to:
+   - Select ZeRO optimization stage (1, 2, or 3)
+   - Configure offload options (CPU, NVMe)
+   - Choose optimizers and schedulers
+   - Set gradient accumulation and clipping parameters
+5. Preview the generated JSON configuration
+6. Save and apply the configuration
+
+The builder keeps the JSON structure consistent and swaps unsupported optimizers to safe defaults when needed, helping you avoid common configuration mistakes.
+
+### Method 2: Manual JSON Configuration
+
+For users who prefer direct configuration editing, you can add DeepSpeed configuration directly to your `config.json` file:
+
+```json
+{
+  "deepspeed_config": {
+    "zero_optimization": {
+      "stage": 2,
+      "offload_param": {
+        "device": "cpu",
+        "pin_memory": true
+      },
+      "offload_optimizer": {
+        "device": "cpu",
+        "pin_memory": true
+      }
+    },
+    "gradient_accumulation_steps": 4,
+    "gradient_clipping": 1.0,
+    "optimizer": {
+      "type": "AdamW",
+      "params": {
+        "lr": 1e-4,
+        "betas": [0.9, 0.999],
+        "eps": 1e-8,
+        "weight_decay": 0.01
+      }
+    },
+    "scheduler": {
+      "type": "WarmupLR",
+      "params": {
+        "warmup_min_lr": 0,
+        "warmup_max_lr": 1e-4,
+        "warmup_num_steps": 500
+      }
+    },
+    "train_batch_size": 8,
+    "train_micro_batch_size_per_gpu": 2
+  }
+}
+```
+
+**Key Configuration Options:**
+
+- `zero_optimization.stage`: Set to 1, 2, or 3 for different ZeRO optimization levels
+- `offload_param.device`: Use "cpu" or "nvme" for parameter offloading
+- `offload_optimizer.device`: Use "cpu" or "nvme" for optimizer offloading
+- `optimizer.type`: Choose from supported optimizers (AdamW, Adam, Adagrad, Lamb, etc.)
+- `gradient_accumulation_steps`: Number of steps to accumulate gradients
+
+**NVMe Offload Example:**
+```json
+{
+  "deepspeed_config": {
+    "zero_optimization": {
+      "stage": 3,
+      "offload_param": {
+        "device": "nvme",
+        "nvme_path": "/path/to/nvme/storage",
+        "buffer_size": 100000000.0,
+        "pin_memory": true
+      }
+    }
+  }
+}
+```
+
+### Method 3: Manual Configuration via accelerate config
+
+For advanced users, DeepSpeed can still be enabled through `accelerate config`:
 
 ```
 ----------------------------------------------------------------------------------------------------------------------------
@@ -86,20 +174,20 @@ This machine
 ----------------------------------------------------------------------------------------------------------------------------
 Which type of machine are you using?
 No distributed training
-Do you want to run your training on CPU only (even if a GPU / Apple Silicon / Ascend NPU device is available)? [yes/NO]:NO  
+Do you want to run your training on CPU only (even if a GPU / Apple Silicon / Ascend NPU device is available)? [yes/NO]:NO
 Do you wish to optimize your script with torch dynamo?[yes/NO]:NO
 Do you want to use DeepSpeed? [yes/NO]: yes
 Do you want to specify a json file to a DeepSpeed config? [yes/NO]: NO
 ----------------------------------------------------------------------------------------------------------------------------
 What should be your DeepSpeed's ZeRO optimization stage?
 1
-How many gradient accumulation steps you're passing in your script? [1]: 4                                                  
+How many gradient accumulation steps you're passing in your script? [1]: 4
 Do you want to use gradient clipping? [yes/NO]:
 Do you want to enable `deepspeed.zero.Init` when using ZeRO Stage-3 for constructing massive models? [yes/NO]:
 How many GPU(s) should be used for distributed training? [1]:
 ----------------------------------------------------------------------------------------------------------------------------
-Do you wish to use FP16 or BF16 (mixed precision)?bf16                                                                                                                        
-accelerate configuration saved at /root/.cache/huggingface/accelerate/default_config.yaml                              
+Do you wish to use FP16 or BF16 (mixed precision)?bf16
+accelerate configuration saved at /root/.cache/huggingface/accelerate/default_config.yaml
 ```
 
 This results in the following yaml file:
@@ -132,6 +220,31 @@ SimpleTuner requires no special configuration for its use of DeepSpeed.
 
 If using ZeRO stage 2 or 3 with NVMe offload, `--offload_param_path=/path/to/offload` can be supplied, to store the parameter/optimiser offload files on a dedicated partition. This storage should ideally be an NVMe device, but any storage will do.
 
+### Recent Improvements (v0.7+)
+
+#### WebUI Configuration Builder
+SimpleTuner now includes a comprehensive DeepSpeed configuration builder in the WebUI, allowing you to:
+- Create custom DeepSpeed JSON configurations through an intuitive interface
+- Auto-discover available parameters
+- Visualize configuration impact before applying
+- Save and reuse configuration templates
+
+#### Enhanced Optimizer Support
+The system now includes improved optimizer name normalization and validation:
+- **Supported optimizers**: AdamW, Adam, Adagrad, Lamb, OneBitAdam, OneBitLamb, ZeroOneAdam, MuAdam, MuAdamW, MuSGD, Lion, Muon
+- **Unsupported optimizers** (automatically replaced with AdamW): cpuadam, fusedadam
+- Automatic fallback warnings when unsupported optimizers are specified
+
+#### Improved Offload Management
+- **Automatic cleanup**: Stale DeepSpeed offload swap directories are automatically removed to prevent corrupted resume states
+- **Enhanced NVMe support**: Better handling of NVMe offload paths with automatic buffer size allocation
+- **Platform detection**: DeepSpeed is automatically disabled on incompatible platforms (macOS/ROCm)
+
+#### Configuration Validation
+- Automatic normalization of optimizer names and configuration structure when you apply changes
+- Safety guards for unsupported optimizer selections and malformed JSON
+- Improved error handling and logging for troubleshooting
+
 ### DeepSpeed Optimizer / Learning rate scheduler
 
 DeepSpeed uses its own learning rate scheduler and, by default, a heavily-optimised version of AdamW - though, not 8bit. That seems less important for DeepSpeed, as things will tend to stay closer to the CPU.
@@ -155,6 +268,43 @@ Since SDXL was trained for many steps on a large distribution of image resolutio
 # AMD device support
 
 I do not have any consumer or workstation-grade AMD GPUs, however, there are some reports that the MI50 (now going out of support) and other higher grade Instinct cards **do** work with DeepSpeed. AMD maintains a repository for their implementation.
+
+## Troubleshooting
+
+### Common Issues and Solutions
+
+#### "DeepSpeed crash on resume"
+**Problem**: Training crashes when resuming from a checkpoint with DeepSpeed offload enabled.
+
+**Solution**: SimpleTuner now automatically cleans up stale DeepSpeed offload swap directories to prevent corrupted resume states. This issue has been resolved in the latest updates.
+
+#### "Unsupported optimizer error"
+**Problem**: DeepSpeed configuration contains unsupported optimizer names.
+
+**Solution**: The system now automatically normalizes optimizer names and replaces unsupported optimizers (cpuadam, fusedadam) with AdamW. Warnings are logged when fallbacks occur.
+
+#### "DeepSpeed not available on this platform"
+**Problem**: DeepSpeed options are disabled or unavailable.
+
+**Solution**: DeepSpeed is only supported on CUDA systems. It is automatically disabled on macOS (MPS) and ROCm systems. This is by design to prevent compatibility issues.
+
+#### "NVMe offload path issues"
+**Problem**: Errors related to NVMe offload path configuration.
+
+**Solution**: Ensure the `--offload_param_path` points to a valid directory with sufficient space. The system now automatically handles buffer size allocation and path validation.
+
+#### "Configuration validation errors"
+**Problem**: Invalid DeepSpeed configuration parameters.
+
+**Solution**: Use the WebUI configuration builder to generate the JSON; it normalizes optimizer selections and structure before applying the configuration.
+
+### Debug Information
+
+To troubleshoot DeepSpeed issues, check the following:
+- Hardware compatibility via the WebUI Hardware tab (Hardware → Accelerate) or `nvidia-smi`
+- DeepSpeed configuration in the training logs
+- Offload path permissions and available space
+- Platform detection logs
 
 # EMA training (Exponential moving average)
 

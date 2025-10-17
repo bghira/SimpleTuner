@@ -20,45 +20,21 @@ apt -y install python3.12 python3.12-venv
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image to enable compiling of CUDA extensions:
 
 ```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+apt -y install nvidia-cuda-toolkit
 ```
-
-If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-python -m venv .venv
-
-source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
+pip install simpletuner[cuda]
 ```
 
-Depending on your system, you will run one of 3 commands:
-
-```bash
-# Linux with NVIDIA
-poetry install
-
-# MacOS
-poetry install -C install/apple
-
-# Linux with ROCM
-poetry install -C install/rocm
-```
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 #### AMD ROCm follow-up steps
 
@@ -70,16 +46,6 @@ pushd /opt/rocm/share/amd_smi
 python3 -m pip install --upgrade pip
 python3 -m pip install .
 popd
-```
-
-#### Removing DeepSpeed & Bits n Bytes
-
-These two dependencies cause numerous issues for container hosts such as RunPod and Vast.
-
-To remove them after `poetry` has installed them, run the following command in the same terminal:
-
-```bash
-pip uninstall -y deepspeed bitsandbytes
 ```
 
 ### Setting up the environment
@@ -95,7 +61,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 
@@ -138,7 +104,7 @@ There are a few more if using a Mac M-series machine:
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS`. The dataset will not be discoverable by the trainer if it is too small.
 
-Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
+Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 In your `/home/user/simpletuner/config` directory, create a multidatabackend.json:
 
@@ -215,7 +181,7 @@ bash train.sh
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ### CLIP score tracking
 

@@ -1,0 +1,422 @@
+<div x-data="deepspeedBuilderComponent()" x-cloak>
+    <template x-if="isOpen">
+        <div class="deepspeed-builder-backdrop" @keydown.escape.window="close()" @click.self="close()">
+            <div class="deepspeed-builder-modal" @click.stop>
+                <div class="modal-header d-flex align-items-start justify-content-between">
+                    <div>
+                        <h5 class="modal-title mb-1">DeepSpeed Configuration Builder</h5>
+                        <p class="text-muted small mb-0">
+                            Generate Hugging Face Accelerate compatible DeepSpeed JSON or reference an external config file.
+                        </p>
+                    </div>
+                    <button type="button" class="btn-close" aria-label="Close" @click="close()"></button>
+                </div>
+
+                <div class="modal-body">
+                    <div class="btn-group mb-3 w-100" role="group" aria-label="Configuration mode">
+                        <button type="button"
+                                class="btn btn-outline-primary btn-mode"
+                                :class="{ 'active': mode === 'inline' }"
+                                @click="setMode('inline')">
+                            Inline JSON Builder
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-primary btn-mode"
+                                :class="{ 'active': mode === 'configFile' }"
+                                @click="setMode('configFile')">
+                            Reference Config File
+                        </button>
+                    </div>
+
+                    <div class="alert alert-info small" role="alert">
+                        <div class="fw-semibold mb-1">Tip</div>
+                        <div>
+                            Running <code>accelerate config</code> on your machine will guide you through creating a baseline DeepSpeed configuration.
+                            Import that file here or use the wizard below to generate a tailored JSON block.
+                        </div>
+                    </div>
+
+                    <div x-show="mode === 'inline'" x-transition>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">ZeRO Stage</label>
+                                <select class="form-select"
+                                        x-model="stage"
+                                        @change="recompute()">
+                                    <option value="stage1">Stage 1 &mdash; shard optimizer states</option>
+                                    <option value="stage2">Stage 2 &mdash; shard gradients</option>
+                                    <option value="stage3">Stage 3 &mdash; shard parameters</option>
+                                </select>
+                                <div class="form-text">
+                                    Higher stages reduce memory at the cost of more CPU/NVMe traffic.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Mixed Precision</label>
+                                <select class="form-select"
+                                        x-model="precision"
+                                        @change="recompute()">
+                                    <option value="bf16">BF16 (recommended)</option>
+                                    <option value="fp16">FP16 (not recommended, potential stability issues)</option>
+                                    <option value="none">Leave unmanaged</option>
+                                </select>
+                                <div class="form-text">
+                                    Sets the mixed precision mode. BF16 offers better stability and is recommended for most modern hardware.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Gradient Accumulation Steps</label>
+                                <input type="number"
+                                       min="1"
+                                       step="1"
+                                       class="form-control"
+                                       x-model.number="gradientAccumulationSteps"
+                                       @input="recompute()">
+                                <div class="form-text">
+                                    Matches SimpleTuner&rsquo;s <code>--gradient_accumulation_steps</code>.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Gradient Clipping</label>
+                                <input type="number"
+                                       min="0"
+                                       step="0.1"
+                                       class="form-control"
+                                       x-model="gradientClipping"
+                                       @input="recompute()"
+                                       placeholder="e.g. 1.0">
+                                <div class="form-text">
+                                    Leave blank to omit the <code>gradient_clipping</code> entry.
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr>
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Parameter Offload Target</label>
+                                <select class="form-select"
+                                        x-model="offloadParam"
+                                        @change="recompute()">
+                                    <option value="none">None (stay on GPU)</option>
+                                    <option value="cpu">CPU (pinned)</option>
+                                    <option value="nvme">NVMe</option>
+                                </select>
+                                <div class="form-text">
+                                    Controls <code>zero_optimization.offload_param.device</code>.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Optimizer Offload Target</label>
+                                <select class="form-select"
+                                        x-model="offloadOptimizer"
+                                        @change="recompute()">
+                                    <option value="none">None</option>
+                                    <option value="cpu">CPU</option>
+                                    <option value="nvme">NVMe</option>
+                                </select>
+                                <div class="form-text">
+                                    Controls <code>zero_optimization.offload_optimizer.device</code>.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3" x-show="offloadParam === 'nvme' || offloadOptimizer === 'nvme'">
+                            <label class="form-label">Shared NVMe Path</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="offloadPath"
+                                   @input="recompute()"
+                                   placeholder="/mnt/nvme/simpletuner-offload">
+                            <div class="form-text">
+                                Used for both parameter and optimizer NVMe offload. Leave blank to require a valid path before training.
+                            </div>
+                        </div>
+
+                        <template x-if="stage === 'stage3'">
+                            <div class="mt-4">
+                                <h6 class="mb-2">Stage 3 Options</h6>
+                                <div class="form-check">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-zero3-init"
+                                           x-model="zero3Init"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-zero3-init">
+                                        Enable <code>zero.Init</code> for massive model construction
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-zero3-save16"
+                                           x-model="zero3Save16"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-zero3-save16">
+                                        Save 16-bit weights alongside sharded checkpoints
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-zero3-gather16"
+                                           x-model="zero3Gather16"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-zero3-gather16">
+                                        Gather 16-bit weights on model save
+                                    </label>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div class="mt-4">
+                            <details>
+                                <summary class="fw-semibold">ZeRO++ / Advanced Optimisations</summary>
+                                <div class="mt-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="ds-zero-quant-weights"
+                                               x-model="zeroQuantizedWeights"
+                                               @change="recompute()">
+                                        <label class="form-check-label" for="ds-zero-quant-weights">
+                                            Enable <code>zero_quantized_weights</code>
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="ds-zero-quant-grads"
+                                               x-model="zeroQuantizedGradients"
+                                               @change="recompute()">
+                                        <label class="form-check-label" for="ds-zero-quant-grads">
+                                            Enable <code>zero_quantized_gradients</code>
+                                        </label>
+                                    </div>
+                                    <div class="mt-2" x-show="zeroQuantizedWeights">
+                                        <label class="form-label">Hierarchical Partition Size</label>
+                                        <input type="number"
+                                               min="1"
+                                               step="1"
+                                               class="form-control"
+                                               x-model.number="zeroHpzPartitionSize"
+                                               @input="recompute()">
+                                        <div class="form-text">
+                                            Typically matches the number of GPUs per node.
+                                        </div>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+
+                        <div class="mt-4">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <h6 class="mb-0">Optimizer</h6>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-include-optimizer"
+                                           x-model="includeOptimizer"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-include-optimizer">Include optimizer block</label>
+                                </div>
+                            </div>
+                            <div class="form-text">Control the <code>optimizer</code> section emitted in the DeepSpeed JSON.</div>
+                            <div class="row g-3 mt-1" x-show="includeOptimizer">
+                                <div class="col-md-6">
+                                    <label class="form-label">Optimizer Type</label>
+                                    <select class="form-select" x-model="optimizerType" @change="recompute()">
+                                        <option value="auto">Auto (AdamW default)</option>
+                                        <option value="AdamW">AdamW</option>
+                                        <option value="Adam">Adam</option>
+                                        <option value="Adagrad">Adagrad</option>
+                                        <option value="Lamb">Lamb</option>
+                                        <option value="OneBitAdam">OneBitAdam</option>
+                                        <option value="ZeroOneAdam">ZeroOneAdam</option>
+                                        <option value="OneBitLamb">OneBitLamb</option>
+                                        <option value="MuAdam">MuAdam</option>
+                                        <option value="MuAdamW">MuAdamW</option>
+                                        <option value="MuSGD">MuSGD</option>
+                                        <option value="Lion">Lion</option>
+                                        <option value="Muon">Muon</option>
+                                        <option value="custom">Custom…</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6" x-show="optimizerType === 'custom'">
+                                    <label class="form-label">Custom Optimizer Name</label>
+                                    <input type="text" class="form-control" x-model="optimizerCustomType" @input="recompute()" placeholder="AdamW">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Learning Rate</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerLr" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Beta 1</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerBeta1" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Beta 2</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerBeta2" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Epsilon</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerEps" @input="recompute()">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Weight Decay</label>
+                                    <input type="number" step="any" class="form-control" x-model="optimizerWeightDecay" @input="recompute()">
+                                </div>
+                                <div class="col-md-3 d-flex align-items-center">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="ds-optimizer-torch" x-model="optimizerTorchAdam" @change="recompute()">
+                                        <label class="form-check-label" for="ds-optimizer-torch">Use Torch Adam kernel</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-3 d-flex align-items-center">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="ds-optimizer-adamw" x-model="optimizerAdamWMode" @change="recompute()">
+                                        <label class="form-check-label" for="ds-optimizer-adamw">AdamW mode</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <h6 class="mb-0">Scheduler</h6>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-include-scheduler"
+                                           x-model="includeScheduler"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-include-scheduler">Include scheduler block</label>
+                                </div>
+                            </div>
+                            <div class="form-text">Configure the DeepSpeed learning rate scheduler or disable it entirely.</div>
+                            <div class="row g-3 mt-1" x-show="includeScheduler">
+                                <div class="col-md-6">
+                                    <label class="form-label">Scheduler Type</label>
+                                    <select class="form-select" x-model="schedulerType" @change="recompute()">
+                                        <option value="WarmupLR">WarmupLR</option>
+                                        <option value="OneCycle">OneCycle</option>
+                                        <option value="Polynomial">Polynomial</option>
+                                        <option value="Constant">Constant</option>
+                                        <option value="custom">Custom…</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6" x-show="schedulerType === 'custom'">
+                                    <label class="form-label">Custom Scheduler Name</label>
+                                    <input type="text" class="form-control" x-model="schedulerCustomType" @input="recompute()" placeholder="WarmupLR">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Warmup Min LR</label>
+                                    <input type="number" step="any" class="form-control" x-model="schedulerWarmupMinLr" @input="recompute()">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Warmup Max LR</label>
+                                    <input type="number" step="any" class="form-control" x-model="schedulerWarmupMaxLr" @input="recompute()">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Warmup Steps</label>
+                                    <input type="number" step="1" min="0" class="form-control" x-model="schedulerWarmupNumSteps" @input="recompute()">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="mode === 'configFile'" x-transition>
+                        <div class="mb-3">
+                            <label class="form-label">DeepSpeed Config File Path</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="configFilePath"
+                                   @input="recompute()"
+                                   placeholder="~/accelerate/zero_stage2_config.json">
+                            <div class="form-text">
+                                The builder stores a JSON object containing <code>deepspeed_config_file</code>, matching Accelerate&rsquo;s recommended layout.
+                            </div>
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-config-zero3-init"
+                                           x-model="zero3Init"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-config-zero3-init">
+                                        Include <code>zero3_init_flag</code>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           id="ds-config-zero3-save"
+                                           x-model="zero3Save16"
+                                           @change="recompute()">
+                                    <label class="form-check-label" for="ds-config-zero3-save">
+                                        Include <code>zero3_save_16bit_model</code>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-warning small mt-3" role="alert">
+                            Specify the full path to a JSON file containing the DeepSpeed configuration.
+                            The SimpleTuner trainer will not validate the file contents &mdash; ensure the file is present on every machine.
+                        </div>
+                    </div>
+
+                    <template x-if="mode === 'inline' && isCustom">
+                        <div class="alert alert-warning mt-3" role="alert">
+                            <div class="fw-semibold mb-1">Custom JSON detected</div>
+                            <p class="mb-2">
+                                The existing configuration contains keys this builder does not recognise.
+                                You can edit the raw JSON below, or reset to builder defaults.
+                            </p>
+                            <textarea class="form-control"
+                                      rows="6"
+                                      x-text="customContent"
+                                      @input="handleCustomInput($event)"></textarea>
+                            <div class="d-flex justify-content-end gap-2 mt-2">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" @click="resetToBuilderDefaults()">
+                                    Reset to defaults
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div class="mt-4">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">Preview</label>
+                            <div class="d-flex gap-2">
+                                <button type="button"
+                                        class="btn btn-outline-secondary btn-sm"
+                                        @click="copyPreview()"
+                                        :disabled="!(builtOutput || customContent)">
+                                    Copy JSON
+                                </button>
+                            </div>
+                        </div>
+                        <pre class="preview-panel" x-text="builtOutput || customContent || 'No configuration generated yet.'"></pre>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="close()">Cancel</button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            :disabled="!canApply()"
+                            @click="apply()">
+                        Apply to Configuration
+                    </button>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>

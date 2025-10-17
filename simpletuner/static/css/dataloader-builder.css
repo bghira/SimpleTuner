@@ -1,0 +1,1249 @@
+/* Dataloader Builder Styles - Dark Theme Compatible */
+
+/* Scoped styles for dataset builder */
+#dataloaderSection {
+    /* Reset Bootstrap interference */
+    --bs-gutter-x: 0;
+    --bs-gutter-y: 0;
+}
+
+/* Override Bootstrap row/col within dataset builder */
+#dataloaderSection .row {
+    display: flex;
+    flex-wrap: wrap;
+    margin-right: calc(var(--spacing-lg) * -0.5);
+    margin-left: calc(var(--spacing-lg) * -0.5);
+}
+
+#dataloaderSection .row > * {
+    flex-shrink: 0;
+    width: 100%;
+    max-width: 100%;
+    padding-right: calc(var(--spacing-lg) * 0.5);
+    padding-left: calc(var(--spacing-lg) * 0.5);
+    margin-top: 0;
+}
+
+#dataloaderSection .col-md-3 {
+    flex: 0 0 auto;
+    width: 25%;
+}
+
+#dataloaderSection .col-md-4 {
+    flex: 0 0 auto;
+    width: 33.33333333%;
+}
+
+#dataloaderSection .col-md-6 {
+    flex: 0 0 auto;
+    width: 50%;
+}
+
+#dataloaderSection .col-md-12 {
+    flex: 0 0 auto;
+    width: 100%;
+}
+
+#dataloaderSection .mb-0 {
+    margin-bottom: 0 !important;
+}
+
+#dataloaderSection .mb-2 {
+    margin-bottom: var(--spacing-sm) !important;
+}
+
+#dataloaderSection .mb-3 {
+    margin-bottom: var(--spacing-md) !important;
+}
+
+#dataloaderSection .mb-4 {
+    margin-bottom: var(--spacing-lg) !important;
+}
+
+#dataloaderSection .mt-2 {
+    margin-top: var(--spacing-sm) !important;
+}
+
+#dataloaderSection .mt-3 {
+    margin-top: var(--spacing-md) !important;
+}
+
+#dataloaderSection .mt-4 {
+    margin-top: var(--spacing-lg) !important;
+}
+
+/* Alignment fixes */
+#dataloaderSection .align-items-center {
+    align-items: center !important;
+}
+
+#dataloaderSection .align-items-end {
+    align-items: flex-end !important;
+}
+
+#dataloaderSection .d-flex {
+    display: flex !important;
+}
+
+#dataloaderSection .flex-wrap {
+    flex-wrap: wrap !important;
+}
+
+#dataloaderSection .justify-content-between {
+    justify-content: space-between !important;
+}
+
+#dataloaderSection .justify-content-end {
+    justify-content: flex-end !important;
+}
+
+#dataloaderSection .gap-2 {
+    gap: var(--spacing-sm) !important;
+}
+
+#dataloaderSection .g-3 > * {
+    padding-right: calc(var(--spacing-md) * 0.5);
+    padding-left: calc(var(--spacing-md) * 0.5);
+}
+
+#dataloaderSection .g-3 > .row {
+    margin-top: calc(var(--spacing-md) * -1);
+}
+
+/* Mode Switcher */
+.mode-switcher {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.mode-switcher .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: var(--card-bg-hover);
+    color: var(--text-secondary);
+    transition: all 0.3s ease;
+    font-size: 0.875rem;
+}
+
+.mode-switcher .btn:hover {
+    background: var(--card-bg-elevated);
+    border-color: var(--border-soft);
+}
+
+.mode-switcher .btn.active {
+    background: var(--primary-gradient);
+    color: var(--text-primary);
+    border-color: transparent;
+}
+
+/* Dataset List */
+.dataset-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg-xl);
+    margin-bottom: var(--spacing-xl);
+}
+
+/* Ensure dataset cards don't touch container edges */
+#dataloaderSection .dataset-list > * {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+/* Dataset Item */
+.dataset-item,
+.dataset-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: var(--layout-border-width) solid var(--glass-border);
+    border-radius: var(--radius-xl);
+    transition: all 0.3s ease;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    margin-bottom: var(--spacing-lg-xl);
+}
+
+.dataset-item:hover,
+.dataset-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 15px 50px rgba(102, 126, 234, 0.15);
+}
+
+.dataset-item.collapsed .dataset-content {
+    display: none;
+}
+
+/* Dataset Header */
+.dataset-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-lg-xl) var(--spacing-xl);
+    border-bottom: var(--layout-border-width) solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* Ensure proper padding for dataset card main header */
+.dataset-card > .d-flex:first-child,
+#dataloaderSection .dataset-card > div:first-child {
+    padding: var(--spacing-lg-xl) var(--spacing-xl) !important;
+    margin: 0;
+}
+
+/* Dataset card title styling */
+#dataloaderSection .dataset-card h6 {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm-md);
+    margin-bottom: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.dataset-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+}
+
+.dataset-icon {
+    color: var(--text-secondary);
+    font-size: 1.25rem;
+}
+
+.dataset-id-input {
+    border: none;
+    background: transparent;
+    font-weight: 600;
+    font-size: 1.1rem;
+    flex: 1;
+    max-width: 300px;
+    color: var(--text-primary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+}
+
+.dataset-id-input:focus {
+    outline: none;
+    background: var(--card-bg-hover);
+}
+
+.dataset-type-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.dataset-type-badge.type-image {
+    background: var(--dataset-type-image-bg);
+    color: var(--dataset-type-image-text);
+}
+
+.dataset-type-badge.type-video {
+    background: var(--dataset-type-video-bg);
+    color: var(--dataset-type-video-text);
+}
+
+.dataset-type-badge.type-text_embeds {
+    background: var(--dataset-type-text-embeds-bg);
+    color: var(--dataset-type-text-embeds-text);
+}
+
+.dataset-type-badge.type-image_embeds {
+    background: var(--dataset-type-image-embeds-bg);
+    color: var(--dataset-type-image-embeds-text);
+}
+
+.dataset-type-badge.type-conditioning {
+    background: var(--dataset-type-conditioning-bg);
+    color: var(--dataset-type-conditioning-text);
+}
+
+/* Dataset Actions */
+.dataset-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* Ensure button groups in dataset cards have proper spacing */
+#dataloaderSection .dataset-card .btn-group {
+    margin-right: var(--spacing-sm);
+}
+
+.btn-icon {
+    padding: 0.5rem;
+    border: none;
+    background: var(--card-bg-hover);
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s;
+}
+
+.btn-icon:hover {
+    background: var(--card-bg-elevated);
+    color: var(--text-primary);
+}
+
+.btn-icon.btn-remove:hover {
+    background: var(--error-bg);
+    color: var(--error-text);
+}
+
+/* Dataset Content */
+.dataset-content {
+    padding: 0;
+}
+
+/* Dataset Section Layout */
+.dataset-section {
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.dataset-section:last-child {
+    border-bottom: none;
+}
+
+.dataset-section-header {
+    padding: var(--spacing-lg) var(--spacing-lg-xl);
+    background: var(--card-bg);
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.dataset-section-body {
+    padding: var(--spacing-lg-xl);
+}
+
+/* Advanced section styling */
+.dataset-section-advanced .dataset-section-header {
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.dataset-section-advanced .dataset-section-header:hover {
+    background: var(--card-bg-hover);
+}
+
+.dataset-section-advanced:not(.is-open) .dataset-section-body {
+    display: none;
+}
+
+/* Config Sections */
+.config-section {
+    margin-bottom: 0;
+}
+
+.config-section:last-child {
+    margin-bottom: 0;
+}
+
+.section-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.subsection {
+    margin-bottom: var(--spacing-lg);
+    padding-left: 0;
+}
+
+.subsection-title {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 0.75rem;
+}
+
+.dataset-subgroup {
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: var(--radius-md-lg);
+    padding: var(--spacing-lg);
+    margin-top: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.dataset-subgroup-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-sm);
+}
+
+.dataset-subgroup .form-text:last-child {
+    margin-bottom: 0;
+}
+
+.dataset-connection-btn {
+    min-width: 2.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Form Grid */
+.config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: var(--spacing-lg);
+}
+
+/* Form Controls - Dark Theme */
+.form-group {
+    margin-bottom: 0;
+}
+
+.form-group label,
+.form-label {
+    display: block;
+    font-size: var(--typography-font-size-sm);
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.dataset-item .form-control,
+.dataset-item .form-select,
+.dataset-card .form-control,
+.dataset-card .form-select,
+.form-control-sm,
+.form-select-sm {
+    width: 100%;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.03);
+    background-clip: padding-box;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-sm-md);
+    transition: all 0.2s ease;
+}
+
+.dataset-item .form-control:focus,
+.dataset-item .form-select:focus,
+.dataset-card .form-control:focus,
+.dataset-card .form-select:focus,
+.form-control-sm:focus,
+.form-select-sm:focus {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: var(--accent-purple);
+    outline: 0;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.dataset-item .form-control:disabled {
+    background-color: rgba(255, 255, 255, 0.02);
+    opacity: 0.5;
+}
+
+/* Checkbox Styling */
+.dataset-item input[type="checkbox"] {
+    margin-right: 0.5rem;
+    cursor: pointer;
+}
+
+/* Textarea */
+.dataset-item textarea.form-control {
+    resize: vertical;
+    min-height: 80px;
+}
+
+/* Conditional Display */
+.crop-dependent {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.dataset-item[data-crop="true"] .crop-dependent {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Conditioning Items */
+.conditioning-list {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.conditioning-item {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.conditioning-header {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.conditioning-type {
+    flex: 1;
+}
+
+.conditioning-params {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.75rem;
+}
+
+/* Presets */
+.preset-container {
+    margin-bottom: var(--spacing-2xl);
+}
+
+.preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.preset-btn {
+    padding: var(--spacing-md) var(--spacing-lg);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md-lg);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    color: var(--text-primary);
+}
+
+.preset-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(102, 126, 234, 0.5);
+    transform: translateY(-2px);
+}
+
+.preset-btn .preset-name {
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.preset-btn .preset-description {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+/* JSON Editor */
+.json-editor-container {
+    position: relative;
+}
+
+#dataloaderSection .json-editor {
+    font-family: 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    tab-size: 4;
+    background: rgba(0, 0, 0, 0.4);
+    color: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#dataloaderSection .json-editor:focus {
+    background: rgba(0, 0, 0, 0.6);
+    border-color: rgba(102, 126, 234, 0.5);
+}
+
+.json-actions {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    display: flex;
+    gap: 0.5rem;
+    z-index: 10;
+}
+
+.json-actions .btn {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.75rem;
+}
+
+/* Add Dataset Button */
+.add-dataset-container {
+    margin-top: var(--spacing-xl);
+    margin-bottom: var(--spacing-xl);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+}
+
+.add-dataset-btn {
+    padding: var(--spacing-md) var(--spacing-lg);
+    border: 2px dashed rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: var(--radius-md-lg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.add-dataset-btn:hover {
+    border-color: rgba(102, 126, 234, 0.5);
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(102, 126, 234, 0.1);
+}
+
+/* Button styling for dark theme */
+.add-conditioning-btn {
+    padding: 0.5rem 1rem;
+    background: rgba(102, 126, 234, 0.2);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    color: #a5b4fc;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: all 0.3s ease;
+}
+
+.add-conditioning-btn:hover {
+    background: rgba(102, 126, 234, 0.3);
+    border-color: rgba(102, 126, 234, 0.5);
+}
+
+/* Scrollbar for dark theme */
+.dataset-list::-webkit-scrollbar,
+.json-editor::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.dataset-list::-webkit-scrollbar-track,
+.json-editor::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.dataset-list::-webkit-scrollbar-thumb,
+.json-editor::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+
+.dataset-list::-webkit-scrollbar-thumb:hover,
+.json-editor::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Form row spacing fixes */
+.row {
+    margin-left: calc(var(--spacing-lg) * -0.5);
+    margin-right: calc(var(--spacing-lg) * -0.5);
+}
+
+.row > * {
+    padding-left: calc(var(--spacing-lg) * 0.5);
+    padding-right: calc(var(--spacing-lg) * 0.5);
+}
+
+/* Column spacing */
+.col-md-3,
+.col-md-4,
+.col-md-6,
+.col-md-12 {
+    margin-bottom: var(--spacing-lg);
+}
+
+/* Fix vertical alignment in rows */
+#dataloaderSection .dataset-section-body .row {
+    align-items: start;
+}
+
+/* Remove bottom margin from last row in each section */
+#dataloaderSection .dataset-section-body > .row:last-child > [class*="col-"] {
+    margin-bottom: 0;
+}
+
+/* Ensure form groups fill their container */
+#dataloaderSection .row > [class*="col-"] > label:first-child {
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Fix alignment when mixing different field types */
+#dataloaderSection .row .form-check {
+    min-height: calc(1.5rem + var(--spacing-sm) * 2 + 1px);
+    margin-bottom: 0;
+}
+
+/* Ensure consistent field heights */
+#dataloaderSection .form-control-sm,
+#dataloaderSection .form-select-sm {
+    min-height: calc(1.5rem + var(--spacing-sm) * 2 + 2px);
+}
+
+/* Legacy form check alignment - preserved for other sections */
+.form-check:not(.checkbox-item .form-check) {
+    display: block;
+    min-height: var(--spacing-xl);
+    padding-left: 0;
+}
+
+/* Legacy checkbox styling - preserved for other sections */
+.form-check:not(.checkbox-item .form-check) .form-check-input {
+    float: left;
+    margin-right: var(--spacing-sm);
+}
+
+.form-check:not(.checkbox-item .form-check) .form-check-label {
+    display: block;
+    margin-left: calc(1.125rem + var(--spacing-sm));
+}
+
+.form-check:not(.checkbox-item .form-check) .form-text {
+    margin-left: calc(1.125rem + var(--spacing-sm));
+    margin-top: var(--spacing-xs);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+
+/* Standardized checkbox group component */
+.checkbox-group-row {
+    margin-top: var(--spacing-xl);
+    padding-top: var(--spacing-xl);
+    border-top: 1px solid var(--glass-border);
+}
+
+.checkbox-group-row .row {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+/* Checkbox item container */
+.checkbox-item {
+    display: flex;
+    align-items: flex-start;
+    padding: var(--spacing-lg);
+    margin: 0;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+    transition: all 0.2s ease;
+    height: 100%;
+    min-height: 110px;
+    width: 100%;
+}
+
+/* Remove bottom margin from last items */
+.checkbox-group-row .checkbox-item,
+.dataset-subgroup .checkbox-item {
+    margin-bottom: 0;
+}
+
+.checkbox-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.checkbox-item .form-check {
+    display: flex;
+    align-items: flex-start;
+    margin: 0;
+    padding: 0;
+    min-height: auto;
+    width: 100%;
+}
+
+.checkbox-item .form-check-input {
+    flex-shrink: 0;
+    width: 1.125rem;
+    height: 1.125rem;
+    margin: 0;
+    margin-right: var(--spacing-md);
+    margin-top: 0.125rem; /* Slight offset to align with text */
+    float: none;
+    position: static;
+}
+
+.checkbox-item .checkbox-content {
+    flex: 1;
+}
+
+.checkbox-item .form-check-label {
+    display: block;
+    margin: 0;
+    font-weight: 500;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    margin-bottom: var(--spacing-xs);
+    cursor: pointer;
+    user-select: none;
+}
+
+.checkbox-item .form-text {
+    margin: 0;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+}
+
+/* Adjust text for longer content in regularisation checkbox */
+.checkbox-group-row .col-md-4:last-child .form-text {
+    font-size: 0.7rem;
+    line-height: 1.35;
+}
+
+/* Ensure consistent sizing for checkbox columns */
+.checkbox-group-row .col-md-4,
+.checkbox-group-row .col-md-3 {
+    padding: 0 var(--spacing-sm);
+    display: flex;
+    flex-direction: column;
+}
+
+/* Force equal height rows */
+.checkbox-group-row .row,
+.dataset-subgroup .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    row-gap: var(--spacing-md);
+}
+
+/* Ensure columns use flex for proper stretching */
+.checkbox-group-row .col-md-4,
+.checkbox-group-row .col-md-3,
+.dataset-subgroup .col-md-3,
+.dataset-subgroup .col-md-4 {
+    display: flex;
+    padding: 0 var(--spacing-sm);
+}
+
+/* Empty state for hidden checkboxes */
+.checkbox-group-row .col-md-4[style*="display: none"],
+.checkbox-group-row .col-md-3[style*="display: none"] {
+    display: none !important;
+}
+
+/* Remove old checkbox styling */
+#dataloaderSection .form-check.mt-4 {
+    margin-top: 0 !important;
+}
+
+
+/* Ensure consistent spacing for checkbox columns */
+#dataloaderSection .dataset-section-body > .row > .col-md-4 {
+    margin-bottom: 0;
+}
+
+/* Inline form checks in dataset headers */
+#dataloaderSection .form-check-inline {
+    margin-right: var(--spacing-lg);
+    margin-bottom: 0;
+}
+
+.form-check-input {
+    width: 1.125rem;
+    height: 1.125rem;
+    margin: 0;
+    margin-right: var(--spacing-sm);
+    float: none;
+    position: relative;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    cursor: pointer;
+}
+
+.form-check-input:checked {
+    background: var(--accent-purple);
+    border-color: var(--accent-purple);
+}
+
+.form-check-label {
+    margin-bottom: 0;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: var(--text-primary);
+}
+
+/* Button group alignment */
+.btn-group {
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+.btn-group .btn {
+    border-radius: 0;
+    margin: 0;
+}
+
+.btn-group .btn:first-child {
+    border-top-left-radius: var(--radius-sm-md);
+    border-bottom-left-radius: var(--radius-sm-md);
+}
+
+.btn-group .btn:last-child {
+    border-top-right-radius: var(--radius-sm-md);
+    border-bottom-right-radius: var(--radius-sm-md);
+}
+
+/* Alert styling */
+.alert {
+    padding: var(--spacing-md) var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+    border-radius: var(--radius-md);
+}
+
+.alert-secondary {
+    background: rgba(148, 163, 184, 0.1);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    color: var(--text-secondary);
+}
+
+.alert-warning {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    color: var(--warning-text);
+}
+
+/* Conditioning generator card */
+.conditioning-generator {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.conditioning-generator .card-body {
+    padding: var(--spacing-lg);
+}
+
+/* Input group styling */
+.input-group {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    width: 100%;
+}
+
+.input-group-sm > .form-control,
+.input-group-sm > .btn {
+    padding: var(--spacing-xs-sm) var(--spacing-sm-md);
+    font-size: 0.875rem;
+}
+
+/* Text formatting */
+.form-text {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    margin-top: var(--spacing-xs);
+}
+
+.text-danger {
+    color: var(--error-text) !important;
+}
+
+.text-warning {
+    color: var(--warning-text) !important;
+}
+
+.text-muted {
+    color: var(--text-muted) !important;
+}
+
+/* Badge styling */
+.badge {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: var(--radius-full);
+}
+
+.bg-secondary {
+    background: rgba(148, 163, 184, 0.2) !important;
+    color: var(--text-secondary) !important;
+}
+
+/* Dataset builder specific button styling */
+#dataloaderSection .btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    border-radius: var(--radius-sm-md);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+#dataloaderSection .btn-sm {
+    padding: var(--spacing-xs-sm) var(--spacing-sm-md);
+    font-size: 0.8125rem;
+}
+
+#dataloaderSection .btn-primary {
+    background: var(--primary-gradient);
+    color: white;
+    border: none;
+}
+
+#dataloaderSection .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
+}
+
+#dataloaderSection .btn-secondary {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-secondary);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+#dataloaderSection .btn-secondary:hover {
+    background: rgba(148, 163, 184, 0.2);
+    border-color: rgba(148, 163, 184, 0.5);
+}
+
+#dataloaderSection .btn-warning {
+    background: rgba(245, 158, 11, 0.2);
+    color: var(--warning-text);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+#dataloaderSection .btn-success {
+    background: rgba(34, 197, 94, 0.2);
+    color: var(--success-text);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+#dataloaderSection .btn-outline-primary {
+    background: transparent;
+    color: var(--accent-blue);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+}
+
+#dataloaderSection .btn-outline-primary:hover {
+    background: rgba(102, 126, 234, 0.1);
+    border-color: rgba(102, 126, 234, 0.5);
+}
+
+#dataloaderSection .btn-outline-secondary {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+#dataloaderSection .btn-outline-secondary:hover {
+    background: rgba(148, 163, 184, 0.1);
+    border-color: rgba(148, 163, 184, 0.5);
+}
+
+#dataloaderSection .btn-outline-danger {
+    background: transparent;
+    color: var(--error-text);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+#dataloaderSection .btn-outline-danger:hover {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+#dataloaderSection .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Small screen adjustments for dataset builder */
+@media (max-width: 768px) {
+    #dataloaderSection .col-md-3,
+    #dataloaderSection .col-md-4,
+    #dataloaderSection .col-md-6,
+    #dataloaderSection .col-md-12 {
+        width: 100%;
+    }
+
+    #dataloaderSection .row {
+        margin-right: calc(var(--spacing-sm) * -0.5);
+        margin-left: calc(var(--spacing-sm) * -0.5);
+    }
+
+    #dataloaderSection .row > * {
+        padding-right: calc(var(--spacing-sm) * 0.5);
+        padding-left: calc(var(--spacing-sm) * 0.5);
+    }
+}
+
+/* Danger mode styling */
+#dataloaderSection .danger-mode-locked {
+    opacity: 0.6;
+    position: relative;
+}
+
+#dataloaderSection .danger-mode-hint {
+    font-size: 0.75rem;
+    margin-top: var(--spacing-xs);
+}
+
+/* Discovery overrides specific spacing */
+#dataloaderSection .dataset-subgroup-title:contains("Discovery Overrides") {
+    margin-bottom: var(--spacing-xl);
+}
+
+/* Ensure checkbox sections have proper spacing */
+#dataloaderSection .dataset-subgroup .row .form-check:first-child {
+    margin-top: var(--spacing-sm);
+}
+
+/* Video settings section */
+#dataloaderSection .video-settings.dataset-section {
+    margin-top: 0;
+    padding-top: 0;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+#dataloaderSection .video-settings .dataset-section-body .form-text {
+    margin-bottom: 0;
+}
+
+/* Fix video settings and sizing section field alignment */
+#dataloaderSection .dataset-subgroup .form-text,
+#dataloaderSection .video-settings .form-text {
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    margin-top: var(--spacing-xs);
+    color: var(--text-muted);
+}
+
+/* Ensure all input fields in sizing/video sections have consistent spacing */
+#dataloaderSection .dataset-subgroup .row > [class*="col-"]:not(:last-child) {
+    margin-bottom: 0;
+}
+
+#dataloaderSection .dataset-subgroup input[type="number"],
+#dataloaderSection .dataset-subgroup select {
+    width: 100%;
+}
+
+/* Fix the specific alignment issue in video settings */
+#dataloaderSection .video-settings .form-check {
+    padding-top: calc(var(--spacing-lg) + var(--spacing-xs));
+}
+
+/* Ensure labels have consistent spacing */
+#dataloaderSection .dataset-section-body .form-label {
+    margin-bottom: var(--spacing-sm);
+    font-weight: 500;
+}
+
+/* Grid layout improvements for better alignment */
+#dataloaderSection .dataset-section-body .row.g-3 {
+    row-gap: var(--spacing-lg);
+}
+
+#dataloaderSection .dataset-section-body .mt-2.row {
+    margin-top: var(--spacing-lg) !important;
+}
+
+#dataloaderSection .dataset-section-body .mt-3.row {
+    margin-top: var(--spacing-lg) !important;
+}
+
+/* Compact form-text for better alignment in grid layouts */
+#dataloaderSection .dataset-subgroup .col-md-3 .form-text {
+    font-size: 0.75rem;
+    line-height: 1.3;
+}
+
+/* Fix specific sizing section alignment */
+#dataloaderSection .dataset-subgroup input[placeholder*="disabled"] {
+    color: var(--text-muted);
+}
+
+/* Ensure form-text in video/sizing sections doesn't push layout */
+#dataloaderSection .video-settings .col-md-3,
+#dataloaderSection .dataset-subgroup .col-md-4 {
+    display: flex;
+    flex-direction: column;
+}
+
+#dataloaderSection .video-settings .col-md-3 > *:last-child,
+#dataloaderSection .dataset-subgroup .col-md-4 > *:last-child {
+    margin-top: auto;
+}
+
+/* Conditioning section */
+#dataloaderSection .conditioning-section.dataset-section {
+    margin-top: 0;
+    padding-top: 0;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+#dataloaderSection .conditioning-section.dataset-section > .mb-3 {
+    padding: var(--spacing-lg-xl);
+    margin-bottom: 0 !important;
+}
+
+/* Advanced options toggle */
+#dataloaderSection .dataset-section-advanced .dataset-section-header .btn {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: 0.8125rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .config-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .dataset-header {
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .dataset-title {
+        width: 100%;
+    }
+
+    .dataset-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .preset-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .add-dataset-container {
+        flex-direction: column;
+    }
+
+    .add-dataset-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}

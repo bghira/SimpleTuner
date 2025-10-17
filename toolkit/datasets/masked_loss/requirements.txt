@@ -1,8 +1,0 @@
-tqdm
-einops
-timm
-transformers
-samv2
-supervision
-opencv-python
-pytest

@@ -1,0 +1,28 @@
+{
+  "_metadata": {
+    "created_at": "2025-09-21T22:51:56.009443+00:00",
+    "description": "Default training configuration",
+    "is_template": false,
+    "model_family": null,
+    "model_type": null,
+    "modified_at": "2025-09-21T22:51:56.009443+00:00",
+    "name": "default",
+    "parent_template": null,
+    "tags": []
+  },
+  "config": {
+    "--checkpointing_steps": 100,
+    "--gradient_checkpointing": true,
+    "--learning_rate": 0.0001,
+    "--max_train_steps": 1000,
+    "--mixed_precision": "bf16",
+    "--model_family": "flux",
+    "--model_type": "lora",
+    "--output_dir": "output/models",
+    "--pretrained_model_name_or_path": "black-forest-labs/FLUX.1-dev",
+    "--resolution": 1024,
+    "--seed": 42,
+    "--train_batch_size": 1,
+    "--use_ema": false
+  }
+}

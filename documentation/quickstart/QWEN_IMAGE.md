@@ -33,42 +33,21 @@ apt -y install python3.12 python3.12-venv
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image to enable compiling of CUDA extensions:
 
 ```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+apt -y install nvidia-cuda-toolkit
 ```
-
-If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-# if python --version shows 3.12 you can just also use the 'python' command here.
-python3.12 -m venv .venv
-
-source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
+pip install simpletuner[cuda]
 ```
 
-**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
-
-Depending on your system, you will run one of 3 commands:
-
-```bash
-# Linux
-poetry install
-```
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 ### Setting up the environment
 
@@ -83,7 +62,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
@@ -173,12 +152,24 @@ Your config.json will look something like this for a minimal setup:
 }
 ```
 
-> ℹ️ Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+> ℹ️ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 > ⚠️ **Critical for 24GB GPUs**: The text encoder alone uses ~16GB VRAM. With `int2-quanto` or `nf4-bnb` quantization, this can be reduced significantly.
 
 For a quick sanity check with a known working configuration:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner[cuda]
+simpletuner train example=qwen_image.peft-lora
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train env=examples/qwen_image.peft-lora
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ENV=examples/qwen_image.peft-lora ./train.sh
 ```
@@ -351,7 +342,7 @@ From the SimpleTuner directory, one simply has to run:
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ### Memory optimization tips
 

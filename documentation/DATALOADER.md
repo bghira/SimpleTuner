@@ -71,7 +71,7 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `type`
 
-- **Values:** `aws` | `local` | `csv`
+- **Values:** `aws` | `local` | `csv` | `huggingface`
 - **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
 
 ### `conditioning_type`
@@ -388,7 +388,7 @@ A complete example list can be found [here](/config/caption_filter_list.txt.exam
 This is a shortened example, which will be explained below:
 
 ```
-arafed 
+arafed
 this .* has a
 ^this is the beginning of the string
 s/this/will be found and replaced/
@@ -556,7 +556,7 @@ When training a model with a very-large dataset numbering in the hundreds of tho
 
 Using the parquet caption strategy allows you to name all of your files by their `id` value, and change their caption column via a config value rather than updating many text files, or having to rename the files to update their captions.
 
-Here is an example dataloader configuration that makes use of the captions and data in the [photo-concept-bucket](https://huggingface.co/datasets/ptx0/photo-concept-bucket) dataset:
+Here is an example dataloader configuration that makes use of the captions and data in the [photo-concept-bucket](https://huggingface.co/datasets/bghira/photo-concept-bucket) dataset:
 
 ```json
 {
@@ -608,7 +608,7 @@ In this configuration:
   - `fallback_caption_column` is an optional name of a column in the table that contains fallback captions. These are used if the primary caption field is empty. For this case, we are using the `tags` column.
   - `identifier_includes_extension` should be set to `true` when your filename column contains the image extension. Otherwise, the extension will be assumed as `.png`. It is recommended to include filename extensions in your table filename column.
 
-> ⚠️ Parquet support capability is limited to reading captions. You must separately populate a data source with your image samples using "{id}.png" as their filename. See scripts in the [toolkit/datasets](toolkit/datasets) directory for ideas.
+> ⚠️ Parquet support capability is limited to reading captions. You must separately populate a data source with your image samples using "{id}.png" as their filename. See scripts in the [scripts/toolkit/datasets](scripts/toolkit/datasets) directory for ideas.
 
 As with other dataloader configurations:
 

@@ -1,0 +1,937 @@
+/* Checkpoints Tab Styles - Dark Theme Compatible */
+
+/* Main container */
+.checkpoints-tab {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: var(--spacing-xl);
+}
+
+/* Grid layout for checkpoint cards */
+.checkpoint-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+/* Individual checkpoint card - inherit from unified theme */
+.checkpoint-card {
+    position: relative;
+    /* Background, border, border-radius, box-shadow now inherited from trainer-core.css */
+    padding: var(--spacing-lg);
+    transition: all 0.3s ease;
+    cursor: pointer;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.checkpoint-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: transparent;
+    transition: background 0.3s ease;
+}
+
+.checkpoint-card:hover::before {
+    background: var(--primary-gradient);
+}
+
+/* Selected state */
+.checkpoint-card.selected {
+    border-color: var(--accent-purple);
+    background: rgba(102, 126, 234, 0.08);
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2);
+}
+
+.checkpoint-card.selected::before {
+    background: var(--primary-gradient);
+}
+
+/* Checkpoint card header */
+.checkpoint-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-md);
+}
+
+.checkpoint-title {
+    font-size: var(--typography-font-size-base);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.checkpoint-title i {
+    font-size: 1rem;
+    color: var(--accent-purple);
+}
+
+/* Checkpoint status badges */
+.checkpoint-status {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-2xs) var(--spacing-sm);
+    border-radius: var(--radius-full);
+    font-size: var(--typography-font-size-xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all 0.2s ease;
+}
+
+/* Valid checkpoint status */
+.checkpoint-status.valid {
+    background: var(--success-bg);
+    color: var(--success-text);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.checkpoint-status.valid i {
+    color: var(--success);
+}
+
+/* Invalid checkpoint status */
+.checkpoint-status.invalid {
+    background: var(--error-bg);
+    color: var(--error-text);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.checkpoint-status.invalid i {
+    color: var(--error);
+}
+
+/* In-progress checkpoint status */
+.checkpoint-status.in-progress {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--info-text);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.checkpoint-status.in-progress i {
+    color: var(--info);
+    animation: spin 1s linear infinite;
+}
+
+/* Checkpoint card body */
+.checkpoint-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+/* Checkpoint card content wrapper */
+.checkpoint-card-content {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.checkpoint-preview-image {
+    margin: var(--spacing-sm) 0;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    position: relative;
+    /* Remove fixed min-height, let content determine height */
+}
+
+.checkpoint-preview-image img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.no-validation-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-lg);
+    text-align: center;
+    /* Use aspect-ratio to match common image ratios */
+    aspect-ratio: 1; /* Default to square, will be overridden by JS if needed */
+    width: 100%;
+}
+
+.no-validation-placeholder i {
+    font-size: 2.5rem;
+    opacity: 0.3;
+}
+
+.no-validation-placeholder span {
+    font-size: var(--typography-font-size-sm);
+    opacity: 0.5;
+}
+
+.checkpoint-tags {
+    margin-top: var(--spacing-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-tag-badge {
+    font-size: var(--typography-font-size-xs);
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.checkpoint-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: var(--typography-font-size-sm);
+}
+
+.checkpoint-info-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.checkpoint-info-value {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.checkpoint-path {
+    font-family: var(--typography-font-family-mono);
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    margin-top: auto;
+    word-break: break-all;
+}
+
+/* Checkpoint card footer */
+.checkpoint-card-footer {
+    margin-top: var(--spacing-md);
+    padding-top: var(--spacing-md);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-card-footer .btn {
+    flex: 1;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--typography-font-size-xs);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-card-footer .btn-load {
+    background: var(--primary-gradient);
+    color: white;
+}
+
+.checkpoint-card-footer .btn-load:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.checkpoint-card-footer .btn-delete {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--error-text);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.checkpoint-card-footer .btn-delete:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Cleanup preview panel */
+.cleanup-preview {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+.cleanup-preview-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.cleanup-preview-header i {
+    font-size: 1.25rem;
+    color: var(--warning);
+}
+
+.cleanup-preview-header h5 {
+    font-size: var(--typography-font-size-lg);
+    font-weight: 600;
+    color: var(--warning-text);
+    margin: 0;
+}
+
+.cleanup-preview-body {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-md);
+}
+
+.cleanup-preview-list {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.cleanup-preview-item {
+    font-family: var(--typography-font-family-mono);
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-muted);
+    padding: var(--spacing-xs) 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.cleanup-preview-item:last-child {
+    border-bottom: none;
+}
+
+.cleanup-preview-footer {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.cleanup-preview-footer .btn {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    font-size: var(--typography-font-size-sm);
+    font-weight: 500;
+    border-radius: var(--radius-sm-md);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.cleanup-preview-footer .btn-confirm {
+    background: var(--error-bg);
+    color: var(--error-text);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.cleanup-preview-footer .btn-confirm:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+}
+
+.cleanup-preview-footer .btn-cancel {
+    background: rgba(148, 163, 184, 0.1);
+    color: var(--text-secondary);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.cleanup-preview-footer .btn-cancel:hover {
+    background: rgba(148, 163, 184, 0.2);
+    border-color: rgba(148, 163, 184, 0.5);
+}
+
+/* Checkpoint controls */
+.checkpoint-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+}
+
+.checkpoint-controls-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-lg);
+}
+
+.checkpoint-count {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+}
+
+.checkpoint-count strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.checkpoint-controls-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.checkpoint-controls-actions .btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--typography-font-size-sm);
+    font-weight: 500;
+    border-radius: var(--radius-sm-md);
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.checkpoint-controls-actions .btn-refresh {
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--info-text);
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.checkpoint-controls-actions .btn-refresh:hover {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.5);
+}
+
+.checkpoint-controls-actions .btn-cleanup {
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning-text);
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.checkpoint-controls-actions .btn-cleanup:hover {
+    background: rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.5);
+}
+
+.checkpoint-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--spacing-md);
+}
+
+.checkpoint-gallery .gallery-item {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-sm);
+    padding: var(--spacing-sm);
+    text-align: center;
+}
+
+.checkpoint-gallery .gallery-item img {
+    width: 100%;
+    height: auto;
+    border-radius: var(--radius-xs);
+    margin-bottom: var(--spacing-xs);
+}
+
+.checkpoint-gallery .gallery-item figcaption {
+    font-size: var(--typography-font-size-xs);
+    color: var(--text-secondary);
+    word-break: break-word;
+}
+
+.gallery-caption-title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.gallery-caption-prompt {
+    margin-top: var(--spacing-xs);
+    color: var(--text-secondary);
+}
+
+.gallery-caption-negative {
+    margin-top: var(--spacing-xxs, 4px);
+    color: var(--error-text);
+}
+
+.readme-content {
+    font-size: var(--typography-font-size-sm);
+    line-height: 1.6;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.readme-content img {
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+    margin: var(--spacing-sm) 0;
+}
+
+.detail-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+/* Empty state */
+.checkpoint-empty {
+    text-align: center;
+    padding: var(--spacing-3xl) var(--spacing-xl);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-xl);
+}
+
+.checkpoint-empty i {
+    font-size: 3rem;
+    color: var(--text-muted);
+    margin-bottom: var(--spacing-lg);
+    opacity: 0.5;
+}
+
+.checkpoint-empty h5 {
+    font-size: var(--typography-font-size-xl);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.checkpoint-empty p {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Visibility Controls */
+.checkpoint-visibility-controls {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: var(--spacing-md);
+}
+
+.checkpoint-visibility-controls .form-check-inline {
+    margin-bottom: 0;
+}
+
+.checkpoint-visibility-controls .form-check-label {
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-secondary);
+    transition: color 0.2s ease;
+}
+
+.checkpoint-visibility-controls .form-check-input:checked ~ .form-check-label {
+    color: var(--text-primary);
+}
+
+/* Checkpoint metadata section */
+.checkpoint-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-sm);
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+}
+
+.meta-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.meta-item i {
+    font-size: 0.875rem;
+    opacity: 0.7;
+}
+
+/* Upload progress in meta section */
+.checkpoint-meta .progress {
+    background-color: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.checkpoint-meta .progress-bar {
+    font-size: 0.65rem;
+    font-weight: 600;
+    line-height: 14px;
+}
+
+.checkpoint-meta .upload-status {
+    font-size: 0.75rem;
+    opacity: 0.8;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .checkpoints-tab {
+        padding: var(--spacing-lg);
+    }
+
+    .checkpoint-grid {
+        grid-template-columns: 1fr;
+        gap: var(--spacing-md);
+    }
+
+    .checkpoint-controls {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .checkpoint-controls-info,
+    .checkpoint-controls-actions {
+        width: 100%;
+        flex-direction: column;
+    }
+
+    .checkpoint-controls-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .cleanup-preview-footer {
+        flex-direction: column;
+    }
+
+    .cleanup-preview-footer .btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Collapsible checkpoint notes */
+[data-bs-toggle="collapse"] i {
+    transition: transform 0.3s ease;
+}
+
+[data-bs-toggle="collapse"][aria-expanded="true"] i {
+    transform: rotate(180deg);
+}
+
+/* Lightbox Styles */
+.lightbox {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    background: rgba(0, 0, 0, 0.95) !important;
+    backdrop-filter: blur(10px) !important;
+    z-index: 99999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    transition: all 0.3s ease !important;
+}
+
+/* Alpine.js x-show transition classes */
+[x-cloak] {
+    display: none !important;
+}
+
+[x-transition]:enter {
+    opacity: 0;
+}
+
+[x-transition]:enter-start {
+    opacity: 0;
+}
+
+[x-transition]:enter-end {
+    opacity: 1;
+}
+
+[x-transition]:leave {
+    opacity: 1;
+}
+
+[x-transition]:leave-start {
+    opacity: 1;
+}
+
+[x-transition]:leave-end {
+    opacity: 0;
+}
+
+.lightbox-content {
+    position: relative;
+    max-width: 90vw;
+    max-height: 90vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform: scale(0.9);
+    transition: transform 0.3s ease;
+}
+
+.lightbox.active .lightbox-content {
+    transform: scale(1);
+}
+
+.lightbox-image {
+    max-width: 100%;
+    max-height: 90vh;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+    cursor: grab;
+    user-select: none;
+    transition: transform 0.1s ease;
+}
+
+.lightbox-image.dragging {
+    cursor: grabbing;
+    transition: none;
+}
+
+.lightbox-close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 18px;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.1);
+}
+
+.lightbox-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 50px;
+    height: 50px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 20px;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.lightbox-nav:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-50%) scale(1.1);
+}
+
+.lightbox-nav.prev {
+    left: 20px;
+}
+
+.lightbox-nav.next {
+    right: 20px;
+}
+
+.lightbox-nav.disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.lightbox-nav.disabled:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: translateY(-50%) scale(1);
+}
+
+.lightbox-caption {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    padding: 12px 20px;
+    border-radius: var(--radius-md);
+    font-size: var(--typography-font-size-sm);
+    max-width: 80%;
+    text-align: center;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.lightbox-counter {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    color: var(--text-primary);
+    padding: 8px 16px;
+    border-radius: var(--radius-md);
+    font-size: var(--typography-font-size-sm);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Clickable image indicators */
+.checkpoint-preview-image img,
+.checkpoint-gallery img {
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.checkpoint-preview-image img:hover,
+.checkpoint-gallery img:hover {
+    transform: scale(1.02);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+/* Loading indicator for lightbox */
+.lightbox-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-primary);
+    font-size: var(--typography-font-size-lg);
+}
+
+.lightbox-loading .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-top: 3px solid var(--accent-purple);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 16px;
+}
+
+/* Zoom controls */
+.lightbox-zoom {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(10px);
+    padding: 8px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.lightbox-zoom-btn {
+    width: 36px;
+    height: 36px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--text-primary);
+    font-size: 16px;
+    transition: all 0.2s ease;
+}
+
+.lightbox-zoom-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.1);
+}
+
+.lightbox-zoom-btn.active {
+    background: var(--accent-purple);
+    color: white;
+}
+
+/* Responsive lightbox */
+@media (max-width: 768px) {
+    .lightbox-close,
+    .lightbox-nav {
+        width: 44px;
+        height: 44px;
+        font-size: 18px;
+    }
+
+    .lightbox-nav.prev {
+        left: 10px;
+    }
+
+    .lightbox-nav.next {
+        right: 10px;
+    }
+
+    .lightbox-caption {
+        bottom: 10px;
+        font-size: var(--typography-font-size-xs);
+        max-width: 90%;
+        padding: 8px 12px;
+    }
+
+    .lightbox-counter {
+        top: 10px;
+        left: 10px;
+        font-size: var(--typography-font-size-xs);
+        padding: 6px 12px;
+    }
+
+    .lightbox-zoom {
+        bottom: 60px;
+        right: 10px;
+    }
+
+    .lightbox-zoom-btn {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+    }
+}
+
+/* Keyboard navigation hint */
+.lightbox-hint {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--text-muted);
+    font-size: var(--typography-font-size-xs);
+    opacity: 0.7;
+    transition: opacity 0.2s ease;
+}
+
+.lightbox-hint:hover {
+    opacity: 1;
+}

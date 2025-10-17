@@ -1,0 +1,164 @@
+<!-- partials/dataset_selector.html - Dataset configuration selector for datasets tab -->
+<!-- Uses the same structure as the dataset_config_select custom component in form_field.html -->
+<div class="dataset-dropdown dropdown w-100"
+     id="datasets-page-dataloader-selector"
+     data-field-id="datasets_page_data_backend_config"
+     data-selected-env=""
+     data-selected-path="">
+    <input type="hidden"
+           id="datasets_page_data_backend_config"
+           name="datasets_page_data_backend_config"
+           value="">
+
+    <button class="btn btn-outline-secondary w-100 dropdown-toggle text-start dataset-toggle"
+            type="button"
+            data-bs-toggle="dropdown"
+            aria-expanded="false">
+        <span class="dataset-toggle-label d-flex justify-content-between align-items-center">
+            <span class="text-muted">Select dataset configuration</span>
+        </span>
+    </button>
+
+    <div class="dropdown-menu w-100 dataset-dropdown-menu" style="max-height: 400px; overflow-y: auto;">
+        <!-- Options will be populated by JavaScript -->
+    </div>
+</div>
+
+<script>
+(function() {
+    const selector = document.getElementById('datasets-page-dataloader-selector');
+    if (!selector) return;
+
+    let allConfigs = [];
+    let filterByEnv = false;
+    let currentEnv = '';
+
+    async function loadDataloaderConfigs() {
+        try {
+            const store = Alpine.store('dataloaderConfigs');
+            if (store) {
+                await store.load();
+                allConfigs = store.configs;
+                renderOptions();
+                syncWithTrainerStore();
+            }
+        } catch (error) {
+            console.error('Failed to load dataloader configs:', error);
+        }
+    }
+
+    function getFilteredConfigs() {
+        if (!filterByEnv || !currentEnv) {
+            return allConfigs;
+        }
+        return allConfigs.filter(config => {
+            const path = config.path || '';
+            const name = config.name || '';
+            return path.startsWith(currentEnv + '/') || name.startsWith(currentEnv);
+        });
+    }
+
+    function renderOptions() {
+        const menu = selector.querySelector('.dataset-dropdown-menu');
+        if (!menu) return;
+
+        const configs = getFilteredConfigs();
+        menu.innerHTML = '';
+
+        if (configs.length === 0) {
+            menu.innerHTML = '<div class="dropdown-item-text text-muted"><i class="fas fa-info-circle me-2"></i>No dataloader configurations found</div>';
+            return;
+        }
+
+        configs.forEach(config => {
+            const button = document.createElement('button');
+            button.className = 'dropdown-item dataset-option d-flex justify-content-between align-items-center';
+            button.type = 'button';
+            button.dataset.value = config.path;
+            button.dataset.environment = config.name;
+            button.dataset.path = config.path;
+            button.innerHTML = `
+                <span class="dataset-env">${config.name}</span>
+                <span class="dataset-path text-muted">${config.path}</span>
+            `;
+            menu.appendChild(button);
+        });
+
+        // Add divider and manage link
+        const divider = document.createElement('div');
+        divider.className = 'dropdown-divider';
+        menu.appendChild(divider);
+
+        const manageLink = document.createElement('a');
+        manageLink.className = 'dropdown-item';
+        manageLink.href = '#environments';
+        manageLink.innerHTML = '<i class="fas fa-folder-open me-2"></i> Manage Dataloader Configs';
+        menu.appendChild(manageLink);
+    }
+
+    function syncWithTrainerStore() {
+        const trainerStore = Alpine.store('trainer');
+        if (trainerStore) {
+            const config = trainerStore.configValues || {};
+            const path = config.data_backend_config || config['--data_backend_config'] || '';
+            currentEnv = trainerStore.selectedEnvironment || '';
+            const badge = document.getElementById('current-env-badge');
+            if (badge) {
+                badge.textContent = currentEnv || 'none';
+            }
+
+            if (path) {
+                const matchingConfig = allConfigs.find(c => c.path === path);
+                if (matchingConfig && window.__setDatasetSelection) {
+                    // Use the global function to properly set the selection with pipe separator
+                    window.__setDatasetSelection(selector, matchingConfig.name, matchingConfig.path, path);
+                } else if (window.__setDatasetSelection) {
+                    // Fallback if no matching config found but we have a path
+                    const envName = path.split('/')[0] || path;
+                    window.__setDatasetSelection(selector, envName, path, path);
+                }
+            }
+        }
+    }
+
+    // Handle filter checkbox
+    const filterCheckbox = document.getElementById('filterByEnvironment');
+    if (filterCheckbox) {
+        filterCheckbox.addEventListener('change', function() {
+            filterByEnv = this.checked;
+            renderOptions();
+            syncWithTrainerStore();
+        });
+    }
+
+    // Initialize - defer to allow Alpine to initialize first
+    if (window.Alpine) {
+        loadDataloaderConfigs();
+    } else {
+        document.addEventListener('alpine:init', () => {
+            loadDataloaderConfigs();
+        });
+    }
+
+    // Watch for trainer store changes
+    document.addEventListener('alpine:init', () => {
+        Alpine.effect(() => {
+            const trainerStore = Alpine.store('trainer');
+            if (trainerStore && trainerStore.configValues) {
+                syncWithTrainerStore();
+            }
+        });
+    });
+
+    // Re-sync when dataloaderConfigs store updates
+    window.addEventListener('configs-updated', () => {
+        loadDataloaderConfigs();
+    });
+
+    // Ensure global dataset dropdown functionality is initialized
+    // This makes the dropdown work with the global __setDatasetSelection and __refreshDatasetDropdowns
+    if (window.__refreshDatasetDropdowns) {
+        setTimeout(() => window.__refreshDatasetDropdowns(), 100);
+    }
+})();
+</script>

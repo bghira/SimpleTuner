@@ -2,7 +2,7 @@
 
 This document contains notes* on configuring a 4-way 8xH100 cluster for use with SimpleTuner.
 
-> *This guide does not contain full end-to-end installation instructions. Instead, these serve as considerations to take when following the [INSTALL](/INSTALL.md) document or one of the [quickstart guides](/documentation/QUICKSTART.md).
+> *This guide does not contain full end-to-end installation instructions. Instead, these serve as considerations to take when following the [INSTALL](/documentation/INSTALL.md) document or one of the [quickstart guides](/documentation/QUICKSTART.md).
 
 ## Storage backend
 
@@ -226,7 +226,7 @@ When optimising training on DeepSpeed for multi-node, using the lowest-possible 
 
 For example, an 80G NVIDIA GPU can successfully train Flux with ZeRO level 1 offload, minimising overhead substantially.
 
-Adding the following lines 
+Adding the following lines
 
 ```yaml
 # Update this from MULTI_GPU to DEEPSPEED

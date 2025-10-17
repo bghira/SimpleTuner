@@ -1,0 +1,43 @@
+[
+    {
+        "id": "text_embeds_primary",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/tmp/text_cache_primary"
+    },
+    {
+        "id": "text_embeds_secondary",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "cache_dir": "/tmp/text_cache_secondary"
+    },
+    {
+        "id": "conditioning_dataset",
+        "type": "local",
+        "dataset_type": "conditioning",
+        "instance_data_dir": "/tmp/conditioning",
+        "caption_strategy": "filename"
+    },
+    {
+        "id": "main_dataset",
+        "type": "local",
+        "dataset_type": "image",
+        "instance_data_dir": "/tmp/main_images",
+        "text_embeds": "text_embeds_primary",
+        "conditioning_data": "conditioning_dataset",
+        "caption_strategy": "filename",
+        "probability": 0.7,
+        "repeats": 3
+    },
+    {
+        "id": "secondary_dataset",
+        "type": "local",
+        "dataset_type": "image",
+        "instance_data_dir": "/tmp/secondary_images",
+        "text_embeds": "text_embeds_secondary",
+        "caption_strategy": "filename",
+        "probability": 0.3,
+        "repeats": 1
+    }
+]

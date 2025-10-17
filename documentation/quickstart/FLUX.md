@@ -1,21 +1,23 @@
-## Flux[dev] / Flux[schnell] Quickstart
+# Flux[dev] / Flux[schnell] Quickstart
 
 ![image](https://github.com/user-attachments/assets/6409d790-3bb4-457c-a4b4-a51a45fc91d1)
 
 In this example, we'll be training a Flux.1 Krea LoRA.
 
-### Hardware requirements
+## Hardware requirements
 
 Flux requires a lot of **system RAM** in addition to GPU memory. Simply quantising the model at startup requires about 50GB of system memory. If it takes an excessively long time, you may need to assess your hardware's capabilities and whether any changes are needed.
 
 When you're training every component of a rank-16 LoRA (MLP, projections, multimodal blocks), it ends up using:
+
 - a bit more than 30G VRAM when not quantising the base model
 - a bit more than 18G VRAM when quantising to int8 + bf16 base/LoRA weights
 - a bit more than 13G VRAM when quantising to int4 + bf16 base/LoRA weights
 - a bit more than 9G VRAM when quantising to NF4 + bf16 base/LoRA weights
 - a bit more than 9G VRAM when quantising to int2 + bf16 base/LoRA weights
 
-You'll need: 
+You'll need:
+
 - **the absolute minimum** is a single **3080 10G**
 - **a realistic minimum** is a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
@@ -24,7 +26,7 @@ Luckily, these are readily available through providers such as [LambdaLabs](http
 
 **Unlike other models, Apple GPUs do not currently work for training Flux.**
 
-### Prerequisites
+## Prerequisites
 
 Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.12.
 
@@ -40,52 +42,25 @@ If you don't have python 3.12 installed on Ubuntu, you can try the following:
 apt -y install python3.12 python3.12-venv
 ```
 
-#### Container image dependencies
+### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
-
-```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
-```
-
-If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
-
-### Installation
-
-Clone the SimpleTuner repository and set up the python venv:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image to enable compiling of CUDA extensions:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-# if python --version shows 3.11 you can just also use the 'python' command here.
-python3.11 -m venv .venv
-
-source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
+apt -y install nvidia-cuda-toolkit
 ```
 
-**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
+## Installation
 
-Depending on your system, you will run one of 3 commands:
+Install SimpleTuner via pip:
 
 ```bash
-# Linux with NVIDIA
-poetry install
-
-# MacOS
-poetry install -C install/apple
-
-# Linux with ROCM
-poetry install -C install/rocm
+pip install simpletuner[cuda]
 ```
 
-#### AMD ROCm follow-up steps
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
+
+### AMD ROCm follow-up steps
 
 The following must be executed for an AMD MI300X to be useable:
 
@@ -97,9 +72,21 @@ python3 -m pip install .
 popd
 ```
 
-### Setting up the environment
+## Setting up the environment
 
-To run SimpleTuner, you will need to set up a configuration file, the dataset and model directories, and a dataloader configuration file.
+### Web interface method
+
+The SimpleTuner WebUI makes setup fairly straightforward. To run the server:
+
+```bash
+simpletuner server
+```
+
+This will create a webserver on port 8001 by default, which you can access by visiting http://localhost:8001.
+
+### Manual / command-line method
+
+To run SimpleTuner via command-line tools, you will need to set up a configuration file, the dataset and model directories, and a dataloader configuration file.
 
 #### Configuration file
 
@@ -110,11 +97,10 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
-
 
 If you prefer to manually configure:
 
@@ -156,8 +142,6 @@ There, you will possibly need to modify the following variables:
 - `gradient_checkpointing` - set this to true in practically every situation on every device
 - `gradient_checkpointing_interval` - this could be set to a value of 2 or higher on larger GPUs to only checkpoint every _n_ blocks. A value of 2 would checkpoint half of the blocks, and 3 would be one-third.
 
-Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
-
 #### Validation prompts
 
 Inside `config/config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
@@ -174,6 +158,7 @@ The example config file `config/user_prompt_library.json.example` contains the f
 The nicknames are the filename for the validation, so keep them short and compatible with your filesystem.
 
 To point the trainer to this prompt library, add it to TRAINER_EXTRA_ARGS by adding a new line at the end of `config.json`:
+
 ```json
   "--user_prompt_library": "config/user_prompt_library.json",
 ```
@@ -215,13 +200,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 Flow-matching models such as Flux and SD3 have a property called "shift" that allows us to shift the trained portion of the timestep schedule using a simple decimal value.
 
 ##### Defaults
+
 By default, no schedule shift is applied to flux, which results in a sigmoid bell-shape to the timestep sampling distribution. This is unlikely to be the ideal approach for Flux, but it results in a greater amount of learning in a shorter period of time than auto-shift.
 
 ##### Auto-shift
+
 A commonly-recommended approach is to follow several recent works and enable resolution-dependent timestep shift, `--flow_schedule_auto_shift` which uses higher shift values for larger images, and lower shift values for smaller images. This results in stable but potentially mediocre training results.
 
 ##### Manual specification
-_Thanks to General Awareness from Discord for the following examples_
+
+(_Thanks to General Awareness from Discord for the following examples_)
 
 When using a `--flow_schedule_shift` value of 0.1 (a very low value), only the finer details of the image are affected:
 ![image](https://github.com/user-attachments/assets/991ca0ad-e25a-4b13-a3d6-b4f2de1fe982)
@@ -229,14 +217,12 @@ When using a `--flow_schedule_shift` value of 0.1 (a very low value), only the f
 When using a `--flow_schedule_shift` value of 4.0 (a very high value), the large compositional features and potentially colour space of the model becomes impacted:
 ![image](https://github.com/user-attachments/assets/857a1f8a-07ab-4b75-8e6a-eecff616a28d)
 
-
 #### Quantised model training
 
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements, training Flux on just 16GB.
 
-
-
 For `config.json` users:
+
 ```json
   "base_model_precision": "int8-quanto",
   "text_encoder_1_precision": "no_change",
@@ -247,7 +233,6 @@ For `config.json` users:
 ```
 
 ##### LoRA-specific settings (not LyCORIS)
-
 
 ```bash
 # When training 'mmdit', we find very stable training that makes the model take longer to learn.
@@ -265,16 +250,15 @@ For `config.json` users:
 "--lora_init_type": "loftq",
 ```
 
-
 #### Dataset considerations
 
-> ⚠️ Image quality for training is more important for Flux than for most other models, as it will absorb the artifacts in your images *first*, and then learn the concept/subject.
+> ⚠️ Image quality for training is more important for Flux than for most other models, as it will absorb the artifacts in your images _first_, and then learn the concept/subject.
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `train_batch_size * gradient_accumulation_steps` as well as more than `vae_batch_size`. The dataset will not be useable if it is too small.
 
 > ℹ️ With few enough images, you might see a message **no images detected in dataset** - increasing the `repeats` value will overcome this limitation.
 
-Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
+Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
 
@@ -383,7 +367,22 @@ Follow the instructions to log in to both services.
 
 ### Executing the training run
 
-From the SimpleTuner directory, one simply has to run:
+From the SimpleTuner directory, you have several options to start training:
+
+**Option 1 (Recommended - pip install):**
+
+```bash
+pip install simpletuner[cuda]
+simpletuner train
+```
+
+**Option 2 (Git clone method):**
+
+```bash
+simpletuner train
+```
+
+**Option 3 (Legacy method - still works):**
 
 ```bash
 ./train.sh
@@ -391,9 +390,21 @@ From the SimpleTuner directory, one simply has to run:
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 **Note:** It's unclear whether training on multi-aspect buckets works correctly for Flux at the moment. It's recommended to use `crop_style=random` and `crop_aspect=square`.
+
+## Multi-GPU Configuration
+
+SimpleTuner includes **automatic GPU detection** through the WebUI. During onboarding, you'll configure:
+
+- **Auto Mode**: Automatically uses all detected GPUs with optimal settings
+- **Manual Mode**: Select specific GPUs or set custom process count
+- **Disabled Mode**: Single GPU training
+
+The WebUI detects your hardware and configures `--num_processes` and `CUDA_VISIBLE_DEVICES` automatically.
+
+For manual configuration or advanced setups, see the [Multi-GPU Training section](/documentation/INSTALL.md#multiple-gpu-training) in the installation guide.
 
 ## Inference tips
 
@@ -406,7 +417,6 @@ In ComfyUI, you'll need to put Flux through another node called AdaptiveGuider. 
 ### CFG-distilled LoRA (flux_guidance_scale == 1)
 
 Inferencing the CFG-distilled LoRA is as easy as using a lower guidance_scale around the value trained with.
-
 
 ## Notes & troubleshooting tips
 
@@ -443,6 +453,7 @@ When using `--attention_mechanism=sageattention`, inference can be sped-up at va
 In simplest terms, NF4 is a 4bit-_ish_ representation of the model, which means training has serious stability concerns to address.
 
 In early tests, the following holds true:
+
 - Lion optimiser causes model collapse but uses least VRAM; AdamW variants help to hold it together; bnb-adamw8bit, adamw_bf16 are great choices
   - AdEMAMix didn't fare well, but settings were not explored
 - `--max_grad_norm=0.01` further helps reduce model breakage by preventing huge changes to the model in too short a time
@@ -484,6 +495,7 @@ Add this to your `config.json`:
 ```
 
 This configuration will:
+
 - Keep only 50% of image tokens during layers 2 through second-to-last
 - Text tokens are never dropped
 - Training speedup of ~25% with minimal quality impact
@@ -516,9 +528,11 @@ For detailed configuration options and troubleshooting, see the [full TREAD docu
 ### Classifier-free guidance
 
 #### Problem
+
 The Dev model arrives guidance-distilled out of the box, which means it does a very straight shot trajectory to the teacher model outputs. This is done through a guidance vector that is fed into the model at training and inference time - the value of this vector greatly impacts what type of resulting LoRA you end up with:
 
 #### Solution
+
 - A value of 1.0 (**the default**) will preserve the initial distillation done to the Dev model
   - This is the most compatible mode
   - Inference is just as fast as the original model
@@ -531,14 +545,16 @@ The Dev model arrives guidance-distilled out of the box, which means it does a v
 We can partially reintroduce distillation to a de-distilled model by continuing tuning your model using a vector value of 1.0. It will never fully recover, but it'll at least be more useable.
 
 #### Caveats
+
 - This has the end impact of **either**:
   - Increasing inference latency by 2x when we sequentially calculate the unconditional output, eg. with two separate forward pass
   - Increasing the VRAM consumption equivalently to using `num_images_per_prompt=2` and receiving two images at inference time, accompanied by the same percent slowdown.
     - This is often less extreme slowdown than sequential computation, but the VRAM use might be too much for most consumer training hardware.
-    - This method is not *currently* integrated into SimpleTuner, but work is ongoing.
+    - This method is not _currently_ integrated into SimpleTuner, but work is ongoing.
 - Inference workflows for ComfyUI or other applications (eg. AUTOMATIC1111) will need to be modified to also enable "true" CFG, which might not be currently possible out of the box.
 
 ### Quantisation
+
 - Minimum 8bit quantisation is required for a 16G card to train this model
   - In bfloat16/float16, a rank-1 LoRA sits at just over 30GB of mem use
 - Quantising the model to 8bit doesn't harm training
@@ -550,11 +566,13 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
 - **int4** is relies on custom bf16 kernels, and will not work if your card does not support bfloat16
 
 ### Crashing
+
 - If you get SIGKILL after the text encoders are unloaded, this means you do not have enough system memory to quantise Flux.
   - Try loading the `--base_model_precision=bf16` but if that does not work, you might just need more memory..
   - Try `--quantize_via=accelerator` to use the GPU instead
 
 ### Schnell
+
 - If you train a LyCORIS LoKr on Dev, it **generally** works very well on Schnell at just 4 steps later.
   - Direct Schnell training really needs a bit more time in the oven - currently, the results do not look good
 
@@ -563,6 +581,7 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
 ### Learning rates
 
 #### LoRA (--lora_type=standard)
+
 - LoRA has overall worse performance than LoKr for larger datasets
 - It's been reported that Flux LoRA trains similarly to SD 1.5 LoRAs
 - However, a model as large as 12B has empirically performed better with **lower learning rates.**
@@ -572,7 +591,9 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
   - If you're finding that it's excessively difficult to train your concept into the model, you might need a higher rank and more regularisation data.
 - Other diffusion transformer models like PixArt and SD3 majorly benefit from `--max_grad_norm` and SimpleTuner keeps a pretty high value for this by default on Flux.
   - A lower value would keep the model from falling apart too soon, but can also make it very difficult to learn new concepts that venture far from the base model data distribution. The model might get stuck and never improve.
+
 #### LoKr (--lora_type=lycoris)
+
 - Higher learning rates are better for LoKr (`1e-3` with AdamW, `2e-4` with Lion)
 - Other algo need more exploration.
 - Setting `is_regularisation_data` on such datasets may help preserve / prevent bleed and improve the final resulting model's quality.
@@ -580,9 +601,11 @@ We can partially reintroduce distillation to a de-distilled model by continuing 
   - SimpleTuner's regularisation data implementation provides an efficient manner of preserving the base model
 
 ### Image artifacts
+
 Flux will immediately absorb bad image artifacts. It's just how it is - a final training run on just high quality data may be required to fix it at the end.
 
 When you do these things (among others), some square grid artifacts **may** begin appearing in the samples:
+
 - Overtrain with low quality data
 - Use too high of a learning rate
 - Overtraining (in general), a low-capacity network with too many images
@@ -590,6 +613,7 @@ When you do these things (among others), some square grid artifacts **may** begi
 - Using weird aspect ratios or training data sizes
 
 ### Aspect bucketing
+
 - Training for too long on square crops probably won't damage this model too much. Go nuts, it's great and reliable.
 - On the other hand, using the natural aspect buckets of your dataset might overly bias these shapes during inference time.
   - This could be a desirable quality, as it keeps aspect-dependent styles like cinematic stuff from bleeding into other resolutions too much.
@@ -600,7 +624,8 @@ When you do these things (among others), some square grid artifacts **may** begi
 
 Some fine-tuned Flux models on Hugging Face Hub (such as Dev2Pro) lack the full directory structure, requiring these specific options be set.
 
-Make sure to set these options `flux_guidance_value`,  `validation_guidance_real` and `flux_attention_masked_training` according to the way the creator did as well if that information is available. 
+Make sure to set these options `flux_guidance_value`,  `validation_guidance_real` and `flux_attention_masked_training` according to the way the creator did as well if that information is available.
+
 ```json
 {
     "model_family": "flux",
@@ -610,11 +635,3 @@ Make sure to set these options `flux_guidance_value`,  `validation_guidance_real
     "pretrained_transformer_subfolder": "none",
 }
 ```
-
-## Credits
-
-The users of [Terminus Research](https://huggingface.co/terminusresearch) who worked on this probably more than their day jobs to figure it out
-
-[Lambda Labs](https://lambdalabs.com) for generous compute allocations that were used for tests and verifications for large scale training runs
-
-Especially [@JimmyCarter](https://huggingface.co/jimmycarter) (incl TREAD addition) and [@kaibioinfo](https://github.com/kaibioinfo) for coming up with some of the best ideas and putting them into action, offering pull requests and running exhaustive tests for analysis - even daring to use _their own faces_ for DreamBooth experimentation.

@@ -1,0 +1,23 @@
+[
+    {
+        "id": "text_embeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/tmp/text_cache"
+    },
+    {
+        "id": "csv_dataset",
+        "type": "csv",
+        "dataset_type": "image",
+        "csv_file": "/path/to/dataset.csv",
+        "csv_cache_dir": "/tmp/csv_cache",
+        "csv_url_column": "image_url",
+        "csv_caption_column": "caption",
+        "text_embeds": "text_embeds",
+        "caption_strategy": "csv",
+        "hash_filenames": true,
+        "probability": 0.8,
+        "repeats": 2
+    }
+]

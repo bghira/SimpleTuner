@@ -1,0 +1,118 @@
+{% set repo_field = section_fields | selectattr('id', 'equalto', 'hub_model_id') | first %}
+{% if repo_field %}
+<div class="col-12">
+    <div
+         x-data='hfRepoSelector.init("{{ repo_field.id }}", {{ repo_field.value | default('') | tojson }})'
+         x-init="initialize()"
+         x-on:token-updated.window="loadNamespaces(true)">
+        <input type="hidden"
+               x-ref="hiddenField"
+               id="{{ repo_field.id }}"
+               name="{{ repo_field.name }}"
+               x-bind:value="fullRepo">
+
+        <!-- Description -->
+        <div class="text-muted mb-3">
+            {% if repo_field.description %}
+                {{ repo_field.description }}
+            {% else %}
+                Enter your Hugging Face Hub repository identifier (namespace/model-name) or combine namespace and repository name separately.
+            {% endif %}
+        </div>
+
+        <!-- Form Fields -->
+        <div class="row g-3">
+            <div class="col-lg-5">
+                <label for="namespace-select" class="form-label">Namespace</label>
+                <div class="input-group">
+                    <select id="namespace-select"
+                            class="form-select"
+                            x-model="selectedNamespace"
+                            @change="updateFullRepo"
+                            :disabled="loading">
+                        <!-- Show loading option only while loading and no namespaces yet -->
+                        <option value="" x-show="loading && namespaces.length === 0" disabled>Loading…</option>
+                        <!-- Show login prompt when not loading and no namespaces available -->
+                        <option value="" x-show="!loading && namespaces.length === 0" disabled>Login to load namespaces</option>
+                        <!-- Show namespaces once loaded -->
+                        <template x-for="namespace in namespaces" :key="namespace">
+                            <option :value="namespace" x-text="namespace"></option>
+                        </template>
+                    </select>
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            :disabled="loading"
+                            @click.prevent="loadNamespaces(true)"
+                            title="Refresh namespaces">
+                        <i class="fas fa-sync-alt" :class="{ 'fa-spin': loading }"></i>
+                    </button>
+                </div>
+                <div class="form-text">
+                    Namespaces from your Hugging Face account and organizations
+                </div>
+                <div class="alert alert-danger alert-sm mt-2" x-show="error" x-cloak>
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    <span x-text="error"></span>
+                </div>
+            </div>
+
+            <div class="col-lg-7">
+                <label for="repo-name-input" class="form-label">Repository name</label>
+                <input type="text"
+                       id="repo-name-input"
+                       class="form-control"
+                       placeholder="{{ repo_field.placeholder or 'my-awesome-model' }}"
+                       x-model="repoName"
+                       @input="onRepoInput">
+            </div>
+        </div>
+
+        <!-- Repository Preview -->
+        <div class="mt-3 p-3 bg-dark bg-opacity-25 border border-secondary rounded">
+            <div class="d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center">
+                    <span class="text-muted me-2">Full repository:</span>
+                    <code class="text-info fs-6" x-text="fullRepo || 'namespace/repository-name'"></code>
+                </div>
+                <button type="button"
+                        class="btn btn-sm btn-outline-info"
+                        @click.prevent="checkAvailability"
+                        :disabled="!fullRepo || checking">
+                    <i class="fas fa-search" :class="{ 'fa-spin': checking }"></i>
+                    <span x-text="checking ? 'Checking...' : 'Check Availability'"></span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Status Message -->
+        <div class="alert mt-3"
+             x-show="checkStatusMessage"
+             x-cloak
+             :class="statusAlertClass"
+             x-text="checkStatusMessage"></div>
+
+<!-- Private Repository Checkbox -->
+{% set private_field = section_fields | selectattr('id', 'equalto', 'model_card_private') | first %}
+{% if private_field %}
+        <div class="row mt-3">
+            <div class="col-md-6">
+                <div class="form-check">
+                    <input type="checkbox"
+                           class="form-check-input"
+                           id="{{ private_field.id }}"
+                           name="{{ private_field.name }}"
+                           value="true"
+                           {% if private_field.value %}checked{% endif %}>
+                    <label class="form-check-label" for="{{ private_field.id }}">
+                        {{ private_field.label }}
+                    </label>
+                    {% if private_field.help_text %}
+                    <div class="form-text">{{ private_field.help_text }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}

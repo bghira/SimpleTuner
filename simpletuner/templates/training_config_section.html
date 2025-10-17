@@ -1,0 +1,128 @@
+<!-- Training configuration section with Alpine.js mutual exclusivity logic -->
+<div class="config-card mb-4"
+     x-data="{
+         expanded: {{ 'true' if section.expanded else 'false' }},
+         numTrainEpochs: parseInt('{{ config_values.get('num_train_epochs', '10') }}') || 0,
+         maxTrainSteps: parseInt('{{ config_values.get('max_train_steps', '0') }}') || 0,
+
+         handleEpochsChange() {
+             // Parse the value to ensure it's a number
+             this.numTrainEpochs = parseInt(this.numTrainEpochs) || 0;
+
+             // Don't automatically reset to 1 - let validation handle it on submit
+             // This allows users to temporarily have both at 0 while adjusting
+         },
+
+         handleMaxStepsChange() {
+             // Parse the value to ensure it's a number
+             this.maxTrainSteps = parseInt(this.maxTrainSteps) || 0;
+
+             // Don't automatically reset to 1 - let validation handle it on submit
+             // This allows users to temporarily have both at 0 while adjusting
+         }
+     }">
+
+    <!-- Section Header -->
+    <div class="card-header {% if section.collapsible %}cursor-pointer{% endif %}"
+         {% if section.collapsible %}@click="expanded = !expanded"{% endif %}>
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center">
+                <i class="{{ section.icon or 'fas fa-cog' }} me-2"></i>
+                <h5 class="card-title mb-0">{{ section.title }}</h5>
+            </div>
+
+            {% if section.collapsible %}
+                <i class="fas fa-chevron-down transition-transform"
+                   x-bind:class="{ 'rotate-180': expanded }"></i>
+            {% endif %}
+        </div>
+
+        {% if section.description %}
+            <p class="text-muted mt-2 mb-0">{{ section.description }}</p>
+        {% endif %}
+    </div>
+
+    <!-- Section Content -->
+    <div class="card-body"
+         {% if section.collapsible %}
+         x-show="expanded"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 max-h-0"
+         x-transition:enter-end="opacity-100 max-h-screen"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100 max-h-screen"
+         x-transition:leave-end="opacity-0 max-h-0"
+         {% endif %}>
+
+        <!-- Render fields in grid -->
+        <div class="row">
+            {% for field in section.fields %}
+                <div class="col-md-6 mb-3">
+                    {% include 'partials/form_field.html' %}
+                </div>
+            {% endfor %}
+        </div>
+
+        <!-- Validation Messages -->
+        <div class="alert alert-info mt-3" x-show="numTrainEpochs > 0 && maxTrainSteps > 0" x-transition>
+            <i class="fas fa-info-circle"></i>
+            Note: When both epochs and max steps are set, max steps takes precedence. To use epochs-based training, set max steps to 0.
+        </div>
+
+        <div class="alert alert-warning mt-3" x-show="numTrainEpochs === 0 && maxTrainSteps === 0" x-transition>
+            <i class="fas fa-exclamation-triangle"></i>
+            At least one of Number of Epochs or Max Training Steps must be greater than 0 for training to proceed.
+        </div>
+
+        <!-- Section Actions -->
+        {% if section.actions %}
+            <div class="section-actions mt-4 pt-3 border-top">
+                <div class="d-flex gap-2">
+                    {% for action in section.actions %}
+                        <button type="{{ action.type or 'button' }}"
+                                class="btn {{ action.class or 'btn-secondary' }}"
+                                {% if action.hx_post %}hx-post="{{ action.hx_post }}"{% endif %}
+                                {% if action.hx_target %}hx-target="{{ action.hx_target }}"{% endif %}
+                                {% if action.hx_include %}hx-include="{{ action.hx_include }}"{% endif %}
+                                {% if action.hx_indicator %}hx-indicator="{{ action.hx_indicator }}"{% endif %}
+                                {% if action.confirm %}onclick="return confirm('{{ action.confirm }}')"{% endif %}
+                                {% if action.onclick %}onclick="{{ action.onclick }}"{% endif %}
+                                {% if action.x_on_click %}x-on:click="{{ action.x_on_click }}"{% endif %}
+                                {% if action.hx_post %}@htmx:after-request="if(event.detail.successful) window.showToast('Configuration saved', 'success')"{% endif %}>
+                            {% if action.icon %}
+                                <i class="{{ action.icon }} me-1"></i>
+                            {% endif %}
+                            {{ action.label }}
+                            {% if action.hx_indicator %}
+                                <i id="{{ action.hx_indicator[1:] }}" class="fas fa-spinner fa-spin htmx-indicator ms-1"></i>
+                            {% endif %}
+                        </button>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    .rotate-180 {
+        transform: rotate(180deg);
+    }
+
+    .transition-transform {
+        transition: transform 0.3s ease;
+    }
+
+    .max-h-0 {
+        max-height: 0;
+        overflow: hidden;
+    }
+
+    .max-h-screen {
+        max-height: 100vh;
+    }
+</style>

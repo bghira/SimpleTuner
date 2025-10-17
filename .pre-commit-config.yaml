@@ -1,0 +1,51 @@
+repos:
+  # Pre-commit hooks for basic file hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Python code formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: ['--line-length=125']
+
+  # Import sorting with isort
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ['--profile=black', '--line-length=125']
+
+  # Python linting with flake8 (using local venv, enforcing 100-char limit)
+  - repo: local
+    hooks:
+      - id: flake8
+        name: flake8
+        entry: .venv/bin/python
+        args: ['-m', 'flake8', '--max-line-length=125', '--extend-ignore=E501,E266,E203,W503,F841,F401,E402,F811,E722,E721,F541']
+        language: system
+        types: [python]
+        exclude: '^(scripts/|tests/|\.venv/)'
+
+  # Type checking with mypy (disabled - too many issues for now)
+  # - repo: local
+  #   hooks:
+  #     - id: mypy
+  #       name: mypy
+  #       entry: .venv/bin/python
+  #       args: ['-m', 'mypy', '--ignore-missing-imports', '--no-strict-optional']
+  #       language: system
+  #       types: [python]
+  #       exclude: '^(scripts/|tests/)'
