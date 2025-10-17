@@ -58,7 +58,7 @@ def get_version():
                     return line.split("=")[1].strip().strip('"').strip("'")
     except:
         pass
-    return "1.1.0"
+    return "3.0.0"
 
 
 def get_platform_dependencies():
