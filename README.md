@@ -33,9 +33,9 @@ If you have any questions, please feel free to reach out to us there.
 
 ## Tutorial
 
-Please fully explore this README before embarking on [the tutorial](/documentation/TUTORIAL.md), as it contains vital information that you might need to know first.
+Please fully explore this README before embarking on the [new web UI tutorial](/documentation/webui/TUTORIAL.md) or [the class command-line tutorial](/documentation/TUTORIAL.md), as this document contains vital information that you might need to know first.
 
-For a quick start without reading the full documentation, you can use the [Quick Start](/documentation/QUICKSTART.md) guide.
+For a manually configured quick start without reading the full documentation or using any web interfaces, you can use the [Quick Start](/documentation/QUICKSTART.md) guide.
 
 For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload. For DTensor-based sharding and context parallelism, read the [FSDP2 guide](/documentation/FSDP2.md) which covers the new FullyShardedDataParallel v2 workflow inside SimpleTuner.
 
