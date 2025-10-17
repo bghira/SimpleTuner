@@ -90,41 +90,6 @@ def lifecycle_stage_event(
     return event
 
 
-def training_progress_event(
-    *,
-    label: str | None = None,
-    current: float | None = None,
-    total: float | None = None,
-    percent: float | None = None,
-    eta_seconds: float | None = None,
-    metrics: Mapping[str, Any] | None = None,
-    job_id: str | None = None,
-    severity: str = "info",
-    timestamp: datetime | None = None,
-    extra: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    event: dict[str, Any] = {
-        "type": "training.progress",
-        "severity": severity,
-        "job_id": job_id,
-        "progress": _progress_payload(
-            label=label,
-            current=current,
-            total=total,
-            percent=percent,
-            eta_seconds=eta_seconds,
-            metrics=metrics,
-        ),
-    }
-    if timestamp:
-        event["timestamp"] = timestamp.isoformat()
-    if extra:
-        event["data"] = dict(extra)
-    if label:
-        event["title"] = label
-    return event
-
-
 def training_status_event(
     status: str,
     *,
@@ -235,7 +200,6 @@ __all__ = [
     "ValidationAsset",
     "CheckpointData",
     "lifecycle_stage_event",
-    "training_progress_event",
     "training_status_event",
     "notification_event",
     "error_event",
