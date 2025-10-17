@@ -258,7 +258,20 @@ class Trainer:
         def _resolve_dynamo_backend(candidate: object) -> DynamoBackend | None:
             if isinstance(candidate, DynamoBackend):
                 return candidate
-            text = str(candidate or "").strip()
+            if candidate is None:
+                return None
+            raw_was_string_like = isinstance(candidate, (str, bytes))
+            if isinstance(candidate, bytes):
+                try:
+                    text = candidate.decode("utf-8", "strict").strip()
+                except UnicodeDecodeError:
+                    logger.debug(
+                        "Unable to decode Torch Dynamo backend bytes value %r; defaulting to no dynamo.",
+                        candidate,
+                    )
+                    return None
+            else:
+                text = str(candidate).strip()
             if not text:
                 return None
             normalised = text.replace("-", "_").upper()
@@ -267,7 +280,14 @@ class Trainer:
             try:
                 return DynamoBackend[normalised]
             except KeyError as exc:
-                raise ValueError(f"Unsupported Torch Dynamo backend '{candidate}'.") from exc
+                if raw_was_string_like:
+                    raise ValueError(f"Unsupported Torch Dynamo backend '{candidate}'.") from exc
+                logger.debug(
+                    "Ignoring non-string Torch Dynamo backend value %r (%s); defaulting to no dynamo.",
+                    candidate,
+                    type(candidate).__name__,
+                )
+                return None
 
         def _coerce_flag(value: object) -> bool:
             if isinstance(value, bool):
