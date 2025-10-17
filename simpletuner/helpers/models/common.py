@@ -36,13 +36,14 @@ else:
     logger.setLevel("ERROR")
 
 
-flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3"]
+flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma"]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
     "sd3": "stabilityai/stable-diffusion-3-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
+    "chroma": "lodestones/Chroma1-Base",
     "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",

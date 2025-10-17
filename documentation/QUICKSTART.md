@@ -15,6 +15,7 @@ For the complete and most accurate feature matrix, please see the [main README.m
 | [Kwai Kolors](/documentation/quickstart/KOLORS.md)| 2.7 B         |  ✓   |  ✓   |     ✓     | not recommended           | bf16            | ✓                    |                 |          |
 | [Stable Diffusion 3](/documentation/quickstart/SD3.md)| 2B–8B    |  ✓   |  ✓   |     ✓     | optional (int8, fp8, nf4)           | bf16            | ✓+                   | ✓ (SLG)         | ✓         |
 | [Flux.1](/documentation/quickstart/FLUX.md)      | ~8B-12B         |  ✓   |  ✓   |     ✓*    | optional (int8,  fp8,  nf4)  | bf16            | ✓+                   | ✓               | ✓         |
+| [Chroma 1](/documentation/quickstart/CHROMA.md)      | 8.9B         |  ✓   |  ✓   |     ✓*    | optional (int8,  fp8,  nf4)  | bf16            | ✓+                   | ✓               |           |
 | [Auraflow](/documentation/quickstart/AURAFLOW.md)| 6 B          |  ✓   |  ✓   |     ✓*    | optional (int8,  fp8,  nf4)  | bf16            | ✓+                   | ✓ (SLG)         | ✓         |
 | [HiDream I1](/documentation/quickstart/HIDREAM.md)| 17 B (8.5B MoE)|  ✓   |  ✓   |     ✓*    | optional (int8,  fp8,  nf4)  | bf16            | ✓                    | ✓               | ✓          |
 | [OmniGen](/documentation/quickstart/OMNIGEN.md)  | 3.8 B        |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |

@@ -1481,11 +1481,11 @@ class FieldService:
             model_family = config_values.get("model_family")
             if not model_family and isinstance(raw_config, dict):
                 model_family = raw_config.get("model_family") or raw_config.get("--model_family")
-            allowed_families = {"auraflow", "sd3", "wan"}
+            allowed_families = {"auraflow", "chroma", "sd3", "wan"}
             if not model_family or model_family not in allowed_families:
                 field_dict["disabled"] = True
                 extra_classes.append("field-disabled")
-                _append_hint("Available when using Auraflow, SD3, or Wan model families.")
+                _append_hint("Available when using Auraflow, Chroma, SD3, or Wan model families.")
 
         if field.name in {"context_parallel_size", "context_parallel_comm_strategy"}:
             disable_reason = None

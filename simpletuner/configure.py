@@ -1896,6 +1896,7 @@ class SimpleTunerNCurses:
                 "flux",
                 "sd3",
                 "sana",
+                "chroma",
             ]:
                 gc_interval = self.state.env_contents.get("gradient_checkpointing_interval", 0)
                 current_values["GC Interval"] = str(gc_interval) if gc_interval > 0 else "Disabled"
