@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Direct comparison test between factory.py and factory.py"""
-import os
-import unittest
 import json
-from unittest.mock import MagicMock, patch
+import os
 import sys
+import unittest
+from unittest.mock import MagicMock, patch
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

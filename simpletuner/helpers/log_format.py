@@ -3,17 +3,37 @@ import os
 import warnings
 
 import torch
-from colorama import Back, Fore, Style, init
+
+# Check if we're in web server mode - disable colors for web responses
+DISABLE_COLORS = os.environ.get("SIMPLETUNER_WEB_MODE", "").lower() in ("1", "true", "yes") or os.environ.get(
+    "SIMPLETUNER_DISABLE_COLORS", ""
+).lower() in ("1", "true", "yes")
+
+if not DISABLE_COLORS:
+    try:
+        from colorama import Back, Fore, Style, init
+
+        COLORAMA_AVAILABLE = True
+    except ImportError:
+        COLORAMA_AVAILABLE = False
+        DISABLE_COLORS = True
+else:
+    COLORAMA_AVAILABLE = False
 
 
 class ColorizedFormatter(logging.Formatter):
-    level_colors = {
-        logging.DEBUG: Fore.CYAN,
-        logging.INFO: Fore.GREEN,
-        logging.WARNING: Fore.YELLOW,
-        logging.ERROR: Fore.RED,
-        logging.CRITICAL: Fore.RED + Back.WHITE + Style.BRIGHT,
-    }
+    def __init__(self, *args, **kwargs):
+        if not DISABLE_COLORS and COLORAMA_AVAILABLE:
+            self.level_colors = {
+                logging.DEBUG: Fore.CYAN,
+                logging.INFO: Fore.GREEN,
+                logging.WARNING: Fore.YELLOW,
+                logging.ERROR: Fore.RED,
+                logging.CRITICAL: Fore.RED + Back.WHITE + Style.BRIGHT,
+            }
+        else:
+            self.level_colors = {}
+        super().__init__(*args, **kwargs)
 
     def format(self, record):
         # Try to get torch rank if torch is available
@@ -25,14 +45,19 @@ class ColorizedFormatter(logging.Formatter):
         except Exception:
             rank = 0
 
-        level_color = self.level_colors.get(record.levelno, "")
-        reset_color = Style.RESET_ALL
-        message = super().format(record)
-        return f"[RANK {rank}] {level_color}{message}{reset_color}"
+        if not DISABLE_COLORS and COLORAMA_AVAILABLE:
+            level_color = self.level_colors.get(record.levelno, "")
+            reset_color = Style.RESET_ALL
+            message = super().format(record)
+            return f"[RANK {rank}] {level_color}{message}{reset_color}"
+        else:
+            message = super().format(record)
+            return f"[RANK {rank}] {message}"
 
 
-# Initialize colorama
-init(autoreset=True)
+# Initialize colorama only if not disabled
+if not DISABLE_COLORS and COLORAMA_AVAILABLE:
+    init(autoreset=True)
 
 # Create a logger
 logger = logging.getLogger()

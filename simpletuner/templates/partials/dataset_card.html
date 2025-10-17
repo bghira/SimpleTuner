@@ -1,0 +1,419 @@
+<!-- templates/partials/dataset_card.html - Interactive dataset configuration card -->
+{% set dataset_id = dataset.id or 'new-dataset' %}
+{% set dataset_type = dataset.type or 'local' %}
+{% set dataset_path = dataset.instance_data_dir or dataset.path or '' %}
+{% set dataset_name = dataset.name or dataset_id %}
+
+<script>
+function datasetCardComponent(dataset, originalData) {
+    return {
+         expanded: false,
+         editing: false,
+         dataset: dataset,
+         originalData: originalData,
+         validationErrors: {},
+         saving: false,
+
+         get hasChanges() {
+             return JSON.stringify(this.dataset) !== JSON.stringify(this.originalData);
+         },
+
+         get hasErrors() {
+             return Object.keys(this.validationErrors).length > 0;
+         },
+
+         toggleExpanded() {
+             this.expanded = !this.expanded;
+             if (!this.expanded) {
+                 this.editing = false;
+             }
+         },
+
+         startEditing() {
+             this.editing = true;
+             this.expanded = true;
+         },
+
+         cancelEdit() {
+             this.dataset = JSON.parse(JSON.stringify(this.originalData));
+             this.editing = false;
+             this.validationErrors = {};
+         },
+
+         async saveChanges() {
+             this.saving = true;
+             this.validationErrors = {};
+
+             try {
+                 const response = await fetch('/api/datasets/' + this.dataset.id, {
+                     method: 'PUT',
+                     headers: {
+                         'Content-Type': 'application/json',
+                     },
+                     body: JSON.stringify(this.dataset)
+                 });
+
+                 if (response.ok) {
+                     const result = await response.json();
+                     this.originalData = JSON.parse(JSON.stringify(this.dataset));
+                     this.editing = false;
+                     window.showToast('Dataset saved successfully', 'success');
+
+                     // Trigger refresh of dataset list
+                     htmx.trigger('#dataset-list', 'refresh');
+                 } else {
+                     const error = await response.json();
+                     if (error.validation_errors) {
+                         this.validationErrors = error.validation_errors;
+                     }
+                     window.showToast('Failed to save dataset: ' + (error.message || 'Unknown error'), 'error');
+                 }
+             } catch (error) {
+                 window.showToast('Network error: ' + error.message, 'error');
+             } finally {
+                 this.saving = false;
+             }
+         },
+
+         async deleteDataset() {
+             if (!confirm('Are you sure you want to delete this dataset?')) {
+                 return;
+             }
+
+             try {
+                 const response = await fetch('/api/datasets/' + this.dataset.id, {
+                     method: 'DELETE'
+                 });
+
+                 if (response.ok) {
+                     window.showToast('Dataset deleted successfully', 'success');
+                     this.$el.remove();
+
+                     // Trigger refresh of dataset list
+                     htmx.trigger('#dataset-list', 'refresh');
+                 } else {
+                     const error = await response.json();
+                     window.showToast('Failed to delete dataset: ' + (error.message || 'Unknown error'), 'error');
+                 }
+             } catch (error) {
+                 window.showToast('Network error: ' + error.message, 'error');
+             }
+         },
+
+         duplicateDataset() {
+             const newDataset = JSON.parse(JSON.stringify(this.dataset));
+             newDataset.id = this.dataset.id + '-copy';
+             newDataset.name = (this.dataset.name || this.dataset.id) + ' (Copy)';
+
+             // Trigger add dataset with this data
+             htmx.ajax('POST', '/api/datasets', {
+                 values: newDataset,
+                 target: '#dataset-list',
+                 swap: 'beforeend'
+             });
+         }
+    }
+}
+
+function datasetAdvancedOptionsComponent() {
+    return {
+        showAdvanced: false
+    }
+}
+</script>
+
+<div class="dataset-card"
+     x-data="datasetCardComponent({{ dataset | tojson }}, {{ dataset | tojson }})"
+     x-bind:class="{ 'loading': saving }"
+     hx-target="this"
+     hx-swap="outerHTML">
+
+    <!-- Card Header -->
+    <div class="dataset-card-header" @click="toggleExpanded()">
+        <div class="dataset-card-header-content">
+            <div class="dataset-card-info">
+                <!-- Dataset Icon & Status -->
+                <i class="fas fa-database dataset-card-icon"
+                   x-bind:class="{
+                       'status-success': !hasErrors && !editing,
+                       'status-warning': editing,
+                       'status-error': hasErrors
+                   }"></i>
+
+                <!-- Dataset Info -->
+                <div class="dataset-card-details">
+                    <div class="dataset-card-title" x-text="dataset.name || dataset.id">{{ dataset_name }}</div>
+                    <div class="dataset-card-meta">
+                        <span x-text="dataset.type">{{ dataset_type }}</span>
+                        •
+                        <span x-text="dataset.dataset_type || 'image'">image</span>
+                    </div>
+                </div>
+
+                <!-- Status Badges -->
+                <div class="dataset-card-badges">
+                    <span x-show="hasChanges && !saving"
+                          class="dataset-badge dataset-badge-modified"
+                          x-transition>
+                        <i class="fas fa-edit"></i> Modified
+                    </span>
+                    <span x-show="saving"
+                          class="dataset-badge dataset-badge-saving"
+                          x-transition>
+                        <i class="fas fa-spinner fa-spin"></i> Saving
+                    </span>
+                    <span x-show="hasErrors"
+                          class="dataset-badge dataset-badge-error"
+                          x-transition>
+                        <i class="fas fa-exclamation-triangle"></i> Errors
+                    </span>
+                </div>
+            </div>
+
+            <!-- Expand/Collapse Icon -->
+            <i class="fas fa-chevron-down dataset-card-toggle"
+               x-bind:class="{ 'expanded': expanded }"
+               @click.stop="toggleExpanded()"></i>
+        </div>
+    </div>
+
+    <!-- Card Body (Collapsible) -->
+    <div class="dataset-card-body dataset-card-collapse"
+         x-bind:class="{ 'expanded': expanded, 'collapsed': !expanded }"
+         x-show="expanded"
+         x-transition>
+
+        <!-- Summary View (when not editing) -->
+        <div x-show="!editing" x-transition>
+            <div class="dataset-summary">
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Path</div>
+                    <div class="dataset-field-value">
+                        <code x-text="dataset.instance_data_dir || 'Not specified'">{{ dataset_path }}</code>
+                    </div>
+                </div>
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Backend</div>
+                    <div class="dataset-field-value" x-text="dataset.type">{{ dataset_type }}</div>
+                </div>
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Resolution</div>
+                    <div class="dataset-field-value" x-text="dataset.resolution || 1024">1024</div>
+                </div>
+                <div class="dataset-field">
+                    <div class="dataset-field-label">Probability</div>
+                    <div class="dataset-field-value" x-text="dataset.probability || 1.0">1.0</div>
+                </div>
+                <div class="dataset-field" x-show="dataset.repeats && dataset.repeats > 0">
+                    <div class="dataset-field-label">Repeats</div>
+                    <div class="dataset-field-value" x-text="dataset.repeats">0</div>
+                </div>
+                <div class="dataset-field" x-show="dataset.caption_strategy">
+                    <div class="dataset-field-label">Caption Strategy</div>
+                    <div class="dataset-field-value" x-text="dataset.caption_strategy">textfile</div>
+                </div>
+            </div>
+
+            <!-- Validation Status -->
+            <div x-show="hasErrors" class="dataset-validation-alert">
+                <strong>Validation Issues:</strong>
+                <ul>
+                    <template x-for="(error, field) in validationErrors" :key="field">
+                        <li x-text="`${field}: ${error}`"></li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Edit Form (when editing) -->
+        <div x-show="editing" x-transition>
+            <form @submit.prevent="saveChanges()" class="dataset-edit-form">
+                <div class="dataset-form-grid">
+                    <!-- Basic Fields -->
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Dataset ID</label>
+                        <input type="text"
+                               class="dataset-form-control"
+                               x-model="dataset.id"
+                               x-bind:class="{ 'is-invalid': validationErrors.id }"
+                               required>
+                        <div x-show="validationErrors.id"
+                             class="dataset-form-error"
+                             x-text="validationErrors.id"></div>
+                    </div>
+
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Display Name</label>
+                        <input type="text"
+                               class="dataset-form-control"
+                               x-model="dataset.name"
+                               x-bind:class="{ 'is-invalid': validationErrors.name }">
+                        <div x-show="validationErrors.name"
+                             class="dataset-form-error"
+                             x-text="validationErrors.name"></div>
+                    </div>
+
+                    <div class="dataset-form-group" style="grid-column: 1 / -1;">
+                        <label class="dataset-form-label">Instance Data Directory</label>
+                        <input type="text"
+                               class="dataset-form-control"
+                               x-model="dataset.instance_data_dir"
+                               x-bind:class="{ 'is-invalid': validationErrors.instance_data_dir }"
+                               placeholder="/path/to/training/images"
+                               required>
+                        <div x-show="validationErrors.instance_data_dir"
+                             class="dataset-form-error"
+                             x-text="validationErrors.instance_data_dir"></div>
+                    </div>
+
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Backend Type</label>
+                        <select class="dataset-form-control"
+                                x-model="dataset.type"
+                                x-bind:class="{ 'is-invalid': validationErrors.type }">
+                            <option value="local">Local</option>
+                            <option value="aws">AWS S3</option>
+                            <option value="huggingface">Hugging Face</option>
+                        </select>
+                        <div x-show="validationErrors.type"
+                             class="dataset-form-error"
+                             x-text="validationErrors.type"></div>
+                    </div>
+
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Dataset Type</label>
+                        <select class="dataset-form-control"
+                                x-model="dataset.dataset_type"
+                                x-bind:class="{ 'is-invalid': validationErrors.dataset_type }">
+                            <option value="image">Image</option>
+                            <option value="conditioning">Conditioning</option>
+                            <option value="eval">Evaluation</option>
+                        </select>
+                        <div x-show="validationErrors.dataset_type"
+                             class="dataset-form-error"
+                             x-text="validationErrors.dataset_type"></div>
+                    </div>
+
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Resolution</label>
+                        <input type="number"
+                               class="dataset-form-control"
+                               x-model="dataset.resolution"
+                               x-bind:class="{ 'is-invalid': validationErrors.resolution }"
+                               min="256"
+                               step="64"
+                               value="1024">
+                        <div x-show="validationErrors.resolution"
+                             class="dataset-form-error"
+                             x-text="validationErrors.resolution"></div>
+                    </div>
+
+                    <div class="dataset-form-group">
+                        <label class="dataset-form-label">Sampling Probability</label>
+                        <input type="number"
+                               class="dataset-form-control"
+                               x-model="dataset.probability"
+                               x-bind:class="{ 'is-invalid': validationErrors.probability }"
+                               min="0"
+                               max="1"
+                               step="0.1"
+                               value="1.0">
+                        <div x-show="validationErrors.probability"
+                             class="dataset-form-error"
+                             x-text="validationErrors.probability"></div>
+                    </div>
+
+                    <!-- Advanced collapsible section -->
+                    <div class="dataset-advanced-section" style="grid-column: 1 / -1;">
+                        <div x-data="datasetAdvancedOptionsComponent()">
+                            <button type="button"
+                                    class="dataset-advanced-toggle"
+                                    @click="showAdvanced = !showAdvanced">
+                                <i class="fas fa-cog"></i>
+                                Advanced Options
+                                <i class="fas fa-chevron-down"
+                                   x-bind:class="{ 'expanded': showAdvanced }"></i>
+                            </button>
+
+                            <div x-show="showAdvanced"
+                                 x-transition
+                                 class="dataset-advanced-content">
+                                <div class="dataset-form-grid">
+                                    <div class="dataset-form-group">
+                                        <label class="dataset-form-label">Caption Strategy</label>
+                                        <select class="dataset-form-control" x-model="dataset.caption_strategy">
+                                            <option value="textfile">Text File</option>
+                                            <option value="filename">Filename</option>
+                                            <option value="csv">CSV Column</option>
+                                            <option value="huggingface">Hugging Face Field</option>
+                                            <option value="parquet">Parquet</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="dataset-form-group">
+                                        <label class="dataset-form-label">Repeats</label>
+                                        <input type="number"
+                                               class="dataset-form-control"
+                                               x-model="dataset.repeats"
+                                               min="0"
+                                               value="0">
+                                    </div>
+
+                                    <div class="dataset-form-group" style="grid-column: 1 / -1;">
+                                        <label class="dataset-form-label">VAE Cache Directory</label>
+                                        <input type="text"
+                                               class="dataset-form-control"
+                                               x-model="dataset.cache_dir_vae"
+                                               placeholder="cache/vae">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="dataset-card-actions">
+        <div class="dataset-actions-group">
+            <button type="button"
+                    class="dataset-action-btn btn-outline-primary"
+                    x-show="!editing"
+                    @click="startEditing()">
+                <i class="fas fa-edit"></i> Edit
+            </button>
+
+            <button type="button"
+                    class="dataset-action-btn btn-outline-secondary"
+                    @click="duplicateDataset()">
+                <i class="fas fa-copy"></i> Duplicate
+            </button>
+
+            <button type="button"
+                    class="dataset-action-btn btn-outline-danger"
+                    @click="deleteDataset()">
+                <i class="fas fa-trash"></i> Delete
+            </button>
+        </div>
+
+        <div class="dataset-actions-group" x-show="editing">
+            <button type="button"
+                    class="dataset-action-btn btn-secondary"
+                    @click="cancelEdit()">
+                Cancel
+            </button>
+
+            <button type="button"
+                    class="dataset-action-btn btn-primary"
+                    @click="saveChanges()"
+                    :disabled="saving">
+                <i class="fas fa-save"></i>
+                <span x-show="!saving">Save Changes</span>
+                <span x-show="saving">Saving...</span>
+            </button>
+        </div>
+    </div>
+</div>

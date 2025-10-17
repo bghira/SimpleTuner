@@ -1,12 +1,14 @@
 """CSV backend builder for creating CSVDataBackend instances."""
+
 import inspect
 import logging
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
+from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
+
 from .base import BaseBackendBuilder
 
 logger = logging.getLogger("CsvBackendBuilder")
@@ -62,11 +64,7 @@ class CsvBackendBuilder(BaseBackendBuilder):
 
         return backend_cls(**kwargs)
 
-    def build_with_metadata(
-        self,
-        config: BaseBackendConfig,
-        args: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def build_with_metadata(self, config: BaseBackendConfig, args: Dict[str, Any]) -> Dict[str, Any]:
         # csv backends use csv_cache_dir instead of instance_data_dir
         logger.info(f"(id={config.id}) Loading CSV dataset.")
 
@@ -77,10 +75,7 @@ class CsvBackendBuilder(BaseBackendBuilder):
         csv_cache_dir = csv_config.get("csv_cache_dir") or backend_config.get("csv_cache_dir")
 
         metadata_backend = self.create_metadata_backend(
-            config=config,
-            data_backend=data_backend,
-            args=args,
-            instance_data_dir=csv_cache_dir
+            config=config, data_backend=data_backend, args=args, instance_data_dir=csv_cache_dir
         )
 
         return {
@@ -88,7 +83,7 @@ class CsvBackendBuilder(BaseBackendBuilder):
             "data_backend": data_backend,
             "metadata_backend": metadata_backend,
             "instance_data_dir": csv_cache_dir,
-            "config": backend_config
+            "config": backend_config,
         }
 
     def _validate_csv_config(self, config: BaseBackendConfig, args: Optional[Dict[str, Any]]) -> None:
@@ -109,9 +104,7 @@ class CsvBackendBuilder(BaseBackendBuilder):
         ]
 
         if missing:
-            raise ValueError(
-                "Missing required CSV configuration keys: " + ", ".join(missing)
-            )
+            raise ValueError("Missing required CSV configuration keys: " + ", ".join(missing))
 
         if getattr(config, "caption_strategy", None) not in {"csv", None}:
             raise ValueError("caption_strategy must be 'csv' for CSV backends.")

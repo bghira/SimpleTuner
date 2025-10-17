@@ -12,25 +12,20 @@ This test suite covers:
 - Performance benchmarks
 """
 
+import os
+import sys
 import unittest
+from typing import Any, Dict, List, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
 import torch
 import torch.nn as nn
-from typing import Dict, Any, List, Tuple
-from unittest.mock import Mock, MagicMock, patch
-
-import sys
-import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
-from transformer_base_test import TransformerBaseTest, AttentionProcessorTestMixin
-from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
-    MockComponents,
-    patch_diffusers_imports,
-)
+from transformer_base_test import AttentionProcessorTestMixin, TransformerBaseTest
+from transformer_test_helpers import MockComponents, MockDiffusersConfig, TensorGenerator, patch_diffusers_imports
 
 
 class TestSD3Transformer2DModel(TransformerBaseTest, AttentionProcessorTestMixin):

@@ -87,6 +87,16 @@ class TextEmbeddingCache(WebhookMixin):
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
 
+    def _num_processes(self) -> int:
+        """Return accelerator num_processes as an int with safe fallback."""
+        if not self.accelerator:
+            return 1
+        value = getattr(self.accelerator, "num_processes", 1)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 1
+
     def create_hash(self, caption):
         if caption is None:
             # It's gross, but some images do not have captions.
@@ -323,7 +333,8 @@ class TextEmbeddingCache(WebhookMixin):
         if self.webhook_handler is not None:
             last_reported_index = 0
             self.send_progress_update(
-                type="init_cache_text_embeds_started",
+                type="init_cache_text_embeds_status_update",
+                readable_type="Text Embedding Caching in Progress",
                 progress=int(0 // len(local_caption_split)),
                 total=len(local_caption_split),
                 current=0,
@@ -333,12 +344,12 @@ class TextEmbeddingCache(WebhookMixin):
             desc="Write embeds to disk",
             leave=False,
             ncols=125,
-            disable=return_concat,
+            disable=return_concat or len(local_caption_split) < 100,
             total=len(local_caption_split),
             position=get_rank(),
         )
+        current_idx = -1
         with torch.no_grad():
-            last_reported_index = 0
             text_encoder_output = None
             for prompt in tqdm(
                 local_caption_split,
@@ -347,8 +358,9 @@ class TextEmbeddingCache(WebhookMixin):
                 miniters=50,
                 leave=False,
                 ncols=125,
-                position=get_rank() + self.accelerator.num_processes + 1,
+                position=get_rank() + self._num_processes() + 1,
             ):
+                current_idx += 1
                 filename = os.path.join(self.cache_dir, self.hash_prompt(prompt))
                 debug_msg = f"Processing file: {filename}, prompt: {prompt}"
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
@@ -405,12 +417,11 @@ class TextEmbeddingCache(WebhookMixin):
                         self.webhook_handler is not None
                         and int(self.write_thread_bar.n % self.webhook_progress_interval) < 10
                     ):
-                        last_reported_index = int(self.write_thread_bar.n % self.webhook_progress_interval)
                         self.send_progress_update(
                             type="init_cache_text_embeds_status_update",
-                            progress=int(self.write_thread_bar.n // len(local_caption_split) * 100),
+                            progress=int(current_idx / len(local_caption_split) * 100),
                             total=len(local_caption_split),
-                            current=0,
+                            current=current_idx,
                         )
 
                     if return_concat:
@@ -432,10 +443,11 @@ class TextEmbeddingCache(WebhookMixin):
 
             if self.webhook_handler is not None:
                 self.send_progress_update(
-                    type="init_cache_text_embeds_status_complete",
+                    type="init_cache_text_embeds_status_update",
                     progress=100,
                     total=len(local_caption_split),
                     current=len(local_caption_split),
+                    readable_type="Text Embedding Caching Complete",
                 )
 
             # Close the tqdm progress bar after the loop

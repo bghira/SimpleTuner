@@ -3,46 +3,45 @@ Comprehensive unit tests for AuraFlow transformer components.
 Tests all 6 classes and 27 functions with focus on typo prevention and edge cases.
 """
 
+import os
+import sys
+import unittest
+from typing import Any, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
 import torch
 import torch.nn as nn
-import unittest
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-from typing import Dict, Any, Optional, List, Tuple
-
-import sys
-import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
+    MockAttention,
     MockDiffusersConfig,
-    TensorGenerator,
-    TypoTestUtils,
-    PerformanceUtils,
-    ShapeValidator,
+    MockingUtils,
     MockModule,
     MockNormLayer,
-    MockAttention,
-    MockingUtils,
+    PerformanceUtils,
+    ShapeValidator,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import the target classes
 from simpletuner.helpers.models.auraflow.transformer import (
-    find_multiple,
-    AuraFlowPatchEmbed,
     AuraFlowFeedForward,
+    AuraFlowJointTransformerBlock,
+    AuraFlowPatchEmbed,
     AuraFlowPreFinalBlock,
     AuraFlowSingleTransformerBlock,
-    AuraFlowJointTransformerBlock,
     AuraFlowTransformer2DModel,
+    find_multiple,
 )
 
 
@@ -563,8 +562,8 @@ class TestAuraFlowSingleTransformerBlock(TransformerBaseTest, TransformerBlockTe
         self.assertTrue(hasattr(block, "ff"))
 
         # Check types
-        from diffusers.models.normalization import AdaLayerNormZero, FP32LayerNorm
         from diffusers.models.attention_processor import Attention
+        from diffusers.models.normalization import AdaLayerNormZero, FP32LayerNorm
 
         self.assertIsInstance(block.norm1, AdaLayerNormZero)
         self.assertIsInstance(block.attn, Attention)

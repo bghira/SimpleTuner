@@ -1,0 +1,190 @@
+/**
+ * Browser Compatibility Styles
+ * Provides fallbacks for older browsers
+ */
+
+/* Flexbox fallbacks for IE 10-11 */
+.d-flex {
+    display: -webkit-box;
+    display: -ms-flexbox;
+    display: flex;
+}
+
+.flex-column {
+    -webkit-box-orient: vertical;
+    -webkit-box-direction: normal;
+    -ms-flex-direction: column;
+    flex-direction: column;
+}
+
+.justify-content-between {
+    -webkit-box-pack: justify;
+    -ms-flex-pack: justify;
+    justify-content: space-between;
+}
+
+.align-items-center {
+    -webkit-box-align: center;
+    -ms-flex-align: center;
+    align-items: center;
+}
+
+/* CSS Grid fallbacks */
+@supports not (display: grid) {
+    .dataset-grid {
+        display: -webkit-box;
+        display: -ms-flexbox;
+        display: flex;
+        -ms-flex-wrap: wrap;
+        flex-wrap: wrap;
+    }
+
+    .dataset-grid > * {
+        -webkit-box-flex: 0;
+        -ms-flex: 0 0 calc(50% - 10px);
+        flex: 0 0 calc(50% - 10px);
+        margin: 5px;
+    }
+}
+
+/* Transition fallbacks */
+* {
+    -webkit-transition-property: all;
+    -moz-transition-property: all;
+    -o-transition-property: all;
+    transition-property: all;
+}
+
+.card {
+    -webkit-transition: all 0.3s ease;
+    -moz-transition: all 0.3s ease;
+    -o-transition: all 0.3s ease;
+    transition: all 0.3s ease;
+}
+
+/* Transform fallbacks */
+.dataset-card:hover {
+    -webkit-transform: translateY(-2px);
+    -moz-transform: translateY(-2px);
+    -ms-transform: translateY(-2px);
+    -o-transform: translateY(-2px);
+    transform: translateY(-2px);
+}
+
+/* Box shadow fallbacks */
+.card {
+    -webkit-box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    -moz-box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+/* Border radius fallbacks */
+.btn, .card, .form-control, .form-select {
+    -webkit-border-radius: 0.375rem;
+    -moz-border-radius: 0.375rem;
+    border-radius: 0.375rem;
+}
+
+/* Opacity fallbacks for IE 8 */
+.htmx-indicator {
+    opacity: 0;
+    filter: alpha(opacity=0);
+}
+
+.htmx-request .htmx-indicator {
+    opacity: 1;
+    filter: alpha(opacity=100);
+}
+
+/* Placeholder text color fallbacks */
+.form-control::-webkit-input-placeholder {
+    color: rgba(148, 163, 184, 0.5);
+}
+
+.form-control::-moz-placeholder {
+    color: rgba(148, 163, 184, 0.5);
+    opacity: 1;
+}
+
+.form-control:-ms-input-placeholder {
+    color: rgba(148, 163, 184, 0.5);
+}
+
+.form-control::placeholder {
+    color: rgba(148, 163, 184, 0.5);
+}
+
+/* Background gradients fallbacks */
+.bg-gradient-primary {
+    background: #667eea;
+    background: -webkit-linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+    background: -moz-linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+    background: -o-linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Animation fallbacks */
+@-webkit-keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@-moz-keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@-o-keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.fade-in {
+    -webkit-animation: fadeIn 0.3s ease-in;
+    -moz-animation: fadeIn 0.3s ease-in;
+    -o-animation: fadeIn 0.3s ease-in;
+    animation: fadeIn 0.3s ease-in;
+}
+
+/* Calc() fallback */
+.half-width-with-gap {
+    width: 48%; /* Fallback for browsers without calc() */
+    width: -webkit-calc(50% - 10px);
+    width: -moz-calc(50% - 10px);
+    width: calc(50% - 10px);
+}
+
+/* Viewport units fallback */
+.full-height {
+    height: 100%; /* Fallback */
+    height: 100vh;
+}
+
+/* Custom properties (CSS variables) fallback */
+.themed-element {
+    background-color: #0a0a0a; /* Fallback */
+    background-color: var(--bg-primary, #0a0a0a);
+    color: #f8f9fa; /* Fallback */
+    color: var(--text-primary, #f8f9fa);
+}
+
+/* Position sticky fallback */
+.sticky-top {
+    position: -webkit-sticky;
+    position: sticky;
+    top: 0;
+    /* Fallback for older browsers */
+    position: relative;
+}
+
+@supports (position: sticky) or (position: -webkit-sticky) {
+    .sticky-top {
+        position: -webkit-sticky;
+        position: sticky;
+    }
+}

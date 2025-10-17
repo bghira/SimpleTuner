@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 
 import accelerate
 import torch
@@ -55,7 +56,7 @@ except:
 
 # Some optimizers are not available in multibackend bitsandbytes as of January 2025.
 is_ademamix_available = False
-if is_bitsandbytes_available:
+if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
     if "AdEMAMix" in dir(bitsandbytes.optim):
         is_ademamix_available = True
 
@@ -283,7 +284,59 @@ optimizer_choices = {
     },
 }
 
-if is_bitsandbytes_available:
+FP8_OPTIMIZER_KEYS = frozenset({"ao-adamfp8", "ao-adamwfp8"})
+
+
+def _is_truthy(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+@lru_cache(maxsize=1)
+def fp8_optimizers_supported() -> bool:
+    """
+    Determine whether FP8 optimizers backed by TorchAO should be offered in the UI.
+
+    Returns:
+        bool: True when the local environment appears to have FP8-capable CUDA devices
+              or the user explicitly enables them via SIMPLETUNER_ENABLE_FP8_OPTIMIZERS.
+    """
+    override = os.environ.get("SIMPLETUNER_ENABLE_FP8_OPTIMIZERS")
+    if override is not None:
+        return _is_truthy(override)
+
+    if not torch.cuda.is_available():
+        return False
+
+    try:
+        device_count = torch.cuda.device_count()
+    except Exception:
+        device_count = 0
+
+    for index in range(device_count):
+        try:
+            major, _ = torch.cuda.get_device_capability(index)
+        except (AssertionError, RuntimeError, ValueError):
+            continue
+
+        if major >= 9:
+            return True
+
+    return False
+
+
+def available_optimizer_keys() -> list[str]:
+    """
+    Return optimizer keys appropriate for the current environment.
+
+    FP8-only optimizers are excluded unless the environment appears capable of running them.
+    """
+    if fp8_optimizers_supported():
+        return list(optimizer_choices.keys())
+
+    return [key for key in optimizer_choices.keys() if key not in FP8_OPTIMIZER_KEYS]
+
+
+if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
     optimizer_choices.update(
         {
             "bnb-adagrad": {

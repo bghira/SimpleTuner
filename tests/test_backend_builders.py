@@ -6,20 +6,19 @@ Validates builder classes for creating backend instances and handling configurat
 
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from typing import Dict, Any
+from typing import Any, Dict
+from unittest.mock import MagicMock, Mock, patch
 
 from simpletuner.helpers.data_backend.builders import (
-    BaseBackendBuilder,
-    LocalBackendBuilder,
     AwsBackendBuilder,
+    BaseBackendBuilder,
     CsvBackendBuilder,
     HuggingfaceBackendBuilder,
-    create_backend_builder,
+    LocalBackendBuilder,
     build_backend_from_config,
+    create_backend_builder,
 )
-
-from simpletuner.helpers.data_backend.config import ImageBackendConfig, TextEmbedBackendConfig, ImageEmbedBackendConfig
+from simpletuner.helpers.data_backend.config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig
 
 
 class TestBaseBackendBuilder(unittest.TestCase):

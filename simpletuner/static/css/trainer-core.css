@@ -1,0 +1,375 @@
+/* trainer-core.css - Core styles extracted from trainer_htmx.html inline styles */
+
+/* Connection status display */
+.connection-status-inline {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    color: var(--text-secondary);
+    font-size: var(--typography-font-size-sm);
+}
+
+/* Main content layout */
+.main-content {
+    margin-left: 280px;
+}
+
+@media (max-width: 1024px) {
+    .main-content {
+        margin-left: 0;
+    }
+}
+
+.tab-fragment .card {
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-panel);
+    color: var(--text-primary);
+}
+
+/* Extend unified card styling to all custom card variants */
+.tab-fragment .card,
+.tab-fragment .checkpoint-card,
+.tab-fragment .dataset-card,
+.tab-fragment .config-card,
+.tab-fragment .publishing-toggle-card,
+.tab-fragment .preference-card {
+    background: var(--panel-bg) !important;
+    border: 1px solid var(--panel-border) !important;
+    border-radius: var(--radius-xl) !important;
+    box-shadow: var(--shadow-panel) !important;
+    color: var(--text-primary);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+
+/* Unified hover effect for all cards */
+.tab-fragment .card:hover,
+.tab-fragment .checkpoint-card:hover,
+.tab-fragment .dataset-card:hover,
+.tab-fragment .config-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-panel-hover) !important;
+}
+
+.tab-fragment .card-header,
+.tab-fragment .card-body,
+.tab-fragment .card-footer {
+    background: transparent;
+    color: inherit;
+}
+
+.tab-fragment .form-label,
+.tab-fragment .card-title,
+.tab-fragment .section-title {
+    color: var(--text-primary);
+}
+
+.tab-fragment .form-text,
+.tab-fragment .text-muted {
+    color: var(--text-tertiary) !important;
+}
+
+.tab-fragment .form-control,
+.tab-fragment .form-select,
+.tab-fragment .form-control:focus,
+.tab-fragment .form-select:focus {
+    background: var(--field-bg);
+    border: 1px solid var(--field-border);
+    color: var(--text-primary);
+    box-shadow: none;
+}
+
+.tab-fragment .form-control::placeholder {
+    color: var(--text-soft);
+}
+
+.danger-mode-locked {
+    opacity: 0.6;
+    position: relative;
+}
+
+.danger-mode-locked select:disabled,
+.danger-mode-locked input:disabled {
+    cursor: not-allowed;
+}
+
+.tab-fragment .btn,
+.tab-fragment .btn-outline-secondary {
+    color: var(--text-primary);
+}
+
+.tab-fragment .btn-outline-secondary {
+    border-color: var(--border-soft);
+}
+
+/* Event Dock Styles */
+.event-dock-shell {
+    position: fixed;
+    left: 280px;
+    right: 0;
+    bottom: 0;
+    padding: 0 2rem;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    pointer-events: none;
+    z-index: 1030;
+}
+
+.event-dock {
+    width: 100%;
+    max-width: calc(1400px + 4rem);
+    background: var(--event-dock-bg);
+    border: 1px solid var(--event-dock-border);
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+    box-shadow: var(--shadow-event-dock);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: height 0.2s ease;
+    pointer-events: auto;
+}
+
+.event-dock.collapsed {
+    cursor: pointer;
+}
+
+.event-dock.resizing {
+    user-select: none;
+    cursor: ns-resize;
+}
+
+.event-dock-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: var(--glass-bg);
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.event-dock-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-weight: 600;
+}
+
+.event-dock-title i {
+    color: var(--accent-blue);
+}
+
+.event-dock-sysstat {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 var(--spacing-md);
+    min-width: 0;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+}
+
+.event-dock-sysstat .sysstat-items {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.event-dock-sysstat .sysstat-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    white-space: nowrap;
+}
+
+.event-dock-sysstat .sysstat-item .label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.7rem;
+    opacity: 0.7;
+}
+
+.event-dock-sysstat .sysstat-item .value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.event-dock-sysstat .sysstat-placeholder {
+    font-size: 0.75rem;
+    color: var(--text-muted, var(--text-secondary));
+    white-space: nowrap;
+}
+
+.event-dock-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.event-dock-actions .btn {
+    border-color: var(--glass-border);
+    color: var(--text-primary);
+    background: var(--card-bg-hover);
+}
+
+.event-dock-actions .btn:hover {
+    background: var(--card-bg-elevated);
+    border-color: var(--border-strong);
+}
+
+.event-dock-resize-handle {
+    display: flex;
+    justify-content: center;
+    padding: 0.35rem 0;
+    cursor: ns-resize;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.event-dock-resize-handle span {
+    width: 48px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--border-soft);
+}
+
+.event-dock-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    backdrop-filter: blur(6px);
+}
+
+.event-dock .event-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-lg);
+    background: var(--event-list-bg);
+}
+
+/* Event dock responsive styles */
+@media (max-width: 1024px) {
+    .event-dock-shell {
+        left: 0;
+        padding: 0 1.25rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .event-dock-title span {
+        font-size: 0.9rem;
+    }
+
+    .event-dock-actions .btn {
+        padding: 0.35rem 0.6rem;
+    }
+}
+
+/* Training Status Pill */
+.training-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    background: var(--field-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    box-shadow: var(--shadow-training-pill);
+    margin-left: 1rem;
+}
+
+.training-status-pill i {
+    color: var(--accent-cyan);
+}
+
+/* Onboarding Overlay & Modal */
+.onboarding-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--onboarding-overlay);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-2xl);
+    z-index: 1200;
+}
+
+.onboarding-modal {
+    width: min(560px, 100%);
+    background: var(--onboarding-modal);
+    border: 1px solid var(--panel-border);
+    border-radius: 16px;
+    padding: var(--spacing-2xl);
+    box-shadow: var(--shadow-panel);
+}
+
+.onboarding-modal h2 {
+    font-size: 1.75rem;
+    margin-bottom: var(--spacing-md);
+}
+
+/* Save Dataset Modal */
+.save-dataset-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--overlay-section-dark);
+    backdrop-filter: blur(4px);
+}
+
+.save-dataset-modal {
+    width: min(480px, 90vw);
+    background: var(--onboarding-modal);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: var(--spacing-2xl);
+    box-shadow: var(--shadow-modal);
+    color: var(--text-primary);
+}
+
+.save-dataset-modal h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.save-dataset-modal p,
+.save-dataset-modal .form-check-label {
+    color: var(--text-secondary);
+}
+
+.save-dataset-modal code {
+    color: var(--text-primary);
+}
+
+/* Onboarding UI Components */
+.onboarding-prompt {
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xl);
+}
+
+.onboarding-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-md);
+    margin-top: var(--spacing-xl);
+}
+
+.onboarding-actions .btn-primary {
+    min-width: 160px;
+}
+
+/* Progress bar styles */
+.training-progress-bar {
+    transition: width 0.3s ease;
+}

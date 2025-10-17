@@ -25,6 +25,8 @@ else:
 
 class Wan(VideoModelFoundation):
     NAME = "Wan"
+    MODEL_DESCRIPTION = "Video generation model (text-to-video)"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLWan
@@ -271,3 +273,8 @@ class Wan(VideoModelFoundation):
                 transforms.Normalize([0.5], [0.5]),
             ]
         )
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("wan", Wan)

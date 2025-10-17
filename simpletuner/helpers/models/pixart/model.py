@@ -26,6 +26,8 @@ else:
 
 class PixartSigma(ImageModelFoundation):
     NAME = "PixArt Sigma"
+    MODEL_DESCRIPTION = "Efficient high-resolution image synthesis"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -288,6 +290,8 @@ class PixartSigma(ImageModelFoundation):
         """
         We'll check the current model config to ensure we're loading a base or refiner model.
         """
+        if self.config.model_flavour is None:
+            return
         if "stage1" in self.config.model_flavour or "stage1" in self.config.pretrained_model_name_or_path:
             logger.info(f"{self.NAME} stage1 eDiffi model is detected, enabling special training configuration settings.")
             self.config.refiner_training = True
@@ -317,7 +321,7 @@ class PixartSigma(ImageModelFoundation):
             logger.warning(f"-!- {self.NAME} supports a max length of 300 tokens, --tokenizer_max_length is ignored -!-")
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
-                "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+                f"{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 64
 
@@ -424,3 +428,8 @@ class PixartSigma(ImageModelFoundation):
 
             return pixart_sigma_controlnet_code_example(self.config, repo_id, self)
         return None
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("pixart_sigma", PixartSigma)

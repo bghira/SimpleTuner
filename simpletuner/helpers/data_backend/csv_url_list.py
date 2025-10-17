@@ -4,7 +4,7 @@ import logging
 import os
 from io import BytesIO
 from pathlib import Path
-from typing import Any, BinaryIO, Optional, Union
+from typing import Any, BinaryIO, Dict, Optional, Union
 
 import pandas as pd
 import requests
@@ -328,3 +328,38 @@ class CSVDataBackend(BaseDataBackend):
             image_cache_loc=representation.get("image_cache_loc"),
             hash_filenames=representation.get("hash_filenames", True),
         )
+
+
+def test_csv_manifest(
+    path: str,
+    caption_column: Optional[str] = None,
+    url_column: Optional[str] = None,
+    sample_rows: int = 5,
+) -> Dict[str, Any]:
+    """Read a small slice of a CSV manifest to validate accessibility and schema."""
+
+    if not path:
+        raise ValueError("CSV file path is required")
+
+    try:
+        df = pd.read_csv(path, nrows=max(1, sample_rows))
+    except Exception as exc:  # pragma: no cover - pandas raises varied subclasses
+        raise ValueError(f"Failed to read CSV manifest: {exc}") from exc
+
+    columns = list(df.columns)
+    warnings = []
+
+    if caption_column:
+        if caption_column not in columns:
+            warnings.append(f"Caption column '{caption_column}' not found in manifest")
+    if url_column:
+        if url_column not in columns:
+            warnings.append(f"URL column '{url_column}' not found in manifest")
+
+    return {
+        "rows_sampled": int(df.shape[0]),
+        "columns": columns,
+        "caption_column": caption_column,
+        "url_column": url_column,
+        "warnings": warnings,
+    }

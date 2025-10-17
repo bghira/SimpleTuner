@@ -1,10 +1,243 @@
 # test_trainer.py
 
+import importlib.machinery as machinery
+import sys
+import time
+import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
+from accelerate import FullyShardedDataParallelPlugin
+
+
+def _ensure_torchao_stub():
+    if "torchao.optim" in sys.modules:
+        return
+    torchao_module = types.ModuleType("torchao")
+    optim_module = types.ModuleType("torchao.optim")
+    dummy_class = type("DummyOptimizer", (), {})
+
+    optim_module.AdamFp8 = dummy_class
+    optim_module.AdamW4bit = dummy_class
+    optim_module.AdamW8bit = dummy_class
+    optim_module.AdamWFp8 = dummy_class
+    optim_module.CPUOffloadOptimizer = dummy_class
+
+    torchao_module.optim = optim_module
+    sys.modules["torchao"] = torchao_module
+    sys.modules["torchao.optim"] = optim_module
+
+
+def _ensure_optimi_stub():
+    if "optimi" in sys.modules:
+        return
+    optimi_module = types.ModuleType("optimi")
+    for cls_name in [
+        "StableAdamW",
+        "AdamW",
+        "Lion",
+        "RAdam",
+        "Ranger",
+        "Adan",
+        "Adam",
+        "SGD",
+    ]:
+        setattr(optimi_module, cls_name, type(cls_name, (), {}))
+
+    def _prepare_for_gradient_release(*_args, **_kwargs):
+        return None
+
+    optimi_module.prepare_for_gradient_release = _prepare_for_gradient_release
+    sys.modules["optimi"] = optimi_module
+
+
+def _ensure_fastapi_stub():
+    if "fastapi" in sys.modules:
+        return
+
+    fastapi_module = types.ModuleType("fastapi")
+
+    class FastAPI:
+        def __init__(self, *_, **__):
+            self.state = types.SimpleNamespace()
+
+        def add_middleware(self, *_, **__):
+            return None
+
+        def mount(self, *_, **__):
+            return None
+
+    class APIRouter:
+        pass
+
+    class HTTPException(Exception):
+        pass
+
+    fastapi_module.FastAPI = FastAPI
+    fastapi_module.APIRouter = APIRouter
+    fastapi_module.HTTPException = HTTPException
+
+    sys.modules["fastapi"] = fastapi_module
+
+    middleware_module = types.ModuleType("fastapi.middleware")
+    sys.modules["fastapi.middleware"] = middleware_module
+
+    cors_module = types.ModuleType("fastapi.middleware.cors")
+
+    class CORSMiddleware:
+        def __init__(self, *_, **__):
+            pass
+
+    cors_module.CORSMiddleware = CORSMiddleware
+    sys.modules["fastapi.middleware.cors"] = cors_module
+
+    responses_module = types.ModuleType("fastapi.responses")
+
+    class FileResponse:
+        def __init__(self, *_, **__):
+            pass
+
+    responses_module.FileResponse = FileResponse
+    sys.modules["fastapi.responses"] = responses_module
+
+    staticfiles_module = types.ModuleType("fastapi.staticfiles")
+
+    class StaticFiles:
+        def __init__(self, *_, **__):
+            pass
+
+    staticfiles_module.StaticFiles = StaticFiles
+    sys.modules["fastapi.staticfiles"] = staticfiles_module
+
+
+def _ensure_toml_stub():
+    if "toml" in sys.modules:
+        return
+    toml_module = types.ModuleType("toml")
+
+    class TomlDecodeError(Exception):
+        pass
+
+    def _load(*_args, **_kwargs):
+        return {}
+
+    toml_module.TomlDecodeError = TomlDecodeError
+    toml_module.load = _load
+    sys.modules["toml"] = toml_module
+
+
+def _ensure_peft_stub():
+    if "peft" in sys.modules:
+        return
+    peft_module = types.ModuleType("peft")
+
+    class LoraConfig:
+        pass
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    peft_module.LoraConfig = LoraConfig
+    peft_module.inject_adapter_in_model = _noop
+    peft_module.set_peft_model_state_dict = _noop
+    peft_module.__spec__ = machinery.ModuleSpec("peft", loader=None)
+    sys.modules["peft"] = peft_module
+
+    utils_module = types.ModuleType("peft.utils")
+
+    def _get_state_dict(*_args, **_kwargs):
+        return {}
+
+    utils_module.get_peft_model_state_dict = _get_state_dict
+    utils_module.set_peft_model_state_dict = _noop
+    utils_module.__spec__ = machinery.ModuleSpec("peft.utils", loader=None)
+    sys.modules["peft.utils"] = utils_module
+
+    other_module = types.ModuleType("peft.utils.other")
+
+    def _transpose(value):
+        return value
+
+    other_module.transpose = _transpose
+    other_module.__spec__ = machinery.ModuleSpec("peft.utils.other", loader=None)
+    sys.modules["peft.utils.other"] = other_module
+
+    tuners_module = types.ModuleType("peft.tuners")
+    tuners_module.__spec__ = machinery.ModuleSpec("peft.tuners", loader=None)
+    sys.modules["peft.tuners"] = tuners_module
+
+    lora_layer_module = types.ModuleType("peft.tuners.lora.layer")
+
+    class LoraLayer:
+        pass
+
+    lora_layer_module.LoraLayer = LoraLayer
+    lora_layer_module.__spec__ = machinery.ModuleSpec("peft.tuners.lora.layer", loader=None)
+    sys.modules["peft.tuners.lora.layer"] = lora_layer_module
+
+    tuners_utils_module = types.ModuleType("peft.tuners.tuners_utils")
+
+    class BaseTunerLayer:
+        pass
+
+    def _check_adapters_to_merge(*_args, **_kwargs):
+        return []
+
+    tuners_utils_module.BaseTunerLayer = BaseTunerLayer
+    tuners_utils_module.check_adapters_to_merge = _check_adapters_to_merge
+    tuners_utils_module.__spec__ = machinery.ModuleSpec("peft.tuners.tuners_utils", loader=None)
+    sys.modules["peft.tuners.tuners_utils"] = tuners_utils_module
+
+    import_utils_module = types.ModuleType("peft.import_utils")
+
+    def _is_quanto_available():
+        return False
+
+    import_utils_module.is_quanto_available = _is_quanto_available
+    import_utils_module.__spec__ = machinery.ModuleSpec("peft.import_utils", loader=None)
+    sys.modules["peft.import_utils"] = import_utils_module
+
+
+def _ensure_torchvision_stub():
+    if "torchvision" in sys.modules:
+        return
+
+    torchvision_module = types.ModuleType("torchvision")
+    torchvision_module.__spec__ = machinery.ModuleSpec("torchvision", loader=None)
+
+    class _DummyTransform:
+        def __call__(self, value):
+            return value
+
+    def _compose(*_args, **_kwargs):
+        return _DummyTransform()
+
+    def _to_tensor(value):
+        return value
+
+    def _normalize(*_args, **_kwargs):
+        return _DummyTransform()
+
+    transforms_module = types.ModuleType("torchvision.transforms")
+    transforms_module.__spec__ = machinery.ModuleSpec("torchvision.transforms", loader=None)
+    transforms_module.Compose = _compose
+    transforms_module.ToTensor = lambda *_args, **_kwargs: _DummyTransform()
+    transforms_module.Normalize = _normalize
+    transforms_module.functional = types.SimpleNamespace(to_tensor=_to_tensor)
+
+    torchvision_module.transforms = transforms_module
+    sys.modules["torchvision"] = torchvision_module
+    sys.modules["torchvision.transforms"] = transforms_module
+
+
+_ensure_torchao_stub()
+_ensure_optimi_stub()
+_ensure_fastapi_stub()
+_ensure_toml_stub()
+_ensure_peft_stub()
+_ensure_torchvision_stub()
 
 from simpletuner.helpers.training.trainer import Trainer
 
@@ -74,6 +307,45 @@ class TestTrainer(unittest.TestCase):
         trainer.init_seed()
         mock_set_seed.assert_called_with(42, False)
 
+    def test_run_trainer_job_aborts_promptly(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        class DummyTrainer:
+            last_instance = None
+
+            def __init__(self, config=None, job_id=None):
+                self.config = config
+                self.job_id = job_id
+                self.should_abort = False
+                self._external_abort_checker = None
+                self.abort_called = False
+                DummyTrainer.last_instance = self
+
+            def run(self):
+                deadline = time.time() + 1.0
+                while not self.should_abort and time.time() < deadline:
+                    time.sleep(0.01)
+                if not self.should_abort:
+                    raise AssertionError("Trainer run did not observe abort signal")
+
+            def abort(self):
+                self.abort_called = True
+                self.should_abort = True
+
+        with patch.object(trainer_module, "Trainer", DummyTrainer):
+            result = trainer_module.run_trainer_job(
+                {
+                    "should_abort": lambda: True,
+                    "__job_id__": "unit-test",
+                }
+            )
+
+        self.assertEqual(result["status"], "completed")
+        instance = DummyTrainer.last_instance
+        self.assertIsNotNone(instance)
+        self.assertTrue(instance.abort_called)
+        self.assertTrue(instance.should_abort)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
@@ -129,6 +401,69 @@ class TestTrainer(unittest.TestCase):
         logs = {}
         trainer._update_grad_metrics(logs, require_value_method=True)
         self.assertNotIn("grad_absmax", logs)
+
+    def test_load_fsdp_plugin_maps_options(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=True,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=["TransformerBlock"],
+            deepspeed_config=None,
+        )
+
+        plugin = trainer._load_fsdp_plugin()
+        self.assertIsInstance(plugin, FullyShardedDataParallelPlugin)
+        self.assertEqual(plugin.fsdp_version, 2)
+        self.assertTrue(plugin.reshard_after_forward)
+        self.assertTrue(plugin.cpu_ram_efficient_loading)
+        self.assertEqual(plugin.state_dict_type, "sharded_state_dict")
+        self.assertEqual(plugin.auto_wrap_policy, "transformer_based_wrap")
+        self.assertEqual(plugin.transformer_cls_names_to_wrap, ["TransformerBlock"])
+
+    def test_load_fsdp_plugin_rejects_deepspeed(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=False,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=None,
+            deepspeed_config={"zero_optimization": {"stage": 2}},
+        )
+
+        with self.assertRaises(ValueError):
+            trainer._load_fsdp_plugin()
+
+    def test_init_validations_disabled_for_fsdp_full_shard(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(deepspeed_plugin=SimpleNamespace(deepspeed_config={"zero_optimization": {"stage": 2}}))
+        )
+        trainer.accelerator.wait_for_everyone = lambda *_, **__: None
+        trainer.accelerator.is_main_process = True
+        trainer.config = SimpleNamespace(
+            use_fsdp=True,
+            fsdp_reshard_after_forward=True,
+            validation_disable=False,
+            eval_steps_interval=None,
+        )
+        trainer.validation = None
+        trainer.evaluation = None
+        trainer.model = None
+        trainer.validation_prompt_metadata = None
+        trainer.distiller = None
+        trainer._get_trainable_parameters = None
+
+        trainer.init_validations()
+
+        self.assertTrue(trainer.config.validation_disable)
+        self.assertIsNone(trainer.validation)
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(

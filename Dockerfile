@@ -25,8 +25,10 @@ RUN apt-get update -y && \
         libgl1-mesa-glx \
         libsm6 \
         libxext6 \
+        libopenmpi-dev \
         net-tools \
         nvtop \
+        openmpi-bin \
         openssh-client \
         openssh-server \
         p7zip-full \
@@ -63,6 +65,9 @@ ENV SIMPLETUNER_PLATFORM=cuda
 
 # Install supporting CLIs ahead of the project install
 RUN pip install --no-cache-dir "huggingface_hub[cli]" wandb
+
+# Install MPI bindings needed for CUDA multi-node support
+RUN pip install --no-cache-dir mpi4py
 
 # Install SimpleTuner from PyPI to match published releases
 RUN pip install --no-cache-dir simpletuner

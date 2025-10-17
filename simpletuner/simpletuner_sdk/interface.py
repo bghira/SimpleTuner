@@ -1,17 +1,16 @@
 # simpletuner_sdk.interface.py
-import json
 import os
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from simpletuner.helpers.configuration.cmd_args import get_default_config as get_cmd_default_config
 
 # Import the proper configuration modules
-from simpletuner.helpers.models.all import get_all_model_flavours, get_model_flavour_choices, model_families
-from simpletuner.helpers.training.optimizer_param import optimizer_choices
+from simpletuner.helpers.models.all import get_all_model_flavours, model_families
+from simpletuner.helpers.training.optimizer_param import available_optimizer_keys, optimizer_choices
 
 
 class WebInterface:
@@ -24,9 +23,9 @@ class WebInterface:
     def setup_routes(self):
         """Setup all web routes"""
         # Main trainer interface
-        self.router.add_api_route("/", self.get_trainer_page, methods=["GET"], response_class=HTMLResponse)
+        self.router.add_api_route("/", self.redirect_to_trainer, methods=["GET"], response_class=HTMLResponse)
         self.router.add_api_route(
-            "/trainer",
+            "/training",
             self.get_trainer_page,
             methods=["GET"],
             response_class=HTMLResponse,
@@ -166,7 +165,8 @@ class WebInterface:
         # Return as grouped structure for optgroup rendering
         categories = {}
 
-        for opt_key, opt_info in optimizer_choices.items():
+        for opt_key in available_optimizer_keys():
+            opt_info = optimizer_choices[opt_key]
             # Create a human-readable label
             label = opt_key
 
@@ -222,23 +222,20 @@ class WebInterface:
         ]
         return schedulers
 
+    async def redirect_to_trainer(self, request: Request):
+        """Redirect root web path to the primary trainer page."""
+        return RedirectResponse(url="/web/trainer", status_code=307)
+
     async def get_trainer_page(self, request: Request):
-        """Serve the main trainer interface"""
-        try:
-            # Prepare configuration data with dynamic options
-            context = self.get_trainer_context(request)
-
-            # Check if trainer.html exists, fallback to ui.template
-            if os.path.exists("templates/trainer.html"):
-                return self.templates.TemplateResponse("trainer.html", context)
-            elif os.path.exists("templates/ui.template"):
-                # For backward compatibility
-                return self.templates.TemplateResponse("ui.template", {"request": request})
-            else:
-                return self.get_fallback_response()
-
-        except Exception as e:
-            return self.get_error_response(str(e))
+        """Serve the HTMX-based trainer interface for legacy links."""
+        return self.templates.TemplateResponse(
+            request,
+            "trainer_htmx.html",
+            {
+                "request": request,
+                "title": "SimpleTuner Training Studio",
+            },
+        )
 
     def get_trainer_context(self, request: Request) -> Dict[str, Any]:
         """Prepare context data for trainer template with dynamic configuration"""
@@ -260,12 +257,15 @@ class WebInterface:
         defaults = get_cmd_default_config()
 
         # Override a few UI-specific defaults
-        defaults["job_id"] = "training_run_" + str(int(os.environ.get("RANDOM", "42")))
+        import random
+
+        defaults["job_id"] = f"training_run_{random.randint(1000, 9999)}"
         defaults["data_backend_config"] = "config/multidatabackend.json"
 
         # Ensure all template-expected values have sensible defaults
         # These are fallbacks if cmd_args doesn't provide them
         template_defaults = {
+            "model_type": "full",  # Default to full training
             "resume_from_checkpoint": "latest",
             "train_batch_size": 1,
             "gradient_accumulation_steps": 1,
@@ -296,30 +296,12 @@ class WebInterface:
         return defaults
 
     async def get_dashboard(self, request: Request):
-        """Serve dashboard page"""
-        context = {
-            "request": request,
-            "page_title": "Dashboard",
-            # Add dashboard-specific data
-        }
-
-        if os.path.exists("templates/dashboard.html"):
-            return self.templates.TemplateResponse("dashboard.html", context)
-        else:
-            return self.get_fallback_response("Dashboard page not implemented yet")
+        """Redirect dashboard requests to the NiceGUI overview."""
+        return RedirectResponse(url="/web/trainer", status_code=307)
 
     async def get_settings(self, request: Request):
-        """Serve settings page"""
-        context = {
-            "request": request,
-            "page_title": "Settings",
-            # Add settings-specific data
-        }
-
-        if os.path.exists("templates/settings.html"):
-            return self.templates.TemplateResponse("settings.html", context)
-        else:
-            return self.get_fallback_response("Settings page not implemented yet")
+        """Redirect settings requests to the NiceGUI page."""
+        return RedirectResponse(url="/web/settings", status_code=307)
 
     def get_fallback_response(self, message: str = None) -> HTMLResponse:
         """Get fallback HTML response"""

@@ -7,9 +7,9 @@ from typing import Union
 import diffusers
 import numpy as np
 import torch
-import wandb
 from tqdm import tqdm
 
+import wandb
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.wrappers import unwrap_model
 
@@ -80,7 +80,10 @@ def resize_validation_images(validation_images, edge_length):
     # we have to scale all the inputs to a stage4 image down to 64px smaller edge.
     resized_validation_samples = []
     for _sample in validation_images:
-        validation_shortname, validation_prompt, _, training_sample_image = _sample
+        if len(_sample) == 4:
+            validation_shortname, validation_prompt, _, training_sample_image = _sample
+        elif len(_sample) == 3:
+            validation_shortname, validation_prompt, training_sample_image = _sample
         resize_to, crop_to, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_edge(
             aspect_ratio=MultiaspectImage.calculate_image_aspect_ratio(training_sample_image),
             resolution=int(edge_length),
@@ -628,6 +631,7 @@ class Validation:
         embed_cache,
         ema_model,
         is_deepspeed: bool = False,
+        is_fsdp: bool = False,
         model_evaluator=None,
         trainable_parameters=None,
     ):
@@ -661,6 +665,7 @@ class Validation:
         self.validation_resolutions = get_validation_resolutions() if not self.deepfloyd_stage2 else [(256, 256)]
         self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.deepspeed = is_deepspeed
+        self.fsdp = is_fsdp
         if is_deepspeed:
             if args.use_ema:
                 if args.ema_validation != "none":
@@ -1027,6 +1032,12 @@ class Validation:
                 message="Validations are generating.. this might take a minute! 🖼️",
                 message_level="info",
             )
+            StateTracker.get_webhook_handler().send_lifecycle_stage(
+                stage_key="validation",
+                stage_label="Running Validation",
+                stage_status="running",
+                message="Validation is starting.",
+            )
 
         if self.accelerator.is_main_process or self.deepspeed:
             logger.debug("Starting validation process...")
@@ -1042,6 +1053,13 @@ class Validation:
             if self.evaluation_result is not None:
                 logger.info(f"Evaluation result: {self.evaluation_result}")
             logger.debug("Validation process completed.")
+            if StateTracker.get_webhook_handler() is not None:
+                StateTracker.get_webhook_handler().send_lifecycle_stage(
+                    stage_key="validation",
+                    stage_label="Running Validation",
+                    stage_status="completed",
+                    message="Validation completed.",
+                )
             self.clean_pipeline()
 
         return self
@@ -1870,6 +1888,13 @@ class Validation:
                     f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
                     f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
                 ),
+                images=validation_images[validation_shortname],
+            )
+            StateTracker.get_webhook_handler().send_raw(
+                structured_data={"message": f"Validation: {validation_shortname}"},
+                message_type="training.validation",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
                 images=validation_images[validation_shortname],
             )
 

@@ -5,14 +5,14 @@ Validates configuration classes for handling configuration scenarios and validat
 """
 
 import unittest
+from typing import Any, Dict
 from unittest.mock import Mock, patch
-from typing import Dict, Any
 
 from simpletuner.helpers.data_backend.config import (
     BaseBackendConfig,
     ImageBackendConfig,
-    TextEmbedBackendConfig,
     ImageEmbedBackendConfig,
+    TextEmbedBackendConfig,
     create_backend_config,
     validators,
 )
@@ -380,7 +380,7 @@ class TestImageBackendConfig(unittest.TestCase):
         backend_dict = {
             "id": "image_test",
             "type": "local",
-            "maximum_image_size": 15,  # Too large for area type
+            "maximum_image_size": 20,  # Too large for area type
             "target_downsample_size": 5,
             "resolution_type": "area",
         }
@@ -390,7 +390,7 @@ class TestImageBackendConfig(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             config.validate(self.args)
 
-        self.assertIn("maximum_image_size must be less than 10 megapixels", str(context.exception))
+        self.assertIn("maximum_image_size must be less than 20 megapixels", str(context.exception))
 
     def test_validate_maximum_image_size_pixel_too_small(self):
         """Test validation fails with maximum_image_size too small for pixel type"""

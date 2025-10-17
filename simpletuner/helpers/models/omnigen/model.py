@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 class OmniGen(ImageModelFoundation):
     NAME = "OmniGen"
+    MODEL_DESCRIPTION = "Unified multimodal generation model"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -155,3 +157,8 @@ class OmniGen(ImageModelFoundation):
         )[0]
 
         return {"model_prediction": model_out}
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("omnigen", OmniGen)

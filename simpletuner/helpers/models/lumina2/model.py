@@ -20,6 +20,8 @@ else:
 
 class Lumina2(ImageModelFoundation):
     NAME = "Lumina-T2I"
+    MODEL_DESCRIPTION = "Next-gen diffusion with Gemma2 text encoder"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -281,3 +283,8 @@ class Lumina2(ImageModelFoundation):
         output_str = f" (parameters={output_args})" if output_args else ""
 
         return output_str
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("lumina2", Lumina2)

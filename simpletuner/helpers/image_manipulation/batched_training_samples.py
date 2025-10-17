@@ -120,7 +120,6 @@ class BatchedTrainingSamples:
         self,
         grouped_data: Dict[str, List[Tuple[str, Any, str]]],
         metadata_backend=None,
-        resolution: int = 1024,
     ) -> List[Tuple[str, np.ndarray, Dict[str, Any]]]:
         processed_results = []
 
@@ -177,8 +176,10 @@ class BatchedTrainingSamples:
                         logger.debug(f"Batch luminance calculation failed: {e}")
 
                 # check resize requirements
-                needs_resize = []
-                target_sizes = []
+                image_resize_indices: List[int] = []
+                image_resize_targets: List[Tuple[int, int]] = []
+                video_resize_indices: List[int] = []
+                video_resize_targets: List[Tuple[int, int]] = []
 
                 for i, (filepath, metadata) in enumerate(zip(batch_filepaths, batch_metadata)):
                     try:
@@ -186,35 +187,61 @@ class BatchedTrainingSamples:
                         if metadata and "target_size" in metadata:
                             target_size = metadata["target_size"]
                         else:
-                            # fallback to model resolution
-                            target_size = (resolution, resolution)
+                            raise RuntimeError(
+                                f"No target_size in metadata, cannot continue. Filename: {filepath}, Metadata: {metadata}"
+                            )
 
-                        current_shape = batch_images[i].shape[:2]  # (H, W)
-                        current_size = (current_shape[1], current_shape[0])  # (W, H)
+                        arr = batch_images[i]
+                        if not isinstance(arr, np.ndarray):
+                            logger.warning(f"Skipping resize check for {filepath}: unsupported type {type(arr)}")
+                            continue
 
-                        if current_size != target_size:
-                            needs_resize.append(i)
-                            target_sizes.append(target_size)
+                        if arr.ndim == 4:  # (frames, H, W, C)
+                            current_height, current_width = arr.shape[1], arr.shape[2]
+                            current_size = (current_width, current_height)
+                            if current_size != target_size:
+                                video_resize_indices.append(i)
+                                video_resize_targets.append(target_size)
+                        elif arr.ndim == 3:  # (H, W, C)
+                            current_height, current_width = arr.shape[0], arr.shape[1]
+                            current_size = (current_width, current_height)
+                            if current_size != target_size:
+                                image_resize_indices.append(i)
+                                image_resize_targets.append(target_size)
+                        else:
+                            logger.warning(f"Skipping resize for {filepath}: unexpected array shape {arr.shape}")
                     except Exception as e:
-                        logger.debug(f"Error checking resize for {filepath}: {e}")
-                        needs_resize.append(i)
-                        target_sizes.append((resolution, resolution))
+                        logger.error(f"Error checking resize for {filepath}: {e}", exc_info=True)
 
-                if needs_resize and len(needs_resize) > 1:
+                        raise e
+
+                if len(image_resize_indices) > 1:
                     try:
-                        resize_images = [batch_images[i] for i in needs_resize]
-                        resize_targets = target_sizes
+                        resize_images = [batch_images[i] for i in image_resize_indices]
 
-                        resized_batch = self.batch_resize_images(resize_images, resize_targets)
+                        resized_batch = self.batch_resize_images(resize_images, image_resize_targets)
 
                         # replace with resized versions
-                        for idx, resized_img in zip(needs_resize, resized_batch):
+                        for idx, resized_img in zip(image_resize_indices, resized_batch):
                             batch_images[idx] = resized_img
 
                         if self.debug_enabled:
                             logger.debug(f"Batch resized {len(resized_batch)} images for aspect bucket {aspect_bucket}")
                     except Exception as e:
                         logger.debug(f"Batch resize failed, falling back to individual processing: {e}")
+
+                if video_resize_indices:
+                    try:
+                        resize_videos = [batch_images[i] for i in video_resize_indices]
+                        resized_videos = self.batch_resize_videos(resize_videos, video_resize_targets)
+
+                        for idx, resized_video in zip(video_resize_indices, resized_videos):
+                            batch_images[idx] = resized_video
+
+                        if self.debug_enabled and resized_videos:
+                            logger.debug(f"Batch resized {len(resized_videos)} videos for aspect bucket {aspect_bucket}")
+                    except Exception as e:
+                        logger.debug(f"Batch video resize failed, falling back to individual processing: {e}")
 
                 # collect results
                 for i, (filepath, image_array) in enumerate(zip(batch_filepaths, batch_images)):

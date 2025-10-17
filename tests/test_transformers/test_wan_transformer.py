@@ -19,45 +19,46 @@ Functions tested:
 6. prepare_video_coords (coordinate preparation - inherited)
 """
 
+import math
+import os
+
+# Import test base classes
+import sys
 import unittest
+from typing import Any, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
-from typing import Dict, Any, Optional, Tuple, List
-from unittest.mock import Mock, MagicMock, patch
-import math
-
-# Import test base classes
-import sys
-import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
     MockComponents,
-    ShapeValidator,
-    TypoTestUtils,
+    MockDiffusersConfig,
     PerformanceUtils,
+    ShapeValidator,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import classes under test
 from simpletuner.helpers.models.wan.transformer import (
     WanAttnProcessor2_0,
     WanImageEmbedding,
-    WanTimeTextImageEmbedding,
     WanRotaryPosEmbed,
-    WanTransformerBlock,
+    WanTimeTextImageEmbedding,
     WanTransformer3DModel,
+    WanTransformerBlock,
     _apply_rotary_emb_anyshape,
 )
 
@@ -1168,7 +1169,12 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         """Test gradient checkpointing functionality."""
         model = WanTransformer3DModel(**self.model_config)
         model.gradient_checkpointing = True
-        model._gradient_checkpointing_func = torch.utils.checkpoint.checkpoint
+
+        # Use a wrapper to pass use_reentrant=False
+        def checkpoint_func(func, *args, **kwargs):
+            return torch.utils.checkpoint.checkpoint(func, *args, use_reentrant=False, **kwargs)
+
+        model._gradient_checkpointing_func = checkpoint_func
 
         batch_size, in_channels, num_frames, height, width = 1, 16, 2, 4, 4
         hidden_states = torch.randn(batch_size, in_channels, num_frames, height, width, requires_grad=True)

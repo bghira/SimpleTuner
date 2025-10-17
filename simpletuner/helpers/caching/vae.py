@@ -24,6 +24,7 @@ from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.webhooks.events import lifecycle_stage_event
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("VAECache")
@@ -105,17 +106,12 @@ class VAECache(WebhookMixin):
         webhook_progress_interval: int = 100,
         cache_data_backend: BaseDataBackend = None,
         cache_dir="vae_cache",
-        resolution: float = 1024,
-        maximum_image_size: float = None,
-        target_downsample_size: float = None,
         num_video_frames: int = 125,
         delete_problematic_images: bool = False,
         write_batch_size: int = 25,
         read_batch_size: int = 25,
         process_queue_size: int = 16,
         vae_batch_size: int = 4,
-        resolution_type: str = "pixel",
-        minimum_image_size: int = None,
         max_workers: int = 32,
         vae_cache_ondemand: bool = False,
         hash_filenames: bool = False,
@@ -140,9 +136,6 @@ class VAECache(WebhookMixin):
         ]:
             self.cache_dir = os.path.abspath(self.cache_dir)
             self.cache_data_backend.create_directory(self.cache_dir)
-        self.resolution = resolution
-        self.resolution_type = resolution_type
-        self.minimum_image_size = minimum_image_size
         self.webhook_progress_interval = webhook_progress_interval
         self.delete_problematic_images = delete_problematic_images
         self.write_batch_size = write_batch_size
@@ -163,13 +156,6 @@ class VAECache(WebhookMixin):
         self.vae_cache_ondemand = vae_cache_ondemand
 
         self.max_workers = max_workers
-        if (maximum_image_size and not target_downsample_size) or (target_downsample_size and not maximum_image_size):
-            raise ValueError(
-                "Both maximum_image_size and target_downsample_size must be specified."
-                f"Only {'maximum_image_size' if maximum_image_size else 'target_downsample_size'} was specified."
-            )
-        self.maximum_image_size = maximum_image_size
-        self.target_downsample_size = target_downsample_size
         self.read_queue = Queue()
         self.process_queue = Queue()
         self.write_queue = Queue()
@@ -421,9 +407,40 @@ class VAECache(WebhookMixin):
                     f"Found video latent of shape: {original_shape} (B, F, C, H, W) to (B, C, F, H, W) {samples.shape}"
                 )
 
-            num_frames = samples.shape[1]
+            num_frames = samples.shape[2]
             if self.num_video_frames is not None and self.num_video_frames != num_frames:
                 samples = samples[:, :, : self.num_video_frames, :, :]
+
+            spatial_ratio = getattr(self.vae, "spatial_compression_ratio", None)
+            if spatial_ratio and spatial_ratio > 1:
+                # The encoder expects latent spatial dims to be divisible by its stride (typically 2).
+                # Ensure that (height / spatial_ratio) and (width / spatial_ratio) remain divisible by 2
+                # by trimming down in spatial_ratio-sized steps when necessary.
+                height = samples.shape[-2]
+                width = samples.shape[-1]
+
+                def _align_dimension(dim: int) -> int:
+                    aligned = (dim // spatial_ratio) * spatial_ratio
+                    min_dim = spatial_ratio * 2  # keep at least two stride steps
+                    if aligned < min_dim:
+                        # Not enough room to align; fall back to original (will likely error later)
+                        return dim
+                    while aligned >= min_dim and ((aligned // spatial_ratio) % 2 != 0):
+                        aligned -= spatial_ratio
+                    return max(min_dim, aligned)
+
+                target_height = _align_dimension(height)
+                target_width = _align_dimension(width)
+
+                if target_height != height or target_width != width:
+                    logger.warning(
+                        "Adjusted video frames from (%s, %s) to (%s, %s) to satisfy VAE stride requirements",
+                        height,
+                        width,
+                        target_height,
+                        target_width,
+                    )
+                    samples = samples[..., :target_height, :target_width]
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
         logger.debug(f"Final samples shape: {samples.shape}")
@@ -647,12 +664,6 @@ class VAECache(WebhookMixin):
                     )
                 else:
                     filepath, image, aspect_bucket = self.process_queue.get()
-                if self.minimum_image_size is not None:
-                    if not self.metadata_backend.meets_resolution_requirements(image_path=filepath):
-                        self.debug_log(
-                            f"Skipping {filepath} because it does not meet the minimum image size requirement of {self.minimum_image_size}"
-                        )
-                        continue
                 initial_data.append((filepath, image, aspect_bucket))
 
             # Use BatchedTrainingSamples for efficient batch processing
@@ -670,20 +681,27 @@ class VAECache(WebhookMixin):
                 batch_results = self.batch_processor.process_aspect_grouped_images(
                     aspect_groups,
                     metadata_backend=self.metadata_backend,
-                    resolution=self.resolution,
                 )
 
                 # Convert batch results to processed samples
                 for filepath, processed_image_array, metadata in batch_results:
                     try:
                         # Convert back to PIL for TrainingSample compatibility
+                        prepared_input = processed_image_array
                         if isinstance(processed_image_array, np.ndarray):
-                            pil_image = Image.fromarray(processed_image_array)
+                            if processed_image_array.ndim == 3:
+                                prepared_input = Image.fromarray(processed_image_array)
+                            elif processed_image_array.ndim == 4:
+                                # Leave video tensors as-is; TrainingSample handles multi-frame arrays.
+                                prepared_input = processed_image_array
+                            else:
+                                logger.warning(f"Skipping {filepath}: unexpected array shape {processed_image_array.shape}")
+                                continue
                         else:
-                            pil_image = processed_image_array
+                            prepared_input = processed_image_array
 
                         result = prepare_sample(
-                            image=pil_image,
+                            image=prepared_input,
                             data_backend_id=self.id,
                             filepath=filepath,
                             model=self.model,
@@ -962,10 +980,11 @@ class VAECache(WebhookMixin):
         if self.webhook_handler is not None:
             total_count = len([item for sublist in aspect_bucket_cache.values() for item in sublist])
             self.send_progress_update(
-                type="init_cache_vae_processing_started",
+                type="init_vae_cache",
+                readable_type="VAE Cache initialising",
                 progress=int(len(processed_images) / max(1, total_count) * 100),
                 total=total_count,
-                current=len(processed_images),
+                current=0,
             )
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -1016,13 +1035,11 @@ class VAECache(WebhookMixin):
                             statistics["cached"] += 1
                             future_to_process = executor.submit(self._encode_images_in_batch)
                             futures.append(future_to_process)
-                            if (
-                                self.webhook_handler is not None
-                                and int(statistics["total"] // self.webhook_progress_interval) > last_reported_index
-                            ):
+                            if self.webhook_handler is not None:
                                 last_reported_index = statistics["total"] // self.webhook_progress_interval
                                 self.send_progress_update(
                                     type="vaecache",
+                                    readable_type=f"VAE Caching (bucket {bucket})",
                                     progress=int(statistics["total"] / len(relevant_files) * 100),
                                     total=len(relevant_files),
                                     current=statistics["total"],
@@ -1086,11 +1103,26 @@ class VAECache(WebhookMixin):
                             progress=100,
                             total=statistics["total"],
                             current=statistics["total"],
+                            readable_type=f"VAE Caching (bucket {bucket})",
                         )
                     self.debug_log("Completed process_buckets, all futures have been returned.")
                 except Exception as e:
                     logger.error(f"Fatal error when processing bucket {bucket}: {e}")
                     continue
+
+        # Send completion event for VAE cache initialization
+        if self.webhook_handler is not None:
+            event = lifecycle_stage_event(
+                key="init_vae_cache",
+                label="VAE Cache initialising",
+                status="completed",
+                message="VAE cache initialization complete",
+                percent=100,
+                current=1,
+                total=1,
+                job_id=StateTracker.get_job_id(),
+            )
+            self.webhook_handler.send_raw(event, message_level="info", job_id=StateTracker.get_job_id())
 
     def scan_cache_contents(self):
         """

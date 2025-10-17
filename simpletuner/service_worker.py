@@ -13,8 +13,11 @@ from pydantic import BaseModel
 
 from simpletuner.simpletuner_sdk.configuration import Configuration
 
-# Import the WebInterface class
-from simpletuner.simpletuner_sdk.interface import WebInterface
+# Import route modules
+from simpletuner.simpletuner_sdk.server.routes.checkpoints import router as checkpoints_router
+from simpletuner.simpletuner_sdk.server.routes.datasets import router as dataset_router
+from simpletuner.simpletuner_sdk.server.routes.publishing import router as publishing_router
+from simpletuner.simpletuner_sdk.server.routes.web import router as web_router
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
 
 
@@ -22,7 +25,7 @@ from simpletuner.simpletuner_sdk.training_host import TrainingHost
 class TrainerConfig(BaseModel):
     trainer_config: Dict[str, Any]
     dataloader_config: List[Dict[str, Any]]
-    webhooks_config: Dict[str, Any]
+    webhook_config: Dict[str, Any]
     job_id: str
 
 
@@ -55,9 +58,8 @@ app.add_middleware(
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Initialize and include web interface
-web_interface = WebInterface()
-app.include_router(web_interface.router)
+# Include web interface router (uses TabService with all tabs)
+app.include_router(web_router)
 
 # Store active training jobs
 active_jobs: Dict[str, Dict[str, Any]] = {}
@@ -85,6 +87,15 @@ app.include_router(config_controller.router)
 #####################################################
 app.include_router(training_host.router)
 
+# Dataset blueprint + plan API
+app.include_router(dataset_router)
+
+# Publishing API for HuggingFace Hub operations
+app.include_router(publishing_router)
+
+# Checkpoints API for checkpoint management operations
+app.include_router(checkpoints_router)
+
 
 # Health check endpoint
 @app.get("/health")
@@ -103,8 +114,22 @@ def main():
     os.makedirs("templates", exist_ok=True)
     os.makedirs("configs", exist_ok=True)
 
+    # Check for SSL configuration
+    ssl_enabled = os.environ.get("SIMPLETUNER_SSL_ENABLED", "false").lower() == "true"
+    ssl_keyfile = os.environ.get("SIMPLETUNER_SSL_KEYFILE")
+    ssl_certfile = os.environ.get("SIMPLETUNER_SSL_CERTFILE")
+
+    # Configure uvicorn
+    uvicorn_config = {"app": app, "host": "0.0.0.0", "port": 8001, "reload": True, "log_level": "info"}
+
+    if ssl_enabled and ssl_keyfile and ssl_certfile:
+        uvicorn_config.update({"ssl_keyfile": ssl_keyfile, "ssl_certfile": ssl_certfile})
+        print("SSL enabled for service worker")
+    else:
+        print("SSL disabled for service worker")
+
     # Run the server
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=True, log_level="info")
+    uvicorn.run(**uvicorn_config)
 
 
 # Main entry point

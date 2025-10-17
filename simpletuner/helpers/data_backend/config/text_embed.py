@@ -1,9 +1,10 @@
 """Text embed backend configuration class."""
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, List
 
-from .base import BaseBackendConfig
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 from . import validators
+from .base import BaseBackendConfig
 
 
 @dataclass
@@ -22,7 +23,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             backend_type=backend_dict.get("type", "local"),
             dataset_type="text_embeds",
             disabled=backend_dict.get("disabled", backend_dict.get("disable", False)),
-            caption_filter_list=backend_dict.get("caption_filter_list", [])
+            caption_filter_list=backend_dict.get("caption_filter_list", []),
         )
 
         compress_arg = backend_dict.get("compress_cache", None)
@@ -69,17 +70,11 @@ class TextEmbedBackendConfig(BaseBackendConfig):
         validators.validate_dataset_type(self.dataset_type, ["text_embeds"], self.id)
 
         validators.check_for_caption_filter_list_misuse(
-            self.dataset_type,
-            self.caption_filter_list is not None and len(self.caption_filter_list) > 0,
-            self.id
+            self.dataset_type, self.caption_filter_list is not None and len(self.caption_filter_list) > 0, self.id
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {
-            "id": self.id,
-            "dataset_type": "text_embeds",
-            "config": {}
-        }
+        result = {"id": self.id, "dataset_type": "text_embeds", "config": {}}
 
         if self.caption_filter_list is not None:
             result["config"]["caption_filter_list"] = self.caption_filter_list

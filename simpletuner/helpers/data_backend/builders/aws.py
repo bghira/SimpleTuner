@@ -1,10 +1,12 @@
 """AWS backend builder for creating S3DataBackend instances."""
+
 import logging
 import sys
 from typing import Any, Dict, Optional
 
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
+
 from .base import BaseBackendBuilder
 
 logger = logging.getLogger("AwsBackendBuilder")
@@ -56,14 +58,10 @@ class AwsBackendBuilder(BaseBackendBuilder):
             "aws_secret_access_key": getattr(config, "aws_secret_access_key", None),
         }
 
-        missing_keys = [
-            key for key, value in required_values.items() if value in (None, "")
-        ]
+        missing_keys = [key for key, value in required_values.items() if value in (None, "")]
 
         if missing_keys:
-            raise ValueError(
-                f"Missing required AWS configuration keys: {missing_keys}"
-            )
+            raise ValueError(f"Missing required AWS configuration keys: {missing_keys}")
 
     def _resolve_max_pool_connections(self, config: BaseBackendConfig) -> int:
 
@@ -95,10 +93,7 @@ class AwsBackendBuilder(BaseBackendBuilder):
             return None
 
     def build_with_metadata(
-        self,
-        config: BaseBackendConfig,
-        args: Dict[str, Any],
-        aws_data_prefix: str = None
+        self, config: BaseBackendConfig, args: Dict[str, Any], aws_data_prefix: str = None
     ) -> Dict[str, Any]:
         logger.info(f"(id={config.id}) Loading AWS S3 dataset.")
 
@@ -109,10 +104,7 @@ class AwsBackendBuilder(BaseBackendBuilder):
             aws_data_prefix = backend_config.get("aws_data_prefix", "")
 
         metadata_backend = self.create_metadata_backend(
-            config=config,
-            data_backend=data_backend,
-            args=args,
-            instance_data_dir=aws_data_prefix
+            config=config, data_backend=data_backend, args=args, instance_data_dir=aws_data_prefix
         )
 
         return {
@@ -120,5 +112,5 @@ class AwsBackendBuilder(BaseBackendBuilder):
             "data_backend": data_backend,
             "metadata_backend": metadata_backend,
             "instance_data_dir": aws_data_prefix,
-            "config": backend_config
+            "config": backend_config,
         }

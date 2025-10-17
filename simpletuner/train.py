@@ -79,12 +79,24 @@ if __name__ == "__main__":
             StateTracker.get_webhook_handler().send(
                 message="Training has been interrupted by user action (lost terminal, or ctrl+C)."
             )
+            StateTracker.get_webhook_handler().send_raw(
+                structured_data={"status": "interrupted"},
+                message_type="training.status",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
+            )
     except Exception as e:
         import traceback
 
         if StateTracker.get_webhook_handler() is not None:
             StateTracker.get_webhook_handler().send(
                 message=f"Training has failed. Please check the logs for more information: {e}"
+            )
+            StateTracker.get_webhook_handler().send_raw(
+                structured_data={"status": "failed", "error": str(e), "traceback": traceback.format_exc()},
+                message_type="training.status",
+                message_level="error",
+                job_id=StateTracker.get_job_id(),
             )
         print(e)
         print(traceback.format_exc())

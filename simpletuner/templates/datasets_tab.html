@@ -1,0 +1,496 @@
+<!-- templates/datasets_tab.html - Datasets configuration tab content -->
+<link rel="stylesheet" href="/static/css/form-sections.css">
+<link rel="stylesheet" href="/static/css/dataset-wizard.css">
+
+<style>
+/* Dataset dropdown styling for datasets page - matches basic tab */
+.dataset-dropdown .dataset-toggle-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+
+.dataset-dropdown .dataset-env {
+    font-weight: 600;
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.dataset-dropdown .dataset-separator {
+    flex: 0 0 auto;
+    opacity: 0.7;
+    padding: 0 0.5rem;
+}
+
+.dataset-dropdown .dataset-path {
+    flex: 1 1 auto;
+    text-align: right;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.dataset-dropdown .dataset-toggle {
+    background-color: rgba(15, 23, 42, 0.65);
+    color: #e2e8f0;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    display: flex;
+    align-items: center;
+    padding-right: 2.5rem; /* Make room for the dropdown arrow */
+}
+
+.dataset-dropdown .dataset-toggle::after {
+    position: absolute;
+    right: 1rem;
+}
+
+.dataset-dropdown .dataset-toggle:hover,
+.dataset-dropdown .dataset-toggle:focus {
+    background-color: rgba(30, 41, 59, 0.85);
+    border-color: rgba(148, 163, 184, 0.65);
+    color: #f8fafc;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+}
+
+.dataset-dropdown .dataset-dropdown-menu {
+    max-height: 280px;
+    overflow-y: auto;
+    background-color: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    box-shadow: 0 18px 40px rgba(8, 47, 73, 0.45);
+    backdrop-filter: blur(6px);
+}
+
+.dataset-dropdown .dataset-option {
+    color: #e2e8f0;
+    padding: 0.5rem 1rem;
+}
+
+.dataset-dropdown .dataset-option:hover,
+.dataset-dropdown .dataset-option:focus,
+.dataset-dropdown .dataset-option.active,
+.dataset-dropdown .dataset-option:active {
+    background-color: rgba(56, 189, 248, 0.25);
+    color: #f8fafc;
+    border-left: 2px solid rgba(125, 211, 252, 0.6);
+}
+
+.dataset-dropdown .dataset-option .dataset-path {
+    color: rgba(148, 163, 184, 0.85);
+}
+
+.dataset-dropdown .dataset-option:hover .dataset-path,
+.dataset-dropdown .dataset-option:focus .dataset-path,
+.dataset-dropdown .dataset-option.active .dataset-path {
+    color: rgba(203, 213, 225, 0.9);
+}
+</style>
+
+<div class="tab-fragment" id="datasets-tab-content" data-tab-name="datasets"
+     x-data="datasetWizardComponent()" x-init="init()">
+    <!-- Main Card -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <div class="d-flex justify-content-between align-items-start mb-3">
+                <div>
+                    <h5 class="mb-1"><i class="fas fa-database me-2"></i>Dataset Configuration</h5>
+                    <p class="text-muted mb-0">Configure datasets and data loaders for training</p>
+                </div>
+                <div class="btn-group" role="group" style="position: relative; z-index: 10;">
+                    <button type="button"
+                            class="btn btn-primary"
+                            @click.prevent="openNewConfigModal()"
+                            title="Create a new multidatabackend configuration file">
+                        <i class="fas fa-file-plus me-1"></i> New Configuration
+                    </button>
+                    <button type="button"
+                            class="btn btn-success"
+                            @click.prevent="openWizard()"
+                            title="Add a dataset to the current configuration">
+                        <i class="fas fa-magic me-1"></i> Dataset Wizard
+                    </button>
+                </div>
+            </div>
+            <!-- Dataloader Config Selector -->
+            <div class="d-flex align-items-center gap-3">
+                <div class="flex-grow-1">
+                    {% if data_backend_choices %}
+                    <div class="mb-0">
+                        <label for="datasets-page-data-backend-config" class="form-label small mb-1 d-block">
+                            <i class="fas fa-file-code me-1"></i>Active Dataloader Configuration
+                        </label>
+                        <div class="dataset-dropdown dropdown w-100"
+                             data-field-id="datasets_page_data_backend_config"
+                             data-selected-env="{{ selected_env | default('') }}"
+                             data-selected-path="{{ selected_path | default('') }}">
+                            <input type="hidden"
+                                   id="datasets_page_data_backend_config"
+                                   name="datasets_page_data_backend_config"
+                                   value="{{ selected_value | default('') }}">
+
+                            <button class="btn btn-outline-secondary w-100 dropdown-toggle dataset-toggle"
+                                    type="button"
+                                    data-bs-toggle="dropdown"
+                                    aria-expanded="false">
+                                <span class="dataset-toggle-label d-flex justify-content-between align-items-center">
+                                    {% if selected_env and selected_path %}
+                                        <span class="dataset-env">{{ selected_env }}</span>
+                                        <span class="dataset-path">{{ selected_path }}</span>
+                                    {% else %}
+                                        <span class="text-muted">Select dataset configuration</span>
+                                    {% endif %}
+                                </span>
+                            </button>
+
+                            <div class="dropdown-menu w-100 dataset-dropdown-menu">
+                                {% for option in data_backend_choices %}
+                                    <button class="dropdown-item dataset-option"
+                                            type="button"
+                                            data-value="{{ option.value }}"
+                                            data-environment="{{ option.environment }}"
+                                            data-path="{{ option.path }}">
+                                        <span class="d-flex justify-content-between align-items-center w-100">
+                                            <span class="dataset-env">{{ option.environment }}</span>
+                                            <span class="dataset-path">{{ option.path }}</span>
+                                        </span>
+                                    </button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="form-check" style="padding-top: 1.75rem;">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           id="filterByEnvironment">
+                    <label class="form-check-label small" for="filterByEnvironment">
+                        Only show configs from<br>current environment
+                        <span class="badge bg-info text-dark" id="current-env-badge">none</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="card-body">
+            <!-- Include the dataloader builder section -->
+            {% include 'trainer_dataloader_section.html' %}
+        </div>
+    </div>
+
+    <!-- Dataset Creation Wizard Modal -->
+    {% include 'partials/dataset_wizard_modal.html' %}
+
+    <!-- Initialize dataset selector -->
+    <script>
+    (function() {
+        let retryCount = 0;
+        const maxRetries = 20; // Try for up to 2 seconds
+
+        // Wait for Alpine and the global dataset dropdown functions to be ready
+        function initDatasetPageSelector() {
+            // Note: ID uses underscores, not hyphens
+            const selector = document.getElementById('datasets_page_data_backend_config');
+            const dropdown = document.querySelector('[data-field-id="datasets_page_data_backend_config"]');
+            const badge = document.getElementById('current-env-badge');
+
+            console.log('initDatasetPageSelector called (attempt ' + (retryCount + 1) + ')', { selector, dropdown, badge });
+
+            if (!dropdown) {
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    console.warn('Dataset dropdown not found, retrying...', {
+                        selectorExists: !!selector,
+                        dropdownExists: !!dropdown,
+                        attempt: retryCount
+                    });
+                    // Retry after a short delay if elements aren't ready
+                    setTimeout(initDatasetPageSelector, 100);
+                    return;
+                } else {
+                    console.error('Dataset dropdown not found after ' + maxRetries + ' attempts. Giving up.');
+                    return;
+                }
+            }
+
+            // Selector might not exist if there are no dataloader configs yet
+            if (!selector) {
+                console.warn('Hidden input not found - may not be rendered by server');
+            }
+
+            console.log('Dataset selector elements found, setting up handlers');
+
+            // Check if already initialized to prevent duplicate handlers
+            if (dropdown.dataset.initialized === 'true') {
+                console.log('Dataset selector already initialized, skipping');
+                return;
+            }
+            dropdown.dataset.initialized = 'true';
+
+            // Function to sync the environment badge with the trainer store
+            function syncEnvironmentBadge() {
+                const trainerStore = Alpine.store('trainer');
+                if (trainerStore && badge) {
+                    const env = trainerStore.selectedEnvironment || '';
+                    badge.textContent = env || 'none';
+                }
+            }
+
+            // Initial sync
+            syncEnvironmentBadge();
+
+            // Watch for trainer store changes
+            if (window.Alpine) {
+                Alpine.effect(() => {
+                    const trainerStore = Alpine.store('trainer');
+                    if (trainerStore) {
+                        syncEnvironmentBadge();
+                    }
+                });
+            }
+
+            // Ensure the global dataset dropdown functionality is applied
+            if (window.__refreshDatasetDropdowns) {
+                window.__refreshDatasetDropdowns();
+            }
+
+            // Add environment filter checkbox handler
+            const filterCheckbox = document.getElementById('filterByEnvironment');
+            if (filterCheckbox) {
+                console.log('Adding environment filter checkbox handler');
+
+                const filterOptions = () => {
+                    const trainerStore = Alpine.store('trainer');
+                    const currentEnv = trainerStore ? trainerStore.activeEnvironment : null;
+                    const shouldFilter = filterCheckbox.checked;
+
+                    console.log('Filtering dropdown options', { shouldFilter, currentEnv });
+
+                    const options = dropdownMenu.querySelectorAll('.dataset-option');
+                    options.forEach(option => {
+                        if (!shouldFilter || !currentEnv) {
+                            // Show all options
+                            option.style.display = '';
+                        } else {
+                            // Only show options matching current environment
+                            const optionEnv = option.dataset.environment || '';
+                            if (optionEnv.toLowerCase() === currentEnv.toLowerCase()) {
+                                option.style.display = '';
+                            } else {
+                                option.style.display = 'none';
+                            }
+                        }
+                    });
+                };
+
+                filterCheckbox.addEventListener('change', filterOptions);
+
+                // Filter on initial load if checkbox is checked
+                if (filterCheckbox.checked) {
+                    filterOptions();
+                }
+            } else {
+                console.warn('Filter checkbox not found');
+            }
+
+            // Add click handler specifically for datasets page dropdown options
+            const dropdownMenu = dropdown.querySelector('.dataset-dropdown-menu');
+            if (dropdownMenu) {
+                console.log('Adding click handler to dropdown menu');
+                dropdownMenu.addEventListener('click', async (event) => {
+                    const optionEl = event.target.closest('.dataset-option');
+                    if (!optionEl) {
+                        console.log('Click not on a dataset option');
+                        return;
+                    }
+
+                    console.log('Dataset option clicked!', optionEl);
+
+                    const env = optionEl.dataset.environment || '';
+                    const path = optionEl.dataset.path || '';
+                    const value = optionEl.dataset.value || '';
+
+                    console.log('Dataset config selected:', { env, path, value });
+
+                    // Update the hidden input (get fresh reference in case it was created dynamically)
+                    const hiddenInput = dropdown.querySelector('input[type="hidden"]') || document.getElementById('datasets_page_data_backend_config');
+                    if (hiddenInput) {
+                        console.log('Updating hidden input value');
+                        hiddenInput.value = value;
+                    } else {
+                        console.warn('Hidden input not found');
+                    }
+
+                    // Update the button label
+                    const toggleLabel = dropdown.querySelector('.dataset-toggle-label');
+                    if (toggleLabel && env && path) {
+                        console.log('Updating button label');
+                        toggleLabel.innerHTML = `
+                            <span class="dataset-env">${env}</span>
+                            <span class="dataset-path">${path}</span>
+                        `;
+                    }
+
+                    // Also try using the global function if available
+                    if (window.__setDatasetSelection) {
+                        console.log('Calling __setDatasetSelection');
+                        window.__setDatasetSelection(dropdown, env, path, value);
+                    } else {
+                        console.warn('__setDatasetSelection not available');
+                    }
+
+                    // Update trainer store configValues
+                    const trainerStore = Alpine.store('trainer');
+                    if (trainerStore) {
+                        console.log('Updating trainer store');
+                        // Update the config value in the store
+                        if (!trainerStore.configValues) {
+                            trainerStore.configValues = {};
+                        }
+                        trainerStore.configValues['data_backend_config'] = value;
+                        trainerStore.configValues['--data_backend_config'] = value;
+
+                        // Mark form as dirty
+                        if (trainerStore.markFormDirty) {
+                            console.log('Marking form dirty');
+                            trainerStore.markFormDirty();
+                        }
+
+                        // Trigger dataset builder to reload with new config
+                        if (trainerStore.loadDatasetsFromConfig) {
+                            console.log('Reloading datasets from config:', value);
+                            try {
+                                await trainerStore.loadDatasetsFromConfig(value);
+                                console.log('Datasets reloaded successfully');
+                            } catch (error) {
+                                console.error('Failed to load datasets from config:', error);
+                                window.showToast && window.showToast('Failed to load dataset configuration', 'error');
+                            }
+                        } else {
+                            console.warn('loadDatasetsFromConfig not available on trainer store');
+                        }
+                    } else {
+                        console.warn('Trainer store not available');
+                    }
+
+                    // Close the dropdown
+                    const toggleButton = dropdown.querySelector('.dataset-toggle');
+                    if (toggleButton && window.bootstrap && window.bootstrap.Dropdown) {
+                        try {
+                            const instance = window.bootstrap.Dropdown.getInstance(toggleButton) || new window.bootstrap.Dropdown(toggleButton);
+                            instance.hide();
+                        } catch (err) {
+                            console.debug('dataset dropdown hide failed', err);
+                        }
+                    }
+                });
+            } else {
+                console.warn('Dropdown menu not found');
+            }
+        }
+
+        // Initialize when Alpine is ready
+        if (window.Alpine) {
+            console.log('Alpine already loaded, initializing now');
+            // Use setTimeout to ensure DOM is fully ready
+            setTimeout(initDatasetPageSelector, 0);
+        } else {
+            console.log('Waiting for Alpine to initialize');
+            document.addEventListener('alpine:init', () => {
+                console.log('Alpine initialized, setting up dataset selector');
+                initDatasetPageSelector();
+            });
+        }
+
+        // Also try on DOMContentLoaded as fallback
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => {
+                setTimeout(initDatasetPageSelector, 100);
+            });
+        } else {
+            // DOM already loaded
+            setTimeout(initDatasetPageSelector, 100);
+        }
+    })();
+    </script>
+
+    <!-- New Configuration Modal -->
+    <div x-show="showNewConfigModal"
+         x-cloak
+         class="modal fade"
+         :class="{ 'show d-block': showNewConfigModal }"
+         id="new-dataloader-config-modal"
+         tabindex="-1"
+         style="background-color: rgba(0,0,0,0.5);"
+         @click.self="closeNewConfigModal()"
+         @keydown.escape="if (showNewConfigModal && !creatingConfig) closeNewConfigModal()">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-file-plus me-2"></i>Create New Configuration
+                    </h5>
+                    <button type="button"
+                            class="btn-close"
+                            @click="closeNewConfigModal()"
+                            aria-label="Close"></button>
+                </div>
+                <form @submit.prevent @keydown.enter.prevent>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3">
+                            Create a new dataset configuration file in your current environment directory.
+                        </p>
+
+                        <div class="mb-3">
+                            <label for="new-config-name" class="form-label">
+                                Configuration Identifier <span class="text-danger">*</span>
+                            </label>
+                            <input type="text"
+                                   class="form-control"
+                                   id="new-config-name"
+                                   x-model="newConfigName"
+                                   placeholder="e.g., my-training-data"
+                                   required
+                                   pattern="[a-zA-Z0-9_\-]+"
+                                   title="Only letters, numbers, hyphens, and underscores allowed"
+                                   @keydown.enter.prevent="if (newConfigName && newConfigName.trim() && !creatingConfig) createNewDataloaderConfig()"
+                                   autocomplete="off">
+                            <div class="form-text">
+                                Will be saved as <code>multidatabackend-<span x-text="newConfigName || 'name'"></span>.json</code>
+                            </div>
+                        </div>
+                        <!-- Hidden field to prevent single-input form auto-submission -->
+                        <input type="text" style="display:none;" tabindex="-1" autocomplete="off">
+
+                        <div class="alert alert-info" role="alert" x-show="currentEnvironment">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <strong>Target location:</strong>
+                            <div class="mt-1 font-monospace small" x-text="currentEnvironment || 'No environment selected'"></div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button"
+                                class="btn btn-outline-secondary"
+                                @click="closeNewConfigModal()">
+                            Cancel
+                        </button>
+                        <button type="button"
+                                class="btn btn-primary"
+                                @click.prevent.stop="createNewDataloaderConfig()"
+                                :disabled="creatingConfig || !newConfigName">
+                            <span x-show="!creatingConfig">
+                                <i class="fas fa-check me-1"></i> Create
+                            </span>
+                            <span x-show="creatingConfig">
+                                <i class="fas fa-spinner fa-spin me-1"></i> Creating...
+                            </span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>

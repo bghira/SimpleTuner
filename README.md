@@ -7,6 +7,9 @@
 If you'd like to join our community, we can be found [on Discord](https://discord.gg/JGkSwEbjRb) via Terminus Research Group.
 If you have any questions, please feel free to reach out to us there.
 
+<img width="1944" height="1657" alt="image" src="https://github.com/user-attachments/assets/af3a24ec-7347-4ddf-8edf-99818a246de1" />
+
+
 ## Table of Contents
 
 - [Design Philosophy](#design-philosophy)
@@ -30,11 +33,11 @@ If you have any questions, please feel free to reach out to us there.
 
 ## Tutorial
 
-Please fully explore this README before embarking on [the tutorial](/documentation/TUTORIAL.md), as it contains vital information that you might need to know first.
+Please fully explore this README before embarking on the [new web UI tutorial](/documentation/webui/TUTORIAL.md) or [the class command-line tutorial](/documentation/TUTORIAL.md), as this document contains vital information that you might need to know first.
 
-For a quick start without reading the full documentation, you can use the [Quick Start](/documentation/QUICKSTART.md) guide.
+For a manually configured quick start without reading the full documentation or using any web interfaces, you can use the [Quick Start](/documentation/QUICKSTART.md) guide.
 
-For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload.
+For memory-constrained systems, see the [DeepSpeed document](/documentation/DEEPSPEED.md) which explains how to use 🤗Accelerate to configure Microsoft's DeepSpeed for optimiser state offload. For DTensor-based sharding and context parallelism, read the [FSDP2 guide](/documentation/FSDP2.md) which covers the new FullyShardedDataParallel v2 workflow inside SimpleTuner.
 
 For multi-node distributed training, [this guide](/documentation/DISTRIBUTED.md) will help tweak the configurations from the INSTALL and Quickstart guides to be suitable for multi-node training, and optimising for image datasets numbering in the billions of samples.
 
@@ -46,11 +49,12 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 
 ### Core Training Features
 
+- **User-friendly web UI** - Manage your entire training lifecycle through a sleek dashboard
 - **Multi-GPU training** - Distributed training across multiple GPUs with automatic optimization
 - **Advanced caching** - Image, video, and caption embeddings cached to disk for faster training
 - **Aspect bucketing** - Support for varied image/video sizes and aspect ratios
 - **Memory optimization** - Most models trainable on 24G GPU, many on 16G with optimizations
-- **DeepSpeed integration** - Train large models on smaller GPUs with gradient checkpointing and optimizer state offload
+- **DeepSpeed & FSDP2 integration** - Train large models on smaller GPUs with optim/grad/parameter sharding, context parallel attention, gradient checkpointing, and optimizer state offload
 - **S3 training** - Train directly from cloud storage (Cloudflare R2, Wasabi S3)
 - **EMA support** - Exponential moving average weights for improved stability and quality
 

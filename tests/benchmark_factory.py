@@ -19,7 +19,7 @@ import gc
 import json
 import logging
 import os
-import psutil
+import shutil
 import tempfile
 import time
 import tracemalloc
@@ -27,7 +27,8 @@ from pathlib import Path
 from statistics import mean, median, stdev
 from typing import Dict, List, Tuple
 from unittest.mock import Mock
-import shutil
+
+import psutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

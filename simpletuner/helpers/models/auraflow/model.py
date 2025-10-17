@@ -21,6 +21,8 @@ else:
 
 class Auraflow(ImageModelFoundation):
     NAME = "Auraflow"
+    MODEL_DESCRIPTION = "Open-source flow-based image generation"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -347,3 +349,8 @@ class Auraflow(ImageModelFoundation):
         output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("auraflow", Auraflow)

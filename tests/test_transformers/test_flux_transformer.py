@@ -11,40 +11,41 @@ Tests all 4 classes and 14 functions with focus on:
 - Different attention processors (2_0 vs 3_0)
 """
 
-import unittest
-import torch
-import torch.nn as nn
-import numpy as np
-from unittest.mock import Mock, MagicMock, patch
-from typing import Dict, Any, Optional, List, Tuple
+import os
 
 # Import the base test classes
 import sys
-import os
+import unittest
+from typing import Any, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
+import numpy as np
+import torch
+import torch.nn as nn
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
     MockComponents,
-    ShapeValidator,
-    TypoTestUtils,
+    MockDiffusersConfig,
     PerformanceUtils,
+    ShapeValidator,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import the modules under test
 from simpletuner.helpers.models.flux.transformer import (
     FluxAttnProcessor2_0,
     FluxSingleTransformerBlock,
-    FluxTransformerBlock,
     FluxTransformer2DModel,
+    FluxTransformerBlock,
     _apply_rotary_emb_anyshape,
     expand_flux_attention_mask,
 )

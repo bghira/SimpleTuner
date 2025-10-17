@@ -1,0 +1,699 @@
+<!-- templates/partials/form_field.html - Reusable form field component -->
+{% set field_id = field.id or name %}
+{% set field_name = field.name or field_id %}
+{% set field_type = field.type or type or 'text' %}
+{% set field_label = field.label or label %}
+{% set field_value = field.value or value or '' %}
+{% set field_required = field.required or required or false %}
+{% set field_placeholder = field.placeholder or placeholder or '' %}
+{% set field_description = field.description or description or '' %}
+{% set field_options = field.options or options or [] %}
+{% set field_disabled = field.disabled or disabled or false %}
+{% set field_tooltip = field.tooltip or tooltip or '' %}
+{% set field_cmd_args_help = field.cmd_args_help or cmd_args_help or '' %}
+{% set custom_component = field.custom_component or '' %}
+{% set uses_custom_label = custom_component == 'merge_environment_toggle' %}
+{% set is_toggle_field = field_type in ['checkbox', 'toggle'] %}
+{% set is_deepspeed_field = field_id == 'deepspeed_config' %}
+{% if field.min is defined %}
+    {% set field_min = field.min %}
+{% elif min is defined %}
+    {% set field_min = min %}
+{% else %}
+    {% set field_min = none %}
+{% endif %}
+
+{% if field.max is defined %}
+    {% set field_max = field.max %}
+{% elif max is defined %}
+    {% set field_max = max %}
+{% else %}
+    {% set field_max = none %}
+{% endif %}
+
+{% if field.step is defined %}
+    {% set field_step = field.step %}
+{% elif step is defined %}
+    {% set field_step = step %}
+{% else %}
+    {% set field_step = none %}
+{% endif %}
+
+<div class="mb-3">
+    <!-- DEBUG: Field info - ID: {{ field_id }}, Name: {{ field_name }}, Type: {{ field_type }}, Value: {{ field_value }} -->
+
+    <!-- Label -->
+    {% if not uses_custom_label %}
+    {% if is_deepspeed_field %}
+    <div class="d-flex align-items-center gap-2">
+    {% endif %}
+    <label id="{{ field_id }}__title"
+           {% if not is_toggle_field %}for="{{ field_id }}"{% endif %}
+           class="form-label d-flex align-items-center gap-1{% if is_deepspeed_field %} mb-0 flex-grow-1{% endif %}">
+        <span>{{ field_label }}</span>
+        {% if field_required %}
+            <span class="text-danger">*</span>
+        {% endif %}
+        {% if field_tooltip or field_cmd_args_help %}
+        <button type="button"
+                class="btn btn-link btn-sm p-0 text-info help-icon"
+                data-bs-toggle="tooltip"
+                data-bs-placement="right"
+                data-bs-html="false"
+                data-bs-trigger="hover focus"
+                data-bs-delay='{"show": 100, "hide": 100}'
+                title="{{ (field_cmd_args_help or field_tooltip) }}"
+                style="text-decoration: none; line-height: 1;">
+            ℹ️
+        </button>
+        {% endif %}
+    </label>
+    {% if is_deepspeed_field %}
+            <button type="button"
+                    class="deepspeed-launch-btn"
+                    data-target-field="{{ field_id }}"
+                    onclick="if (window.launchDeepSpeedBuilderButton) { window.launchDeepSpeedBuilderButton(this); } else if (window.openDeepSpeedBuilderFromButton) { window.openDeepSpeedBuilderFromButton(this); } else { console.warn('DeepSpeed builder not loaded'); }">
+                <span class="btn-icon">🧙</span> DeepSpeed Builder
+            </button>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    <!-- Input Field -->
+    {% if custom_component == 'dataset_config_select' %}
+        <div class="dataset-dropdown dropdown w-100"
+             data-field-id="{{ field_id }}"
+             data-selected-env="{{ field.selected_environment or '' }}"
+             data-selected-path="{{ field.selected_path or '' }}">
+            <input type="hidden" id="{{ field_id }}" name="{{ field_name }}" value="{{ field_value }}"{% if field_required %} data-required="true"{% endif %}>
+            <button class="btn btn-outline-secondary w-100 dropdown-toggle dataset-toggle"
+                    type="button"
+                    data-bs-toggle="dropdown"
+                    aria-expanded="false">
+                <span class="dataset-toggle-label">
+                    {% if field.selected_path %}
+                        <span class="dataset-env">{{ field.selected_environment }}</span>
+                        <span class="dataset-path">{{ field.selected_path }}</span>
+                    {% else %}
+                        Select dataset configuration
+                    {% endif %}
+                </span>
+            </button>
+            <div class="dropdown-menu w-100 dataset-dropdown-menu">
+                {% for option in field.options %}
+                    <button class="dropdown-item dataset-option"
+                            type="button"
+                            data-value="{{ option.value }}"
+                            data-environment="{{ option.environment }}"
+                            data-path="{{ option.path }}">
+                        <span class="d-flex justify-content-between align-items-center w-100">
+                            <span class="dataset-env">{{ option.environment }}</span>
+                            <span class="dataset-path">{{ option.path }}</span>
+                        </span>
+                    </button>
+                {% endfor %}
+            </div>
+        </div>
+
+        <script>
+            (function() {
+                if (!window.__datasetDropdownInit) {
+                    window.__datasetDropdownInit = true;
+
+                    const updateDropdownLabel = function(dropdown, value) {
+                        if (!dropdown) return;
+                        const toggle = dropdown.querySelector('.dataset-toggle-label');
+                        if (!toggle) return;
+
+                        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                        const fallbackValue = value != null ? value : hiddenInput ? hiddenInput.value : '';
+
+                        const env = dropdown.dataset.selectedEnv || dropdown.dataset.defaultEnv || '';
+                        const path = dropdown.dataset.selectedPath || dropdown.dataset.defaultPath || '';
+
+                        if (env && path) {
+                            toggle.innerHTML = `
+                                <span class="dataset-env">${env}</span>
+                                <span class="dataset-path">${path}</span>
+                            `;
+                        } else if (path) {
+                            toggle.innerHTML = `
+                                <span class="dataset-path">${path}</span>
+                            `;
+                        } else if (fallbackValue) {
+                            toggle.textContent = fallbackValue;
+                        } else {
+                            toggle.textContent = 'Select dataset configuration';
+                        }
+                    };
+
+                    const syncDropdownDefaults = function(dropdown, env, path) {
+                        if (!dropdown) return;
+                        if (env && !dropdown.dataset.defaultEnv) {
+                            dropdown.dataset.defaultEnv = env;
+                        }
+                        if (path && !dropdown.dataset.defaultPath) {
+                            dropdown.dataset.defaultPath = path;
+                        }
+                    };
+
+                    const applySelection = function(dropdown, env, path, value) {
+                        if (!dropdown) return;
+                        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                        if (hiddenInput && typeof value === 'string') {
+                            hiddenInput.value = value;
+                        }
+                        if (env && path) {
+                            dropdown.dataset.selectedEnv = env;
+                            dropdown.dataset.selectedPath = path;
+                        }
+                        syncDropdownDefaults(dropdown, env, path);
+                        const targetValue = value != null ? value : hiddenInput ? hiddenInput.value : '';
+                        if (targetValue) {
+                            dropdown.dataset.lastValue = targetValue;
+                        }
+                        dropdown.querySelectorAll('.dataset-option').forEach(function(item) {
+                            const itemValue = item.dataset.value || '';
+                            if (itemValue === targetValue) {
+                                item.classList.add('active');
+                            } else {
+                                item.classList.remove('active');
+                            }
+                        });
+                        updateDropdownLabel(dropdown, value);
+                    };
+
+                    window.__setDatasetSelection = applySelection;
+
+                    window.__refreshDatasetDropdowns = function() {
+                        document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
+                            const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                            if (!hiddenInput) {
+                                return;
+                            }
+                            const currentValue = hiddenInput.value;
+                            const storedValue = dropdown.dataset.lastValue || '';
+                            const valueToApply = currentValue || storedValue;
+                            const env = dropdown.dataset.selectedEnv || dropdown.dataset.defaultEnv || '';
+                            const path = dropdown.dataset.selectedPath || dropdown.dataset.defaultPath || '';
+                            applySelection(dropdown, env, path, valueToApply);
+                        });
+                    };
+
+                    document.addEventListener('htmx:afterSwap', function() {
+                        window.__refreshDatasetDropdowns();
+                    });
+
+                    document.addEventListener('htmx:afterSettle', function() {
+                        window.__refreshDatasetDropdowns();
+                    });
+
+                    document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
+                        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                        if (hiddenInput && !hiddenInput.dataset.datasetObserver) {
+                            const observer = new MutationObserver(function() {
+                                updateDropdownLabel(dropdown, hiddenInput.value);
+                            });
+                            observer.observe(hiddenInput, { attributes: true, attributeFilter: ['value'] });
+                            hiddenInput.dataset.datasetObserver = 'true';
+                        }
+                    });
+
+                    document.addEventListener('click', function(event) {
+                        const optionEl = event.target.closest('.dataset-option');
+                        if (!optionEl) {
+                            return;
+                        }
+
+                        const dropdown = optionEl.closest('.dataset-dropdown');
+                        if (!dropdown) {
+                            return;
+                        }
+
+                        const env = optionEl.dataset.environment || '';
+                        const path = optionEl.dataset.path || '';
+                        const value = optionEl.dataset.value || '';
+
+                        applySelection(dropdown, env, path, value);
+
+                        // Mark form as dirty when dataset config changes
+                        if (window.Alpine && Alpine.store('trainer')) {
+                            Alpine.store('trainer').markFormDirty();
+                        }
+
+                        const toggleButton = dropdown.querySelector('.dataset-toggle');
+                        if (toggleButton && window.bootstrap && window.bootstrap.Dropdown) {
+                            try {
+                                const instance = window.bootstrap.Dropdown.getInstance(toggleButton) || new window.bootstrap.Dropdown(toggleButton);
+                                instance.hide();
+                            } catch (err) {
+                                console.debug('dataset dropdown hide failed', err);
+                            }
+                        }
+                    });
+
+                }
+
+                document.querySelectorAll('.dataset-dropdown').forEach(function(dropdown) {
+                    const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                    const currentValue = hiddenInput ? hiddenInput.value : '';
+                    const optionEl = currentValue
+                        ? dropdown.querySelector(`.dataset-option[data-value="${CSS.escape(currentValue)}"]`)
+                        : null;
+                    const initialEnv = optionEl ? optionEl.dataset.environment : dropdown.dataset.selectedEnv || '';
+                    const initialPath = optionEl ? optionEl.dataset.path : dropdown.dataset.selectedPath || '';
+                    if (currentValue) {
+                        dropdown.dataset.lastValue = currentValue;
+                    }
+                    if (!dropdown.dataset.defaultEnv && initialEnv && initialPath) {
+                        dropdown.dataset.defaultEnv = initialEnv;
+                        dropdown.dataset.defaultPath = initialPath;
+                    }
+                    const valueToApply = currentValue || dropdown.dataset.lastValue || '';
+                    window.__setDatasetSelection(dropdown, initialEnv, initialPath, valueToApply);
+                });
+            })();
+        </script>
+
+    {% elif field_type == 'text' or field_type == 'email' or field_type == 'password' %}
+        <input type="{{ field_type }}"
+               id="{{ field_id }}"
+               name="{{ field_name }}"
+               class="form-control"
+               value="{{ field_value }}"
+               placeholder="{{ field_placeholder }}"
+               {% if field_required %}required{% endif %}
+               {% if field_disabled %}disabled{% endif %}>
+        {% if field_id == 'fsdp_transformer_layer_cls_to_wrap' %}
+            <div class="mt-2 d-flex flex-wrap align-items-center gap-2" id="fsdp-detection-actions">
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        id="fsdp-detect-blocks">
+                    <i class="fas fa-search me-1"></i> Detect Blocks
+                </button>
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm d-none"
+                        id="fsdp-refresh-blocks">
+                    <i class="fas fa-sync-alt me-1"></i> Refresh Detection
+                </button>
+                <div class="text-muted small" id="fsdp-detection-status"></div>
+            </div>
+        {% endif %}
+
+    {% elif field_type == 'number' %}
+        <input type="number"
+               id="{{ field_id }}"
+               name="{{ field_name }}"
+               class="form-control{% if field_id in ['num_train_epochs', 'max_train_steps'] %} spinner-fix{% endif %}"
+               value="{{ field_value }}"
+               placeholder="{{ field_placeholder }}"
+               {% if field_min is not none %}min="{{ field_min }}"{% endif %}
+               {% if field_max is not none %}max="{{ field_max }}"{% endif %}
+               {% if field_step is not none %}step="{{ field_step }}"{% endif %}
+               {% if field_required %}required{% endif %}
+               {% if field_disabled %}disabled{% endif %}
+               {% if field.x_model %}x-model.number="{{ field.x_model }}"{% endif %}
+               {% if field.x_bind_disabled %}x-bind:disabled="{{ field.x_bind_disabled }}"{% endif %}
+               {% if field.x_on_input %}x-on:input="{{ field.x_on_input }}"{% endif %}>
+
+    {% elif field_type == 'select' %}
+        <select id="{{ field_id }}"
+                name="{{ field_name }}"
+                class="form-select{% if field.extra_classes %} {{ field.extra_classes }}{% endif %}"
+                {% if field.dynamic_loader == 'checkpoints' %}x-data="checkpointField" x-init="$nextTick(() => loadCheckpoints())"{% endif %}
+                {% if field_required %}required{% endif %}>
+
+            {% if not field_required or not field_value %}
+                <option value="">-- Select {{ field_label }} --</option>
+            {% endif %}
+
+            {% for option in field_options %}
+                <option value="{{ option.value }}"
+                        {% if option.environment is defined %}data-environment="{{ option.environment }}"{% endif %}
+                        {% if option.path is defined %}data-path="{{ option.path }}" title="{{ option.path }}"{% endif %}
+                        {% if option.value == field_value %}selected{% endif %}>
+                    {{ option.label or option.value }}
+                </option>
+            {% endfor %}
+        </select>
+
+    {% elif field_type == 'textarea' %}
+        <textarea id="{{ field_id }}"
+                  name="{{ field_name }}"
+                  class="form-control"
+                  placeholder="{{ field_placeholder }}"
+                  rows="4"
+                  {% if field_required %}required{% endif %}>{{ field_value }}</textarea>
+
+    {% elif custom_component == 'merge_environment_toggle' %}
+        <div class="merge-env-toggle" x-data="mergeEnvironmentPopover('{{ 'true' if field_value else 'false' }}')">
+            <input type="hidden" name="{{ field_name }}" x-model="mergeEnabledString">
+
+            <div class="d-flex align-items-start gap-2">
+                <div class="form-check form-switch mb-0">
+                    <input type="checkbox"
+                           class="form-check-input"
+                           id="{{ field_id }}"
+                           aria-labelledby="{{ field_id }}__switch_label"
+                           :checked="mergeEnabled"
+                           @change="mergeEnabled = $event.target.checked">
+                    <span class="form-check-label" id="{{ field_id }}__switch_label">
+                        {{ field.checkbox_label or field_label }}
+                    </span>
+                </div>
+                <div class="position-relative" @mouseenter="open = true" @mouseleave="open = false">
+                    <button type="button"
+                            class="btn btn-link btn-sm p-0 text-info help-icon"
+                            @focus="open = true"
+                            @blur="open = false"
+                            @click.prevent="open = !open"
+                            title="Show environment defaults"
+                            aria-label="Show environment defaults">
+                        ℹ️
+                    </button>
+                    <div class="merge-env-popover" x-cloak x-show="open" @mouseenter="open = true" @mouseleave="open = false" @keydown.escape.window="open = false">
+                        <div class="merge-env-popover__content">
+                            <template x-if="hasDefaults">
+                                <pre x-text="defaultsJson"></pre>
+                            </template>
+                            <template x-if="!hasDefaults">
+                                <span class="text-muted">No active environment configuration loaded.</span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {% if field_description %}
+            <p class="form-text mt-2">{{ field_description }}</p>
+            {% endif %}
+        </div>
+
+        <script>
+        if (!window.__mergeEnvPopoverStyles) {
+            window.__mergeEnvPopoverStyles = true;
+            const style = document.createElement('style');
+            style.textContent = `
+            .merge-env-toggle { position: relative; }
+            .merge-env-popover {
+                position: absolute;
+                top: 0;
+                right: -12px;
+                transform: translateY(100%);
+                background-color: rgba(17, 24, 39, 0.95);
+                border: 1px solid rgba(148, 163, 184, 0.25);
+                box-shadow: 0 10px 30px rgba(15, 23, 42, 0.35);
+                border-radius: 0.5rem;
+                padding: 0.75rem;
+                min-width: 320px;
+                max-width: 420px;
+                z-index: 1080;
+            }
+            .merge-env-popover__content {
+                max-height: 280px;
+                overflow-y: auto;
+                font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+                font-size: 0.8rem;
+                color: #e2e8f0;
+                white-space: pre;
+            }
+            .merge-env-popover__content pre {
+                margin: 0;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            `;
+            document.head.appendChild(style);
+        }
+
+        if (!window.mergeEnvironmentPopover) {
+            window.mergeEnvironmentPopover = function(initialValue) {
+                const initial = typeof initialValue === 'string'
+                    ? initialValue.toLowerCase() !== 'false'
+                    : Boolean(initialValue);
+                return {
+                    open: false,
+                    mergeEnabled: initial,
+                    init() {
+                        try {
+                            const stored = localStorage.getItem('simpletuner.mergeEnvironmentConfig');
+                            if (stored === 'true' || stored === 'false') {
+                                this.mergeEnabled = stored === 'true';
+                            }
+                        } catch (err) {
+                            console.debug('mergeEnvironmentPopover storage unavailable', err);
+                        }
+
+                        if (Alpine.store('trainer')) {
+                            Alpine.store('trainer').mergeEnvironmentDefaults = this.mergeEnabled;
+                        }
+
+                        this.$watch('mergeEnabled', (value) => {
+                            try {
+                                localStorage.setItem('simpletuner.mergeEnvironmentConfig', value ? 'true' : 'false');
+                            } catch (err) {
+                                console.debug('mergeEnvironmentPopover storage unavailable', err);
+                            }
+                            if (Alpine.store('trainer')) {
+                                Alpine.store('trainer').mergeEnvironmentDefaults = value;
+                            }
+                        });
+                    },
+                    get mergeEnabledString() {
+                        return this.mergeEnabled ? 'true' : 'false';
+                    },
+                    set mergeEnabledString(value) {
+                        this.mergeEnabled = String(value).toLowerCase() !== 'false';
+                    },
+                    get hasDefaults() {
+                        const store = Alpine.store('trainer');
+                        const config = store ? store.activeEnvironmentConfig : null;
+                        return config && Object.keys(config).length > 0;
+                    },
+                    get defaultsJson() {
+                        try {
+                            const store = Alpine.store('trainer');
+                            const config = store ? store.activeEnvironmentConfig : null;
+                            if (!config || Object.keys(config).length === 0) {
+                                return 'No environment configuration loaded.';
+                            }
+                            return JSON.stringify(config, null, 2);
+                        } catch (err) {
+                            return 'Unable to render environment configuration.';
+                        }
+                    }
+                };
+            };
+        }
+        </script>
+
+    {% elif field_type == 'checkbox' or field_type == 'toggle' %}
+        <div class="form-check form-switch">
+            <input type="checkbox"
+                   id="{{ field_id }}"
+                   name="{{ field_name }}"
+                   class="form-check-input"
+                   value="true"
+                   aria-labelledby="{{ field_id }}__title {{ field_id }}__switch_label"
+                   {% if field_value %}checked{% endif %}>
+            <span class="form-check-label" id="{{ field_id }}__switch_label">
+                {{ field_label }}
+            </span>
+        </div>
+
+    {% elif field_type == 'file' %}
+        <input type="file"
+               id="{{ field_id }}"
+               name="{{ field_name }}"
+               class="form-control"
+               {% if field_required %}required{% endif %}>
+
+    {% endif %}
+
+
+    <!-- Description/Help Text -->
+    {% if field_description %}
+        <div class="form-text">{{ field_description }}</div>
+    {% endif %}
+
+</div>
+
+<!-- Dynamic checkpoint loading script -->
+{% if field.dynamic_loader == 'checkpoints' %}
+<script>
+function checkpointField() {
+    return {
+        async loadCheckpoints() {
+            // Get the select element
+            const select = document.getElementById('{{ field_id }}');
+            const outputDirInput = document.querySelector('input[name="--output_dir"]');
+
+            if (!outputDirInput || !outputDirInput.value) {
+                return;
+            }
+
+            const outputDir = outputDirInput.value;
+
+            try {
+                // Show loading state
+                select.disabled = true;
+                const currentValue = select.value;
+
+                // Fetch checkpoints from API
+                const response = await fetch(`/api/training/checkpoints?output_dir=${encodeURIComponent(outputDir)}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    console.error('Failed to load checkpoints:', data.error);
+                    return;
+                }
+
+                // Clear current options
+                select.innerHTML = '';
+
+                // Add default options
+                select.add(new Option('None (Start fresh)', ''));
+                select.add(new Option('Latest checkpoint', 'latest'));
+
+                // Add checkpoint options
+                if (data.checkpoints && data.checkpoints.length > 0) {
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = 'Available Checkpoints';
+
+                    data.checkpoints.forEach(checkpoint => {
+                        const option = new Option(
+                            `${checkpoint.name} (Step ${checkpoint.step})${checkpoint.is_latest ? ' - Latest' : ''}`,
+                            checkpoint.name
+                        );
+                        optgroup.appendChild(option);
+                    });
+
+                    select.appendChild(optgroup);
+                }
+
+                // Restore previous selection if it still exists
+                if (currentValue && Array.from(select.options).some(opt => opt.value === currentValue)) {
+                    select.value = currentValue;
+                } else {
+                    select.value = '{{ field_value }}';
+                }
+
+            } catch (error) {
+                console.error('Error loading checkpoints:', error);
+            } finally {
+                // Reset loading state
+                select.disabled = false;
+            }
+        },
+
+        init() {
+            // Watch for output_dir changes
+            const outputDirInput = document.querySelector('input[name="--output_dir"]');
+            if (outputDirInput) {
+                // Load immediately if output_dir already has a value
+                if (outputDirInput.value) {
+                    this.loadCheckpoints();
+                }
+
+                // Load when output_dir changes
+                outputDirInput.addEventListener('change', () => this.loadCheckpoints());
+                outputDirInput.addEventListener('blur', () => this.loadCheckpoints());
+            }
+        }
+    };
+}
+</script>
+{% endif %}
+
+<!-- Initialize Bootstrap tooltips for this field -->
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize tooltips with fast show/hide
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl =>
+        new bootstrap.Tooltip(tooltipTriggerEl, {
+            delay: { show: 100, hide: 100 }
+        })
+    );
+
+    // Fix for number input spinner not going to 0
+    const spinnerFixInputs = document.querySelectorAll('input.spinner-fix');
+    spinnerFixInputs.forEach(input => {
+        // More aggressive fix - set min/max as numbers and force step
+        const minVal = parseFloat(input.getAttribute('min') || '0');
+        const maxVal = parseFloat(input.getAttribute('max') || '1000');
+
+        // Set attributes as numbers to ensure browser recognizes them
+        input.min = minVal;
+        input.max = maxVal;
+        input.step = input.getAttribute('step') || '1';
+
+        // Also handle input events to ensure value can be 0
+        input.addEventListener('input', function(e) {
+            const val = parseFloat(this.value);
+            if (!isNaN(val) && val < minVal) {
+                // Don't prevent - just note it for debugging
+                console.log('Value below min:', val, 'min:', minVal);
+            }
+        });
+
+        // Original focus handler as fallback
+        input.addEventListener('focus', function() {
+            const currentValue = this.value;
+            if (!this.dataset.spinnerFixed) {
+                // Temporarily set to min then back to force recognition
+                this.value = minVal;
+                setTimeout(() => {
+                    this.value = currentValue || '';
+                }, 0);
+                this.dataset.spinnerFixed = 'true';
+            }
+        });
+    });
+
+    // Also reinitialize on HTMX content swaps
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        const newTooltips = evt.detail.target.querySelectorAll('[data-bs-toggle="tooltip"]');
+        [...newTooltips].forEach(el => {
+            // Dispose existing tooltip instance if exists
+            const existingTooltip = bootstrap.Tooltip.getInstance(el);
+            if (existingTooltip) {
+                existingTooltip.dispose();
+            }
+            // Create new tooltip
+            new bootstrap.Tooltip(el, {
+                delay: { show: 100, hide: 100 }
+            });
+        });
+
+        // Reapply spinner fix to new elements
+        const newSpinnerFixInputs = evt.detail.target.querySelectorAll('input.spinner-fix');
+        newSpinnerFixInputs.forEach(input => {
+            const minVal = parseFloat(input.getAttribute('min') || '0');
+            const maxVal = parseFloat(input.getAttribute('max') || '1000');
+
+            input.min = minVal;
+            input.max = maxVal;
+            input.step = input.getAttribute('step') || '1';
+
+            input.addEventListener('input', function(e) {
+                const val = parseFloat(this.value);
+                if (!isNaN(val) && val < minVal) {
+                    console.log('Value below min:', val, 'min:', minVal);
+                }
+            });
+
+            input.addEventListener('focus', function() {
+                const currentValue = this.value;
+                if (!this.dataset.spinnerFixed) {
+                    this.value = minVal;
+                    setTimeout(() => {
+                        this.value = currentValue || '';
+                    }, 0);
+                    this.dataset.spinnerFixed = 'true';
+                }
+            });
+        });
+    });
+});
+</script>

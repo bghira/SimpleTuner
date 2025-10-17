@@ -21,6 +21,8 @@ else:
 
 class Sana(ImageModelFoundation):
     NAME = "Sana"
+    MODEL_DESCRIPTION = "Scalable autoregressive model for images"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderDC
@@ -184,3 +186,8 @@ class Sana(ImageModelFoundation):
             ),
             self.config.tread_config["routes"],
         )
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("sana", Sana)

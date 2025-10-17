@@ -1,8 +1,9 @@
 """Base configuration class for data backends."""
+
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Union, List
-import os
+from typing import Any, Dict, List, Optional, Union
 
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -61,11 +62,11 @@ class BaseBackendConfig(ABC):
         if (
             self.maximum_image_size
             and self.resolution_type == "area"
-            and self.maximum_image_size > 10
+            and self.maximum_image_size >= 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
-                f"When a data backend is configured to use `'resolution_type':area`, `maximum_image_size` must be less than 10 megapixels. You may have accidentally entered {self.maximum_image_size} pixels, instead of megapixels."
+                f"When a data backend is configured to use `'resolution_type':area`, `maximum_image_size` must be less than 20 megapixels. You may have accidentally entered {self.maximum_image_size} pixels, instead of megapixels."
             )
         elif (
             self.maximum_image_size
@@ -80,11 +81,11 @@ class BaseBackendConfig(ABC):
         if (
             self.target_downsample_size
             and self.resolution_type == "area"
-            and self.target_downsample_size > 10
+            and self.target_downsample_size >= 20
             and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
         ):
             raise ValueError(
-                f"When a data backend is configured to use `'resolution_type':area`, `target_downsample_size` must be less than 10 megapixels. You may have accidentally entered {self.target_downsample_size} pixels, instead of megapixels."
+                f"When a data backend is configured to use `'resolution_type':area`, `target_downsample_size` must be less than 20 megapixels. You may have accidentally entered {self.target_downsample_size} pixels, instead of megapixels."
             )
         elif (
             self.target_downsample_size
@@ -97,9 +98,7 @@ class BaseBackendConfig(ABC):
             )
 
     def _validate_caption_strategy(self, args: Dict[str, Any]) -> None:
-        if self.caption_strategy == "parquet" and (
-            self.metadata_backend == "json" or self.metadata_backend == "discovery"
-        ):
+        if self.caption_strategy == "parquet" and (self.metadata_backend == "json" or self.metadata_backend == "discovery"):
             raise ValueError(
                 f"(id={self.id}) Cannot use caption_strategy=parquet with metadata_backend={self.metadata_backend}. Instead, it is recommended to use the textfile strategy and extract your captions into txt files."
             )
@@ -127,11 +126,7 @@ class BaseBackendConfig(ABC):
             self.target_downsample_size = args.get("target_downsample_size")
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {
-            "id": self.id,
-            "dataset_type": self.dataset_type,
-            "config": self.config.copy()
-        }
+        result = {"id": self.id, "dataset_type": self.dataset_type, "config": self.config.copy()}
 
         if self.resolution is not None:
             result["config"]["resolution"] = self.resolution

@@ -1,0 +1,1 @@
+"""Dependencies for FastAPI routes."""

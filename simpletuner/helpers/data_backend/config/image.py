@@ -1,11 +1,13 @@
 """Image backend configuration class."""
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Union, List
-import logging
 
-from .base import BaseBackendConfig
-from . import validators
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Union
+
 from simpletuner.helpers.training.state_tracker import StateTracker
+
+from . import validators
+from .base import BaseBackendConfig
 
 logger = logging.getLogger("ImageBackendConfig")
 
@@ -79,7 +81,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
-            dataset_type=backend_dict.get("dataset_type", "image")
+            dataset_type=backend_dict.get("dataset_type", "image"),
         )
 
         config.disabled = backend_dict.get("disabled", backend_dict.get("disable", False))
@@ -198,22 +200,35 @@ class ImageBackendConfig(BaseBackendConfig):
 
         pixel_edge = self.resolution if self.resolution is not None else base_resolution
         if pixel_edge is None:
-            raise ValueError(
-                "Resolution type 'pixel_area' requires a numeric 'resolution' value to be provided."
-            )
+            raise ValueError("Resolution type 'pixel_area' requires a numeric 'resolution' value to be provided.")
 
         try:
             pixel_edge_value = float(pixel_edge)
         except (TypeError, ValueError):
-            raise ValueError(
-                "Resolution type 'pixel_area' requires the resolution value to be numeric."
-            )
+            raise ValueError("Resolution type 'pixel_area' requires the resolution value to be numeric.")
 
         baseline = float(base_resolution or 1.0)
         if baseline == 0:
             baseline = 1.0
 
         self.resolution = (pixel_edge_value * pixel_edge_value) / baseline
+
+        def _convert_pixel_edge_to_megapixels(value: Optional[Union[int, float]]) -> Optional[Union[int, float]]:
+            if value in (None, ""):
+                return value
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                return value
+            if numeric_value <= 0 or numeric_value <= 10:
+                return value
+            return (numeric_value * numeric_value) / 1_000_000.0
+
+        for field_name in ("maximum_image_size", "minimum_image_size", "target_downsample_size"):
+            current_value = getattr(self, field_name, None)
+            converted_value = _convert_pixel_edge_to_megapixels(current_value)
+            setattr(self, field_name, converted_value)
+
         self.resolution_type = "area"
 
     def apply_defaults(self, args: Dict[str, Any]) -> None:
@@ -238,21 +253,14 @@ class ImageBackendConfig(BaseBackendConfig):
         validators.validate_crop_style(self.crop_style, self.id)
 
         validators.validate_image_size_constraints(
-            self.maximum_image_size,
-            self.target_downsample_size,
-            self.resolution_type,
-            args.get("model_type", ""),
-            self.id
+            self.maximum_image_size, self.target_downsample_size, self.resolution_type, args.get("model_type", ""), self.id
         )
 
         if self.resolution_type:
             validators.validate_resolution_type(self.resolution_type, self.id)
 
         validators.validate_caption_strategy_compatibility(
-            self.caption_strategy or "",
-            self.metadata_backend or "",
-            self.backend_type,
-            self.id
+            self.caption_strategy or "", self.metadata_backend or "", self.backend_type, self.id
         )
 
         self._validate_backend_specific_settings()
@@ -260,17 +268,13 @@ class ImageBackendConfig(BaseBackendConfig):
         if self.dataset_type == "video":
             self._validate_video_settings(args)
 
-        validators.check_for_caption_filter_list_misuse(
-            self.dataset_type,
-            False,
-            self.id
-        )
+        validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
 
     def _validate_controlnet_requirements(self, args: Dict[str, Any]) -> None:
         state_args = validators.StateTracker.get_args()
         if (
             state_args is not None
-            and hasattr(state_args, 'controlnet')
+            and hasattr(state_args, "controlnet")
             and state_args.controlnet
             and self.dataset_type == "image"
             and (self.conditioning_data is None and self.conditioning is None)
@@ -279,13 +283,9 @@ class ImageBackendConfig(BaseBackendConfig):
                 f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
             )
 
-
     def _validate_backend_specific_settings(self) -> None:
         validators.validate_huggingface_backend_settings(
-            self.backend_type,
-            self.metadata_backend,
-            self.caption_strategy,
-            self.id
+            self.backend_type, self.metadata_backend, self.caption_strategy, self.id
         )
 
     def _validate_video_settings(self, args: Dict[str, Any]) -> None:

@@ -128,7 +128,7 @@ class SaveHookManager:
             self.ema_model.restore(trainable_parameters)
 
         lora_save_parameters = {}
-        # TODO: Make this less shitty.
+        # TODO: Refactor this implementation for better structure.
         for model in models:
             if self.args.controlnet and isinstance(
                 model,

@@ -38,6 +38,7 @@ class HubManager:
         self._repo_id = create_repo(
             repo_id=self.config.hub_model_id or self.config.tracker_project_name,
             exist_ok=True,
+            private=self.config.model_card_private,
         ).repo_id
 
     def _vae_string(self):
@@ -77,6 +78,12 @@ class HubManager:
             webhook_handler.send(
                 message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} validation samples to Hugging Face Hub as `{self.repo_id}`."
             )
+            webhook_handler.send_raw(
+                structured_data={"status": "uploading_validation_samples"},
+                message_type="training.status",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
+            )
         if not self.config.push_to_hub:
             return
         try:
@@ -112,6 +119,12 @@ class HubManager:
             webhook_handler.send(
                 message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} to Hugging Face Hub as `{self.repo_id}`."
             )
+            webhook_handler.send_raw(
+                structured_data={"status": "uploading_model"},
+                message_type="training.status",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
+            )
 
         try:
             self.upload_validation_folder(webhook_handler=webhook_handler, override_path=override_path)
@@ -134,9 +147,21 @@ class HubManager:
                     webhook_handler.send(
                         message=f"(attempt {attempt}/3) Error uploading model to Hugging Face Hub: {e}. Retrying..."
                     )
+                    webhook_handler.send_raw(
+                        structured_data={"status": "uploading_model"},
+                        message_type="training.status",
+                        message_level="info",
+                        job_id=StateTracker.get_job_id(),
+                    )
         if webhook_handler:
             webhook_handler.send(
                 message=f"Model is now available [on Hugging Face Hub](https://huggingface.co/{self._repo_id})."
+            )
+            webhook_handler.send_raw(
+                structured_data={"status": "model_available"},
+                message_type="training.status",
+                message_level="info",
+                job_id=StateTracker.get_job_id(),
             )
 
     def upload_full_model(self, override_path=None):
@@ -214,8 +239,48 @@ class HubManager:
         if checkpoint_path:
             logging.info(f"Checkpoint path: {checkpoint_path}")
             try:
+                # Extract step number from checkpoint path (e.g., "checkpoint-50" -> 50)
+                checkpoint_step = None
+                checkpoint_name = os.path.basename(str(checkpoint_path))
+                if "checkpoint-" in checkpoint_name:
+                    try:
+                        checkpoint_step = int(checkpoint_name.split("-")[1])
+                    except (IndexError, ValueError):
+                        logger.warning(f"Could not extract step number from checkpoint path: {checkpoint_path}")
+
+                # Filter validation images to only include those for this checkpoint step
+                filtered_images = {}
+                if validation_images and checkpoint_step is not None:
+                    validation_dir = os.path.join(self.config.output_dir, "validation_images")
+                    if os.path.exists(validation_dir):
+                        # Look for images with step_{checkpoint_step}_ in the filename
+                        for shortname, images in validation_images.items():
+                            filtered_images[shortname] = []
+                            # Get the actual image files for this step
+                            step_pattern = f"step_{checkpoint_step}_"
+                            for img_file in os.listdir(validation_dir):
+                                if step_pattern in img_file and shortname in img_file:
+                                    img_path = os.path.join(validation_dir, img_file)
+                                    try:
+                                        from PIL import Image
+
+                                        img = Image.open(img_path)
+                                        filtered_images[shortname].append(img)
+                                    except Exception as e:
+                                        logger.warning(f"Could not load validation image {img_path}: {e}")
+                            # Remove empty entries
+                            if not filtered_images[shortname]:
+                                del filtered_images[shortname]
+
+                # Only use images that were actually generated at this checkpoint step.
+                # Don't fall back to validation_images as those may be from a different step
+                # (e.g., benchmark images from step 0) and shouldn't be associated with this checkpoint.
+                # If no validation was run at this checkpoint step, we simply don't include validation
+                # images in the model card.
+                images_to_upload = filtered_images if filtered_images else None
+
                 self.upload_model(
-                    validation_images=validation_images,
+                    validation_images=images_to_upload,
                     override_path=checkpoint_path,
                     webhook_handler=webhook_handler,
                 )
@@ -257,6 +322,12 @@ class HubManager:
                             if webhook_handler:
                                 webhook_handler.send(
                                     message=f"(attempt {attempt}/3) Error uploading validation image to Hugging Face Hub: {e}. Retrying..."
+                                )
+                                webhook_handler.send_raw(
+                                    structured_data={"status": "uploading_validation_samples"},
+                                    message_type="training.status",
+                                    message_level="info",
+                                    job_id=StateTracker.get_job_id(),
                                 )
                     sub_idx += 1
                     idx += 1

@@ -1,3 +1,4 @@
+import ast
 import copy
 import glob
 import hashlib
@@ -6,16 +7,22 @@ import logging
 import math
 import os
 import random
+import shlex
 import shutil
+import signal
+import subprocess
 import sys
-from typing import Dict, Optional
+import threading
+import time
+from pathlib import Path
+from typing import Dict, List, Optional
 
 import huggingface_hub
-import wandb
-from accelerate.logging import get_logger
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.data_backend.factory import BatchFetcher, configure_multi_databackend, random_dataloader_iterator
 from simpletuner.helpers.models.all import model_families
@@ -23,6 +30,8 @@ from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import trainable_parameter_count
 from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
 from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
+from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
+from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
@@ -39,29 +48,61 @@ from simpletuner.helpers.training.peft_init import init_lokr_network_with_pertur
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
+from simpletuner.helpers.webhooks.events import (
+    attach_timestamp,
+    checkpoint_event,
+    error_event,
+    lifecycle_stage_event,
+    notification_event,
+    training_status_event,
+)
+from simpletuner.simpletuner_sdk.api_state import APIState
 
-logger = get_logger("SimpleTuner", log_level=os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 
-filelock_logger = get_logger("filelock")
-connection_logger = get_logger("urllib3.connectionpool")
-training_logger = get_logger("training-loop")
+def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
+    level_value = (
+        os.environ.get(env_var, os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level))
+        if env_var
+        else os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level)
+    )
+    try:
+        numeric_level = logging._nameToLevel.get(level_value.upper(), None)
+        if numeric_level is None:
+            numeric_level = int(level_value)
+    except Exception:
+        numeric_level = logging.INFO
 
-# More important logs.
-target_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
-logger.setLevel(target_level)
-training_logger_level = os.environ.get("SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL", "INFO")
-training_logger.setLevel(training_logger_level)
+    logger_instance = logging.getLogger(name)
+    logger_instance.setLevel(numeric_level)
+    if not logger_instance.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        logger_instance.addHandler(handler)
+    logger_instance.propagate = False
+    return logger_instance
 
-# Less important logs.
-filelock_logger.setLevel("WARNING")
-connection_logger.setLevel("WARNING")
+
+logger = _setup_logger("SimpleTuner")
+filelock_logger = _setup_logger("filelock", default_level="WARNING")
+connection_logger = _setup_logger("urllib3.connectionpool", default_level="WARNING")
+training_logger = _setup_logger("training-loop", env_var="SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
+
+
 import accelerate
 import diffusers
 import torch
 import torch.nn.functional as F
 import transformers
-from accelerate import Accelerator
-from accelerate.utils import set_seed
+from accelerate import Accelerator, DeepSpeedPlugin, FullyShardedDataParallelPlugin
+from accelerate.utils import (
+    DistributedType,
+    DynamoBackend,
+    ParallelismConfig,
+    TorchContextParallelConfig,
+    TorchDynamoPlugin,
+    set_seed,
+)
 from torch.distributions import Beta
 
 from simpletuner.configure import model_classes
@@ -128,26 +169,38 @@ class Trainer:
         job_id: str = None,
         exit_on_error: bool = False,
     ):
+        if job_id in (None, ""):
+            job_id_env = os.environ.get("SIMPLETUNER_JOB_ID")
+            if job_id_env:
+                job_id = job_id_env
+
         self.accelerator = None
         self.model = None
-        self.job_id = job_id
-        StateTracker.set_job_id(job_id)
-        self.parse_arguments(
-            args=config,
-            disable_accelerator=disable_accelerator,
-            exit_on_error=exit_on_error,
-        )
-        if getattr(self, "config", None) is not None and self.config.model_family in model_families:
-            self.model = model_families[self.config.model_family](self.config, self.accelerator)
-            self.model.check_user_config()
-            StateTracker.set_model(self.model)
-        self._misc_init()
+        self.checkpoint_manager = None
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
         self.lr_scheduler = None
         self.webhook_handler = None
         self.should_abort = False
+        self._external_abort_checker = None
         self.ema_model = None
+        self.job_id = job_id
+        StateTracker.set_job_id(job_id)
+        try:
+            self.parse_arguments(
+                args=config,
+                disable_accelerator=disable_accelerator,
+                exit_on_error=exit_on_error,
+            )
+        except Exception as e:
+            self._send_webhook_msg(f"Error: {e}", message_level="critical")
+            raise e
+
+        if getattr(self, "config", None) is not None and self.config.model_family in model_families:
+            self.model = model_families[self.config.model_family](self.config, self.accelerator)
+            self.model.check_user_config()
+            StateTracker.set_model(self.model)
+        self._misc_init()
         self.validation = None
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
@@ -174,8 +227,100 @@ class Trainer:
             target_logs["grad_absmax"] = self.grad_norm
 
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
+        self.configure_webhook(raw_config=args)
         self.config = load_config(args, exit_on_error=exit_on_error)
-        report_to = None if self.config.report_to.lower() == "none" else self.config.report_to
+        if self.config is None and args:
+            # Fallback to the user's persisted defaults when ad-hoc CLI args are incomplete.
+            # This mirrors historical behaviour where we would silently load the active
+            # environment when parsing failed, while still surfacing an explicit failure if
+            # no configuration can be resolved at all.
+            self.config = load_config(None, exit_on_error=exit_on_error)
+
+        if self.config is None:
+            raise ValueError("Training configuration could not be parsed")
+
+        accelerate_config_path = getattr(self.config, "accelerate_config", None)
+        if accelerate_config_path not in (None, "", "None"):
+            os.environ["ACCELERATE_CONFIG_PATH"] = os.path.expanduser(str(accelerate_config_path))
+
+        accelerate_extra_args = getattr(self.config, "accelerate_extra_args", None)
+        if accelerate_extra_args not in (None, ""):
+            os.environ["ACCELERATE_EXTRA_ARGS"] = str(accelerate_extra_args)
+
+        num_processes_value = getattr(self.config, "num_processes", None)
+        if num_processes_value not in (None, ""):
+            os.environ["TRAINING_NUM_PROCESSES"] = str(num_processes_value)
+
+        num_machines_value = getattr(self.config, "num_machines", None)
+        if num_machines_value not in (None, ""):
+            os.environ["TRAINING_NUM_MACHINES"] = str(num_machines_value)
+
+        def _resolve_dynamo_backend(candidate: object) -> DynamoBackend | None:
+            if isinstance(candidate, DynamoBackend):
+                return candidate
+            if candidate is None:
+                return None
+            raw_was_string_like = isinstance(candidate, (str, bytes))
+            if isinstance(candidate, bytes):
+                try:
+                    text = candidate.decode("utf-8", "strict").strip()
+                except UnicodeDecodeError:
+                    logger.debug(
+                        "Unable to decode Torch Dynamo backend bytes value %r; defaulting to no dynamo.",
+                        candidate,
+                    )
+                    return None
+            else:
+                text = str(candidate).strip()
+            if not text:
+                return None
+            normalised = text.replace("-", "_").upper()
+            if normalised in {"DISABLED", "NONE"}:
+                normalised = "NO"
+            try:
+                return DynamoBackend[normalised]
+            except KeyError as exc:
+                if raw_was_string_like:
+                    raise ValueError(f"Unsupported Torch Dynamo backend '{candidate}'.") from exc
+                logger.debug(
+                    "Ignoring non-string Torch Dynamo backend value %r (%s); defaulting to no dynamo.",
+                    candidate,
+                    type(candidate).__name__,
+                )
+                return None
+
+        def _coerce_flag(value: object) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return value != 0
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            return False
+
+        dynamo_backend_value = getattr(self.config, "dynamo_backend", None)
+        try:
+            resolved_dynamo_backend = _resolve_dynamo_backend(dynamo_backend_value)
+        except ValueError:
+            raise
+
+        dynamo_backend_env = "no"
+        if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
+            dynamo_backend_env = resolved_dynamo_backend.value.lower()
+        elif isinstance(dynamo_backend_value, str) and dynamo_backend_value.strip():
+            dynamo_backend_env = dynamo_backend_value.strip().lower()
+        os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
+
+        report_to_value = getattr(self.config, "report_to", None)
+        if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
+            report_to_value = "none"
+            setattr(self.config, "report_to", report_to_value)
+
+        if isinstance(report_to_value, str):
+            normalized_report = report_to_value.strip().lower()
+            report_to = None if normalized_report == "none" else report_to_value.strip()
+        else:
+            report_to = report_to_value
         if not disable_accelerator:
             accelerator_custom_config = [self.config.process_group_kwargs]
             if self.config.mixed_precision == "fp8":
@@ -196,8 +341,110 @@ class Trainer:
                 log_with=report_to,
                 project_config=self.config.accelerator_project_config,
                 kwargs_handlers=accelerator_custom_config,
-                dynamo_backend=os.environ.get("TRAINING_DYNAMO_BACKEND", "no"),
+                dynamo_backend=dynamo_backend_env,
             )
+
+            fsdp_plugin = None
+            if getattr(self.config, "fsdp_enable", False):
+                fsdp_plugin = self._load_fsdp_plugin()
+            deepspeed_plugin = None
+            if fsdp_plugin is None and hasattr(self.config, "deepspeed_config"):
+                deepspeed_plugin = self._load_deepspeed_plugin()
+            if fsdp_plugin is not None and deepspeed_plugin is not None:
+                raise ValueError("Cannot enable both FSDP and DeepSpeed in the same run.")
+            if fsdp_plugin is not None:
+                fsdp_plugin = self._prepare_fsdp_plugin_for_accelerator(fsdp_plugin)
+                accelerator_kwargs["fsdp_plugin"] = fsdp_plugin
+            if deepspeed_plugin is not None:
+                accelerator_kwargs["deepspeed_plugin"] = deepspeed_plugin
+
+            dynamo_plugin = None
+            if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
+                plugin_kwargs: Dict[str, object] = {"backend": resolved_dynamo_backend}
+
+                mode_value = getattr(self.config, "dynamo_mode", None)
+                if isinstance(mode_value, str):
+                    mode_text = mode_value.strip().lower()
+                    if mode_text and mode_text not in {"auto", "default"}:
+                        plugin_kwargs["mode"] = mode_text
+                    elif mode_text == "default":
+                        plugin_kwargs["mode"] = "default"
+                elif mode_value:
+                    plugin_kwargs["mode"] = str(mode_value)
+
+                if _coerce_flag(getattr(self.config, "dynamo_fullgraph", None)):
+                    plugin_kwargs["fullgraph"] = True
+                if _coerce_flag(getattr(self.config, "dynamo_dynamic", None)):
+                    plugin_kwargs["dynamic"] = True
+                if _coerce_flag(getattr(self.config, "dynamo_use_regional_compilation", None)):
+                    plugin_kwargs["use_regional_compilation"] = True
+
+                dynamo_plugin = TorchDynamoPlugin(**plugin_kwargs)
+                accelerator_kwargs["dynamo_plugin"] = dynamo_plugin
+
+                flag_details = []
+                if "mode" in plugin_kwargs:
+                    flag_details.append(f"mode={plugin_kwargs['mode']}")
+                if plugin_kwargs.get("fullgraph"):
+                    flag_details.append("fullgraph")
+                if plugin_kwargs.get("dynamic"):
+                    flag_details.append("dynamic")
+                if plugin_kwargs.get("use_regional_compilation"):
+                    flag_details.append("regional")
+                extras = f" ({', '.join(flag_details)})" if flag_details else ""
+                logger.info("Torch Dynamo enabled (backend=%s)%s.", resolved_dynamo_backend.value.lower(), extras)
+
+            context_parallel_size_raw = getattr(self.config, "context_parallel_size", None)
+            context_parallel_strategy_raw = getattr(self.config, "context_parallel_comm_strategy", None)
+            context_parallel_size = None
+            if context_parallel_size_raw not in (None, "", "None"):
+                try:
+                    context_parallel_size = int(context_parallel_size_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Context parallel size must be an integer, got {context_parallel_size_raw!r}."
+                    ) from exc
+                setattr(self.config, "context_parallel_size", context_parallel_size)
+
+            if context_parallel_size is not None and context_parallel_size <= 0:
+                raise ValueError("Context parallel size must be greater than 0 when specified.")
+
+            enable_context_parallel = context_parallel_size is not None and context_parallel_size > 1
+            if enable_context_parallel:
+                if not getattr(self.config, "fsdp_enable", False) or fsdp_plugin is None:
+                    raise ValueError(
+                        "Context parallelism requires FSDP2. Enable FSDP in Hardware > Accelerate before setting a context parallel size."
+                    )
+                fsdp_version_value = getattr(self.config, "fsdp_version", 2)
+                try:
+                    fsdp_version = int(fsdp_version_value)
+                except (TypeError, ValueError):
+                    fsdp_version = 2
+                if fsdp_version != 2:
+                    raise ValueError("Context parallelism currently only supports FSDP version 2.")
+
+                context_parallel_strategy = (context_parallel_strategy_raw or "allgather").strip().lower()
+                if context_parallel_strategy not in {"allgather", "alltoall"}:
+                    raise ValueError(
+                        f"Unsupported context parallel rotation '{context_parallel_strategy_raw}'. "
+                        "Valid options are 'allgather' and 'alltoall'."
+                    )
+                setattr(self.config, "context_parallel_comm_strategy", context_parallel_strategy)
+
+                accelerator_kwargs["parallelism_config"] = ParallelismConfig(
+                    cp_size=context_parallel_size,
+                    cp_handler=TorchContextParallelConfig(cp_comm_strategy=context_parallel_strategy),
+                )
+                logger.info(
+                    "Context parallelism enabled (size=%s, rotation=%s).",
+                    context_parallel_size,
+                    context_parallel_strategy,
+                )
+            elif context_parallel_size is not None:
+                # Normalise stored value when users explicitly set 1 to disable sharding
+                strategy_fallback = context_parallel_strategy_raw or "allgather"
+                strategy_text = strategy_fallback.strip().lower() if isinstance(strategy_fallback, str) else "allgather"
+                setattr(self.config, "context_parallel_comm_strategy", strategy_text)
 
             try:
                 self.accelerator = Accelerator(**accelerator_kwargs)
@@ -210,6 +457,11 @@ class Trainer:
                     self.accelerator = Accelerator(**accelerator_kwargs)
                 else:
                     raise
+            self._setup_accelerator_barrier_guard()
+        fsdp_active = False
+        if self.accelerator and hasattr(self.accelerator, "state"):
+            fsdp_active = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
+        setattr(self.config, "use_fsdp", fsdp_active)
         safety_check(args=self.config, accelerator=self.accelerator)
 
         if self.config.lr_scale:
@@ -257,13 +509,421 @@ class Trainer:
         except ImportError:
             logger.warning("Failed to patch Accelerate bf16 guard; proceeding without override.")
 
+    def _setup_accelerator_barrier_guard(self) -> None:
+        if not self.accelerator:
+            return
+
+        if getattr(self.accelerator, "_simpletuner_safe_wait_installed", False):
+            return
+
+        original_wait_for_everyone = self.accelerator.wait_for_everyone
+
+        def _safe_wait_for_everyone(*fn_args, **fn_kwargs):
+            state = getattr(self.accelerator, "state", None)
+            distributed_type = getattr(state, "distributed_type", None)
+            if distributed_type in (
+                DistributedType.MULTI_GPU,
+                DistributedType.MULTI_MLU,
+                DistributedType.MULTI_SDAA,
+                DistributedType.MULTI_MUSA,
+                DistributedType.MULTI_NPU,
+                DistributedType.MULTI_XPU,
+                DistributedType.MULTI_CPU,
+                DistributedType.MULTI_HPU,
+                DistributedType.DEEPSPEED,
+                DistributedType.FSDP,
+            ):
+                if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+                    logger.debug("Skipping accelerator.wait_for_everyone(); distributed process group not initialised.")
+                    return
+            return original_wait_for_everyone(*fn_args, **fn_kwargs)
+
+        self.accelerator.wait_for_everyone = _safe_wait_for_everyone
+        setattr(self.accelerator, "_simpletuner_safe_wait_installed", True)
+
+    def _load_fsdp_plugin(self):
+        if not getattr(self.config, "fsdp_enable", False):
+            return None
+
+        deepspeed_config = getattr(self.config, "deepspeed_config", None)
+        if deepspeed_config not in (None, "", "None", False):
+            raise ValueError("FSDP and DeepSpeed cannot be enabled simultaneously.")
+
+        fsdp_version = getattr(self.config, "fsdp_version", 2) or 2
+        reshard_after_forward = getattr(self.config, "fsdp_reshard_after_forward", True)
+        cpu_ram_efficient_loading = getattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
+        state_dict_type = getattr(self.config, "fsdp_state_dict_type", None)
+        auto_wrap_policy = getattr(self.config, "fsdp_auto_wrap_policy", None)
+        transformer_cls = getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+
+        plugin_kwargs = {
+            "fsdp_version": fsdp_version,
+            "reshard_after_forward": reshard_after_forward,
+            "cpu_ram_efficient_loading": cpu_ram_efficient_loading,
+        }
+
+        resolved_state_dict_display = None
+        if state_dict_type:
+            state_dict_mapping = {
+                "SHARDED_STATE_DICT": "sharded_state_dict",
+                "FULL_STATE_DICT": "full_state_dict",
+            }
+            resolved_state_dict = state_dict_mapping.get(state_dict_type.upper(), state_dict_type)
+            resolved_state_dict_display = resolved_state_dict
+            plugin_kwargs["state_dict_type"] = resolved_state_dict
+
+        if auto_wrap_policy:
+            plugin_kwargs["auto_wrap_policy"] = auto_wrap_policy
+
+        if transformer_cls:
+            plugin_kwargs["transformer_cls_names_to_wrap"] = transformer_cls
+
+        logger.info(
+            "FSDP v%s configuration detected; enabling FullyShardedDataParallelPlugin%s.",
+            fsdp_version,
+            f" (reshard_after_forward={reshard_after_forward})" if fsdp_version >= 2 else "",
+        )
+        plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
+
+        if resolved_state_dict_display:
+            setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
+            setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
+            plugin.state_dict_type = resolved_state_dict_display
+
+        if auto_wrap_policy and callable(getattr(plugin, "auto_wrap_policy", None)):
+            setattr(plugin, "_auto_wrap_policy_callable", plugin.auto_wrap_policy)
+            setattr(plugin, "auto_wrap_policy_display", auto_wrap_policy)
+            plugin.auto_wrap_policy = auto_wrap_policy
+
+        return plugin
+
+    @staticmethod
+    def _prepare_fsdp_plugin_for_accelerator(fsdp_plugin: FullyShardedDataParallelPlugin) -> FullyShardedDataParallelPlugin:
+        if hasattr(fsdp_plugin, "_state_dict_type_enum"):
+            fsdp_plugin.state_dict_type = getattr(fsdp_plugin, "_state_dict_type_enum")
+        elif isinstance(getattr(fsdp_plugin, "state_dict_type", None), str):
+            fsdp_plugin.set_state_dict_type(fsdp_plugin.state_dict_type)
+
+        if hasattr(fsdp_plugin, "_auto_wrap_policy_callable"):
+            fsdp_plugin.auto_wrap_policy = getattr(fsdp_plugin, "_auto_wrap_policy_callable")
+
+        return fsdp_plugin
+
+    def _finalize_deepspeed_config_auto_values(self, model) -> None:
+        if not self.accelerator or model is None:
+            return
+
+        if getattr(self.accelerator.state, "distributed_type", None) != DistributedType.DEEPSPEED:
+            return
+
+        deepspeed_plugin = getattr(self.accelerator.state, "deepspeed_plugin", None)
+        if not deepspeed_plugin:
+            return
+
+        hidden_size_keys = (
+            "zero_optimization.reduce_bucket_size",
+            "zero_optimization.stage3_prefetch_bucket_size",
+            "zero_optimization.stage3_param_persistence_threshold",
+        )
+        pending_auto_keys = [key for key in hidden_size_keys if deepspeed_plugin.is_auto(key)]
+        if not pending_auto_keys:
+            return
+
+        inferred_hidden_size = self._infer_model_hidden_size(model)
+        if not inferred_hidden_size or inferred_hidden_size <= 0:
+            keys_text = ", ".join(pending_auto_keys)
+            raise ValueError(
+                "Unable to infer a representative hidden size from the training model's configuration. "
+                "Please populate the DeepSpeed config with explicit numeric values for "
+                f"{keys_text} or ensure the model config exposes a hidden-size attribute."
+            )
+
+        zero_config = deepspeed_plugin.deepspeed_config.setdefault("zero_optimization", {})
+        if deepspeed_plugin.is_auto("zero_optimization.reduce_bucket_size"):
+            zero_config["reduce_bucket_size"] = int(inferred_hidden_size * inferred_hidden_size)
+        if deepspeed_plugin.is_auto("zero_optimization.stage3_prefetch_bucket_size"):
+            zero_config["stage3_prefetch_bucket_size"] = int(0.9 * inferred_hidden_size * inferred_hidden_size)
+        if deepspeed_plugin.is_auto("zero_optimization.stage3_param_persistence_threshold"):
+            zero_config["stage3_param_persistence_threshold"] = int(10 * inferred_hidden_size)
+
+    @staticmethod
+    def _normalize_numeric_candidate(value):
+        if isinstance(value, (int, float)):
+            return int(value)
+        if isinstance(value, (list, tuple, set)):
+            numeric_values = [int(v) for v in value if isinstance(v, (int, float))]
+            return max(numeric_values) if numeric_values else None
+        if isinstance(value, dict):
+            numeric_values = [int(v) for v in value.values() if isinstance(v, (int, float))]
+            return max(numeric_values) if numeric_values else None
+        return None
+
+    def _infer_model_hidden_size(self, model) -> Optional[int]:
+        if model is None:
+            return None
+
+        config = getattr(model, "config", None)
+        if config is not None:
+            candidate_attributes = (
+                "hidden_size",
+                "hidden_sizes",
+                "encoder_hidden_sizes",
+                "d_model",
+                "model_dim",
+                "embed_dim",
+                "embedding_dim",
+                "cross_attention_dim",
+                "encoder_embed_dim",
+                "inner_dim",
+                "projection_dim",
+                "block_out_channels",
+                "channels",
+            )
+            for attr in candidate_attributes:
+                if hasattr(config, attr):
+                    candidate = self._normalize_numeric_candidate(getattr(config, attr))
+                    if candidate and candidate > 0:
+                        return candidate
+
+            # Some configs expose dimensions via dict-style access
+            if hasattr(config, "to_dict"):
+                config_dict = config.to_dict()
+            elif hasattr(config, "__dict__"):
+                config_dict = config.__dict__
+            else:
+                config_dict = {}
+            if isinstance(config_dict, dict):
+                for attr in candidate_attributes:
+                    if attr in config_dict:
+                        candidate = self._normalize_numeric_candidate(config_dict[attr])
+                        if candidate and candidate > 0:
+                            return candidate
+
+        direct_attributes = (
+            "hidden_size",
+            "d_model",
+            "model_dim",
+            "embed_dim",
+            "inner_dim",
+        )
+        for attr in direct_attributes:
+            if hasattr(model, attr):
+                candidate = self._normalize_numeric_candidate(getattr(model, attr))
+                if candidate and candidate > 0:
+                    return candidate
+
+        try:
+            first_param = next(model.parameters())
+            if first_param is not None and hasattr(first_param, "shape"):
+                dims = [int(dim) for dim in first_param.shape if isinstance(dim, int) and dim > 1]
+                if dims:
+                    return max(dims)
+        except (StopIteration, TypeError, AttributeError):
+            pass
+
+        return None
+
+    def _load_deepspeed_plugin(self):
+        raw_config = getattr(self.config, "deepspeed_config", None)
+        if raw_config in (None, "", "None", False):
+            return None
+
+        try:
+            normalized = self._normalize_deepspeed_config(raw_config)
+        except ValueError as error:
+            logger.error(str(error))
+            raise
+
+        if normalized is None:
+            return None
+
+        normalized, fallback_optimizer = sanitize_optimizer_block(normalized)
+        if fallback_optimizer:
+            logger.warning(
+                "Unsupported DeepSpeed optimizer '%s'; replacing with '%s'.",
+                fallback_optimizer,
+                DS_DEFAULT_OPTIMIZER,
+            )
+        self._apply_deepspeed_overrides(normalized)
+        self.config.deepspeed_config = normalized
+
+        plugin_kwargs = {
+            "hf_ds_config": normalized,
+            "gradient_accumulation_steps": getattr(self.config, "gradient_accumulation_steps", 1),
+        }
+
+        zero_stage = self._extract_zero_stage(normalized)
+        if zero_stage is not None:
+            plugin_kwargs["zero_stage"] = zero_stage
+
+        offload_param_path = getattr(self.config, "offload_param_path", None)
+        if offload_param_path:
+            expanded_offload_path = os.path.abspath(os.path.expanduser(str(offload_param_path)))
+            self._cleanup_deepspeed_offload_artifacts(expanded_offload_path, zero_stage)
+            zero_config = normalized.get("zero_optimization")
+            if isinstance(zero_config, dict):
+                if self._uses_nvme(zero_config.get("offload_param")):
+                    plugin_kwargs.setdefault("offload_param_nvme_path", expanded_offload_path)
+                if self._uses_nvme(zero_config.get("offload_optimizer")):
+                    plugin_kwargs.setdefault("offload_optimizer_nvme_path", expanded_offload_path)
+
+        logger.info(
+            "DeepSpeed configuration detected; enabling DeepSpeedPlugin%s.",
+            f" (ZeRO stage {zero_stage})" if zero_stage is not None else "",
+        )
+        return DeepSpeedPlugin(**plugin_kwargs)
+
+    @staticmethod
+    def _uses_nvme(section):
+        if not isinstance(section, dict):
+            return False
+        device = section.get("device")
+        if isinstance(device, str):
+            return device.lower() == "nvme"
+        return False
+
+    def _apply_deepspeed_overrides(self, config_dict: dict) -> None:
+        if not isinstance(config_dict, dict):
+            return
+
+        if "deepspeed_config_file" in config_dict:
+            # User is delegating configuration to an external DeepSpeed JSON file.
+            # Respect their settings and avoid mutating the inline dictionary.
+            return
+
+        train_batch_size = getattr(self.config, "train_batch_size", None)
+        if train_batch_size is not None and "train_micro_batch_size_per_gpu" not in config_dict:
+            config_dict["train_micro_batch_size_per_gpu"] = train_batch_size
+
+        grad_accum = getattr(self.config, "gradient_accumulation_steps", None)
+        if grad_accum is not None and "gradient_accumulation_steps" not in config_dict:
+            config_dict["gradient_accumulation_steps"] = grad_accum
+
+        offload_param_path = getattr(self.config, "offload_param_path", None)
+        if not offload_param_path:
+            return
+
+        zero_config = config_dict.get("zero_optimization")
+        if not isinstance(zero_config, dict):
+            return
+
+        expanded_path = os.path.expanduser(str(offload_param_path))
+        for key in ("offload_param", "offload_optimizer"):
+            section = zero_config.get(key)
+            if isinstance(section, dict) and self._uses_nvme(section):
+                section.setdefault("nvme_path", expanded_path)
+
+    def _cleanup_deepspeed_offload_artifacts(self, offload_root: str, zero_stage: Optional[int]) -> None:
+        """Remove stale DeepSpeed offload swap directories to avoid corrupted resume state."""
+
+        if not offload_root:
+            return
+        try:
+            resolved_root = os.path.abspath(offload_root)
+        except Exception:
+            logger.debug("Unable to resolve DeepSpeed offload path %s", offload_root, exc_info=True)
+            return
+
+        try:
+            if not os.path.isdir(resolved_root):
+                return
+
+            candidates: List[str] = []
+            if zero_stage is not None:
+                candidates.append(os.path.join(resolved_root, f"zero_stage_{zero_stage}"))
+            else:
+                for entry in os.listdir(resolved_root):
+                    if entry.startswith("zero_stage_"):
+                        candidates.append(os.path.join(resolved_root, entry))
+
+            for candidate in candidates:
+                if not os.path.isdir(candidate):
+                    continue
+                try:
+                    if os.path.commonpath([resolved_root, candidate]) != resolved_root:
+                        logger.debug("Skipping DeepSpeed offload cleanup outside root: %s", candidate)
+                        continue
+                except Exception:
+                    logger.debug("Failed to validate DeepSpeed offload path %s", candidate, exc_info=True)
+                    continue
+                try:
+                    shutil.rmtree(candidate, ignore_errors=True)
+                    logger.info("Cleared DeepSpeed offload artefacts at %s", candidate)
+                except Exception:
+                    logger.debug("Failed to clear DeepSpeed offload directory %s", candidate, exc_info=True)
+        except Exception:
+            logger.debug("Unexpected error while cleaning DeepSpeed offload path %s", resolved_root, exc_info=True)
+
+    @staticmethod
+    def _extract_zero_stage(config_dict: dict) -> Optional[int]:
+        if not isinstance(config_dict, dict):
+            return None
+
+        candidates = []
+        if "zero_stage" in config_dict:
+            candidates.append(config_dict.get("zero_stage"))
+
+        zero_config = config_dict.get("zero_optimization")
+        if isinstance(zero_config, dict):
+            candidates.append(zero_config.get("stage"))
+
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                return int(candidate)
+            except (TypeError, ValueError):
+                continue
+
+        return None
+
+    @staticmethod
+    def _normalize_deepspeed_config(raw_config):
+        if raw_config in (None, "", "None", False):
+            return None
+
+        if isinstance(raw_config, (dict, list)):
+            return raw_config
+
+        if isinstance(raw_config, Path):
+            raw_config = str(raw_config)
+
+        if isinstance(raw_config, str):
+            candidate = raw_config.strip()
+            if not candidate:
+                return None
+
+            if candidate.startswith("{") or candidate.startswith("["):
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError as json_error:
+                    try:
+                        return ast.literal_eval(candidate)
+                    except (ValueError, SyntaxError) as ast_error:
+                        raise ValueError(f"Could not parse --deepspeed_config JSON payload: {ast_error}") from ast_error
+
+            expanded_path = os.path.expanduser(candidate)
+            if os.path.isfile(expanded_path):
+                try:
+                    with open(expanded_path, "r", encoding="utf-8") as handle:
+                        return json.load(handle)
+                except json.JSONDecodeError as file_error:
+                    raise ValueError(f"DeepSpeed config at {expanded_path} is invalid JSON: {file_error}") from file_error
+
+            raise ValueError(f"DeepSpeed config value '{raw_config}' is neither valid JSON nor an existing file.")
+
+        raise ValueError(f"Unsupported type for --deepspeed_config: {type(raw_config)}")
+
     def run(self):
         try:
+            self._exit_on_signal()
             # Initialize essential configurations and schedules
-            self.configure_webhook()
             self.init_noise_schedule()
+            self._exit_on_signal()
             self.init_seed()
+            self._exit_on_signal()
             self.init_huggingface_hub()
+            self._exit_on_signal()
 
             # Core initialization steps with signal checks after each step
             self._initialize_components_with_signal_check(
@@ -305,16 +965,33 @@ class Trainer:
             import traceback
 
             logger.error(f"Failed to run training: {e}, traceback: {traceback.format_exc()}")
+
+            # Ensure webhook handler is configured before sending error message
+            if not self.webhook_handler:
+                logger.warning("Webhook handler not initialized, attempting to configure it now")
+                try:
+                    self.configure_webhook(send_startup_message=False)
+                except Exception as webhook_err:
+                    logger.error(f"Failed to configure webhook handler: {webhook_err}")
+
             self._send_webhook_msg(
                 message=f"Failed to run training: {e}",
             )
-            self._send_webhook_raw(
-                structured_data={
-                    "message": f"Failed to run training: {e}",
-                    "status": "error",
-                },
-                message_type="fatal_error",
+            event = error_event(
+                message=f"Failed to run training: {e}",
+                title="Fatal Error",
+                job_id=self.job_id,
+                data={"status": "error"},
             )
+            self._emit_event(event, message_level="critical")
+
+            status_event = training_status_event(
+                status="failed",
+                message=f"Training failed: {e}",
+                job_id=self.job_id,
+                severity="error",
+            )
+            self._emit_event(status_event, message_level="critical")
 
             raise e
 
@@ -343,18 +1020,32 @@ class Trainer:
         self.noise_scheduler = self._get_noise_schedule()
         self.lr = 0.0
 
-    def configure_webhook(self, send_startup_message: bool = True):
+    def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
         self.webhook_handler = None
-        if self.config.webhook_config is None:
+        if raw_config is not None:
+            # Handle both dict and argparse.Namespace
+            if hasattr(raw_config, "get"):
+                webhook_config = raw_config.get("webhook_config", raw_config.get("--webhook_config", None))
+            else:
+                # argparse.Namespace - use getattr
+                webhook_config = getattr(raw_config, "webhook_config", getattr(raw_config, "__webhook_config", None))
+            logging.info(f"Creating webhook: {webhook_config}")
+        else:
+            webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
+        if webhook_config is None:
             return
         from simpletuner.helpers.webhooks.handler import WebhookHandler
 
         self.webhook_handler = WebhookHandler(
-            self.config.webhook_config,
             self.accelerator,
-            f"{self.config.tracker_project_name} {self.config.tracker_run_name}",
+            (
+                f"{getattr(self.config, 'tracker_project_name', 'unknown')} {getattr(self.config, 'tracker_run_name', 'unknown')}"
+                if hasattr(self, "config")
+                else "unknown"
+            ),
             send_video=(True if isinstance(self.model, VideoModelFoundation) else False),
-            args=self.config,
+            video_framerate=getattr(self.config, "framerate", None) if hasattr(self, "config") else None,
+            webhook_config=webhook_config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
         if send_startup_message:
@@ -362,16 +1053,21 @@ class Trainer:
                 message="SimpleTuner has launched. Hold onto your butts!",
                 store_response=True,
             )
-        self._send_webhook_raw(
-            structured_data={"message": "Training job has started, configuration has begun."},
-            message_type="configure_webhook",
+        event = notification_event(
+            message="Training job has started, configuration has begun.",
+            job_id=self.job_id,
         )
+        self._emit_event(event)
 
     def _misc_init(self):
         """things that do not really need an order."""
         torch.set_num_threads(self.config.torch_num_threads)
         self.state = {}
         self.state["lr"] = 0.0
+        # Initialize CheckpointManager with output directory
+        self.checkpoint_manager = None
+        if hasattr(self, "config") and getattr(self.config, "output_dir", None):
+            self.checkpoint_manager = CheckpointManager(self.config.output_dir)
         # Global step represents the most recently *completed* optimization step, which means it
         #  takes into account the number of gradient_accumulation_steps. If we use 1 gradient_accumulation_step,
         #  then global_step and step will be the same throughout training. However, if we use
@@ -455,6 +1151,8 @@ class Trainer:
         self.hub_manager = None
         if not self.accelerator.is_main_process:
             return
+        if access_token is None:
+            access_token = getattr(self, "hf_access_token", None)
         if access_token:
             huggingface_hub.login(token=access_token)
         self.hub_manager = HubManager(config=self.config, model=self.model)
@@ -490,25 +1188,45 @@ class Trainer:
 
     def init_load_base_model(self):
         webhook_msg = f"Loading model: `{self.config.pretrained_model_name_or_path}`..."
-        self._send_webhook_msg(message=webhook_msg)
-        self._send_webhook_raw(
-            structured_data={"message": webhook_msg},
-            message_type="init_load_base_model_begin",
+        # Send to Discord but don't emit event (lifecycle event below will handle that)
+        self._send_webhook_msg(message=webhook_msg, emit_event=False)
+        self._emit_event(
+            lifecycle_stage_event(
+                key="init_load_base_model",
+                label="Loading base model",
+                status="running",
+                message=webhook_msg,
+                job_id=self.job_id,
+            )
         )
         self.model.load_model(move_to_device=False)
         self.accelerator.wait_for_everyone()
-        self._send_webhook_raw(
-            structured_data={"message": "Base model has loaded."},
-            message_type="init_load_base_model_completed",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="init_load_base_model",
+                label="Loading base model",
+                status="completed",
+                message="Base model has loaded.",
+                current=1,
+                total=1,
+                percent=100,
+                job_id=self.job_id,
+            ),
         )
 
     def init_data_backend(self):
         try:
             self.init_clear_backend_cache()
-            self._send_webhook_msg(message="Configuring data backends... (this may take a while!)")
-            self._send_webhook_raw(
-                structured_data={"message": "Configuring data backends."},
-                message_type="init_data_backend_begin",
+            # Send to Discord but don't emit event (lifecycle event below will handle that)
+            self._send_webhook_msg(message="Configuring data backends... (this may take a while!)", emit_event=False)
+            self._emit_event(
+                lifecycle_stage_event(
+                    key="init_data_backend",
+                    label="Configuring data backends",
+                    status="running",
+                    message="Configuring data backends... (this may take a while!)",
+                    job_id=self.job_id,
+                )
             )
             configure_multi_databackend(
                 self.config,
@@ -517,24 +1235,44 @@ class Trainer:
                 tokenizers=self.model.tokenizers,
                 model=self.model,
             )
-            self._send_webhook_raw(
-                structured_data={"message": "Completed configuring data backends."},
-                message_type="init_data_backend_completed",
+            self._emit_event(
+                lifecycle_stage_event(
+                    key="init_data_backend",
+                    label="Configuring data backends",
+                    status="completed",
+                    message="Completed configuring data backends.",
+                    current=1,
+                    total=1,
+                    percent=100,
+                    job_id=self.job_id,
+                )
             )
         except Exception as e:
             import traceback
 
             logger.error(f"{e}, traceback: {traceback.format_exc()}")
+
+            # Ensure webhook handler is configured before sending error message
+            if not self.webhook_handler:
+                logger.warning("Webhook handler not initialized, attempting to configure it now")
+                try:
+                    self.configure_webhook(send_startup_message=False)
+                except Exception as webhook_err:
+                    logger.error(f"Failed to configure webhook handler: {webhook_err}")
+
             self._send_webhook_msg(
                 message=f"Failed to load data backends: {e}",
                 message_level="critical",
             )
-            self._send_webhook_raw(
-                structured_data={
-                    "message": f"Failed to load data backends: {e}",
-                    "status": "error",
-                },
-                message_type="fatal_error",
+            self._emit_event(
+                lifecycle_stage_event(
+                    key="init_data_backend",
+                    label="Configuring data backends",
+                    status="failed",
+                    message=f"Failed to load data backends: {e}",
+                    job_id=self.job_id,
+                ),
+                message_level="critical",
             )
 
             raise e
@@ -557,10 +1295,16 @@ class Trainer:
             logger.debug(f"Collected validation prompts: {validation_prompt_metadata}")
         self._recalculate_training_steps()
         logger.info(f"Collected the following data backends: {collected_data_backend_keys}")
-        self._send_webhook_msg(message=f"Collected the following data backends: {collected_data_backend_keys}")
-        self._send_webhook_raw(
-            structured_data={"message": f"Collected the following data backends: {collected_data_backend_keys}"},
-            message_type="init_data_backend",
+        # Send to Discord but don't emit event (notification event below will handle that)
+        self._send_webhook_msg(
+            message=f"Collected the following data backends: {collected_data_backend_keys}", emit_event=False
+        )
+        self._emit_event(
+            notification_event(
+                message=f"Collected the following data backends: {collected_data_backend_keys}",
+                severity="info",
+                job_id=self.job_id,
+            )
         )
         self.accelerator.wait_for_everyone()
 
@@ -872,7 +1616,7 @@ class Trainer:
             ]
         )
         self.config.num_update_steps_per_epoch = math.ceil(
-            self.config.total_num_batches / self.config.gradient_accumulation_steps
+            self.config.total_num_batches / max(self.config.gradient_accumulation_steps or 1, 1)
         )
         if getattr(self.config, "overrode_max_train_steps", False):
             self.config.max_train_steps = self.config.num_train_epochs * self.config.num_update_steps_per_epoch
@@ -1065,7 +1809,7 @@ class Trainer:
         # Prepare everything with our `accelerator`.
         logger.info("Preparing models..")
 
-        # TODO: Is this still needed? Seems like a hack job from January 2024.
+        # TODO: Review if this is still required - added January 2024 as temporary solution.
         self.train_dataloaders = []
         for _, backend in StateTracker.get_data_backends().items():
             if "train_dataloader" not in backend:
@@ -1081,12 +1825,19 @@ class Trainer:
         logger.info("Loading our accelerator...")
         if torch.backends.mps.is_available():
             self.accelerator.native_amp = False
-        self._send_webhook_msg(message="Moving weights to GPU...")
-        self._send_webhook_raw(
-            structured_data={"message": "Moving weights to GPU"},
-            message_type="init_prepare_models_begin",
+        # Send to Discord but don't emit event (lifecycle event below will handle that)
+        self._send_webhook_msg(message="Preparing model components...", emit_event=False)
+        self._emit_event(
+            lifecycle_stage_event(
+                key="init_prepare_models",
+                label="Preparing model components",
+                status="running",
+                message="Preparing model components",
+                job_id=self.job_id,
+            )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        self._finalize_deepspeed_config_auto_values(primary_model)
         results = self.accelerator.prepare(primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0])
         self.model.set_prepared_model(results[0])
 
@@ -1108,9 +1859,12 @@ class Trainer:
                 try:
                     self.ema_model.pin_memory()
                 except Exception as e:
-                    self._send_webhook_raw(
-                        structured_data={"message": f"Failed to pin EMA to CPU: {e}"},
-                        message_type="error",
+                    self._emit_event(
+                        notification_event(
+                            message=f"Failed to pin EMA to CPU: {e}",
+                            severity="warning",
+                            job_id=self.job_id,
+                        )
                     )
                     logger.error(f"Failed to pin EMA model to CPU: {e}")
 
@@ -1128,9 +1882,17 @@ class Trainer:
             self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(self.text_encoder_1, self.text_encoder_2)
         self._recalculate_training_steps()
         self.accelerator.wait_for_everyone()
-        self._send_webhook_raw(
-            structured_data={"message": "Completed moving weights to GPU"},
-            message_type="init_prepare_models_completed",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="init_prepare_models",
+                label="Preparing model components",
+                status="completed",
+                message="Completed preparing model components",
+                current=1,
+                total=1,
+                percent=100,
+                job_id=self.job_id,
+            )
         )
 
     def init_unload_vae(self):
@@ -1157,6 +1919,9 @@ class Trainer:
         ):
             logger.warning("Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation.")
             self.config.validation_disable = True
+        if getattr(self.config, "use_fsdp", False) and getattr(self.config, "fsdp_reshard_after_forward", True):
+            logger.warning("Cannot run validations with FSDP reshard-after-forward enabled. Disabling validation.")
+            self.config.validation_disable = True
         self.evaluation = None
         if self.config.validation_disable:
             return
@@ -1178,6 +1943,7 @@ class Trainer:
             ema_model=self.ema_model,
             model_evaluator=model_evaluator,
             is_deepspeed=self.config.use_deepspeed_optimizer,
+            is_fsdp=self.config.use_fsdp,
         )
         if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
@@ -1192,16 +1958,29 @@ class Trainer:
         if not self.accelerator.is_main_process:
             return
         logger.info("Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour.")
-        self._send_webhook_raw(
-            structured_data={"message": "Base model benchmark begins"},
-            message_type="init_benchmark_base_model_begin",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="benchmark_base_model",
+                label="Benchmarking base model",
+                status="running",
+                message="Base model benchmark begins",
+                job_id=self.job_id,
+            )
         )
         # we'll run validation on base model if it hasn't already.
         self.validation.run_validations(validation_type="base_model", step=0)
         self.validation.save_benchmark("base_model")
-        self._send_webhook_raw(
-            structured_data={"message": "Base model benchmark completed"},
-            message_type="init_benchmark_base_model_completed",
+        self._emit_event(
+            lifecycle_stage_event(
+                key="benchmark_base_model",
+                label="Benchmarking base model",
+                status="completed",
+                message="Base model benchmark completed",
+                current=1,
+                total=1,
+                percent=100,
+                job_id=self.job_id,
+            )
         )
 
     def init_resume_checkpoint(self, lr_scheduler):
@@ -1222,10 +2001,14 @@ class Trainer:
 
         if path is None:
             logger.info(f"Checkpoint '{self.config.resume_from_checkpoint}' does not exist. Starting a new training run.")
-            self._send_webhook_raw(
-                structured_data={"message": "No model to resume. Beginning fresh training run."},
-                message_type="init_resume_checkpoint",
+            event = lifecycle_stage_event(
+                key="init_resume_checkpoint",
+                label="Resume Checkpoint",
+                status="completed",
+                message="No model to resume. Beginning fresh training run.",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
 
             self.config.resume_from_checkpoint = None
             return lr_scheduler
@@ -1245,18 +2028,24 @@ class Trainer:
                     if k in ("base_lrs", "_last_lr"):
                         v[0] = self.config.learning_rate
         except Exception as e:
-            self._send_webhook_raw(
-                structured_data={"message": "Could not update learning rate scheduler LR value."},
-                message_type="warning",
+            event = notification_event(
+                message="Could not update learning rate scheduler LR value.",
+                severity="warning",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
             logger.error(
                 f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
             )
 
-        self._send_webhook_raw(
-            structured_data={"message": f"Resuming model: {path}"},
-            message_type="init_resume_checkpoint",
+        event = lifecycle_stage_event(
+            key="init_resume_checkpoint",
+            label="Resume Checkpoint",
+            status="running",
+            message=f"Resuming model: {path}",
+            job_id=self.job_id,
         )
+        self._emit_event(event)
         training_state_filename = f"training_state.json"
         if get_rank() > 0:
             training_state_filename = f"training_state-{get_rank()}.json"
@@ -1272,10 +2061,15 @@ class Trainer:
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         training_state_in_ckpt = StateTracker.get_training_state()
-        self._send_webhook_raw(
-            structured_data=training_state_in_ckpt,
-            message_type="init_resume_checkpoint_details",
+        event = lifecycle_stage_event(
+            key="init_resume_checkpoint",
+            label="Resume Checkpoint",
+            status="completed",
+            message=f"Resumed from global_step {self.state['global_resume_step']}",
+            job_id=self.job_id,
+            extra=training_state_in_ckpt,
         )
+        self._emit_event(event)
         logger.debug(f"Training state inside checkpoint: {training_state_in_ckpt}")
         if hasattr(lr_scheduler, "last_step"):
             lr_scheduler.last_step = self.state["global_resume_step"]
@@ -1317,6 +2111,20 @@ class Trainer:
                 if "use_focus" not in group:
                     group["use_focus"] = False
 
+        # Emit completion event for resume checkpoint stage
+        if self.config.resume_from_checkpoint:
+            completion_event = lifecycle_stage_event(
+                key="init_resume_checkpoint",
+                label="Resuming checkpoint",
+                status="completed",
+                percent=100,
+                current=1,
+                total=1,
+                job_id=self.job_id,
+                severity="info",
+            )
+            self._emit_event(completion_event, message_level="info")
+
         return lr_scheduler
 
     def init_trackers(self):
@@ -1328,6 +2136,7 @@ class Trainer:
             public_args = copy.deepcopy(self.config)
             delattr(public_args, "accelerator_project_config")
             delattr(public_args, "process_group_kwargs")
+            delattr(public_args, "webhook_config")
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
             if hasattr(public_args, "vae_kwargs"):
@@ -1358,14 +2167,18 @@ class Trainer:
                     self.accelerator.trackers = []
                 else:
                     logger.error(f"Could not initialize trackers: {e}")
-                    self._send_webhook_raw(
-                        structured_data={"message": f"Could not initialize trackers. Continuing without. {e}"},
-                        message_type="error",
+                    event = error_event(
+                        message=f"Could not initialize trackers. Continuing without. {e}",
+                        job_id=self.job_id,
                     )
-            self._send_webhook_raw(
-                structured_data=public_args.__dict__,
-                message_type="training_config",
+                    self._emit_event(event)
+            event = notification_event(
+                message="Training configuration initialized",
+                title="Training Config",
+                job_id=self.job_id,
+                data=public_args.__dict__,
             )
+            self._emit_event(event)
 
     def resume_and_prepare(self):
         self.init_optimizer()
@@ -1545,31 +2358,34 @@ class Trainer:
             logger.debug("Setting optimiser into eval() mode.")
             self.optimizer.eval()
 
-    def _send_webhook_msg(self, message: str, message_level: str = "info", store_response: bool = False):
+    def _send_webhook_msg(
+        self, message: str, message_level: str = "info", store_response: bool = False, emit_event: bool = True
+    ):
         if type(message) is not str:
             logger.error(f"_send_webhook_msg received {type(message)} type message instead of str.")
             return False
         if self.webhook_handler is None or not self.webhook_handler:
             return
         self.webhook_handler.send(message=message, message_level=message_level, store_response=store_response)
+        # Only emit event if requested (to avoid duplicates when a structured event is also being sent)
+        if emit_event:
+            event = notification_event(message=message, severity=message_level, job_id=self.job_id)
+            self._emit_event(event, message_level=message_level)
 
-    def _send_webhook_raw(
-        self,
-        structured_data: dict,
-        message_type: str,
-        message_level: str = "info",
-    ):
-        if type(structured_data) is not dict:
-            logger.error(f"_send_webhook_msg received {type(structured_data)} type message instead of dict.")
+    def _emit_event(self, event: dict, message_level: str = "info"):
+        if not isinstance(event, dict):
+            logger.error(f"_emit_event expected dict payload, received {type(event)}.")
             return False
         if not self.webhook_handler:
-            return
-        self.webhook_handler.send_raw(
-            structured_data=structured_data,
-            message_type=message_type,
-            message_level=message_level,
-            job_id=self.job_id,
-        )
+            logger.warning("No webhook handler is configured.")
+            return False
+        if self.job_id and event.get("job_id") is None:
+            event["job_id"] = self.job_id
+        attach_timestamp(event)
+        if "severity" not in event:
+            event["severity"] = message_level
+        self.webhook_handler.send_raw(event, message_level=message_level, job_id=self.job_id)
+        return True
 
     def _train_initial_msg(self):
         initial_msg = "\n***** Running training *****"
@@ -1585,27 +2401,49 @@ class Trainer:
         initial_msg += f"\n-  Total optimization steps = {self.config.max_train_steps}"
         if self.state["global_step"] > 1:
             initial_msg += f"\n  - Steps completed: {self.state['global_step']}"
-        initial_msg += f"\n-  Total optimization steps remaining = {max(0, getattr(self.config, 'total_steps_remaining_at_start', self.config.max_train_steps))}"
+        steps_remaining_at_start = max(
+            0, getattr(self.config, "total_steps_remaining_at_start", self.config.max_train_steps)
+        )
+        initial_msg += f"\n-  Total optimization steps remaining = {steps_remaining_at_start}"
+        self.state["steps_remaining_at_start"] = steps_remaining_at_start
+        self.state["total_num_steps"] = self.config.max_train_steps
         logger.info(initial_msg)
-        self._send_webhook_msg(message=initial_msg)
-        structured_data = {
-            "total_num_batches": self.config.total_num_batches,
-            "total_num_epochs": self.config.num_train_epochs,
-            "total_num_steps": self.config.max_train_steps,
-            "current_epoch": self.state["first_epoch"],
-            "total_batch_size": self.config.total_batch_size,
-            "micro_batch_size": self.config.train_batch_size,
-            "current_step": self.state["global_step"],
-            "remaining_num_steps": max(
-                0,
-                getattr(
-                    self.config,
-                    "total_steps_remaining_at_start",
-                    self.config.max_train_steps,
-                ),
-            ),
+        # Send to Discord webhook but don't emit as event (to avoid cluttering event dock)
+        if self.webhook_handler is not None:
+            self.webhook_handler.send(message=initial_msg, message_level="info")
+        # Cap global_step to max_train_steps in case of resume on already-completed environment
+        capped_global_step = min(self.state["global_step"], self.config.max_train_steps)
+        progress_percent = 0.0
+        if self.config.max_train_steps:
+            progress_percent = (capped_global_step / self.config.max_train_steps) * 100
+        progress_payload = {
+            "label": "Training initialisation",
+            "current": capped_global_step,
+            "total": self.config.max_train_steps,
+            "percent": progress_percent,
+            "metrics": {
+                "epoch": self.state["first_epoch"],
+                "total_epochs": self.config.num_train_epochs,
+            },
         }
-        self._send_webhook_raw(structured_data=structured_data, message_type="_train_initial_msg")
+        status_event = training_status_event(
+            status="running",  # Changed from "starting" - all initialization is complete
+            message=initial_msg,
+            job_id=self.job_id,
+            severity="info",
+            progress=progress_payload,
+            extra={
+                "total_num_batches": self.config.total_num_batches,
+                "total_num_epochs": self.config.num_train_epochs,
+                "total_num_steps": self.config.max_train_steps,
+                "current_epoch": self.state["first_epoch"],
+                "total_batch_size": self.config.total_batch_size,
+                "micro_batch_size": self.config.train_batch_size,
+                "global_step": self.state["global_step"],
+                "remaining_num_steps": steps_remaining_at_start,
+            },
+        )
+        self._emit_event(status_event)
 
     def _epoch_rollover(self, epoch):
         if self.state["first_epoch"] == epoch:
@@ -1650,11 +2488,25 @@ class Trainer:
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
     def _exit_on_signal(self):
+        external_abort = False
+        if callable(getattr(self, "_external_abort_checker", None)):
+            try:
+                external_abort = bool(self._external_abort_checker())
+            except Exception:
+                external_abort = False
+
+        if external_abort and not self.should_abort:
+            self.abort()
+
         if self.should_abort:
-            self._send_webhook_raw(
-                structured_data={"message": "Aborting training run."},
-                message_type="exit",
+            event = lifecycle_stage_event(
+                key="training_abort",
+                label="Training Aborted",
+                status="completed",
+                message="Aborting training run.",
+                job_id=self.job_id,
             )
+            self._emit_event(event)
             raise StopIteration("Training run received abort signal.")
 
     def abort(self):
@@ -1741,58 +2593,70 @@ class Trainer:
         return self.model.get_prediction_target(prepared_batch)
 
     def checkpoint_state_remove(self, output_dir, checkpoint):
-        removing_checkpoint = os.path.join(output_dir, checkpoint)
-        try:
-            logger.debug(f"Removing {removing_checkpoint}")
-            shutil.rmtree(removing_checkpoint, ignore_errors=True)
-        except Exception as e:
-            logger.error(f"Failed to remove directory: {removing_checkpoint}")
-            print(e)
+        if self.checkpoint_manager:
+            self.checkpoint_manager.remove_checkpoint(checkpoint)
+        else:
+            # Fallback to original implementation
+            removing_checkpoint = os.path.join(output_dir, checkpoint)
+            try:
+                logger.debug(f"Removing {removing_checkpoint}")
+                shutil.rmtree(removing_checkpoint, ignore_errors=True)
+            except Exception as e:
+                logger.error(f"Failed to remove directory: {removing_checkpoint}")
+                print(e)
 
     def checkpoint_state_filter(self, output_dir, suffix=None):
-        checkpoints_keep = []
-        checkpoints = os.listdir(output_dir)
-        for checkpoint in checkpoints:
-            cs = checkpoint.split("-")
-            base = cs[0]
-            sfx = None
-            if len(cs) < 2:
-                continue
-            elif len(cs) > 2:
-                sfx = cs[2]
+        if self.checkpoint_manager:
+            return self.checkpoint_manager._filter_checkpoints(suffix)
+        else:
+            # Fallback to original implementation
+            checkpoints_keep = []
+            checkpoints = os.listdir(output_dir)
+            for checkpoint in checkpoints:
+                cs = checkpoint.split("-")
+                base = cs[0]
+                sfx = None
+                if len(cs) < 2:
+                    continue
+                elif len(cs) > 2:
+                    sfx = cs[2]
 
-            if base != "checkpoint":
-                continue
-            if suffix and sfx and suffix != sfx:
-                continue
-            if (suffix and not sfx) or (sfx and not suffix):
-                continue
+                if base != "checkpoint":
+                    continue
+                if suffix and sfx and suffix != sfx:
+                    continue
+                if (suffix and not sfx) or (sfx and not suffix):
+                    continue
 
-            checkpoints_keep.append(checkpoint)
+                checkpoints_keep.append(checkpoint)
 
-        return checkpoints_keep
+            return checkpoints_keep
 
     def checkpoint_state_cleanup(self, output_dir, limit, suffix=None):
-        # remove any left over temp checkpoints (partially written, etc)
-        checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
-        for removing_checkpoint in checkpoints:
-            self.checkpoint_state_remove(output_dir, removing_checkpoint)
+        if self.checkpoint_manager:
+            self.checkpoint_manager.cleanup_checkpoints(limit, suffix)
+        else:
+            # Fallback to original implementation
+            # remove any left over temp checkpoints (partially written, etc)
+            checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
+            for removing_checkpoint in checkpoints:
+                self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
-        # now remove normal checkpoints past the limit
-        checkpoints = self.checkpoint_state_filter(output_dir, suffix)
-        checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+            # now remove normal checkpoints past the limit
+            checkpoints = self.checkpoint_state_filter(output_dir, suffix)
+            checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
-        # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
-        if len(checkpoints) < limit:
-            return
+            # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
+            if len(checkpoints) < limit:
+                return
 
-        num_to_remove = len(checkpoints) - limit + 1
-        removing_checkpoints = checkpoints[0:num_to_remove]
-        logger.debug(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
-        logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+            num_to_remove = len(checkpoints) - limit + 1
+            removing_checkpoints = checkpoints[0:num_to_remove]
+            logger.debug(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
+            logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
-        for removing_checkpoint in removing_checkpoints:
-            self.checkpoint_state_remove(output_dir, removing_checkpoint)
+            for removing_checkpoint in removing_checkpoints:
+                self.checkpoint_state_remove(output_dir, removing_checkpoint)
 
     def checkpoint_state_save(self, output_dir, suffix=None):
         print("\n")
@@ -1808,10 +2672,42 @@ class Trainer:
         save_path_tmp = f"{save_path}-tmp" if self.config.checkpointing_use_tempdir else save_path
 
         # schedulefree optim needs the optimizer to be in eval mode to save the state (and then back to train after)
+        event = lifecycle_stage_event(
+            key="checkpoint_save",
+            label="Saving Checkpoint",
+            status="running",
+            message=f"Saving checkpoint to {save_path}",
+            job_id=self.job_id,
+        )
+        self._emit_event(event)
         self.mark_optimizer_eval()
         self.accelerator.save_state(save_path_tmp)
+        event = lifecycle_stage_event(
+            key="checkpoint_save",
+            label="Saving Checkpoint",
+            status="completed",
+            message=f"Saved checkpoint to {save_path}",
+            job_id=self.job_id,
+        )
+        self._emit_event(event)
         if getattr(self, "distiller", None) is not None:
+            event = lifecycle_stage_event(
+                key="checkpoint_save_distiller",
+                label="Saving Distillation States",
+                status="running",
+                message=f"Saving distillation states to {save_path_tmp}",
+                job_id=self.job_id,
+            )
+            self._emit_event(event)
             self.distiller.on_save_checkpoint(self.state["global_step"], save_path_tmp)
+            event = lifecycle_stage_event(
+                key="checkpoint_save_distiller",
+                label="Saving Distillation States",
+                status="completed",
+                message=f"Saved distillation states to {save_path_tmp}",
+                job_id=self.job_id,
+            )
+            self._emit_event(event)
         self.mark_optimizer_train()
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
@@ -1824,13 +2720,23 @@ class Trainer:
                 )
         if save_path != save_path_tmp:
             os.rename(save_path_tmp, save_path)
+        event = checkpoint_event(
+            path=save_path,
+            label=f"Checkpoint saved to {save_path}",
+            job_id=self.job_id,
+        )
+        self._emit_event(event)
 
     def checkpoint_state_latest(self, output_dir):
-        # both checkpoint-[0-9]+ and checkpoint-[0-9]-rolling are candidates
-        dirs = os.listdir(output_dir)
-        dirs = [d for d in dirs if d.startswith("checkpoint") and not d.endswith("tmp")]
-        dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-        return dirs[-1] if len(dirs) > 0 else None
+        if self.checkpoint_manager:
+            return self.checkpoint_manager.get_latest_checkpoint()
+        else:
+            # Fallback to original implementation
+            # both checkpoint-[0-9]+ and checkpoint-[0-9]-rolling are candidates
+            dirs = os.listdir(output_dir)
+            dirs = [d for d in dirs if d.startswith("checkpoint") and not d.endswith("tmp")]
+            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
+            return dirs[-1] if len(dirs) > 0 else None
 
     def train(self):
         self.init_trackers()
@@ -2085,7 +2991,7 @@ class Trainer:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
                             self.lr = self.optimizer.param_groups[0]["d"]
                         elif self.config.is_lr_scheduler_disabled:
-                            # hackjob method of retrieving LR from accelerated optims
+                            # Alternative method for retrieving LR from accelerated optimizers
                             self.lr = StateTracker.get_last_lr()
                         else:
                             self.lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
@@ -2155,29 +3061,66 @@ class Trainer:
                     )
                     webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
 
-                    # Reset some values for the next go.
-                    training_luminance_values = []
-                    self.train_loss = 0.0
-
-                    if (
-                        self.config.webhook_reporting_interval is not None
-                        and self.state["global_step"] % self.config.webhook_reporting_interval == 0
-                    ):
-                        structured_data = {
-                            "state": self.state,
-                            "loss": round(self.train_loss, 4),
-                            "parent_loss": parent_loss,
-                            "learning_rate": self.lr,
-                            "epoch": epoch,
-                            "final_epoch": self.config.num_train_epochs,
-                        }
-                        self._send_webhook_raw(structured_data=structured_data, message_type="train")
+                    if self.webhook_handler is not None:
+                        current_state = self.state.copy()
+                        current_state.pop("args")  # we don't need to send the config every time.
+                        # Cap global_step to prevent exceeding total when resuming completed runs
+                        capped_step = min(
+                            current_state.get("global_step", 0),
+                            current_state.get("total_num_steps", float("inf")),
+                        )
+                        event = training_status_event(
+                            status="running",
+                            job_id=self.job_id,
+                            progress={
+                                "current": capped_step,
+                                "total": current_state.get("total_num_steps"),
+                                "metrics": {
+                                    "loss": self.train_loss,
+                                    "parent_loss": parent_loss,
+                                    "learning_rate": float(self.lr),
+                                    "epoch": epoch,
+                                },
+                            },
+                            extra={
+                                "final_epoch": self.config.num_train_epochs,
+                                **current_state,
+                            },
+                        )
+                        self._emit_event(event)
 
                     if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
                         self._send_webhook_msg(
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
                         )
+                        # Also send structured progress update at checkpoint time
+                        current_state = self.state.copy()
+                        current_state.pop("args", None)
+                        # Cap global_step to prevent exceeding total when resuming completed runs
+                        capped_step = min(
+                            current_state.get("global_step", 0),
+                            current_state.get("total_num_steps", float("inf")),
+                        )
+                        event = training_status_event(
+                            status="running",
+                            job_id=self.job_id,
+                            progress={
+                                "current": capped_step,
+                                "total": current_state.get("total_num_steps"),
+                                "metrics": {
+                                    "loss": self.train_loss,
+                                    "parent_loss": parent_loss,
+                                    "learning_rate": float(self.lr),
+                                    "epoch": epoch,
+                                },
+                            },
+                            extra={
+                                "final_epoch": self.config.num_train_epochs,
+                                **current_state,
+                            },
+                        )
+                        self._emit_event(event)
                         if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2195,6 +3138,33 @@ class Trainer:
                             message=f"Checkpoint: `{webhook_pending_msg}`",
                             message_level="info",
                         )
+                        # Also send structured progress update at checkpoint time
+                        current_state = self.state.copy()
+                        current_state.pop("args", None)
+                        # Cap global_step to prevent exceeding total when resuming completed runs
+                        capped_step = min(
+                            current_state.get("global_step", 0),
+                            current_state.get("total_num_steps", float("inf")),
+                        )
+                        event = training_status_event(
+                            status="running",
+                            job_id=self.job_id,
+                            progress={
+                                "current": capped_step,
+                                "total": current_state.get("total_num_steps"),
+                                "metrics": {
+                                    "loss": self.train_loss,
+                                    "parent_loss": parent_loss,
+                                    "learning_rate": float(self.lr),
+                                    "epoch": epoch,
+                                },
+                            },
+                            extra={
+                                "final_epoch": self.config.num_train_epochs,
+                                **current_state,
+                            },
+                        )
+                        self._emit_event(event)
                         if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
                             # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
                             self.checkpoint_state_cleanup(
@@ -2208,6 +3178,7 @@ class Trainer:
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None
+                        and self.config.accelerator.cache_clear_interval > 0
                         and self.state["global_step"] % self.config.accelerator_cache_clear_interval == 0
                     ):
                         reclaim_memory()
@@ -2234,6 +3205,10 @@ class Trainer:
                         wandb_logs,
                         step=self.state["global_step"],
                     )
+
+                    # Reset some values for the next go.
+                    training_luminance_values = []
+                    self.train_loss = 0.0
 
                 logs = {
                     "step_loss": loss.detach().item(),
@@ -2287,6 +3262,7 @@ class Trainer:
                         f"Training has completed."
                         f"\n -> global_step = {self.state['global_step']}, max_train_steps = {self.config.max_train_steps}, epoch = {epoch}, num_train_epochs = {self.config.num_train_epochs}",
                     )
+                    # Note: training_complete event is emitted after final validation and model save
                     break
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
@@ -2294,22 +3270,49 @@ class Trainer:
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"
                 )
+                # Note: training_complete event is emitted after final validation and model save
                 break
 
         # Create the pipeline using the trained modules and save it.
         self.accelerator.wait_for_everyone()
         validation_images = None
         if self.accelerator.is_main_process:
+            event = lifecycle_stage_event(
+                key="model_save",
+                label="Saving Final Model",
+                status="running",
+                message=f"Finalizing model and saving to {self.config.output_dir}",
+                job_id=self.job_id,
+            )
+            self._emit_event(event)
             self.mark_optimizer_eval()
             if self.validation is not None:
                 self.enable_sageattention_inference()
                 self.disable_gradient_checkpointing()
+                # Emit validation start lifecycle event for final validations
+                validation_start_event = lifecycle_stage_event(
+                    key="final_validation",
+                    label="Running Final Validations",
+                    status="running",
+                    message="Generating final validation images...",
+                    job_id=self.job_id,
+                )
+                self._emit_event(validation_start_event)
                 validation_images = self.validation.run_validations(
                     validation_type="final",
                     step=self.state["global_step"],
                     force_evaluation=True,
                     skip_execution=True,
                 ).validation_images
+                # Emit validation completed lifecycle event
+                validation_completed_event = lifecycle_stage_event(
+                    key="final_validation",
+                    label="Running Final Validations",
+                    status="completed",
+                    message="Final validation images completed",
+                    job_id=self.job_id,
+                )
+                self._emit_event(validation_completed_event)
                 # we don't have to do this but we will anyway.
                 self.disable_sageattention_inference()
             if self.model.get_trained_component() is not None:
@@ -2382,3 +3385,502 @@ class Trainer:
             if self.hub_manager is not None and self.accelerator.is_main_process:
                 self.hub_manager.upload_model(validation_images, self.webhook_handler)
         self.accelerator.end_training()
+        # Emit training_complete event after all model saving and validation is complete
+        event = lifecycle_stage_event(
+            key="training_complete",
+            label="Training Complete",
+            status="completed",
+            message="Training run complete.",
+            job_id=self.job_id,
+            percent=100,
+            metrics={
+                "loss": round(self.train_loss, 4),
+                "learning_rate": self.lr,
+                "epoch": self.state.get("current_epoch", 0),
+            },
+            extra={
+                "state": self.state,
+                "final_epoch": self.config.num_train_epochs,
+            },
+        )
+        self._emit_event(event)
+
+
+def run_trainer_job(config):
+    """Create a Trainer from the provided config and execute the full run loop."""
+
+    job_id = None
+    should_abort_callable = None
+
+    if hasattr(config, "__dict__"):
+        attrs = vars(config).copy()
+        should_abort_callable = attrs.pop("should_abort", None)
+        job_id = attrs.pop("__job_id__", None) or attrs.pop("job_id", None)
+        config_payload = attrs
+    elif isinstance(config, dict):
+        config_payload = dict(config)
+        job_id = config_payload.pop("__job_id__", None) or config_payload.pop("job_id", None)
+        should_abort_callable = config_payload.pop("should_abort", None)
+    else:
+        config_payload = config
+
+    def _extract_value(mapping: Dict[str, object], *keys: str, default=None):
+        for key in keys:
+            if key in mapping:
+                value = mapping[key]
+                if isinstance(value, str) and value.strip() == "":
+                    continue
+                if value not in (None, "==SUPPRESS=="):
+                    return value
+        return default
+
+    def _safe_int(value: object, fallback: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return fallback
+
+    accelerate_config_path = None
+    accelerate_extra_args = None
+    requested_processes = None
+    requested_machines = None
+    requested_dynamo_backend = None
+    mixed_precision_value = "bf16"
+    main_process_ip_value = "127.0.0.1"
+    main_process_port_value = 29500
+    machine_rank_value = 0
+    same_network_value = True
+
+    selected_device_ids: Optional[List[str]] = None
+
+    if isinstance(config_payload, dict):
+        accelerate_config_path = _extract_value(config_payload, "accelerate_config", "--accelerate_config")
+        accelerate_extra_args = _extract_value(
+            config_payload,
+            "accelerate_extra_args",
+            "--accelerate_extra_args",
+        )
+        requested_processes = _extract_value(config_payload, "num_processes", "--num_processes")
+        requested_machines = _extract_value(config_payload, "num_machines", "--num_machines")
+        requested_dynamo_backend = _extract_value(
+            config_payload,
+            "dynamo_backend",
+            "--dynamo_backend",
+            "training_dynamo_backend",
+            "--training_dynamo_backend",
+        )
+        mixed_precision_value = _extract_value(
+            config_payload, "mixed_precision", "--mixed_precision", default=mixed_precision_value
+        )
+        main_process_ip_value = _extract_value(
+            config_payload,
+            "main_process_ip",
+            "--main_process_ip",
+            default=main_process_ip_value,
+        )
+        main_process_port_value = _extract_value(
+            config_payload,
+            "main_process_port",
+            "--main_process_port",
+            default=main_process_port_value,
+        )
+        machine_rank_value = _extract_value(
+            config_payload,
+            "machine_rank",
+            "--machine_rank",
+            default=machine_rank_value,
+        )
+        same_network_value = _extract_value(
+            config_payload,
+            "same_network",
+            "--same_network",
+            default=same_network_value,
+        )
+        if isinstance(same_network_value, str):
+            same_network_value = same_network_value.strip().lower() in {"1", "true", "yes", "on"}
+
+        accelerate_visible_devices = _extract_value(
+            config_payload,
+            "accelerate_visible_devices",
+            "--accelerate_visible_devices",
+        )
+        if isinstance(accelerate_visible_devices, str):
+            tokens = [token.strip() for token in accelerate_visible_devices.split(",") if token.strip()]
+            if tokens:
+                selected_device_ids = tokens
+        elif isinstance(accelerate_visible_devices, (list, tuple, set)):
+            tokens: List[str] = []
+            for item in accelerate_visible_devices:
+                if isinstance(item, str):
+                    stripped = item.strip()
+                    if stripped:
+                        tokens.append(stripped)
+                else:
+                    try:
+                        tokens.append(str(int(item)))
+                    except (TypeError, ValueError):
+                        continue
+            if tokens:
+                selected_device_ids = tokens
+
+    def _resolve_hf_token() -> Optional[str]:
+        possible_env_vars = (
+            "HUGGINGFACEHUB_API_TOKEN",
+            "HUGGINGFACE_HUB_TOKEN",
+            "HF_TOKEN",
+            "HF_API_TOKEN",
+        )
+        for env_var in possible_env_vars:
+            token = os.environ.get(env_var)
+            if token:
+                return token
+        try:
+            from huggingface_hub import HfFolder
+
+            token = HfFolder.get_token()
+            if token:
+                return token
+        except Exception:
+            pass
+        return None
+
+    hf_token = _resolve_hf_token()
+
+    def _launch_with_accelerate() -> Optional[int]:
+        use_accelerate = False
+
+        nonlocal accelerate_config_path, main_process_port_value, machine_rank_value
+
+        config_candidate = accelerate_config_path
+        if isinstance(config_candidate, str) and config_candidate.strip():
+            use_accelerate = True
+
+        extra_candidate = accelerate_extra_args
+        if isinstance(extra_candidate, str) and extra_candidate.strip():
+            use_accelerate = True
+
+        proc_count = _safe_int(requested_processes, 1)
+        machine_count = _safe_int(requested_machines, 1)
+        if proc_count > 1 or machine_count > 1:
+            use_accelerate = True
+
+        dyn_backend_normalized = (requested_dynamo_backend or "").strip().lower()
+        if dyn_backend_normalized and dyn_backend_normalized not in {"no", "none", ""}:
+            use_accelerate = True
+
+        if not use_accelerate:
+            return None
+
+        launch_env = os.environ.copy()
+        if job_id:
+            launch_env["SIMPLETUNER_JOB_ID"] = job_id
+        if hf_token:
+            for var in ("HUGGINGFACEHUB_API_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN", "HF_API_TOKEN"):
+                launch_env.setdefault(var, hf_token)
+
+        if selected_device_ids:
+            launch_env["CUDA_VISIBLE_DEVICES"] = ",".join(selected_device_ids)
+
+        # Normalise accelerate config path if provided
+        config_file_arg = None
+        if isinstance(accelerate_config_path, str) and accelerate_config_path.strip():
+            expanded_path = os.path.expanduser(accelerate_config_path.strip())
+            accelerate_config_path = expanded_path
+            if os.path.isfile(expanded_path):
+                config_file_arg = expanded_path
+            else:
+                logger.warning("Accelerate config file not found at %s; falling back to CLI parameters", expanded_path)
+
+        if mixed_precision_value:
+            launch_env["MIXED_PRECISION"] = str(mixed_precision_value)
+        launch_env.setdefault("MIXED_PRECISION", "bf16")
+
+        if proc_count:
+            launch_env["TRAINING_NUM_PROCESSES"] = str(proc_count)
+        if machine_count:
+            launch_env["TRAINING_NUM_MACHINES"] = str(machine_count)
+        if dyn_backend_normalized:
+            launch_env["TRAINING_DYNAMO_BACKEND"] = dyn_backend_normalized
+
+        if accelerate_extra_args:
+            launch_env["ACCELERATE_EXTRA_ARGS"] = str(accelerate_extra_args)
+
+        if machine_count > 1:
+            if not main_process_ip_value:
+                raise ValueError(
+                    "Main process IP is required when launching across multiple machines. "
+                    "Provide it under Hardware > Accelerate settings or supply an accelerate config file."
+                )
+            if not main_process_port_value:
+                raise ValueError(
+                    "Main process port is required when launching across multiple machines. "
+                    "Provide it under Hardware > Accelerate settings or supply an accelerate config file."
+                )
+            if machine_rank_value is None:
+                raise ValueError(
+                    "Machine rank must be specified for multi-node launches. "
+                    "Set it under Hardware > Accelerate settings for each node."
+                )
+
+            main_process_port_int = _safe_int(main_process_port_value, 29500)
+            if main_process_port_int <= 0:
+                raise ValueError("Main process port must be a positive integer.")
+            machine_rank_int = _safe_int(machine_rank_value, 0)
+            if machine_rank_int < 0:
+                raise ValueError("Machine rank must be zero or greater.")
+            main_process_port_value = main_process_port_int
+            machine_rank_value = machine_rank_int
+
+        cmd = ["accelerate", "launch"]
+
+        if config_file_arg:
+            cmd.append(f"--config_file={config_file_arg}")
+        else:
+            cmd.extend(
+                [
+                    f"--mixed_precision={launch_env.get('MIXED_PRECISION', 'bf16')}",
+                    f"--num_processes={launch_env.get('TRAINING_NUM_PROCESSES', '1')}",
+                    f"--num_machines={launch_env.get('TRAINING_NUM_MACHINES', '1')}",
+                    f"--dynamo_backend={launch_env.get('TRAINING_DYNAMO_BACKEND', 'no')}",
+                ]
+            )
+            if machine_count > 1:
+                cmd.append(f"--main_process_ip={main_process_ip_value}")
+                cmd.append(f"--main_process_port={main_process_port_value}")
+                cmd.append(f"--machine_rank={machine_rank_value}")
+                if same_network_value:
+                    cmd.append("--same_network")
+
+        extra_args = []
+        if accelerate_extra_args:
+            try:
+                extra_args = shlex.split(str(accelerate_extra_args))
+            except ValueError:
+                logger.warning("Failed to parse accelerate extra args; using raw string")
+                extra_args = [str(accelerate_extra_args)]
+        if extra_args:
+            cmd.extend(extra_args)
+
+        import simpletuner
+
+        train_py = Path(simpletuner.__file__).parent / "train.py"
+        cmd.append(str(train_py))
+
+        cli_args: list[str] = []
+        if isinstance(config_payload, dict):
+            train_cli_payload = dict(config_payload)
+            for accel_key in {
+                "accelerate_config",
+                "--accelerate_config",
+                "accelerate_extra_args",
+                "--accelerate_extra_args",
+                "main_process_ip",
+                "--main_process_ip",
+                "main_process_port",
+                "--main_process_port",
+                "machine_rank",
+                "--machine_rank",
+                "same_network",
+                "--same_network",
+            }:
+                train_cli_payload.pop(accel_key, None)
+            for webhook_key in ("--webhook_config", "webhook_config"):
+                webhook_value = train_cli_payload.get(webhook_key)
+                if isinstance(webhook_value, (dict, list)):
+                    try:
+                        train_cli_payload[webhook_key] = json.dumps(webhook_value)
+                    except Exception:
+                        train_cli_payload.pop(webhook_key, None)
+            try:
+                cli_args = mapping_to_cli_args(train_cli_payload)
+            except Exception as exc:
+                logger.warning("Failed to convert config payload to CLI args: %s", exc)
+                cli_args = []
+        if cli_args:
+            launch_env.setdefault("CONFIG_BACKEND", "cmd")
+            cmd.extend(cli_args)
+
+        logging.info("Launching training via accelerate: %s", " ".join(cmd))
+
+        popen_kwargs = {
+            "env": launch_env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "bufsize": 1,
+        }
+        if os.name != "nt":
+            popen_kwargs["preexec_fn"] = os.setsid
+        process = subprocess.Popen(cmd, **popen_kwargs)
+
+        output_lock = threading.Lock()
+
+        def _forward_output():
+            if not process.stdout:
+                return
+            for line in iter(process.stdout.readline, ""):
+                if not line:
+                    break
+                with output_lock:
+                    try:
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
+                    except Exception:
+                        logger.info(line.rstrip())
+
+        reader_thread = threading.Thread(target=_forward_output, daemon=True)
+        reader_thread.start()
+
+        try:
+            while process.poll() is None:
+                if callable(should_abort_callable) and should_abort_callable():
+                    logger.info("Abort requested; terminating accelerate launcher")
+                    _terminate_accelerate_process(process)
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("Accelerate process unresponsive; forcing kill")
+                        _kill_accelerate_process(process)
+                    break
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            logger.info("Keyboard interrupt received; terminating accelerate launcher")
+            _terminate_accelerate_process(process)
+            raise
+        finally:
+            if process.stdout:
+                process.stdout.close()
+            reader_thread.join(timeout=2)
+            if process.poll() is None:
+                _terminate_accelerate_process(process)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Accelerate process still alive; forcing kill")
+                    _kill_accelerate_process(process)
+
+        returncode = process.wait()
+        if returncode != 0:
+            raise RuntimeError(f"Accelerate launch exited with status {returncode}")
+        return returncode
+
+    try:
+        accelerate_result = _launch_with_accelerate()
+    except Exception as exc:
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is not None:
+            from simpletuner.simpletuner_sdk.api_state import APIState
+
+            webhook_handler.send(
+                message=f"Training job failed to start: {exc}",
+                message_level="error",
+            )
+            payload = {"status": "training_failed", "error": str(exc)}
+            try:
+                import traceback
+
+                payload["traceback"] = traceback.format_exc()
+            except Exception:
+                pass
+            webhook_handler.send_raw(
+                structured_data=payload,
+                message_type="training.status",
+                message_level="error",
+                job_id=StateTracker.get_job_id(),
+            )
+            try:
+                APIState.set_state("training_status", "failed")
+                APIState.set_state("current_job_id", None)
+            except Exception:
+                pass
+        APIState.set_state("training_status", "failed")
+        raise
+
+    if accelerate_result is not None:
+        return accelerate_result
+
+    if hf_token:
+        for var in ("HUGGINGFACEHUB_API_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HF_TOKEN", "HF_API_TOKEN"):
+            os.environ.setdefault(var, hf_token)
+
+    try:
+        trainer = Trainer(config=config_payload, job_id=job_id)
+
+        if hf_token:
+            trainer.hf_access_token = hf_token
+
+    except Exception as e:
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is not None:
+            from simpletuner.simpletuner_sdk.api_state import APIState
+
+            webhook_handler.send(
+                message=f"Training job failed to start: {e}",
+                message_level="error",
+            )
+            payload = {"status": "training_failed", "error": str(e)}
+            try:
+                import traceback
+
+                payload["traceback"] = traceback.format_exc()
+            except Exception:
+                pass
+            webhook_handler.send_raw(
+                structured_data=payload,
+                message_type="training.status",
+                message_level="error",
+                job_id=StateTracker.get_job_id(),
+            )
+            try:
+                APIState.set_state("training_status", "failed")
+                APIState.set_state("current_job_id", None)
+            except Exception:
+                pass
+        raise e
+
+    def _abort_monitor():
+        if not callable(should_abort_callable):
+            return
+        while not trainer.should_abort:
+            try:
+                if should_abort_callable():
+                    trainer.abort()
+                    return
+            except Exception:
+                return
+            time.sleep(0.5)
+
+    if callable(should_abort_callable):
+        trainer._external_abort_checker = should_abort_callable
+        threading.Thread(target=_abort_monitor, daemon=True).start()
+
+    trainer.run()
+    return {"status": "completed"}
+
+
+def _terminate_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    return
+                except Exception:
+                    pass
+            process.terminate()
+    except Exception as exc:
+        logger.warning("Failed to terminate accelerate process cleanly: %s", exc)
+
+
+def _kill_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    return
+                except Exception:
+                    pass
+            process.kill()
+    except Exception as exc:
+        logger.warning("Failed to kill accelerate process: %s", exc)

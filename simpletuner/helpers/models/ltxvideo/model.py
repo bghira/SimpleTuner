@@ -28,6 +28,8 @@ else:
 
 class LTXVideo(VideoModelFoundation):
     NAME = "LTXVideo"
+    MODEL_DESCRIPTION = "Video generation model with flow matching"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLLTXVideo
@@ -231,7 +233,7 @@ class LTXVideo(VideoModelFoundation):
             )
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
-                "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+                f"{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 64
 
@@ -273,3 +275,8 @@ class LTXVideo(VideoModelFoundation):
         output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("ltxvideo", LTXVideo)

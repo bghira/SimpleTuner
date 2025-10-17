@@ -1,0 +1,109 @@
+<div class="mb-3">
+    <label class="form-label">Environment Name</label>
+    <div class="input-group">
+        <input type="text"
+               class="form-control"
+               :value="newEnvironment.name"
+               placeholder="my-environment"
+               required
+               @input="updateNewEnvironmentName($event.target.value)">
+        <button type="button"
+                class="btn btn-outline-secondary"
+                title="Generate project name"
+                @click="generateProjectName()">
+            <i class="fas fa-random"></i>
+        </button>
+    </div>
+</div>
+<div class="mb-3">
+    <label class="form-label">Model Family</label>
+    <select class="form-select"
+            x-model="newEnvironment.model_family"
+            required
+            :disabled="exampleLocked"
+            @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour=null;">
+        <option value="" disabled>Select a model family</option>
+        <template x-for="family in modelFamilies" :key="family">
+            <option :value="family" x-text="family"></option>
+        </template>
+    </select>
+</div>
+<div class="mb-3">
+    <label class="form-label">Model Flavour</label>
+    <select class="form-select" x-model="newEnvironment.model_flavour" :disabled="exampleLocked">
+        <option value="">Default</option>
+        <template x-for="flavour in modelFlavours" :key="flavour">
+            <option :value="flavour" x-text="flavour"></option>
+        </template>
+    </select>
+</div>
+<div class="mb-3">
+    <label class="form-label">Model Type</label>
+    <select class="form-select"
+            x-model="newEnvironment.model_type"
+            :disabled="exampleLocked"
+            @change="handleModelTypeChange($event.target.value)">
+        <template x-for="type in modelTypes" :key="type.value">
+            <option :value="type.value" x-text="type.label"></option>
+        </template>
+    </select>
+</div>
+<div class="mb-3">
+    <label class="form-label">Bootstrap From Example</label>
+    <select class="form-select"
+            x-model="newEnvironment.example"
+            @change="handleExampleSelection($event.target.value)">
+        <option value="">None</option>
+        <template x-for="example in examples" :key="example.name">
+            <option :value="example.name" x-text="example.name"></option>
+        </template>
+    </select>
+</div>
+<div class="mb-3" x-show="newEnvironment.model_type === 'lora'">
+    <label class="form-label">LoRA Type</label>
+    <select class="form-select" x-model="newEnvironment.lora_type" :disabled="exampleLocked">
+        <template x-for="lora in loraTypes" :key="lora.value">
+            <option :value="lora.value" :disabled="lora.disabled" x-text="lora.label"></option>
+        </template>
+    </select>
+    <small class="text-muted">LyCORIS option is temporarily unavailable for new configs.</small>
+</div>
+<div class="mb-3">
+    <label class="form-label">Dataset Configuration</label>
+    <div class="form-check mb-2" x-show="dataloaderConfigs.length > 0">
+        <input class="form-check-input" type="checkbox" id="createNewDataloader"
+               :checked="createNewDataloader"
+               @change="toggleCreateNewDataloader($event.target.checked)">
+        <label class="form-check-label" for="createNewDataloader">
+            Create new dataloader config for this environment
+        </label>
+    </div>
+    <select class="form-select mb-2"
+            :disabled="createNewDataloader || dataloaderConfigs.length === 0"
+            x-model="selectedDataloaderPath"
+            @change="selectExistingDataloader($event.target.value)">
+        <template x-if="dataloaderConfigs.length === 0">
+            <option value="">No dataloader configs available</option>
+        </template>
+        <template x-for="config in dataloaderConfigs" :key="config.path">
+            <option :value="config.path"
+                    x-text="config.dataset_count !== undefined ? `${config.name} (${config.dataset_count} datasets)` : config.name"></option>
+        </template>
+    </select>
+    <input type="text"
+           class="form-control"
+           placeholder="my-environment/multidatabackend.json"
+           :disabled="!createNewDataloader"
+           :value="newEnvironment.dataloader_path"
+           @input="markEnvironmentPathTouched(); newEnvironment.dataloader_path = $event.target.value">
+    <small class="text-muted" x-show="createNewDataloader">
+        Path is relative to your configs directory. Leave blank to use the default location.
+    </small>
+    <small class="text-muted" x-show="!createNewDataloader">
+        The selected dataloader configuration will be referenced by this environment.
+    </small>
+</div>
+<div class="mb-3">
+    <label class="form-label">Description</label>
+    <textarea class="form-control" rows="2" x-model="newEnvironment.description" placeholder="Optional description"></textarea>
+</div>

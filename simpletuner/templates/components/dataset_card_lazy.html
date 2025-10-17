@@ -1,0 +1,115 @@
+<!-- Lazy-loaded Dataset Card Component -->
+<div class="dataset-card card mb-3 lazy-load"
+     data-lazy
+     data-lazy-type="htmx"
+     data-hx-get="/api/datasets/{{ dataset.id }}/details"
+     hx-trigger="intersect once"
+     hx-target="this"
+     hx-swap="innerHTML">
+
+    <!-- Loading placeholder -->
+    <div class="card-body text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading dataset...</span>
+        </div>
+        <p class="text-muted mt-3">Loading {{ dataset.name }}...</p>
+    </div>
+</div>
+
+<!-- Example of image lazy loading in dataset preview -->
+{% if dataset.preview_images %}
+<div class="dataset-preview-grid">
+    {% for image in dataset.preview_images[:4] %}
+    <div class="preview-image-wrapper">
+        <img class="lazy-load preview-image"
+             data-lazy
+             data-lazy-type="image"
+             data-lazy-src="{{ image.url }}"
+             src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 300'%3E%3Crect width='100%25' height='100%25' fill='%23333'/%3E%3Ctext x='50%25' y='50%25' text-anchor='middle' dy='.3em' fill='%23999' font-family='sans-serif' font-size='16'%3ELoading...%3C/text%3E%3C/svg%3E"
+             alt="{{ image.caption or 'Dataset preview' }}"
+             width="200"
+             height="150">
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Example of lazy-loaded component with custom URL -->
+<div class="dataset-statistics lazy-load"
+     data-lazy
+     data-lazy-type="component"
+     data-lazy-component="/api/datasets/{{ dataset.id }}/statistics">
+    <div class="text-muted text-center py-3">
+        <i class="fas fa-chart-bar"></i> Statistics will load when visible
+    </div>
+</div>
+
+<style>
+/* Lazy loading styles specific to dataset cards */
+.dataset-card.lazy-loading {
+    min-height: 200px;
+    background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0.03) 0%,
+        rgba(255,255,255,0.06) 50%,
+        rgba(255,255,255,0.03) 100%
+    );
+    background-size: 200% 100%;
+    animation: lazy-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes lazy-shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+.preview-image.lazy-loading {
+    filter: blur(5px);
+    transform: scale(1.1);
+}
+
+.preview-image.lazy-loaded {
+    filter: blur(0);
+    transform: scale(1);
+    transition: filter 0.3s ease-out, transform 0.3s ease-out;
+}
+
+.preview-image.lazy-error {
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.dataset-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.preview-image-wrapper {
+    position: relative;
+    overflow: hidden;
+    border-radius: 0.375rem;
+    background-color: rgba(0, 0, 0, 0.2);
+}
+
+.preview-image {
+    width: 100%;
+    height: 150px;
+    object-fit: cover;
+}
+</style>
+
+<script>
+// Optional: Custom handling for this component
+document.addEventListener('lazy-loaded', function(event) {
+    if (event.target.classList.contains('dataset-statistics')) {
+        // Reinitialize any charts or interactive elements
+        console.log('Dataset statistics loaded:', event.target);
+    }
+});
+</script>

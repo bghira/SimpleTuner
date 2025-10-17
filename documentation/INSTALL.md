@@ -1,12 +1,34 @@
-## Setup
+# Setup
 
 For users that wish to make use of Docker or another container orchestration platform, see [this document](/documentation/DOCKER.md) first.
 
-### Installation
+## Installation
 
 For  users operating on Windows 10 or newer, an installation guide based on Docker and WSL is available here [this document](/documentation/DOCKER.md).
 
-Clone the SimpleTuner repository and set up the python venv:
+### Pip installation method
+
+You can simply install SimpleTuner using pip, which is recommended for most users:
+
+```bash
+# for CUDA
+pip install 'simpletuner[cuda]'
+# for ROCm
+pip install 'simpletuner[rocm]'
+# for Apple Silicon
+pip install 'simpletuner[apple]'
+# for CPU-only (not recommended)
+pip install 'simpletuner[cpu]'
+# for JPEG XL support (optional)
+pip install 'simpletuner[jxl]'
+
+# development requirements (optional, only for submitting PRs or running tests)
+pip install 'simpletuner[dev]'
+```
+
+### Git repository method
+
+For local development or testing, you can clone the SimpleTuner repository and set up the python venv:
 
 ```bash
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
@@ -71,19 +93,41 @@ popd
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 
-#### Multiple GPU training
+#### MultiGPU training
 
-**Note**: For MultiGPU setup, you will have to set all of these variables in `config/config.env`
+SimpleTuner now includes **automatic GPU detection and configuration** through the WebUI. Upon first load, you'll be guided through an onboarding step that detects your GPUs and configures Accelerate automatically.
 
-```bash
-TRAINING_NUM_PROCESSES=1
-TRAINING_NUM_MACHINES=1
-TRAINING_DYNAMO_BACKEND='no'
-# this is auto-detected, and not necessary. but can be set explicitly.
-CONFIG_BACKEND='json'
+##### WebUI Auto-Detection (Recommended)
+
+When you first launch the WebUI or use `simpletuner configure`, you'll encounter an "Accelerate GPU Defaults" onboarding step that:
+
+1. **Automatically detects** all available GPUs on your system
+2. **Shows GPU details** including name, memory, and device IDs
+3. **Recommends optimal settings** for multi-GPU training
+4. **Offers three configuration modes:**
+
+   - **Auto Mode** (Recommended): Uses all detected GPUs with optimal process count
+   - **Manual Mode**: Select specific GPUs or set a custom process count
+   - **Disabled Mode**: Single GPU training only
+
+**How it works:**
+- The system detects your GPU hardware via CUDA/ROCm
+- Calculates optimal `--num_processes` based on available devices
+- Sets `CUDA_VISIBLE_DEVICES` automatically when specific GPUs are selected
+- Saves your preferences for future training runs
+
+##### Manual Configuration
+
+If not using the WebUI, you can control GPU visibility directly in your `config.json`:
+
+```json
+{
+  "accelerate_visible_devices": [0, 1, 2],
+  "num_processes": 3
+}
 ```
 
-Any missing values from your user config will fallback to the defaults.
+This will restrict training to GPUs 0, 1, and 2, launching 3 processes.
 
 3. If you are using `--report_to='wandb'` (the default), the following will help you report your statistics:
 

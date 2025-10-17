@@ -37,6 +37,8 @@ else:
 
 class Flux(ImageModelFoundation):
     NAME = "Flux.1"
+    MODEL_DESCRIPTION = "High-quality image generation, 12B parameters"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -683,7 +685,7 @@ class Flux(ImageModelFoundation):
         #     )
         if self.config.aspect_bucket_alignment != 64:
             logger.warning(
-                "{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
+                f"{self.NAME} requires an alignment value of 64px. Overriding the value of --aspect_bucket_alignment."
             )
             self.config.aspect_bucket_alignment = 64
 
@@ -729,7 +731,7 @@ class Flux(ImageModelFoundation):
             if not self.config.flux_attention_masked_training:
                 logger.warning("LibreFlux requires attention masking. Enabling it.")
                 self.config.flux_attention_masked_training = True
-            if self.config.fused_qkv_projections:
+            if self.config.fuse_qkv_projections:
                 logger.warning("LibreFlux does not support fused QKV projections. Disabling it.")
                 self.config.fuse_qkv_projections = False
         if self.config.model_flavour == "fluxbooru":
@@ -1034,3 +1036,8 @@ class Flux(ImageModelFoundation):
 
 # Register Flux configuration requirements when module is imported
 Flux.register_config_requirements()
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("flux", Flux)

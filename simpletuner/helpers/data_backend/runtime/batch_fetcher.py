@@ -5,11 +5,11 @@ import os
 import queue
 import threading
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from simpletuner.helpers.training.multi_process import should_log
-from .dataloader_iterator import random_dataloader_iterator as _runtime_random_iterator
 
+from .dataloader_iterator import random_dataloader_iterator as _runtime_random_iterator
 
 DEFAULT_KEEP_RUNNING_PROPERTY = None
 DEFAULT_RANDOM_ITERATOR = _runtime_random_iterator
@@ -32,6 +32,7 @@ else:
 
 def prefetch_log_debug(message: str) -> None:
     from simpletuner.helpers.training.multi_process import rank_info
+
     prefetch_log.debug(f"{rank_info()} {message}")
 
 
@@ -50,7 +51,6 @@ def _resolve_random_iterator():
 class BatchFetcher:
 
     def __init__(self, step: int, max_size: int = 10, datasets: Optional[Dict[str, Any]] = None) -> None:
-        global DEFAULT_KEEP_RUNNING_PROPERTY
         if DEFAULT_KEEP_RUNNING_PROPERTY is not None:
             type(self).keep_running = DEFAULT_KEEP_RUNNING_PROPERTY
         self.queue = queue.Queue(max_size)

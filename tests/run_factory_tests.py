@@ -5,10 +5,10 @@ Integration test runner for factory tests.
 Runs factory integration tests and provides a summary of test coverage.
 """
 
-import os
-import sys
-import subprocess
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 # Add parent directory to path

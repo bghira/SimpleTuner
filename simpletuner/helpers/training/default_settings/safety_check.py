@@ -138,7 +138,7 @@ def safety_check(args, accelerator):
             logger.error(
                 f"Gradient checkpointing interval is not supported with {args.model_family} models. Please disable --gradient_checkpointing_interval by setting it to None, or remove it from your configuration. Currently supported models: {gradient_checkpointing_interval_supported_models}"
             )
-            sys.exit(1)
+            args.gradient_checkpointing_interval = None
         if args.gradient_checkpointing_interval == 0:
             raise ValueError("Gradient checkpointing interval must be greater than 0. Please set it to a positive integer.")
 

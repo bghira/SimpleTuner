@@ -17,6 +17,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:  # Optional dependency; used for robust process tree termination
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - psutil is optional
+    psutil = None
+
 logger = logging.getLogger("ProcessKeeper")
 
 # Registry of active processes
@@ -39,9 +44,10 @@ class TrainerProcess:
         self.event_thread = None
         self.events = []
         self.events_lock = threading.Lock()
-
+        self.output_thread = None
         # Create temp directory for IPC
         self.ipc_dir = tempfile.mkdtemp(prefix=f"trainer_{job_id}_")
+        logger.info(f"IPC dir {self.ipc_dir}")
         self.command_file = os.path.join(self.ipc_dir, "commands.json")
         self.event_file = os.path.join(self.ipc_dir, "events.json")
         self.func_file = os.path.join(self.ipc_dir, "func.pkl")
@@ -130,7 +136,9 @@ try:
     logger.info("Function loaded successfully")
 except Exception as e:
     logger.error(f"Failed to import function: {{e}}")
-    send_event("error", {{"message": f"Import error: {{e}}"}})
+    import_error = f"Import error: {{e}}"
+    send_event("error", {{"message": import_error}})
+    send_event("state", {{"status": "failed", "message": import_error}})
     sys.exit(1)
 
 # Load config from JSON string
@@ -194,27 +202,62 @@ try:
     logger.info("Starting target function")
     result = target_func(wrapped_config)
     send_event("state", {{"status": "completed", "result": str(result)}})
+except SystemExit as exc:
+    exit_code = getattr(exc, "code", None)
+    if isinstance(exit_code, str) and exit_code.strip():
+        exit_message = exit_code.strip()
+    elif isinstance(exit_code, int):
+        exit_message = f"Training process exited during configuration (exit code {{exit_code}}). Check the logs above for details."
+    else:
+        exit_message = "Training process exited during configuration. Check the logs above for details."
+    logger.error(f"Training terminated via SystemExit: {{exit_message}}")
+    send_event("error", {{"message": exit_message, "exit_code": exit_code}})
+    send_event("state", {{"status": "failed", "message": exit_message, "exit_code": exit_code}})
+    raise
 except Exception as e:
     logger.error(f"Function error: {{e}}")
-    send_event("error", {{"message": str(e)}})
-    send_event("state", {{"status": "failed"}})
+    import traceback
+    traceback_str = traceback.format_exc()
+    logger.error(traceback_str)
+    error_message = str(e)
+    send_event("error", {{"message": error_message, "traceback": traceback_str}})
+    send_event("state", {{"status": "failed", "message": error_message}})
 
 logger.info("Subprocess exiting")
 '''
 
+        env = os.environ.copy()
+        env.setdefault("WANDB_CONSOLE", "off")
+        env.setdefault("WANDB_SILENT", "true")
+        env.setdefault("WANDB_DISABLE_SERVICE", "true")
+        env.setdefault("WANDB_STDOUT_CAPTURE", "off")
+        env.setdefault("WANDB_STDERR_CAPTURE", "off")
+
         # Start the subprocess
-        self.process = subprocess.Popen(
-            [sys.executable, "-c", runner_code],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr to stdout for easier debugging
-            text=True,
-        )
+        popen_kwargs = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.STDOUT,
+            "text": True,
+            "env": env,
+        }
+
+        if os.name != "nt":
+            popen_kwargs["preexec_fn"] = os.setsid
+        else:  # pragma: no cover - Windows specific
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+        self.process = subprocess.Popen([sys.executable, "-c", runner_code], **popen_kwargs)
 
         self.status = "running"
 
         # Start event listener thread
         self.event_thread = threading.Thread(target=self._event_listener, daemon=True)
         self.event_thread.start()
+
+        # Stream stdout to avoid blocking pipes and preserve logs
+        if self.process.stdout is not None:
+            self.output_thread = threading.Thread(target=self._stream_output, daemon=True)
+            self.output_thread.start()
 
     def _event_listener(self):
         """Listen for events from the subprocess."""
@@ -270,6 +313,25 @@ logger.info("Subprocess exiting")
                     logger.error(f"Event listener error: {e}")
                 break
 
+    def _stream_output(self):
+        """Continuously read subprocess stdout to prevent pipe backpressure."""
+        if not self.process or self.process.stdout is None:
+            return
+
+        try:
+            for line in iter(self.process.stdout.readline, ""):
+                if line == "":
+                    break
+                try:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                except Exception:
+                    # If stdout is unavailable just log the line
+                    logger.info(line.rstrip())
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                logger.debug(f"stdout streaming error for {self.job_id}: {exc}")
+
     def _handle_event(self, event: Dict[str, Any]):
         """Handle an event from the trainer subprocess."""
         self.last_heartbeat = time.time()
@@ -313,6 +375,27 @@ logger.info("Subprocess exiting")
         with open(self.command_file, "w") as f:
             json.dump(commands, f)
 
+    def _append_event(self, event_type: str, data: Optional[Dict] = None):
+        event = {
+            "type": event_type,
+            "timestamp": time.time(),
+            "data": data or {},
+        }
+
+        try:
+            with open(self.event_file, "r") as f:
+                events = json.load(f)
+        except Exception:
+            events = []
+
+        events.append(event)
+
+        try:
+            with open(self.event_file, "w") as f:
+                json.dump(events, f)
+        except Exception as exc:
+            logger.debug(f"Failed to append event for {self.job_id}: {exc}")
+
     def terminate(self, timeout: int = 5) -> bool:
         """Terminate the subprocess, first gracefully then forcefully."""
         if not self.process:
@@ -324,30 +407,19 @@ logger.info("Subprocess exiting")
 
             # Only try to send abort if process is still running
             if self.process.poll() is None:
-                # Try to send abort command first
                 try:
                     self.send_command("abort")
-                    # Give it a moment to process
-                    time.sleep(0.5)
-                except:
+                except Exception:
                     pass  # Process might not be responsive
 
-            # Try graceful termination
-            if self.process.poll() is None:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    # Force kill if still running
-                    logger.warning(f"Force killing process {self.job_id}")
-                    self.process.kill()
-                    self.process.wait(timeout=1)
+                self._force_kill_process_tree(timeout)
 
             # Clean up resources
             self._cleanup_resources()
 
             self.status = "terminated"
             self.end_time = datetime.now().isoformat()
+            self._append_event("state", {"status": "terminated"})
 
             # Note: Registry update is handled by the caller (terminate_process)
             # since it already holds the lock. Attempting to acquire lock here
@@ -357,7 +429,56 @@ logger.info("Subprocess exiting")
 
         except Exception as e:
             logger.error(f"Error terminating process {self.job_id}: {e}")
-            return False
+        return False
+
+    def _force_kill_process_tree(self, timeout: int) -> None:
+        """Forcefully terminate the subprocess and any children."""
+
+        if not self.process or self.process.poll() is not None:
+            return
+
+        pid = self.process.pid
+
+        def _kill_with_psutil(proc_pid: int) -> None:
+            if not psutil:
+                return
+
+            try:
+                parent = psutil.Process(proc_pid)
+            except Exception:
+                return
+
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+
+            try:
+                parent.kill()
+            except Exception:
+                pass
+
+        try:
+            if os.name != "nt" and hasattr(os, "killpg"):
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except Exception as exc:
+                    logger.debug(f"killpg failed for {self.job_id}: {exc}")
+            else:  # pragma: no cover - Windows specific
+                try:
+                    self.process.kill()
+                except Exception as exc:
+                    logger.debug(f"kill() failed for {self.job_id}: {exc}")
+
+            _kill_with_psutil(pid)
+
+            try:
+                self.process.wait(timeout=timeout)
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.debug(f"Error forcing kill for {self.job_id}: {exc}")
 
     def _cleanup_resources(self):
         """Clean up all resources associated with this process."""
@@ -366,6 +487,9 @@ logger.info("Subprocess exiting")
             self.stop_event.set()
             # Use shorter timeout - thread is daemon anyway
             self.event_thread.join(timeout=0.5)
+        if self.output_thread and self.output_thread.is_alive():
+            self.output_thread.join(timeout=0.5)
+        self.output_thread = None
 
         # Clean up IPC directory
         try:
@@ -491,8 +615,20 @@ def get_process_status(job_id: str) -> str:
             if process.status == "running":
                 # Give the event thread a moment to process final events
                 if process.event_thread and process.event_thread.is_alive():
-                    # Event thread is still running, status will be updated soon
-                    pass
+                    # Event thread is still running, wait briefly for it to finish
+                    # Release lock while waiting to avoid deadlock
+                    event_thread = process.event_thread
+                    lock.release()
+                    try:
+                        event_thread.join(timeout=0.3)
+                    finally:
+                        lock.acquire()
+
+                    # Re-check status after waiting
+                    if process.status == "running":
+                        # Event thread finished but status still running = crashed
+                        process.status = "crashed"
+                        entry["status"] = "crashed"
                 else:
                     # Event thread finished, if still running then it crashed
                     process.status = "crashed"

@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import tracemalloc
+from contextlib import nullcontext
 from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
@@ -306,6 +307,21 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution"] = (edge_value * edge_value) / base_value
         output["config"]["resolution_type"] = "area"
 
+        def _maybe_convert_pixel_edge(field_name: str) -> None:
+            raw_value = output["config"].get(field_name)
+            if raw_value in (None, ""):
+                return
+            try:
+                numeric_value = float(raw_value)
+            except (TypeError, ValueError):
+                return
+            if numeric_value <= 0 or numeric_value <= 10:
+                return
+            output["config"][field_name] = (numeric_value * numeric_value) / 1_000_000.0
+
+        for field in ("maximum_image_size", "minimum_image_size", "target_downsample_size"):
+            _maybe_convert_pixel_edge(field)
+
     if "parquet" in backend:
         output["config"]["parquet"] = backend["parquet"]
     if "caption_strategy" in backend:
@@ -365,11 +381,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         maximum_image_size
         and output["config"]["resolution_type"] == "area"
-        and maximum_image_size > 10
+        and maximum_image_size >= 20
         and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
     ):
         raise ValueError(
-            f"(id={backend['id']}) maximum_image_size must be less than 10 megapixels when resolution_type is 'area'."
+            f"(id={backend['id']}) maximum_image_size must be less than 20 megapixels when resolution_type is 'area'."
         )
     elif (
         maximum_image_size
@@ -383,11 +399,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if (
         target_downsample_size
         and output["config"]["resolution_type"] == "area"
-        and target_downsample_size > 10
+        and target_downsample_size >= 20
         and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
     ):
         raise ValueError(
-            f"(id={backend['id']}) target_downsample_size must be less than 10 megapixels when resolution_type is 'area'."
+            f"(id={backend['id']}) target_downsample_size must be less than 20 megapixels when resolution_type is 'area'."
         )
     elif (
         target_downsample_size
@@ -979,6 +995,18 @@ class FactoryRegistry:
 
         return result if isinstance(result, bool) else False
 
+    def _is_multi_process(self) -> bool:
+        """Return True when accelerator reports multiple processes."""
+        accelerator = getattr(self, "accelerator", None)
+        if accelerator is None:
+            return False
+
+        num_processes = getattr(accelerator, "num_processes", 1)
+        try:
+            return int(num_processes) > 1
+        except (TypeError, ValueError):
+            return False
+
     def _finalize_metrics(self) -> None:
         """Finalize performance metrics."""
         self.metrics["initialization_time"] = time.time() - self.start_time
@@ -1071,6 +1099,29 @@ class FactoryRegistry:
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         text_embed_count = 0
 
+        total_text_backends = sum(
+            1
+            for backend in data_backend_config
+            if backend.get("dataset_type") == "text_embeds"
+            and not backend.get("disabled", False)
+            and not backend.get("disable", False)
+        )
+        webhook_handler = None
+        if getattr(self.accelerator, "is_main_process", False):
+            webhook_handler = StateTracker.get_webhook_handler()
+            if webhook_handler and total_text_backends > 0:
+                webhook_handler.send_lifecycle_stage(
+                    stage_key="init_text_embed_cache",
+                    stage_label="Loading text embedding cache",
+                    stage_status="running",
+                    message="Loading text embedding cache(s)...",
+                    progress_current=0,
+                    progress_total=total_text_backends,
+                    progress_percent=0,
+                )
+
+        processed_text_backends = 0
+
         for backend in data_backend_config:
             dataset_type = backend.get("dataset_type", None)
             if dataset_type is None or dataset_type != "text_embeds":
@@ -1137,11 +1188,17 @@ class FactoryRegistry:
 
             init_backend["text_embed_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
             logger.debug(f"rank {get_rank()} might skip discovery..")
-            with self.accelerator.main_process_first():
+            main_process_context = (
+                self.accelerator.main_process_first()
+                if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
+                else nullcontext()
+            )
+            with main_process_context:
                 logger.debug(f"rank {get_rank()} is discovering all files")
                 init_backend["text_embed_cache"].discover_all_files()
             logger.debug(f"rank {get_rank()} is waiting for other processes")
-            self.accelerator.wait_for_everyone()
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
 
             if backend.get("default", False):
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
@@ -1149,7 +1206,12 @@ class FactoryRegistry:
 
                 info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
-                with self.accelerator.main_process_first():
+                main_process_context = (
+                    self.accelerator.main_process_first()
+                    if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
+                    else nullcontext()
+                )
+                with main_process_context:
                     self.model.get_pipeline()
                     logger.debug(f"rank {get_rank()} is computing the null embed")
                     init_backend["text_embed_cache"].compute_embeddings_for_prompts(
@@ -1158,7 +1220,8 @@ class FactoryRegistry:
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
-                self.accelerator.wait_for_everyone()
+                if self._is_multi_process():
+                    self.accelerator.wait_for_everyone()
                 logger.debug(f"rank {get_rank()} is continuing")
 
             if self.args.caption_dropout_probability == 0.0:
@@ -1168,11 +1231,34 @@ class FactoryRegistry:
 
             self.text_embed_backends[init_backend["id"]] = init_backend
 
+            processed_text_backends += 1
+            if webhook_handler and total_text_backends > 0:
+                webhook_handler.send_lifecycle_stage(
+                    stage_key="init_text_embed_cache",
+                    stage_label="Loading text embedding cache",
+                    stage_status="running",
+                    message=f"Configured text embedding cache for `{init_backend['id']}`",
+                    progress_current=processed_text_backends,
+                    progress_total=total_text_backends,
+                    progress_percent=(processed_text_backends / total_text_backends) * 100,
+                )
+
         self.metrics["backend_counts"]["text_embeds"] = text_embed_count
         self._log_performance_metrics(
             "text_embed_config_complete",
             {"text_embed_backends_created": text_embed_count, "default_backend_id": self.default_text_embed_backend_id},
         )
+
+        if webhook_handler and total_text_backends > 0:
+            webhook_handler.send_lifecycle_stage(
+                stage_key="init_text_embed_cache",
+                stage_label="Loading text embedding cache",
+                stage_status="completed",
+                message="Text embedding cache initialisation complete",
+                progress_current=total_text_backends,
+                progress_total=total_text_backends,
+                progress_percent=100,
+            )
 
         self._validate_text_embed_backends()
 
@@ -1245,21 +1331,18 @@ class FactoryRegistry:
                     preserve_data_backend_cache=preserve_data_backend_cache,
                 )
 
-            init_backend["vae_cache"] = VAECache(
+            init_backend["vaecache"] = VAECache(
                 vae=StateTracker.get_vae(),
                 data_backend=init_backend["data_backend"],
                 accelerator=self.accelerator,
                 instance_data_dir=init_backend.get("instance_data_dir", ""),
                 cache_dir=init_backend["cache_dir"],
-                resolution=self.args.resolution,
-                resolution_type=self.args.resolution_type,
-                minimum_image_size=self.args.minimum_image_size,
                 cache_file_suffix=self.args.cache_file_suffix,
                 write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
                 read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
             )
 
-            init_backend["vae_cache"].discover_all_files()
+            init_backend["vaecache"].discover_all_files()
             self.image_embed_backends[init_backend["id"]] = init_backend
 
     def _prevalidate_backend_ids(self, data_backend_config: List[Dict[str, Any]]) -> None:
@@ -1528,7 +1611,7 @@ class FactoryRegistry:
                 "mask",
                 # controlnet uses pixel values for older Unets but encoded latents for newer models.
                 # when we require encoded latents, we also must scan for aspect ratio buckets here.
-                # it's stupid, because it effectively doubles the I/O to discover the conditioning dataset,
+                # This approach is inefficient as it effectively doubles the I/O to discover the conditioning dataset,
                 # and a more ideal implementation would simply reference the training dataset metadata buckets.
                 # but currently, there is no method to instruct a dataset to use a separate metadata instance with different paths.
                 "controlnet" if not self.model.requires_conditioning_latents() else -1,
@@ -1545,7 +1628,8 @@ class FactoryRegistry:
                     )
                     return
 
-        self.accelerator.wait_for_everyone()
+        if self._is_multi_process():
+            self.accelerator.wait_for_everyone()
         if (
             not backend.get("auto_generated", False)
             and backend.get("conditioning_type", None) is not None
@@ -1558,7 +1642,8 @@ class FactoryRegistry:
             if not self.accelerator.is_main_process:
                 info_log(f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses.")
                 init_backend["metadata_backend"].reload_cache()
-            self.accelerator.wait_for_everyone()
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
             if init_backend["metadata_backend"].has_single_underfilled_bucket():
                 raise Exception(
                     f"Cannot train using a dataset that has a single bucket with fewer than {self.args.train_batch_size} images."
@@ -1690,15 +1775,19 @@ class FactoryRegistry:
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
     ) -> None:
         """Create the dataset and sampler objects."""
+        caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
+        prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
+        instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
+
         use_captions = True
         is_regularisation_data = backend.get("is_regularisation_data", backend.get("is_regularization_data", False))
         is_i2v_data = backend.get("video", {}).get(
             "is_i2v", True if getattr(self.args, "ltx_train_mode", None) == "i2v" else False
         )
 
-        if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
+        if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
             use_captions = False
-        elif self.args.only_instance_prompt:
+        elif caption_strategy == "instanceprompt":
             use_captions = False
 
         init_backend["train_dataset"] = MultiAspectDataset(
@@ -1734,10 +1823,10 @@ class FactoryRegistry:
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             resolution=backend.get("resolution", self.args.resolution),
             resolution_type=backend.get("resolution_type", self.args.resolution_type),
-            caption_strategy=backend.get("caption_strategy", self.args.caption_strategy),
+            caption_strategy=caption_strategy,
             use_captions=use_captions,
-            prepend_instance_prompt=backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt),
-            instance_prompt=backend.get("instance_prompt", self.args.instance_prompt),
+            prepend_instance_prompt=prepend_instance_prompt,
+            instance_prompt=instance_prompt,
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
             dataset_type=backend.get("dataset_type"),
@@ -1755,13 +1844,11 @@ class FactoryRegistry:
             persistent_workers=False,
         )
 
-        prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
-        instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
         if prepend_instance_prompt and instance_prompt is None:
             raise ValueError(
                 f"Backend {init_backend['id']} has prepend_instance_prompt=True, but no instance_prompt was provided. You must provide an instance_prompt, or disable this option."
             )
-        if instance_prompt is None and backend.get("caption_strategy", self.args.caption_strategy) == "instanceprompt":
+        if instance_prompt is None and caption_strategy == "instanceprompt":
             raise ValueError(
                 f"Backend {init_backend['id']} has caption_strategy=instanceprompt, but no instance_prompt was provided. You must provide an instance_prompt, or change the caption_strategy."
                 f"\n -> backend: {init_backend}"
@@ -1787,12 +1874,13 @@ class FactoryRegistry:
                 logger.debug("Skipping text embedding processing due to missing output_dir in args.")
                 return
             info_log(f"(id={init_backend['id']}) Collecting captions.")
+            caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
             prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
             instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
             use_captions = True
-            if "only_instance_prompt" in backend and backend["only_instance_prompt"]:
+            if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
                 use_captions = False
-            elif self.args.only_instance_prompt:
+            elif caption_strategy == "instanceprompt":
                 use_captions = False
 
             try:
@@ -1802,7 +1890,7 @@ class FactoryRegistry:
                     prepend_instance_prompt=prepend_instance_prompt,
                     instance_prompt=instance_prompt,
                     use_captions=use_captions,
-                    caption_strategy=backend.get("caption_strategy", self.args.caption_strategy),
+                    caption_strategy=caption_strategy,
                 )
             except AttributeError:
                 logger.debug("Skipping text embedding processing due to incomplete StateTracker configuration.")
@@ -1811,7 +1899,6 @@ class FactoryRegistry:
             if len(images_missing_captions) > 0 and hasattr(init_backend["metadata_backend"], "remove_images"):
                 # we'll tell the aspect bucket manager to remove these images.
                 init_backend["metadata_backend"].remove_images(images_missing_captions)
-            caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
             info_log(
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
@@ -1888,21 +1975,7 @@ class FactoryRegistry:
             cache_data_backend=image_embed_data_backend["data_backend"],
             instance_data_dir=init_backend["instance_data_dir"],
             delete_problematic_images=backend.get("delete_problematic_images", self.args.delete_problematic_images),
-            resolution=backend.get("resolution", self.args.resolution),
-            resolution_type=backend.get("resolution_type", self.args.resolution_type),
             num_video_frames=video_config.get("num_frames", None),
-            maximum_image_size=backend.get(
-                "maximum_image_size",
-                self.args.maximum_image_size or backend.get("resolution", self.args.resolution) * 1.5,
-            ),
-            target_downsample_size=backend.get(
-                "target_downsample_size",
-                self.args.target_downsample_size or backend.get("resolution", self.args.resolution) * 1.25,
-            ),
-            minimum_image_size=backend.get(
-                "minimum_image_size",
-                self.args.minimum_image_size,
-            ),
             vae_batch_size=backend.get("vae_batch_size", self.args.vae_batch_size),
             write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
             read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
@@ -1924,7 +1997,8 @@ class FactoryRegistry:
                         f"(id={init_backend['id']}) Skipping VAE cache discovery because data directory was not found: {init_backend.get('instance_data_dir')}"
                     )
                     return
-            self.accelerator.wait_for_everyone()
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
         all_image_files = StateTracker.get_image_files(
             data_backend_id=init_backend["id"],
             retry_limit=3,  # some filesystems maybe take longer to make it available.
@@ -1977,7 +2051,8 @@ class FactoryRegistry:
                 )
                 return
 
-        self.accelerator.wait_for_everyone()
+        if self._is_multi_process():
+            self.accelerator.wait_for_everyone()
         if not self.accelerator.is_main_process:
             try:
                 init_backend["metadata_backend"].load_image_metadata()
@@ -1986,7 +2061,8 @@ class FactoryRegistry:
                     f"(id={init_backend['id']}) Skipping metadata load because data directory was not found: {init_backend.get('instance_data_dir')}"
                 )
                 return
-        self.accelerator.wait_for_everyone()
+        if self._is_multi_process():
+            self.accelerator.wait_for_everyone()
 
     def _connect_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> bool:
         """Connect conditioning datasets to their main datasets."""
@@ -2076,7 +2152,7 @@ class FactoryRegistry:
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
 
-        info_log(f"Configuring data backend: {backend['id']}")
+        info_log(f"Configuring data backend: {backend['id']}: {backend}")
         conditioning_type = backend.get("conditioning_type")
         if backend.get("dataset_type") == "conditioning" or conditioning_type is not None:
             backend["dataset_type"] = "conditioning"
@@ -2138,7 +2214,7 @@ class FactoryRegistry:
             "mask",
             (
                 "controlnet" if not self.model.requires_conditioning_latents() else -1
-            ),  # hack to encode VAE latents when the model requires them.
+            ),  # Workaround to encode VAE latents when the model requires them.
         ]:
             self._configure_vae_cache(
                 backend,
@@ -2169,7 +2245,8 @@ class FactoryRegistry:
                 logger.info(f"Executing VAE cache update..")
                 init_backend["vaecache"].process_buckets()
             logger.debug(f"Encoding images during training: {self.args.vae_cache_ondemand}")
-            self.accelerator.wait_for_everyone()
+            if self._is_multi_process():
+                self.accelerator.wait_for_everyone()
 
         move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
         init_backend_debug_info = {

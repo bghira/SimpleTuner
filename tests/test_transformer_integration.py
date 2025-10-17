@@ -5,18 +5,18 @@ This module validates that all transformer test files work correctly together,
 have consistent interfaces, and follow the established testing patterns.
 """
 
+import importlib.util
 import os
 import sys
 import unittest
-import importlib.util
-from typing import Dict, List, Set, Any
+from typing import Any, Dict, List, Set
 from unittest.mock import Mock, patch
 
 # Add utils to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "utils"))
 
 from transformer_base_test import TransformerBaseTest
-from transformer_test_helpers import TensorGenerator, MockDiffusersConfig, ShapeValidator, TypoTestUtils, PerformanceUtils
+from transformer_test_helpers import MockDiffusersConfig, PerformanceUtils, ShapeValidator, TensorGenerator, TypoTestUtils
 
 
 class TestTransformerTestSuiteIntegration(unittest.TestCase):

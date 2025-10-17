@@ -95,6 +95,8 @@ def _encode_sd3_prompt_with_clip(
 
 class SD3(ImageModelFoundation):
     NAME = "Stable Diffusion 3.x"
+    MODEL_DESCRIPTION = "Latest SD3 architecture with improved quality"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -533,3 +535,8 @@ class SD3(ImageModelFoundation):
         output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("sd3", SD3)

@@ -169,6 +169,7 @@ base_deps = [
     "torch-optimi>=0.2.1",
     "toml>=0.10.2",
     "fastapi[standard]>=0.115.0",
+    "sse-starlette>=1.6.5",
     "atomicwrites>=1.4.1",
     "beautifulsoup4>=4.12.3",
     "prodigy-plus-schedule-free>=1.9.2",
@@ -179,6 +180,7 @@ base_deps = [
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
     "trainingsample>=0.2.1",
+    "cryptography>=41.0.0",
     # Minimal PyTorch for base install (CPU-only)
     "torch>=2.7.1",
     "torchvision>=0.22.1",
@@ -190,7 +192,7 @@ base_deps = [
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
     "dev": [
-        "pytest>=7.0.0",
+        "selenium>=4.0.0",
         "black>=23.0.0",
         "isort>=5.12.0",
         "flake8>=6.0.0",
@@ -229,7 +231,7 @@ setup(
     author="bghira",
     # license handled by pyproject.toml
     packages=find_packages(),
-    python_requires=">=3.11,<3.13",
+    python_requires=">=3.11,<3.14",
     install_requires=base_deps,
     extras_require=extras_require,
     entry_points={

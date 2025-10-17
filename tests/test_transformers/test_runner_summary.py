@@ -6,11 +6,11 @@ This script validates the structure and coverage of our transformer test suites
 without requiring the full dependencies to be installed.
 """
 
-import os
-import sys
 import ast
 import inspect
-from typing import List, Dict, Set
+import os
+import sys
+from typing import Dict, List, Set
 
 
 def analyze_test_file(filepath: str) -> Dict[str, any]:

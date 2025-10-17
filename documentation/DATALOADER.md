@@ -71,7 +71,7 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `type`
 
-- **Values:** `aws` | `local` | `csv`
+- **Values:** `aws` | `local` | `csv` | `huggingface`
 - **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
 
 ### `conditioning_type`

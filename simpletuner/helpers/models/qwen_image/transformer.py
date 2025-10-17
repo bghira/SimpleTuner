@@ -31,7 +31,7 @@ from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
-from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 from simpletuner.helpers.training.tread import TREADRouter
@@ -710,14 +710,22 @@ class QwenImageTransformer2DModel(
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                checkpoint_fn = self._gradient_checkpointing_func or torch.utils.checkpoint.checkpoint
-                encoder_hidden_states, hidden_states = checkpoint_fn(
-                    block,
+
+                def create_custom_forward(module):
+                    def custom_forward(*inputs):
+                        return module(*inputs)
+
+                    return custom_forward
+
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
                     hidden_states,
                     encoder_hidden_states,
                     encoder_hidden_states_mask,
                     temb,
                     image_rotary_emb,
+                    **ckpt_kwargs,
                 )
 
             else:

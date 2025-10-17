@@ -19,44 +19,49 @@ Functions tested:
 6. prepare_attention_mask (from base attention)
 """
 
-import unittest
-import torch
-import torch.nn as nn
-import torch.utils.checkpoint
-from typing import Dict, Any, Optional, Tuple, List
-from unittest.mock import Mock, MagicMock, patch
+# Suppress PyTorch distributed warnings before importing torch
+import logging
 import math
+import os
 
 # Import test base classes
 import sys
-import os
+import unittest
+
+logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
+from typing import Any, Dict, List, Optional, Tuple
+from unittest.mock import MagicMock, Mock, patch
+
+import torch
+import torch.nn as nn
+import torch.utils.checkpoint
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import (
-    TransformerBaseTest,
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
+    TransformerBaseTest,
     TransformerBlockTestMixin,
 )
 from transformer_test_helpers import (
-    MockDiffusersConfig,
-    TensorGenerator,
     MockComponents,
-    ShapeValidator,
-    TypoTestUtils,
+    MockDiffusersConfig,
     PerformanceUtils,
+    ShapeValidator,
+    TensorGenerator,
+    TypoTestUtils,
 )
 
 # Import classes under test
 from simpletuner.helpers.models.ltxvideo.transformer import (
+    LTXAttention,
     LTXVideoAttentionProcessor2_0,
     LTXVideoAttnProcessor,
-    LTXAttention,
     LTXVideoRotaryPosEmbed,
-    LTXVideoTransformerBlock,
     LTXVideoTransformer3DModel,
+    LTXVideoTransformerBlock,
     apply_rotary_emb,
 )
 
@@ -964,7 +969,12 @@ class TestLTXVideoTransformer3DModel(TransformerBaseTest):
         """Test gradient checkpointing functionality."""
         model = LTXVideoTransformer3DModel(**self.model_config)
         model.gradient_checkpointing = True
-        model._gradient_checkpointing_func = torch.utils.checkpoint.checkpoint
+
+        # Use a wrapper to pass use_reentrant=False
+        def checkpoint_func(func, *args, **kwargs):
+            return torch.utils.checkpoint.checkpoint(func, *args, use_reentrant=False, **kwargs)
+
+        model._gradient_checkpointing_func = checkpoint_func
 
         seq_len = 16
         hidden_states = torch.randn(2, seq_len, self.model_config["in_channels"], requires_grad=True)

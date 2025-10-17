@@ -1,0 +1,205 @@
+<!-- Configuration Selector Fragment for HTMX -->
+<div id="config-selector-container" class="config-selector">
+    <div class="d-flex align-items-center">
+        <label for="config-select" class="form-label mb-0 me-2">
+            <i class="fas fa-folder-open"></i> Configuration:
+        </label>
+        <select id="config-select"
+                class="form-select form-select-sm"
+                hx-post="/api/config/activate"
+                hx-trigger="change"
+                hx-target="#config-selector-feedback"
+                hx-swap="innerHTML"
+                hx-indicator="#config-loading">
+            <option value="" {% if not active_config %}selected{% endif %}>
+                -- Select Configuration --
+            </option>
+            {% for config in configs %}
+            <option value="{{ config.name }}"
+                    {% if config.name == active_config %}selected{% endif %}
+                    data-modified="{{ config.last_modified }}">
+                {{ config.name }}
+                {% if config.description %}({{ config.description|truncate(50) }}){% endif %}
+            </option>
+            {% endfor %}
+        </select>
+
+        <!-- Loading indicator -->
+        <div id="config-loading" class="htmx-indicator ms-2">
+            <span class="spinner-border spinner-border-sm text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </span>
+        </div>
+
+        <!-- Config actions -->
+        <div class="btn-group ms-2" role="group">
+            <!-- New Config -->
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    title="Create new configuration"
+                    data-bs-toggle="modal"
+                    data-bs-target="#new-config-modal"
+                    hx-get="/api/config/new/form"
+                    hx-target="#new-config-modal .modal-content"
+                    hx-swap="innerHTML">
+                <i class="fas fa-plus"></i>
+            </button>
+
+            <!-- Clone Config -->
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    title="Clone current configuration"
+                    {% if not active_config %}disabled{% endif %}
+                    hx-get="/api/config/clone/{{ active_config }}/form"
+                    hx-target="#clone-config-modal .modal-content"
+                    hx-swap="innerHTML"
+                    data-bs-toggle="modal"
+                    data-bs-target="#clone-config-modal">
+                <i class="fas fa-copy"></i>
+            </button>
+
+            <!-- Delete Config -->
+            <button type="button"
+                    class="btn btn-sm btn-outline-danger"
+                    title="Delete current configuration"
+                    {% if not active_config %}disabled{% endif %}
+                    hx-delete="/api/config/{{ active_config }}"
+                    hx-confirm="Are you sure you want to delete the configuration '{{ active_config }}'? This cannot be undone."
+                    hx-target="#config-selector-container"
+                    hx-swap="outerHTML">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Feedback area -->
+    <div id="config-selector-feedback" class="mt-2"></div>
+
+    <!-- Active config info -->
+    {% if active_config %}
+    <div class="config-info mt-2 text-muted small">
+        <i class="fas fa-info-circle"></i>
+        Active: <strong>{{ active_config }}</strong>
+        {% for config in configs if config.name == active_config %}
+        - Modified: {{ config.last_modified|date('Y-m-d H:i') }}
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+
+<!-- New Config Modal -->
+<div class="modal fade" id="new-config-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <!-- Content loaded via HTMX -->
+        </div>
+    </div>
+</div>
+
+<!-- Clone Config Modal -->
+<div class="modal fade" id="clone-config-modal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <!-- Content loaded via HTMX -->
+        </div>
+    </div>
+</div>
+
+<style>
+/* Config selector styling */
+.config-selector {
+    padding: 0.75rem;
+    background-color: rgba(255, 255, 255, 0.02);
+    border-radius: 0.375rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#config-select {
+    max-width: 300px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #f8f9fa;
+}
+
+#config-select:focus {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.config-info {
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    padding-top: 0.5rem;
+}
+
+/* Modal styling for dark theme */
+.modal-content {
+    background-color: #1a202c;
+    color: #f8f9fa;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-header {
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+.modal-footer {
+    border-top-color: rgba(255, 255, 255, 0.1);
+}
+</style>
+
+<script>
+// Config selector enhancements
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle config change feedback
+    document.body.addEventListener('htmx:afterRequest', function(evt) {
+        if (evt.detail.pathInfo.requestPath === '/api/config/activate') {
+            if (evt.detail.xhr.status === 200) {
+                // Reload all tabs after config change
+                htmx.trigger(document.body, 'config-changed');
+                window.showToast('Configuration activated', 'success');
+
+                // Reload the page or specific sections
+                setTimeout(() => {
+                    // Trigger reload of active tab
+                    const activeTab = document.querySelector('.nav-link.active[data-bs-toggle="tab"]');
+                    if (activeTab) {
+                        activeTab.click();
+                    }
+                }, 500);
+            }
+        }
+    });
+
+    // Initialize Bootstrap modals
+    if (typeof bootstrap !== 'undefined') {
+        window.newConfigModal = new bootstrap.Modal(document.getElementById('new-config-modal'));
+        window.cloneConfigModal = new bootstrap.Modal(document.getElementById('clone-config-modal'));
+    }
+});
+
+// Handle modal form submissions
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.closest('.modal-content')) {
+        // Modal content loaded, initialize form
+        const form = evt.detail.target.querySelector('form');
+        if (form) {
+            form.addEventListener('htmx:afterRequest', function(formEvt) {
+                if (formEvt.detail.xhr.status === 200) {
+                    // Close modal on success
+                    const modal = formEvt.target.closest('.modal');
+                    if (modal) {
+                        const modalInstance = bootstrap.Modal.getInstance(modal);
+                        if (modalInstance) {
+                            modalInstance.hide();
+                        }
+                    }
+
+                    // Refresh config selector
+                    htmx.trigger('#config-selector-container', 'refresh');
+                }
+            });
+        }
+    }
+});
+</script>

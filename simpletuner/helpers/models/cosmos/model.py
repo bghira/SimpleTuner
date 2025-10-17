@@ -21,6 +21,8 @@ else:
 
 class Cosmos2Image(VideoModelFoundation):
     NAME = "Cosmos (T2I)"
+    MODEL_DESCRIPTION = "NVIDIA's text-to-image transformer model"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.SAMPLE
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLWan
@@ -343,3 +345,8 @@ class Cosmos2Image(VideoModelFoundation):
             ),
             self.config.tread_config["routes"],
         )
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("cosmos2image", Cosmos2Image)

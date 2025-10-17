@@ -1,0 +1,324 @@
+/**
+ * HTMX Loading States CSS
+ * Comprehensive loading states for HTMX operations
+ */
+
+/* =================================================================
+   Base Loading Indicators
+   ================================================================= */
+
+/* Hide HTMX indicators by default */
+.htmx-indicator {
+    display: none;
+    opacity: 0;
+    transition: opacity 150ms ease-in;
+}
+
+/* Show indicators during requests */
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+    display: inline-block;
+    opacity: 1;
+}
+
+/* =================================================================
+   Loading Overlays
+   ================================================================= */
+
+/* Full page loading overlay */
+.htmx-loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--overlay-backdrop);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+.htmx-request + .htmx-loading-overlay,
+.htmx-loading-overlay.htmx-request {
+    display: flex;
+}
+
+/* Section loading overlay */
+.htmx-section-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--overlay-section-light);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.htmx-request .htmx-section-overlay {
+    display: flex;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .htmx-section-overlay {
+        background-color: var(--overlay-section-dark);
+    }
+}
+
+/* =================================================================
+   Button Loading States
+   ================================================================= */
+
+/* Disable buttons during requests */
+.htmx-request:is(button, input[type="submit"], input[type="button"]) {
+    position: relative;
+    color: transparent !important;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* Button loading spinner */
+.htmx-request:is(button, input[type="submit"], input[type="button"])::after {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    top: 50%;
+    left: 50%;
+    margin-left: -8px;
+    margin-top: -8px;
+    border: 2px solid var(--spinner-track);
+    border-top: 2px solid var(--spinner-head, currentColor);
+    border-radius: 50%;
+    animation: htmx-spin 1s linear infinite;
+}
+
+/* Preserve button dimensions */
+.htmx-request:is(button, input[type="submit"], input[type="button"]) {
+    min-height: 38px;
+}
+
+/* =================================================================
+   Form Loading States
+   ================================================================= */
+
+/* Disable form during submission */
+form.htmx-request {
+    pointer-events: none;
+    opacity: 0.6;
+}
+
+/* Form field loading state */
+.htmx-request input:not([type="submit"]):not([type="button"]),
+.htmx-request select,
+.htmx-request textarea {
+    background-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M8 1V5M8 11V15M1 8H5M11 8H15' stroke='%236c757d' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 16px 16px;
+}
+
+/* =================================================================
+   Content Loading States
+   ================================================================= */
+
+/* Fade out old content */
+.htmx-swapping {
+    opacity: 0;
+    transition: opacity 200ms ease-out;
+}
+
+/* Fade in new content */
+.htmx-settling {
+    opacity: 0;
+}
+
+.htmx-added {
+    opacity: 1;
+    transition: opacity 200ms ease-in;
+}
+
+/* Skeleton loader for content areas */
+.htmx-loading-skeleton {
+    background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-highlight) 50%, var(--skeleton-base) 75%);
+    background-size: 200% 100%;
+    animation: htmx-loading 1.5s infinite;
+    border-radius: 4px;
+    display: block;
+    height: 20px;
+    margin-bottom: 10px;
+}
+
+/* =================================================================
+   Tab Loading States
+   ================================================================= */
+
+/* Tab content loading */
+.tab-fragment.htmx-request {
+    position: relative;
+    min-height: 200px;
+}
+
+.tab-fragment.htmx-request::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 40px;
+    height: 40px;
+    margin: -20px 0 0 -20px;
+    border: 3px solid var(--spinner-track);
+    border-top: 3px solid var(--spinner-head);
+    border-radius: 50%;
+    animation: htmx-spin 1s linear infinite;
+}
+
+/* =================================================================
+   Progress Indicators
+   ================================================================= */
+
+/* Progress bar for long operations */
+.htmx-progress-bar {
+    width: 100%;
+    height: 4px;
+    background-color: var(--skeleton-base);
+    position: relative;
+    overflow: hidden;
+    display: none;
+}
+
+.htmx-request ~ .htmx-progress-bar,
+.htmx-progress-bar.htmx-request {
+    display: block;
+}
+
+.htmx-progress-bar::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 50%;
+    background-color: var(--spinner-head);
+    animation: htmx-progress 1.5s ease-in-out infinite;
+}
+
+/* =================================================================
+   Animations
+   ================================================================= */
+
+@keyframes htmx-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes htmx-loading {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+@keyframes htmx-progress {
+    0% { transform: translateX(-100%); }
+    50% { transform: translateX(200%); }
+    100% { transform: translateX(-100%); }
+}
+
+/* =================================================================
+   Status Indicators
+   ================================================================= */
+
+/* Success state */
+.htmx-success {
+    border-color: #28a745 !important;
+    animation: htmx-pulse-success 1s ease;
+}
+
+@keyframes htmx-pulse-success {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(40, 167, 69, 0); }
+    50% { box-shadow: 0 0 0 10px rgba(40, 167, 69, 0.1); }
+}
+
+/* Error state */
+.htmx-error {
+    border-color: #dc3545 !important;
+    animation: htmx-pulse-error 1s ease;
+}
+
+@keyframes htmx-pulse-error {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+    50% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0.1); }
+}
+
+/* =================================================================
+   Utility Classes
+   ================================================================= */
+
+/* Blur background during loading */
+.htmx-blur-bg {
+    filter: blur(2px);
+    transition: filter 300ms ease;
+}
+
+/* Disable pointer events */
+.htmx-no-pointer {
+    pointer-events: none;
+}
+
+/* Loading cursor */
+.htmx-loading-cursor {
+    cursor: wait !important;
+}
+
+/* =================================================================
+   Custom Loading Messages
+   ================================================================= */
+
+/* Loading message container */
+.htmx-loading-message {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #333;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 4px;
+    display: none;
+    align-items: center;
+    gap: 10px;
+    z-index: 10000;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.htmx-request ~ .htmx-loading-message {
+    display: flex;
+}
+
+.htmx-loading-message::before {
+    content: "";
+    width: 16px;
+    height: 16px;
+    border: 2px solid #fff;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: htmx-spin 0.8s linear infinite;
+}
+
+/* =================================================================
+   Responsive Adjustments
+   ================================================================= */
+
+@media (max-width: 768px) {
+    .htmx-loading-message {
+        right: 10px;
+        left: 10px;
+        text-align: center;
+    }
+
+    .htmx-section-overlay {
+        background-color: rgba(255, 255, 255, 0.95);
+    }
+}

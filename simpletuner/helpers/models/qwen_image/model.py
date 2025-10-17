@@ -23,6 +23,8 @@ else:
 
 class QwenImage(ImageModelFoundation):
     NAME = "Qwen-Image"
+    MODEL_DESCRIPTION = "Qwen's multimodal image generation model"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLQwenImage
@@ -273,3 +275,8 @@ class QwenImage(ImageModelFoundation):
         if self.config.prediction_type != "flow_matching":
             logger.warning(f"{self.NAME} uses flow matching. " "Overriding prediction_type to 'flow_matching'.")
             self.config.prediction_type = "flow_matching"
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("qwen_image", QwenImage)

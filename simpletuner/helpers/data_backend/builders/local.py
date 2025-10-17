@@ -1,10 +1,12 @@
 """Local backend builder for creating LocalDataBackend instances."""
+
 import logging
 import sys
 from typing import Any, Dict, Optional
 
-from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
+from simpletuner.helpers.data_backend.local import LocalDataBackend
+
 from .base import BaseBackendBuilder
 
 logger = logging.getLogger("LocalBackendBuilder")
@@ -23,11 +25,7 @@ class LocalBackendBuilder(BaseBackendBuilder):
         else:
             backend_cls = LocalDataBackend
 
-        data_backend = backend_cls(
-            accelerator=self.accelerator,
-            id=config.id,
-            compress_cache=compress_cache
-        )
+        data_backend = backend_cls(accelerator=self.accelerator, id=config.id, compress_cache=compress_cache)
 
         # ensure mocked backends mirror the expected identifier attribute
         try:
@@ -39,10 +37,7 @@ class LocalBackendBuilder(BaseBackendBuilder):
         return data_backend
 
     def build_with_metadata(
-        self,
-        config: BaseBackendConfig,
-        args: Dict[str, Any],
-        instance_data_dir: Optional[str] = None
+        self, config: BaseBackendConfig, args: Dict[str, Any], instance_data_dir: Optional[str] = None
     ) -> Dict[str, Any]:
         logger.info(f"(id={config.id}) Loading local dataset.")
 
@@ -52,10 +47,7 @@ class LocalBackendBuilder(BaseBackendBuilder):
         data_backend = self.build(config)
 
         metadata_backend = self.create_metadata_backend(
-            config=config,
-            data_backend=data_backend,
-            args=args,
-            instance_data_dir=instance_data_dir
+            config=config, data_backend=data_backend, args=args, instance_data_dir=instance_data_dir
         )
 
         return {
@@ -63,5 +55,5 @@ class LocalBackendBuilder(BaseBackendBuilder):
             "data_backend": data_backend,
             "metadata_backend": metadata_backend,
             "instance_data_dir": instance_data_dir,
-            "config": config.to_dict()["config"]
+            "config": config.to_dict()["config"],
         }

@@ -300,17 +300,17 @@ This report summarizes the comprehensive unit tests created for the most complex
 
 ```bash
 # Run all transformer tests
-python -m pytest tests/test_transformers/ -v
+python -m unittest discover tests/test_transformers -v
 
 # Run specific test file
-python -m pytest tests/test_transformers/test_flux_transformer.py -v
-python -m pytest tests/test_transformers/test_hidream_transformer.py -v
+python -m unittest tests.test_transformers.test_flux_transformer -v
+python -m unittest tests.test_transformers.test_hidream_transformer -v
 
 # Run specific test class
-python -m pytest tests/test_transformers/test_flux_transformer.py::TestApplyRotaryEmbAnyshape -v
+python -m unittest tests.test_transformers.test_flux_transformer.TestApplyRotaryEmbAnyshape -v
 
 # Run with coverage
-python -m pytest tests/test_transformers/ --cov=simpletuner.helpers.models --cov-report=html
+coverage run -m unittest discover tests/test_transformers && coverage html
 ```
 
 ### Test Categories
@@ -319,13 +319,13 @@ Tests can be run by category using markers (if implemented):
 
 ```bash
 # Run only typo prevention tests
-python -m pytest tests/test_transformers/ -m "typo_prevention" -v
+python -m unittest discover tests/test_transformers -k typo_prevention -v
 
 # Run only performance tests
-python -m pytest tests/test_transformers/ -m "performance" -v
+python -m unittest discover tests/test_transformers -k performance -v
 
 # Run only edge case tests
-python -m pytest tests/test_transformers/ -m "edge_cases" -v
+python -m unittest discover tests/test_transformers -k edge_cases -v
 ```
 
 ## Future Enhancements

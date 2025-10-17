@@ -62,8 +62,6 @@ webhooks.json
 untracked/
 config/*/
 config/*.toml
-static
-templates
 api_state.json
 images/
 datasets/
@@ -75,3 +73,8 @@ coverage.xml
 .simpletuner_output
 .mypy_cache
 .ruff_cache
+test-screenshots/
+test-folder/
+node_modules
+package-lock.json
+**/config

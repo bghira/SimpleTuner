@@ -33,6 +33,8 @@ else:
 
 class HiDream(ImageModelFoundation):
     NAME = "HiDream"
+    MODEL_DESCRIPTION = "High-quality image generation with MoE architecture"
+    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
@@ -607,3 +609,8 @@ class HiDream(ImageModelFoundation):
         clear_load_balancing_loss()
 
         return total_loss, aux_log_info
+
+
+from simpletuner.helpers.models.registry import ModelRegistry
+
+ModelRegistry.register("hidream", HiDream)

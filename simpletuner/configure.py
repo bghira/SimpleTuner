@@ -2062,7 +2062,7 @@ class SimpleTunerNCurses:
                 "Optimizer": self.state.env_contents.get("optimizer", "adamw_bf16"),
                 "Learning Rate": self.state.env_contents.get("learning_rate", "1e-4"),
                 "LR Scheduler": self.state.env_contents.get("lr_scheduler", "polynomial"),
-                "Warmup Steps": str(self.state.env_contents.get("lr_warmup_steps", 100)),
+                "Warmup Steps": str(self.state.env_contents.get("lr_warmup_steps", 0)),
                 "Gradient Precision": self.state.env_contents.get("gradient_precision", "unmodified"),
                 "Max Grad Norm": str(self.state.env_contents.get("max_grad_norm", 1.0)),
             }

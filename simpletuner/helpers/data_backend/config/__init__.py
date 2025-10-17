@@ -1,10 +1,10 @@
 """Backend configuration classes for different dataset types."""
 
+from . import validators
 from .base import BaseBackendConfig
 from .image import ImageBackendConfig
-from .text_embed import TextEmbedBackendConfig
 from .image_embed import ImageEmbedBackendConfig
-from . import validators
+from .text_embed import TextEmbedBackendConfig
 
 __all__ = [
     "BaseBackendConfig",
@@ -12,7 +12,7 @@ __all__ = [
     "TextEmbedBackendConfig",
     "ImageEmbedBackendConfig",
     "validators",
-    "create_backend_config"
+    "create_backend_config",
 ]
 
 
