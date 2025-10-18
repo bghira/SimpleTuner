@@ -1,6 +1,7 @@
 import logging
 import os
 from math import sqrt
+from numbers import Real
 
 import numpy as np
 from PIL import Image
@@ -12,13 +13,35 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
 
-import numpy as np
-import torch
-from PIL import Image
-from torchvision import transforms
-
 
 class MultiaspectImage:
+    @staticmethod
+    def _coerce_positive_int(value, default: int = 1) -> int:
+        """Return a positive integer from value or fallback to default."""
+        if isinstance(value, Real):
+            candidate = int(value)
+        else:
+            try:
+                candidate = int(value)
+            except (TypeError, ValueError):
+                return default
+        return candidate if candidate > 0 else default
+
+    @staticmethod
+    def _get_alignment(default: int = 1) -> int:
+        args = StateTracker.get_args()
+        align = getattr(args, "aspect_bucket_alignment", None) if args is not None else None
+        return MultiaspectImage._coerce_positive_int(align, default)
+
+    @staticmethod
+    def _get_rounding(default: int) -> int:
+        args = StateTracker.get_args()
+        rounding = getattr(args, "aspect_bucket_rounding", None) if args is not None else None
+        if rounding is None:
+            return default
+        rounding = MultiaspectImage._coerce_positive_int(rounding, default)
+        return rounding if rounding >= 0 else default
+
     @staticmethod
     def limit_canvas_size(width: int, height: int, max_size: int) -> dict:
         """
@@ -40,7 +63,7 @@ class MultiaspectImage:
             # If the canvas size is already within limits, return the original dimensions.
             return {"width": width, "height": height, "canvas_size": width * height}
 
-        align = StateTracker.get_args().aspect_bucket_alignment
+        align = MultiaspectImage._get_alignment()
         dims = [("width", width), ("height", height)]
 
         # Sort by size descending
