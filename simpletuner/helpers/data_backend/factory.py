@@ -9,7 +9,7 @@ from contextlib import nullcontext
 from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from .runtime import BatchFetcher
 
@@ -43,6 +43,26 @@ def _set_arg_value(args: Any, key: str, value: Any) -> None:
         args[key] = value
     else:
         setattr(args, key, value)
+
+
+def _coerce_bucket_keys(indices: Dict[Any, Iterable]) -> Dict[Any, list]:
+    """Return a copy of aspect ratio bucket indices with numeric keys coerced to float."""
+    coerced: Dict[Any, list] = {}
+    for key, values in (indices or {}).items():
+        try:
+            coerced_key: Any = float(key)
+        except (TypeError, ValueError):
+            coerced_key = key
+        if isinstance(values, dict):
+            iterable_values = [values]
+        elif isinstance(values, str):
+            iterable_values = [values]
+        elif isinstance(values, Iterable):
+            iterable_values = list(values)
+        else:
+            iterable_values = [values]
+        coerced.setdefault(coerced_key, []).extend(iterable_values)
+    return coerced
 
 
 import numpy as np
@@ -1586,16 +1606,10 @@ class FactoryRegistry:
         )
 
         metadata_backend = init_backend["metadata_backend"]
-        # Coerce legacy string keys to floats for aspect ratio bucket indices to keep backwards compatibility.
-        if getattr(metadata_backend, "aspect_ratio_bucket_indices", None):
-            coerced_indices: Dict[float, list] = {}
-            for key, value in list(metadata_backend.aspect_ratio_bucket_indices.items()):
-                try:
-                    float_key = float(key)
-                except (TypeError, ValueError):
-                    float_key = key
-                coerced_indices.setdefault(float_key, list(value) if isinstance(value, list) else value)
-            metadata_backend.aspect_ratio_bucket_indices = coerced_indices
+        if isinstance(getattr(metadata_backend, "aspect_ratio_bucket_indices", None), dict):
+            metadata_backend.aspect_ratio_bucket_indices = _coerce_bucket_keys(
+                metadata_backend.aspect_ratio_bucket_indices
+            )
         if hasattr(metadata_backend, "_mock_children"):
             children = getattr(metadata_backend, "_mock_children", None)
             if isinstance(children, dict):
