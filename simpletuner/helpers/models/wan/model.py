@@ -149,6 +149,13 @@ class Wan(VideoModelFoundation):
         super().unload_model()
         self._wan_cached_stage_modules.clear()
 
+    def get_group_offload_components(self, pipeline):
+        components = dict(super().get_group_offload_components(pipeline))
+        transformer_2 = getattr(pipeline, "transformer_2", None)
+        if transformer_2 is not None:
+            components.setdefault("transformer_2", transformer_2)
+        return components
+
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         pipeline = super().get_pipeline(pipeline_type, load_base_model)
         stage_info = self._wan_stage_info()
@@ -298,9 +305,9 @@ class Wan(VideoModelFoundation):
         }
 
         if prepared_batch.get("conditioning_image_embeds") is not None:
-            wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch[
-                "conditioning_image_embeds"
-            ].to(self.config.weight_dtype)
+            wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch["conditioning_image_embeds"].to(
+                self.config.weight_dtype
+            )
 
         # For masking with TREAD, avoid dropping any tokens that are in the mask
         if (

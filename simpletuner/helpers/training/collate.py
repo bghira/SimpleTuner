@@ -405,6 +405,8 @@ def collate_fn(batch):
     batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
+    data_backend = StateTracker.get_data_backend(data_backend_id)
+
     debug_log("Compute latents")
     model = StateTracker.get_model()
     batch_data = compute_latents(filepaths, data_backend_id, model)
@@ -416,6 +418,7 @@ def collate_fn(batch):
         debug_log("Check latents")
         latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
 
+    conditioning_image_embeds = None
     if model.requires_conditioning_image_embeds():
         cache = data_backend.get("conditioning_image_embed_cache")
         if cache is None:
@@ -435,10 +438,8 @@ def collate_fn(batch):
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
-    conditioning_image_embeds = None
 
     # get multiple backend ids
-    data_backend = StateTracker.get_data_backend(data_backend_id)
     conditioning_backends = data_backend.get("conditioning_data", [])
     if len(conditioning_examples) > 0:
         # check the # of conditioning backends

@@ -14,11 +14,13 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 try:
     from simpletuner.helpers.webhooks.mixin import WebhookMixin
 except Exception:  # pragma: no cover - optional dependency guard
+
     class WebhookMixin:  # type: ignore
         """Fallback mixin used when webhook dependencies are unavailable."""
 
         def set_webhook_handler(self, webhook_handler):
             self.webhook_handler = webhook_handler
+
 
 logger = logging.getLogger("ConditioningImageEmbedCache")
 if should_log():
@@ -70,7 +72,9 @@ class ImageEmbedCache(WebhookMixin):
         self.pipeline = None
         self.image_encoder = None
         self.image_processor = None
-        self.compute_device = getattr(self.accelerator, "device", torch.device("cpu")) if self.accelerator else torch.device("cpu")
+        self.compute_device = (
+            getattr(self.accelerator, "device", torch.device("cpu")) if self.accelerator else torch.device("cpu")
+        )
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")

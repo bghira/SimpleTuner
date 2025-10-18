@@ -80,6 +80,7 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
             "wan",
             "qwen_image",
             "sana",
+            "chroma_controlnet",
         ]
 
         discovered_transformers = set()

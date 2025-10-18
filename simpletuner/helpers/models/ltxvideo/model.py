@@ -160,6 +160,12 @@ class LTXVideo(VideoModelFoundation):
             negative_prompt_attention_mask,
         )
 
+    def get_group_offload_components(self, pipeline):
+        components = dict(super().get_group_offload_components(pipeline))
+        if "transformer" not in components and getattr(self, "model", None) is not None:
+            components["transformer"] = self.unwrap_model(self.model)
+        return components
+
     def model_predict(self, prepared_batch):
         if prepared_batch["noisy_latents"].shape[1] != 128:
             raise ValueError(

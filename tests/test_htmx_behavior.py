@@ -16,6 +16,8 @@ from tests.webui_test_base import WebUITestCase
 class HTMXBehaviourTestCase(WebUITestCase):
     """Exercise core HTMX interactions without redundant page reloads."""
 
+    MAX_BROWSERS = 1
+
     def test_htmx_interactions_suite(self) -> None:
         self.with_sample_environment()
 

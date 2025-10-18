@@ -2,10 +2,10 @@
 
 from . import validators
 from .base import BaseBackendConfig
+from .conditioning_image_embed import ConditioningImageEmbedBackendConfig
 from .image import ImageBackendConfig
 from .image_embed import ImageEmbedBackendConfig
 from .text_embed import TextEmbedBackendConfig
-from .conditioning_image_embed import ConditioningImageEmbedBackendConfig
 
 __all__ = [
     "BaseBackendConfig",

@@ -29,6 +29,15 @@ Currently, image-to-video training is not supported for Wan, but T2V LoRA and Ly
 - Resolution: 1280x720
 -->
 
+#### Image to Video (Wan 2.2)
+
+Recent Wan 2.2 I2V checkpoints work with the same training flow:
+
+- High stage: https://huggingface.co/Wan-AI/Wan2.2-I2V-14B-Diffusers/tree/main/high_noise_model
+- Low stage: https://huggingface.co/Wan-AI/Wan2.2-I2V-14B-Diffusers/tree/main/low_noise_model
+
+You can target the stage you want with the `model_flavour` and `wan_validation_load_other_stage` settings outlined later in this guide.
+
 You'll need:
 - **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
@@ -111,6 +120,23 @@ simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
+
+### Memory offloading (optional)
+
+Wan is one of the heaviest models SimpleTuner supports. Enable grouped offloading if you are close to the VRAM ceiling:
+
+```bash
+--enable_group_offload \
+--group_offload_type block_level \
+--group_offload_blocks_per_group 1 \
+--group_offload_use_stream \
+# optional: spill offloaded weights to disk instead of RAM
+# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
+```
+
+- Only CUDA devices honour `--group_offload_use_stream`; ROCm/MPS fall back automatically.
+- Leave disk staging commented out unless CPU memory is the bottleneck.
+- `--enable_model_cpu_offload` is mutually exclusive with group offload.
 
 
 If you prefer to manually configure:

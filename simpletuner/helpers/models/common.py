@@ -26,6 +26,7 @@ from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -804,18 +805,16 @@ class ModelFoundation(ABC):
         """
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
+            pipeline_instance = active_pipelines[pipeline_type]
             setattr(
-                active_pipelines[pipeline_type],
+                pipeline_instance,
                 self.MODEL_TYPE.value,
                 self.unwrap_model(model=self.model),
             )
             if self.config.controlnet:
-                setattr(
-                    active_pipelines[pipeline_type],
-                    "controlnet",
-                    self.unwrap_model(model=self.controlnet),
-                )
-            return active_pipelines[pipeline_type]
+                setattr(pipeline_instance, "controlnet", self.unwrap_model(model=self.controlnet))
+            self._configure_pipeline_offloading(pipeline_instance)
+            return pipeline_instance
 
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
@@ -862,11 +861,83 @@ class ModelFoundation(ABC):
             pipeline_kwargs["controlnet"] = self.controlnet
 
         logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
-        self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
-            **pipeline_kwargs,
-        )
+        pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
+        self.pipelines[pipeline_type] = pipeline_instance
+        self._configure_pipeline_offloading(pipeline_instance)
 
-        return self.pipelines[pipeline_type]
+        return pipeline_instance
+
+    def get_group_offload_components(self, pipeline: DiffusionPipeline):
+        """
+        Return the component mapping used for group offloading.
+        Sub-classes can override to prune or extend the mapping.
+        """
+        return getattr(pipeline, "components", {})
+
+    def get_group_offload_exclusions(self, pipeline: DiffusionPipeline):
+        """
+        Names of components that should be excluded from group offloading.
+        """
+        return ()
+
+    def _resolve_group_offload_device(self, pipeline: DiffusionPipeline):
+        pipeline_device = getattr(pipeline, "device", None)
+        if pipeline_device is not None:
+            return torch.device(pipeline_device)
+        if hasattr(self.accelerator, "device"):
+            return torch.device(self.accelerator.device)
+        return torch.device("cpu")
+
+    def _resolve_group_offload_disk_path(self):
+        raw_path = getattr(self.config, "group_offload_to_disk_path", None)
+        if not raw_path:
+            return None
+        expanded = os.path.expanduser(raw_path)
+        return expanded
+
+    def _configure_pipeline_offloading(self, pipeline: DiffusionPipeline):
+        if pipeline is None:
+            return
+
+        enable_group_offload = bool(getattr(self.config, "enable_group_offload", False))
+        enable_model_cpu_offload = bool(getattr(self.config, "enable_model_cpu_offload", False))
+
+        if enable_group_offload and enable_model_cpu_offload:
+            logger.warning(
+                "Both group offload and model CPU offload requested; prioritising group offload. "
+                "Disable one of the options to silence this warning."
+            )
+
+        if enable_group_offload:
+            try:
+                device = self._resolve_group_offload_device(pipeline)
+                use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
+                if use_stream:
+                    if device.type != "cuda" or not torch.cuda.is_available():
+                        use_stream = False
+                enable_group_offload_on_components(
+                    self.get_group_offload_components(pipeline),
+                    device=device,
+                    offload_type=getattr(self.config, "group_offload_type", "block_level"),
+                    number_blocks_per_group=getattr(self.config, "group_offload_blocks_per_group", 1),
+                    use_stream=use_stream,
+                    offload_to_disk_path=self._resolve_group_offload_disk_path(),
+                    exclude=self.get_group_offload_exclusions(pipeline),
+                )
+                logger.info("Group offloading enabled for pipeline components.")
+            except ImportError as error:
+                logger.warning("Group offloading unavailable: %s", error)
+            except ValueError as error:
+                logger.warning("Group offloading validation error: %s", error)
+            except Exception as error:
+                logger.warning("Failed to configure group offloading: %s", error)
+            return
+
+        if enable_model_cpu_offload and hasattr(pipeline, "enable_model_cpu_offload"):
+            try:
+                pipeline.enable_model_cpu_offload()
+            except RuntimeError as error:
+                logger.warning("Model CPU offload unavailable: %s", error)
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
