@@ -63,6 +63,11 @@ class CornerCropping(BaseCropping):
         right = min(target_width, self.intermediary_width)
         bottom = min(target_height, self.intermediary_height)
 
+        left = int(round(left))
+        top = int(round(top))
+        right = int(round(right))
+        bottom = int(round(bottom))
+
         logger.debug(
             f"CornerCropping: intermediary_size=({self.intermediary_width}, {self.intermediary_height}), target_size=({target_width}, {target_height})"
         )
@@ -96,6 +101,11 @@ class CenterCropping(BaseCropping):
         top = max(0, int((self.intermediary_height - target_height) / 2))
         right = left + min(target_width, self.intermediary_width - left)
         bottom = top + min(target_height, self.intermediary_height - top)
+
+        left = int(round(left))
+        top = int(round(top))
+        right = int(round(right))
+        bottom = int(round(bottom))
 
         logger.debug(
             f"CenterCropping: intermediary_size=({self.intermediary_width}, {self.intermediary_height}), target_size=({target_width}, {target_height})"
@@ -135,6 +145,11 @@ class RandomCropping(BaseCropping):
         top = random.randint(0, max_top) if max_top > 0 else 0
         right = left + min(target_width, self.intermediary_width - left)
         bottom = top + min(target_height, self.intermediary_height - top)
+
+        left = int(round(left))
+        top = int(round(top))
+        right = int(round(right))
+        bottom = int(round(bottom))
 
         logger.debug(
             f"RandomCropping: intermediary_size=({self.intermediary_width}, {self.intermediary_height}), target_size=({target_width}, {target_height})"

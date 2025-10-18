@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import ast
 import sys
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple

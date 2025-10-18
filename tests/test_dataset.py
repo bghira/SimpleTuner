@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.data_backend.factory import check_column_values
+from simpletuner.helpers.data_backend.factory import _coerce_bucket_keys, check_column_values
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
 
@@ -150,6 +150,18 @@ class TestDataBackendFactory(unittest.TestCase):
         with self.assertRaises(TypeError) as context:
             check_column_values(column_data, "test_column", "test_file.parquet")
         self.assertIn("Unsupported data type in column", str(context.exception))
+
+    def test_coerce_bucket_keys(self):
+        indices = {"1.0": ["foo"], 1.5: ["bar"], "invalid": ["baz"], "single": "path"}
+        coerced = _coerce_bucket_keys(indices)
+        self.assertIn(1.0, coerced)
+        self.assertEqual(coerced[1.0], ["foo"])
+        self.assertIn(1.5, coerced)
+        self.assertEqual(coerced[1.5], ["bar"])
+        self.assertIn("invalid", coerced)
+        self.assertEqual(coerced["invalid"], ["baz"])
+        self.assertIn("single", coerced)
+        self.assertEqual(coerced["single"], ["path"])
 
 
 if __name__ == "__main__":
