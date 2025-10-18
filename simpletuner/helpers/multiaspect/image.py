@@ -64,8 +64,12 @@ class MultiaspectImage:
     @staticmethod
     def _round_to_nearest_multiple(value, override_value: int = None):
         """Round a value to the nearest multiple."""
-        multiple = float(override_value or StateTracker.get_args().aspect_bucket_alignment)
-        rounded = round(float(value) / multiple) * multiple
+        multiple = override_value
+        if multiple is None:
+            multiple = MultiaspectImage._get_alignment()
+        else:
+            multiple = MultiaspectImage._coerce_positive_int(multiple, default=1)
+        rounded = int(round(value / multiple) * multiple)
         return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
 
     @staticmethod
