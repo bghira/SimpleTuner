@@ -191,7 +191,7 @@ class QwenEmbedRope(PatchableModule):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
-        self._current_max_len = 4096
+        self._current_max_len = 1024
         pos_index = torch.arange(self._current_max_len)
         neg_index = torch.arange(self._current_max_len).flip(0) * -1 - 1
         self.pos_freqs = torch.cat(

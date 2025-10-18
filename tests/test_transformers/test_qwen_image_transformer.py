@@ -59,6 +59,8 @@ from simpletuner.helpers.models.qwen_image.transformer import (
     apply_rotary_emb_qwen,
     get_timestep_embedding,
 )
+from diffusers.utils import logging as diffusers_logging
+from diffusers.utils.testing_utils import CaptureLogger
 
 
 class TestGetTimestepEmbedding(TransformerBaseTest):
@@ -419,7 +421,7 @@ class TestQwenEmbedRope(TransformerBaseTest):
         self.assertIsInstance(module, nn.Module)
         self.assertEqual(module.theta, self.theta)
         self.assertEqual(module.axes_dim, self.axes_dim)
-        self.assertIsInstance(module.rope_cache, dict)
+        self.assertEqual(module._current_max_len, 1024)
 
     def test_rope_params_generation(self):
         """Test rope_params method generates correct frequencies."""
@@ -489,21 +491,54 @@ class TestQwenEmbedRope(TransformerBaseTest):
     def test_caching_behavior(self):
         """Test rope caching behavior."""
         module = QwenEmbedRope(self.theta, self.axes_dim)
+        module._compute_video_freqs.cache_clear()
 
         video_fhw = [(4, 32, 32)]
         txt_seq_lens = [77]
         device = "cpu"
 
-        # First call should populate cache
-        self.assertEqual(len(module.rope_cache), 0)
+        cache_info_before = module._compute_video_freqs.cache_info()
         module(video_fhw, txt_seq_lens, device)
-        self.assertGreater(len(module.rope_cache), 0)
+        cache_info_after_first = module._compute_video_freqs.cache_info()
+        module(video_fhw, txt_seq_lens, device)
+        cache_info_after_second = module._compute_video_freqs.cache_info()
 
-        # Second call should use cache
-        cache_size_before = len(module.rope_cache)
-        module(video_fhw, txt_seq_lens, device)
-        cache_size_after = len(module.rope_cache)
-        self.assertEqual(cache_size_before, cache_size_after)
+        self.assertEqual(cache_info_before.currsize, 0)
+        self.assertGreater(cache_info_after_first.currsize, cache_info_before.currsize)
+        self.assertEqual(cache_info_after_second.currsize, cache_info_after_first.currsize)
+
+    def test_dynamic_expansion_increases_capacity(self):
+        """Ensure long prompts trigger dynamic RoPE expansion."""
+        module = QwenEmbedRope(self.theta, self.axes_dim)
+
+        video_fhw = [(1, 32, 32)]
+        txt_len = module._current_max_len + 200
+        txt_seq_lens = [txt_len]
+
+        _, txt_freqs = module(video_fhw, txt_seq_lens, device="cpu")
+        required_len = 32 + txt_len
+
+        self.assertGreaterEqual(module._current_max_len, required_len)
+        self.assertEqual(txt_freqs.shape[0], txt_len)
+        self.assertGreaterEqual(module.pos_freqs.shape[0], module._current_max_len)
+
+    def test_long_prompt_warning(self):
+        """Verify that a warning is emitted when prompts exceed training limits."""
+        module = QwenEmbedRope(self.theta, self.axes_dim)
+        video_fhw = [(1, 32, 32)]
+        txt_len = module._current_max_len + 600
+        txt_seq_lens = [txt_len]
+
+        logger = diffusers_logging.get_logger("simpletuner.helpers.models.qwen_image.transformer")
+        logger.setLevel(diffusers_logging.WARNING)
+
+        with patch.object(logger, "warning") as mock_warning:
+            module(video_fhw, txt_seq_lens, device="cpu")
+
+        warnings = [str(call.args[0]) for call in mock_warning.call_args_list if call.args]
+        concatenated = " ".join(warnings)
+        self.assertIn("512 tokens", concatenated)
+        self.assertIn("unpredictable behavior", concatenated)
 
     def test_device_handling(self):
         """Test device handling and tensor movement."""
