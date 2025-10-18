@@ -39,6 +39,7 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("DATASETS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("TQDM_DISABLE", "1")
+os.environ.setdefault("SIMPLETUNER_FAST_CONFIG_API", "1")
 
 # Register cleanup for test directories
 import atexit

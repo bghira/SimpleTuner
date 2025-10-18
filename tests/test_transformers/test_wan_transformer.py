@@ -1067,6 +1067,34 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         expected_shape = (batch_size, self.model_config["out_channels"], num_frames, height, width)
         self.assert_tensor_shape(output_tensor, expected_shape)
 
+    def test_set_time_embedding_v2_1_toggle(self):
+        """Ensure the helper toggles the internal force flag."""
+        model = WanTransformer3DModel(**self.model_config)
+        self.assertFalse(model.force_v2_1_time_embedding)
+        model.set_time_embedding_v2_1(True)
+        self.assertTrue(model.force_v2_1_time_embedding)
+        model.set_time_embedding_v2_1(False)
+        self.assertFalse(model.force_v2_1_time_embedding)
+
+    def test_forward_time_embedding_override_with_sequence_timesteps(self):
+        """Time embedding override should handle sequence-shaped timesteps without errors."""
+        model = WanTransformer3DModel(**self.model_config)
+        model.set_time_embedding_v2_1(True)
+
+        batch_size, in_channels, num_frames, height, width = 1, 16, 4, 8, 8
+        hidden_states = torch.randn(batch_size, in_channels, num_frames, height, width)
+        # Simulate Wan 2.2-style timestep tensor (batch, sequence_length)
+        sequence_length = num_frames // self.model_config["patch_size"][0]
+        timestep = torch.randint(0, 1000, (batch_size, sequence_length))
+        encoder_hidden_states = torch.randn(batch_size, 77, self.model_config["text_dim"])
+
+        with torch.no_grad():
+            output = model.forward(hidden_states=hidden_states, timestep=timestep, encoder_hidden_states=encoder_hidden_states)
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
+        expected_shape = (batch_size, self.model_config["out_channels"], num_frames, height, width)
+        self.assert_tensor_shape(output_tensor, expected_shape)
+
     def test_3d_patch_embedding(self):
         """Test 3D patch embedding processing."""
         model = WanTransformer3DModel(**self.model_config)
