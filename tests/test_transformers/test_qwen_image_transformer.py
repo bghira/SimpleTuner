@@ -1039,9 +1039,11 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
 
     def setUp(self):
         super().setUp()
+        self.patch_size = 2
+        self.latent_channels = 4
         self.config = {
-            "patch_size": 2,
-            "in_channels": 4,
+            "patch_size": self.patch_size,
+            "in_channels": self.latent_channels * (self.patch_size**2),
             "out_channels": 4,
             "num_layers": 2,  # Reduced for testing
             "attention_head_dim": 64,
@@ -1050,13 +1052,37 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
             "axes_dims_rope": (16, 32, 32),
         }
 
+    def _generate_packed_hidden_states(self, batch_size: int, height: int, width: int):
+        """Create latent tensors and pack them into the Qwen patch format."""
+        latents = torch.randn(batch_size, self.latent_channels, height, width)
+        patch_size = self.patch_size
+        if height % patch_size != 0 or width % patch_size != 0:
+            raise ValueError("Height and width must be divisible by patch size for packing.")
+
+        latents = latents.view(
+            batch_size,
+            self.latent_channels,
+            height // patch_size,
+            patch_size,
+            width // patch_size,
+            patch_size,
+        )
+        latents = latents.permute(0, 2, 4, 1, 3, 5)
+        packed = latents.reshape(
+            batch_size,
+            (height // patch_size) * (width // patch_size),
+            self.latent_channels * (patch_size**2),
+        )
+        img_shapes = [(1, height // patch_size, width // patch_size)]
+        return packed, img_shapes
+
     def test_instantiation(self):
         """Test basic instantiation."""
         model = QwenImageTransformer2DModel(**self.config)
 
         self.assertIsInstance(model, nn.Module)
-        self.assertEqual(model.config.patch_size, 2)
-        self.assertEqual(model.config.in_channels, 4)
+        self.assertEqual(model.config.patch_size, self.patch_size)
+        self.assertEqual(model.config.in_channels, self.config["in_channels"])
         self.assertEqual(model.config.num_layers, 2)
 
     def test_component_initialization(self):
@@ -1096,12 +1122,10 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         # Input tensors
         batch_size = 2
         height, width = 32, 32  # Input image size
-        in_channels = self.config["in_channels"]
 
-        hidden_states = torch.randn(batch_size, in_channels, height, width)
+        hidden_states, img_shapes = self._generate_packed_hidden_states(batch_size, height, width)
         encoder_hidden_states = torch.randn(batch_size, 77, 512)  # Text tokens
         timestep = torch.randint(0, 1000, (batch_size,))
-        img_shapes = [(1, height // 2, width // 2)]  # Frame, height, width for patches
         txt_seq_lens = [77]
 
         with torch.no_grad():
@@ -1149,11 +1173,10 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         for i, block in enumerate(model.transformer_blocks):
             model.transformer_blocks[i] = Mock(return_value=(torch.randn(2, 77, 512), torch.randn(2, 256, 512)))
 
-        hidden_states = torch.randn(2, 4, 32, 32)
+        hidden_states, img_shapes = self._generate_packed_hidden_states(2, 32, 32)
         encoder_hidden_states = torch.randn(2, 77, 512)
         timestep = torch.randint(0, 1000, (2,))
         guidance = torch.randn(2)  # Guidance values
-        img_shapes = [(1, 16, 16)]
         txt_seq_lens = [77]
 
         with torch.no_grad():
@@ -1178,10 +1201,9 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         for i, block in enumerate(model.transformer_blocks):
             model.transformer_blocks[i] = Mock(return_value=(torch.randn(2, 77, 512), torch.randn(2, 256, 512)))
 
-        hidden_states = torch.randn(2, 4, 32, 32)
+        hidden_states, img_shapes = self._generate_packed_hidden_states(2, 32, 32)
         encoder_hidden_states = torch.randn(2, 77, 512)
         timestep = torch.randint(0, 1000, (2,))
-        img_shapes = [(1, 16, 16)]
         txt_seq_lens = [77]
 
         # Enable gradients to test checkpointing path
@@ -1205,10 +1227,9 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         for i, block in enumerate(model.transformer_blocks):
             model.transformer_blocks[i] = Mock(return_value=(torch.randn(2, 77, 512), torch.randn(2, 256, 512)))
 
-        hidden_states = torch.randn(2, 4, 32, 32)
+        hidden_states, img_shapes = self._generate_packed_hidden_states(2, 32, 32)
         encoder_hidden_states = torch.randn(2, 77, 512)
         timestep = torch.randint(0, 1000, (2,))
-        img_shapes = [(1, 16, 16)]
         txt_seq_lens = [77]
 
         # Create ControlNet samples
@@ -1237,10 +1258,9 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         for i, block in enumerate(model.transformer_blocks):
             model.transformer_blocks[i] = Mock(return_value=(torch.randn(2, 77, 512), torch.randn(2, 256, 512)))
 
-        hidden_states = torch.randn(2, 4, 32, 32)
+        hidden_states, img_shapes = self._generate_packed_hidden_states(2, 32, 32)
         encoder_hidden_states = torch.randn(2, 77, 512)
         timestep = torch.randint(0, 1000, (2,))
-        img_shapes = [(1, 16, 16)]
         txt_seq_lens = [77]
         attention_kwargs = {"scale": 0.5}
 
@@ -1264,10 +1284,9 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         for i, block in enumerate(model.transformer_blocks):
             model.transformer_blocks[i] = Mock(return_value=(torch.randn(2, 77, 512), torch.randn(2, 256, 512)))
 
-        hidden_states = torch.randn(2, 4, 32, 32)
+        hidden_states, img_shapes = self._generate_packed_hidden_states(2, 32, 32)
         encoder_hidden_states = torch.randn(2, 77, 512)
         timestep = torch.randint(0, 1000, (2,))
-        img_shapes = [(1, 16, 16)]
         txt_seq_lens = [77]
 
         # Test return_dict=True (default)
@@ -1322,7 +1341,7 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         try:
             model = QwenImageTransformer2DModel(
                 patch_size=2,
-                in_channels=4,
+                in_channels=16,
                 out_channels=4,
                 num_layers=2,
                 attention_head_dim=64,
@@ -1348,11 +1367,12 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
                 return_value=(torch.randn(1, 77, 512), torch.randn(1, 64, 512))  # Smaller sequence for performance
             )
 
+        packed_hidden_states, img_shapes = self._generate_packed_hidden_states(1, 16, 16)
         inputs = {
-            "hidden_states": torch.randn(1, 4, 16, 16),  # Smaller input
+            "hidden_states": packed_hidden_states,
             "encoder_hidden_states": torch.randn(1, 77, 512),
             "timestep": torch.randint(0, 1000, (1,)),
-            "img_shapes": [(1, 8, 8)],
+            "img_shapes": img_shapes,
             "txt_seq_lens": [77],
         }
 
@@ -1370,10 +1390,9 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
             )
 
         # Test minimal input sizes
-        hidden_states = torch.randn(1, 4, 2, 2)  # Minimal spatial size
+        hidden_states, img_shapes = self._generate_packed_hidden_states(1, 2, 2)  # Minimal spatial size
         encoder_hidden_states = torch.randn(1, 1, 512)  # Single token
         timestep = torch.randint(0, 1000, (1,))
-        img_shapes = [(1, 1, 1)]  # Minimal frame/height/width
         txt_seq_lens = [1]
 
         with torch.no_grad():
@@ -1399,7 +1418,7 @@ class TestQwenImageTransformerIntegration(TransformerBaseTest):
         # Create minimal model for integration test
         config = {
             "patch_size": 2,
-            "in_channels": 4,
+            "in_channels": 16,
             "out_channels": 4,
             "num_layers": 1,
             "attention_head_dim": 32,
@@ -1412,7 +1431,17 @@ class TestQwenImageTransformerIntegration(TransformerBaseTest):
 
         # Create realistic inputs
         batch_size = 1
-        hidden_states = torch.randn(batch_size, 4, 16, 16)
+        latent_channels = 4
+        patch_size = config["patch_size"]
+        height = width = 16
+        latents = torch.randn(batch_size, latent_channels, height, width)
+        latents = latents.view(batch_size, latent_channels, height // patch_size, patch_size, width // patch_size, patch_size)
+        latents = latents.permute(0, 2, 4, 1, 3, 5)
+        hidden_states = latents.reshape(
+            batch_size,
+            (height // patch_size) * (width // patch_size),
+            latent_channels * (patch_size**2),
+        )
         encoder_hidden_states = torch.randn(batch_size, 77, 256)
         timestep = torch.randint(0, 1000, (batch_size,))
         img_shapes = [(1, 8, 8)]
@@ -1434,7 +1463,8 @@ class TestQwenImageTransformerIntegration(TransformerBaseTest):
         else:
             output_tensor = output
 
-        self.assert_tensor_shape(output_tensor, hidden_states.shape)
+        expected_shape = (batch_size, config["out_channels"], height, width)
+        self.assert_tensor_shape(output_tensor, expected_shape)
         self.assert_no_nan_or_inf(output_tensor)
         self.assert_tensor_in_range(output_tensor, -5.0, 5.0)
 
