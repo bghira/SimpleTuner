@@ -1377,7 +1377,7 @@ function trainingWizardComponent() {
             this.answers.group_offload_type = null;
             this.answers.group_offload_blocks_per_group = null;
             this.answers.group_offload_use_stream = false;
-            this.answers.group_offload_to_disk_path = null;
+            this.answers.group_offload_to_disk_path = '';
         },
 
         ensureFsdpDefaults() {
@@ -1412,7 +1412,7 @@ function trainingWizardComponent() {
             this.answers.fsdp_state_dict_type = null;
             this.answers.fsdp_cpu_ram_efficient_loading = false;
             this.answers.fsdp_auto_wrap_policy = null;
-            this.answers.fsdp_transformer_layer_cls_to_wrap = null;
+            this.answers.fsdp_transformer_layer_cls_to_wrap = '';
             this.answers.context_parallel_size = null;
         },
 

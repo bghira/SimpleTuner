@@ -2,10 +2,31 @@
 
 from . import validators
 from .base import BaseBackendConfig
-from .conditioning_image_embed import ConditioningImageEmbedBackendConfig
 from .image import ImageBackendConfig
 from .image_embed import ImageEmbedBackendConfig
 from .text_embed import TextEmbedBackendConfig
+
+try:  # pragma: no cover - graceful fallback when optional module missing
+    from .conditioning_image_embed import ConditioningImageEmbedBackendConfig
+except ModuleNotFoundError:  # pragma: no cover - legacy environments
+
+    class ConditioningImageEmbedBackendConfig(ImageEmbedBackendConfig):  # type: ignore[misc]
+        """Fallback configuration that mirrors ImageEmbed when the specialised class is unavailable."""
+
+        def __post_init__(self):
+            super().__post_init__()
+            self.dataset_type = "conditioning_image_embeds"
+
+        @classmethod
+        def from_dict(cls, backend_dict: dict, args: dict) -> "ConditioningImageEmbedBackendConfig":
+            config = super().from_dict(backend_dict, args)
+            config.dataset_type = "conditioning_image_embeds"
+            return config
+
+        def to_dict(self) -> dict:
+            payload = super().to_dict()
+            payload["dataset_type"] = "conditioning_image_embeds"
+            return payload
 
 __all__ = [
     "BaseBackendConfig",
