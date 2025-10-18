@@ -33,6 +33,8 @@ class EventHandler {
         this.totalEpochs = 0;
         this.currentLoss = 0;
         this.learningRate = 0;
+        this.lastKnownJobId = null;
+        this.lastReportedStatus = null;
 
         // Dynamic row limit tracking
         this.currentMaxEvents = 500;
@@ -456,6 +458,103 @@ class EventHandler {
     shouldDisplayEvent(event) {
         // Determine if an event without a message should still be displayed
         return ['train', 'validation', 'checkpoint'].includes(event.message_type);
+    }
+
+    extractJobId(event, data) {
+        const candidates = [
+            event?.job_id,
+            data?.job_id,
+            data?.jobID,
+            data?.jobId,
+            data?.job_id_current,
+            this.lastKnownJobId,
+        ];
+
+        for (const candidate of candidates) {
+            if (typeof candidate === 'string' && candidate.trim()) {
+                return candidate.trim();
+            }
+        }
+        return null;
+    }
+
+    getTrainerActionsInstance() {
+        if (window.TrainerActionsInstance && typeof window.TrainerActionsInstance.updateButtonStates === 'function') {
+            return window.TrainerActionsInstance;
+        }
+        if (window.trainerMain && window.trainerMain.actions && typeof window.trainerMain.actions.updateButtonStates === 'function') {
+            return window.trainerMain.actions;
+        }
+        return null;
+    }
+
+    notifyTrainingState(status, data = {}, options = {}) {
+        const normalizedStatus = String(status || '').toLowerCase();
+        if (!normalizedStatus) {
+            return;
+        }
+
+        const jobId = this.extractJobId({ job_id: data?.job_id }, data) || this.lastKnownJobId || null;
+
+        if (jobId) {
+            this.lastKnownJobId = jobId;
+        }
+
+        const terminalStatuses = new Set(['failed', 'error', 'fatal', 'fatal_error', 'cancelled', 'canceled', 'stopped', 'completed', 'terminated']);
+        const activeStatuses = new Set(['running', 'starting', 'initializing', 'initialising', 'configuring']);
+        const isTraining = options.forceTraining === true || activeStatuses.has(normalizedStatus);
+        const shouldResetProgress = options.resetProgress === true || terminalStatuses.has(normalizedStatus);
+
+        if (this.lastReportedStatus === normalizedStatus && !options.force && jobId === this.lastKnownJobId && !shouldResetProgress) {
+            return;
+        }
+
+        this.lastReportedStatus = normalizedStatus;
+
+        const trainerActions = this.getTrainerActionsInstance();
+        if (trainerActions) {
+            trainerActions.updateButtonStates(isTraining);
+        }
+
+        const body = document?.body;
+        if (body) {
+            body.dataset.trainingActive = isTraining ? 'true' : 'false';
+        }
+
+        const jobIdInput = document.getElementById('job_id');
+        if (jobIdInput) {
+            if (isTraining && jobId) {
+                jobIdInput.value = jobId;
+            } else if (!isTraining && (!jobId || jobIdInput.value === jobId)) {
+                jobIdInput.value = '';
+            }
+        }
+
+        const trainerStore = window.Alpine && typeof window.Alpine.store === 'function' ? window.Alpine.store('trainer') : null;
+        if (trainerStore) {
+            trainerStore.isTraining = isTraining;
+            if (shouldResetProgress) {
+                trainerStore.trainingProgress = {};
+            }
+        }
+
+        const statusDetail = {
+            status: normalizedStatus,
+            job_id: jobId,
+            source: options.source || 'event-handler',
+        };
+        if (data && typeof data === 'object') {
+            const possibleMessage = data.message || data.error || data.detail;
+            if (possibleMessage) {
+                statusDetail.message = possibleMessage;
+            }
+        }
+        window.dispatchEvent(new CustomEvent('training-status', { detail: statusDetail }));
+
+        if (shouldResetProgress) {
+            window.dispatchEvent(new CustomEvent('training-progress', { detail: { reset: true, job_id: jobId } }));
+            this.resetTrainingState();
+        }
     }
 
     formatEnhancedMessage(event) {
@@ -882,6 +981,7 @@ class EventHandler {
     processProcessKeeperEvents(events) {
         // Convert process keeper events to the format expected by updateEventList
         const formattedEvents = events.map(event => {
+            const jobId = this.extractJobId(event, event.data);
             const baseEvent = {
                 timestamp: event.timestamp || new Date().toISOString(),
                 message_type: event.type || 'info'
@@ -892,6 +992,9 @@ class EventHandler {
                 const status = event.data?.status;
                 baseEvent.message_type = this.mapStatusToEventType(status);
                 baseEvent.message = this.formatStateMessage(status, event.data);
+                if (status) {
+                    this.notifyTrainingState(status, { ...event.data, job_id: jobId }, { resetProgress: ['failed', 'error', 'fatal', 'cancelled', 'stopped', 'terminated', 'completed'].includes(String(status).toLowerCase()) });
+                }
 
                 // Update training state if relevant
                 if (event.data?.config) {
@@ -900,6 +1003,7 @@ class EventHandler {
             } else if (event.type === 'error') {
                 baseEvent.message_type = 'error';
                 baseEvent.message = event.data?.message || 'Unknown error';
+                this.notifyTrainingState('error', { ...event.data, job_id: jobId }, { resetProgress: true });
             } else if (event.type === 'webhook') {
                 baseEvent.message_type = 'info';
                 baseEvent.message = event.data?.message || '';
@@ -907,10 +1011,14 @@ class EventHandler {
                 const statusValue = (event.data?.status || event.status || '').toLowerCase();
                 baseEvent.message_type = this.mapStatusToEventType(statusValue);
                 baseEvent.message = event.message || `Training status updated: ${statusValue}`;
+                if (statusValue) {
+                    this.notifyTrainingState(statusValue, { ...event.data, job_id: jobId }, { resetProgress: ['failed', 'error', 'fatal', 'cancelled', 'stopped', 'completed'].includes(statusValue) });
+                }
             } else if (event.type === 'notification') {
                 const severity = String(event.severity || '').toLowerCase();
                 if (severity === 'error' || severity === 'fatal') {
                     baseEvent.message_type = 'fatal_error';
+                    this.notifyTrainingState('error', { ...event.data, job_id: jobId, message: event.message || event.title }, { resetProgress: true });
                 } else if (severity === 'warning') {
                     baseEvent.message_type = 'warning';
                 } else if (severity === 'success') {
@@ -929,6 +1037,8 @@ class EventHandler {
                 if (!event.data || Object.keys(event.data).length === 0) {
                     return null;
                 }
+            } else if (event.type === 'exit') {
+                this.notifyTrainingState('idle', { job_id: jobId }, { resetProgress: true, force: true });
             }
 
             return baseEvent;

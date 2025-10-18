@@ -144,7 +144,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="loss_functions",
             subsection="advanced",
-            default_value=3,
+            default_value=3.0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             help_text="Shift the noise schedule for flow-matching models",
             tooltip="Affects contrast/brightness learning. Higher values focus on composition, lower on fine details.",
