@@ -42,11 +42,8 @@ def detect_platform():
     if shutil.which("rocminfo") or shutil.which("rocm-smi"):
         return "rocm"
 
-    # Default to CUDA on Linux, CPU-only elsewhere
-    if platform.system() == "Linux":
-        return "cuda"
-    else:
-        return "cpu"
+    # Default to CPU to avoid pulling incorrect GPU packages
+    return "cpu"
 
 
 def get_version():
@@ -59,6 +56,84 @@ def get_version():
     except:
         pass
     return "3.0.0"
+
+
+def _rocm_platform_tag():
+    """Return the ROCm wheel platform tag, overridable via environment."""
+    return os.environ.get("SIMPLETUNER_ROCM_PLATFORM_TAG", "manylinux_2_28_x86_64")
+
+
+def build_rocm_wheel_url(package: str, version: str, rocm_version: str) -> str:
+    """Build a direct wheel URL for ROCm packages."""
+    py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    platform_tag = _rocm_platform_tag()
+    filename = f"{package}-{version}%2Brocm{rocm_version}-{py_tag}-{py_tag}-{platform_tag}.whl"
+    base_url = os.environ.get(
+        "SIMPLETUNER_ROCM_BASE_URL", f"https://download.pytorch.org/whl/rocm{rocm_version}"
+    )
+    return f"{package} @ {base_url}/{filename}"
+
+
+def get_cuda_dependencies():
+    return [
+        "torch>=2.9.0",
+        "torchvision>=0.24.0",
+        "torchaudio>=2.4.1",
+        "triton>=3.3.0",
+        "bitsandbytes>=0.45.0",
+        "deepspeed>=0.17.2",
+        "torchao>=0.12.0",
+        "nvidia-cudnn-cu12",
+        "nvidia-nccl-cu12",
+        "lm-eval>=0.4.4",
+    ]
+
+
+def get_rocm_dependencies():
+    rocm_version = os.environ.get("SIMPLETUNER_ROCM_VERSION", "6.4")
+    torch_version = os.environ.get("SIMPLETUNER_ROCM_TORCH_VERSION", "2.9.0")
+    torchvision_version = os.environ.get("SIMPLETUNER_ROCM_TORCHVISION_VERSION", "0.24.0")
+    torchaudio_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "2.4.1")
+    triton_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "3.5.0")
+
+    try:
+        return [
+            build_rocm_wheel_url("torch", torch_version, rocm_version),
+            build_rocm_wheel_url("torchvision", torchvision_version, rocm_version),
+            "pytorch_triton_rocm @ https://download.pytorch.org/whl/pytorch_triton_rocm-3.5.0-cp312-cp312-linux_x86_64.whl#sha256=b3a209621d0433367c489e8dce90ebc4c7c9e3bfe1c2b7adc928344f8290d5f5",
+            "torchao>=0.11.0",
+        ]
+    except Exception as exc:
+        print(f"Warning: falling back to CPU PyTorch packages because ROCm wheel configuration failed: {exc}")
+        return [
+            "torch>=2.9.0",
+            "torchvision>=0.24.0",
+            "torchao>=0.11.0",
+        ]
+
+
+def get_apple_dependencies():
+    return [
+        "torch>=2.9.0",
+        "torchvision>=0.24.0",
+        "torchao>=0.11.0",
+    ]
+
+
+def get_cpu_dependencies():
+    return [
+        "torch>=2.9.0",
+        "torchvision>=0.24.0",
+        "torchao>=0.11.0",
+    ]
+
+
+PLATFORM_DEPENDENCIES = {
+    "cuda": get_cuda_dependencies(),
+    "rocm": get_rocm_dependencies(),
+    "apple": get_apple_dependencies(),
+    "cpu": get_cpu_dependencies(),
+}
 
 
 def get_platform_dependencies():
@@ -75,65 +150,8 @@ def get_platform_dependencies():
     platform_to_use = platform_override
 
     # Base PyTorch dependencies
-    deps = []
-
-    if platform_to_use == "cuda":
-        print("Installing CUDA dependencies...")
-        deps.extend(
-            [
-                # PyTorch with CUDA
-                "torch>=2.8.0",
-                "torchvision>=0.23.0",
-                "torchaudio>=2.8.0",
-                # CUDA-specific
-                "triton>=3.3.0",
-                "bitsandbytes>=0.45.0",
-                "deepspeed>=0.17.2",
-                "torchao>=0.12.0",
-                "nvidia-cudnn-cu12",
-                "nvidia-nccl-cu12",
-                "lm-eval>=0.4.4",
-            ]
-        )
-
-    elif platform_to_use == "rocm":
-        print("Installing ROCm dependencies...")
-        deps.extend(
-            [
-                # PyTorch with ROCm - using direct URL for now
-                "torch @ https://download.pytorch.org/whl/rocm6.3/torch-2.7.0%2Brocm6.3-cp312-cp312-manylinux_2_28_x86_64.whl",
-                "torchvision>=0.22.0",  # Will need ROCm version
-                "torchaudio>=2.4.1",
-                # ROCm-specific
-                "torchao>=0.11.0",
-                # Note: pytorch_triton_rocm might need special handling
-            ]
-        )
-
-    elif platform_to_use == "apple":
-        print("Installing Apple Silicon (MPS) dependencies...")
-        deps.extend(
-            [
-                # PyTorch with MPS support
-                "torch>=2.7.1",
-                "torchvision>=0.22.1",
-                "torchaudio>=2.7.0",
-                "torchao>=0.11.0",
-                # No deepspeed on Apple
-                # No bitsandbytes on Apple (or use CPU version)
-            ]
-        )
-
-    else:  # cpu fallback
-        print("Installing CPU-only dependencies...")
-        deps.extend(
-            [
-                "torch>=2.7.1",
-                "torchvision>=0.22.1",
-                "torchaudio>=2.4.1",
-            ]
-        )
-
+    deps = PLATFORM_DEPENDENCIES.get(platform_to_use, PLATFORM_DEPENDENCIES["cpu"])
+    print(f"Installing {platform_to_use.upper()} dependencies...")
     return deps
 
 
@@ -167,6 +185,7 @@ base_deps = [
     "optimum-quanto>=0.2.7",
     "lycoris-lora>=3.2.0.post2",
     "torch-optimi>=0.2.1",
+    "torchaudio>=2.4.1",
     "toml>=0.10.2",
     "fastapi[standard]>=0.115.0",
     "sse-starlette>=1.6.5",
@@ -181,12 +200,9 @@ base_deps = [
     "peft-singlora>=0.2.0",
     "trainingsample>=0.2.1",
     "cryptography>=41.0.0",
-    # Minimal PyTorch for base install (CPU-only)
-    "torch>=2.7.1",
-    "torchvision>=0.22.1",
-    "torchaudio>=2.4.1",
-    "torchao>=0.11.0",
 ]
+
+platform_deps_for_install = get_platform_dependencies()
 
 # Optional extras
 extras_require = {
@@ -198,21 +214,10 @@ extras_require = {
         "flake8>=6.0.0",
     ],
     # Platform-specific extras for manual override
-    "cuda": [
-        "triton>=3.3.0",
-        "bitsandbytes>=0.45.0",
-        "deepspeed>=0.17.2",
-        "torchao>=0.12.0",
-        "nvidia-cudnn-cu12",
-        "nvidia-nccl-cu12",
-        "lm-eval>=0.4.4",
-    ],
-    "rocm": [
-        "torchao>=0.11.0",
-    ],
-    "apple": [
-        "torchao>=0.11.0",
-    ],
+    "cuda": list(PLATFORM_DEPENDENCIES["cuda"]),
+    "rocm": list(PLATFORM_DEPENDENCIES["rocm"]),
+    "apple": list(PLATFORM_DEPENDENCIES["apple"]),
+    "cpu": list(PLATFORM_DEPENDENCIES["cpu"]),
 }
 
 # Read long description
@@ -232,7 +237,7 @@ setup(
     # license handled by pyproject.toml
     packages=find_packages(),
     python_requires=">=3.11,<3.14",
-    install_requires=base_deps,
+    install_requires=base_deps + platform_deps_for_install,
     extras_require=extras_require,
     entry_points={
         "console_scripts": [
