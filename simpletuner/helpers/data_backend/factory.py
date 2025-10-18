@@ -1586,6 +1586,16 @@ class FactoryRegistry:
         )
 
         metadata_backend = init_backend["metadata_backend"]
+        # Coerce legacy string keys to floats for aspect ratio bucket indices to keep backwards compatibility.
+        if getattr(metadata_backend, "aspect_ratio_bucket_indices", None):
+            coerced_indices: Dict[float, list] = {}
+            for key, value in list(metadata_backend.aspect_ratio_bucket_indices.items()):
+                try:
+                    float_key = float(key)
+                except (TypeError, ValueError):
+                    float_key = key
+                coerced_indices.setdefault(float_key, list(value) if isinstance(value, list) else value)
+            metadata_backend.aspect_ratio_bucket_indices = coerced_indices
         if hasattr(metadata_backend, "_mock_children"):
             children = getattr(metadata_backend, "_mock_children", None)
             if isinstance(children, dict):

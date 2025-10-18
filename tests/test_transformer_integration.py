@@ -72,6 +72,7 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
             "flux",
             "hidream",
             "auraflow",
+            "chroma",
             "cosmos",
             "sd3",
             "pixart",
