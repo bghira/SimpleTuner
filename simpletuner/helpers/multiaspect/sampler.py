@@ -299,7 +299,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if "." not in str(bucket_name):
             self.debug_log(f"Assuming {bucket_name} is already an index.")
             return int(bucket_name)
-        return self.buckets.index(str(bucket_name))
+        try:
+            if str(bucket_name) in self.buckets:
+                return self.buckets.index(str(bucket_name))
+            if bucket_name in self.buckets:
+                return self.buckets.index(bucket_name)
+        except ValueError:
+            raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
 
     def _reset_buckets(self, raise_exhaustion_signal: bool = True):
         if len(self.metadata_backend.seen_images) == 0 and len(self._get_unseen_images()) == 0:

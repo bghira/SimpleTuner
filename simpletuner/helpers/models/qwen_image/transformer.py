@@ -187,12 +187,13 @@ class QwenTimestepProjEmbeddings(PatchableModule):
 
 
 class QwenEmbedRope(PatchableModule):
-    def __init__(self, theta: int, axes_dim: List[int], scale_rope=False):
+    def __init__(self, theta: int, axes_dim: List[int], scale_rope: bool = False):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
-        pos_index = torch.arange(4096)
-        neg_index = torch.arange(4096).flip(0) * -1 - 1
+        self._current_max_len = 1024
+        pos_index = torch.arange(self._current_max_len)
+        neg_index = torch.arange(self._current_max_len).flip(0) * -1 - 1
         self.pos_freqs = torch.cat(
             [
                 self.rope_params(pos_index, self.axes_dim[0], self.theta),
@@ -209,9 +210,8 @@ class QwenEmbedRope(PatchableModule):
             ],
             dim=1,
         )
-        self.rope_cache = {}
 
-        # DO NOT USING REGISTER BUFFER HERE, IT WILL CAUSE COMPLEX NUMBERS LOSE ITS IMAGINARY PART
+        # DO NOT USE REGISTER BUFFER HERE; COMPLEX NUMBERS MAY LOSE THEIR IMAGINARY PART
         self.scale_rope = scale_rope
 
     def rope_params(self, index, dim, theta=10000):
@@ -219,6 +219,45 @@ class QwenEmbedRope(PatchableModule):
         freqs = torch.outer(index, 1.0 / torch.pow(theta, torch.arange(0, dim, 2).to(torch.float32).div(dim)))
         freqs = torch.polar(torch.ones_like(freqs), freqs)
         return freqs
+
+    def _expand_pos_freqs_if_needed(self, required_len: int) -> None:
+        if required_len <= self._current_max_len:
+            return
+
+        new_max_len = max(required_len, int((required_len + 511) // 512) * 512)
+
+        if required_len > 512:
+            logger.warning(
+                "QwenImage model was trained on prompts up to 512 tokens. "
+                f"Current prompt requires {required_len} tokens, which may lead to unpredictable behavior. "
+                "Consider using shorter prompts for better results."
+            )
+
+        device = self.pos_freqs.device
+        dtype = self.pos_freqs.dtype
+        pos_index = torch.arange(new_max_len, device=device)
+        neg_index = torch.arange(new_max_len, device=device).flip(0) * -1 - 1
+
+        self.pos_freqs = torch.cat(
+            [
+                self.rope_params(pos_index, self.axes_dim[0], self.theta),
+                self.rope_params(pos_index, self.axes_dim[1], self.theta),
+                self.rope_params(pos_index, self.axes_dim[2], self.theta),
+            ],
+            dim=1,
+        ).to(device=device, dtype=dtype)
+
+        self.neg_freqs = torch.cat(
+            [
+                self.rope_params(neg_index, self.axes_dim[0], self.theta),
+                self.rope_params(neg_index, self.axes_dim[1], self.theta),
+                self.rope_params(neg_index, self.axes_dim[2], self.theta),
+            ],
+            dim=1,
+        ).to(device=device, dtype=dtype)
+
+        self._current_max_len = new_max_len
+        self._compute_video_freqs.cache_clear()
 
     def forward(self, video_fhw, txt_seq_lens, device):
         if self.pos_freqs.device != device:
@@ -243,14 +282,7 @@ class QwenEmbedRope(PatchableModule):
         max_vid_index = 0
         for idx, fhw in enumerate(video_fhw):
             frame, height, width = fhw
-            rope_key = f"{idx}_{height}_{width}"
-
-            if not torch.compiler.is_compiling():
-                if rope_key not in self.rope_cache:
-                    self.rope_cache[rope_key] = self._compute_video_freqs(frame, height, width, idx)
-                video_freq = self.rope_cache[rope_key]
-            else:
-                video_freq = self._compute_video_freqs(frame, height, width, idx)
+            video_freq = self._compute_video_freqs(frame, height, width, idx)
             video_freq = video_freq.to(device)
             vid_freqs.append(video_freq)
 
@@ -260,12 +292,14 @@ class QwenEmbedRope(PatchableModule):
                 max_vid_index = max(height, width, max_vid_index)
 
         max_len = max(txt_seq_lens)
+        required_len = max_vid_index + max_len
+        self._expand_pos_freqs_if_needed(required_len)
         txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + max_len, ...]
         vid_freqs = torch.cat(vid_freqs, dim=0)
 
         return vid_freqs, txt_freqs
 
-    @functools.lru_cache(maxsize=None)
+    @functools.lru_cache(maxsize=128)
     def _compute_video_freqs(self, frame, height, width, idx=0):
         seq_lens = frame * height * width
         freqs_pos = self.pos_freqs.split([x // 2 for x in self.axes_dim], dim=1)
@@ -542,8 +576,7 @@ class QwenImageTransformer2DModel(
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)
 
         self._patch_area = patch_size * patch_size
-        self._img_in_features = in_channels * self._patch_area
-        self.img_in = nn.Linear(self._img_in_features, self.inner_dim)
+        self.img_in = nn.Linear(in_channels, self.inner_dim)
         self.txt_in = nn.Linear(joint_attention_dim, self.inner_dim)
 
         self.transformer_blocks = MutableModuleList(
@@ -585,6 +618,11 @@ class QwenImageTransformer2DModel(
             stride=patch_size,
         )
         patches = patches.transpose(1, 2)
+        if patches.shape[-1] != self._img_in_features:
+            raise ValueError(
+                f"Flattened latent features ({patches.shape[-1]}) do not match expected in_channels "
+                f"({self._img_in_features}). Ensure `in_channels` equals latent_channels * patch_size^2."
+            )
         return patches, height // patch_size, width // patch_size
 
     def _unflatten_image_latents(
