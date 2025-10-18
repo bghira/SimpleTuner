@@ -26,7 +26,7 @@
     "minimum_image_size": 0,
     "mixed_precision": "bf16",
     "model_family": "wan",
-    "model_flavour": "i2v-480p-14b-2.2-low",
+    "model_flavour": "i2v-14b-2.2-low",
     "model_type": "lora",
     "num_train_epochs": 0,
     "offload_during_startup": true,

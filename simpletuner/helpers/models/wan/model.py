@@ -51,15 +51,15 @@ class Wan(VideoModelFoundation):
     HUGGINGFACE_PATHS = {
         "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
-        "i2v-480p-14b-2.2-high": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
-        "i2v-480p-14b-2.2-low": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
+        "i2v-14b-2.2-high": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
+        "i2v-14b-2.2-low": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
         # "i2v-480p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         # "i2v-720p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
     }
     MODEL_LICENSE = "apache-2.0"
 
     WAN_STAGE_OVERRIDES: Dict[str, Dict[str, object]] = {
-        "i2v-480p-14b-2.2-high": {
+        "i2v-14b-2.2-high": {
             "trained_stage": "high",
             "stage_subfolder": "high_noise_model",
             "other_stage_subfolder": "low_noise_model",
@@ -68,7 +68,7 @@ class Wan(VideoModelFoundation):
             "boundary_ratio": 0.90,
             "guidance": {"high": 3.5, "low": 3.5},
         },
-        "i2v-480p-14b-2.2-low": {
+        "i2v-14b-2.2-low": {
             "trained_stage": "low",
             "stage_subfolder": "low_noise_model",
             "other_stage_subfolder": "high_noise_model",
