@@ -44,17 +44,33 @@ requires-python = ">=3.11,<3.14"
 [project.optional-dependencies]
 # Platform-specific extras (for manual override)
 cuda = [
+    "torch>=2.9.0",
+    "torchvision>=0.24.0",
+    "torchaudio>=2.4.1",
     "triton>=3.3.0",
     "bitsandbytes>=0.45.0",
     "deepspeed>=0.17.2",
+    "torchao>=0.12.0",
     "nvidia-cudnn-cu12",
     "nvidia-nccl-cu12",
     "lm-eval>=0.4.4",
 ]
 rocm = [
+    "torch>=2.9.0",
+    "torchvision>=0.24.0",
+    "torchaudio>=2.4.1",
     "torchao>=0.11.0",
 ]
 apple = [
+    "torch>=2.9.0",
+    "torchvision>=0.24.0",
+    "torchaudio>=2.4.1",
+    "torchao>=0.11.0",
+]
+cpu = [
+    "torch>=2.9.0",
+    "torchvision>=0.24.0",
+    "torchaudio>=2.4.1",
     "torchao>=0.11.0",
 ]
 
