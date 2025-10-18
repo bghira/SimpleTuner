@@ -542,8 +542,7 @@ class QwenImageTransformer2DModel(
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)
 
         self._patch_area = patch_size * patch_size
-        self._img_in_features = in_channels * self._patch_area
-        self.img_in = nn.Linear(self._img_in_features, self.inner_dim)
+        self.img_in = nn.Linear(in_channels, self.inner_dim)
         self.txt_in = nn.Linear(joint_attention_dim, self.inner_dim)
 
         self.transformer_blocks = MutableModuleList(
