@@ -189,104 +189,264 @@
                 </div>
 
                 <div class="mt-4" x-show="answers.model_type === 'full'" x-transition>
-                    <h6 class="wizard-question-small">DeepSpeed Configuration</h6>
+                    <h6 class="wizard-question-small">Acceleration Strategy</h6>
                     <p class="text-muted small">
-                        Configure Hugging Face Accelerate's DeepSpeed integration. Choose the ZeRO stage and optional offload targets. Advanced tweaks remain available from the Hardware &gt; Accelerate tab after finishing the wizard.
+                        Choose how SimpleTuner should manage large-model training. You can enable grouped CPU offloading, Hugging Face Accelerate + DeepSpeed, or PyTorch FSDP2 sharding. Hardware &gt; Accelerate retains all advanced switches for later tweaks.
                     </p>
 
-                    <div class="btn-group w-100 mb-3" role="group" aria-label="DeepSpeed Stage">
+                    <div class="btn-group w-100 flex-wrap mb-3" role="group" aria-label="Full Training Strategy">
                         <button type="button"
                                 class="btn btn-outline-secondary"
-                                :class="{ 'active': answers.deepspeed_preset === 'disabled' }"
-                                @click.prevent="selectDeepSpeedPreset('disabled')">
-                            Disabled
+                                :class="{ 'active': answers.full_training_strategy === 'none' }"
+                                @click.prevent="selectFullTrainingStrategy('none')">
+                            None
                         </button>
                         <button type="button"
                                 class="btn btn-outline-secondary"
-                                :class="{ 'active': answers.deepspeed_preset === 'stage1' }"
-                                @click.prevent="selectDeepSpeedPreset('stage1')">
-                            ZeRO Stage 1
+                                :class="{ 'active': answers.full_training_strategy === 'group_offload' }"
+                                @click.prevent="selectFullTrainingStrategy('group_offload')">
+                            Group Offload
                         </button>
                         <button type="button"
                                 class="btn btn-outline-secondary"
-                                :class="{ 'active': answers.deepspeed_preset === 'stage2' }"
-                                @click.prevent="selectDeepSpeedPreset('stage2')">
-                            ZeRO Stage 2
+                                :class="{ 'active': answers.full_training_strategy === 'deepspeed' }"
+                                @click.prevent="selectFullTrainingStrategy('deepspeed')">
+                            DeepSpeed
                         </button>
                         <button type="button"
                                 class="btn btn-outline-secondary"
-                                :class="{ 'active': answers.deepspeed_preset === 'stage3' }"
-                                @click.prevent="selectDeepSpeedPreset('stage3')">
-                            ZeRO Stage 3
+                                :class="{ 'active': answers.full_training_strategy === 'fsdp2' }"
+                                @click.prevent="selectFullTrainingStrategy('fsdp2')">
+                            FSDP2
                         </button>
                     </div>
 
-                    <div class="row g-3">
-                        <div class="col-md-6">
-                            <label class="form-label">Parameter Offload</label>
-                            <select class="form-select"
-                                    x-model="answers.deepspeed_offload_param"
-                                    @change="updateDeepSpeedConfig()"
-                                    :disabled="answers.deepspeed_preset === 'disabled'">
-                                <option value="none">None</option>
-                                <option value="cpu">CPU</option>
-                                <option value="nvme">NVMe</option>
-                            </select>
-                            <div class="form-text">NVMe requires a fast disk path; CPU keeps tensors in host memory.</div>
+                    <div class="alert alert-secondary small"
+                         x-show="answers.full_training_strategy === 'none'">
+                        <i class="fas fa-microchip me-2"></i>
+                        Keep the default single-process Accelerate launch. You can still enable CPU offload or sharding later from Hardware &gt; Accelerate if your run requires it.
+                    </div>
+
+                    <div class="mt-4"
+                         x-show="answers.full_training_strategy === 'group_offload'"
+                         x-transition>
+                        <h6 class="wizard-question-small">Group Offload Options</h6>
+                        <p class="text-muted small">
+                            Diffusers&rsquo; group offload moves configured module groups to CPU (or disk) between forward passes, freeing VRAM on small GPUs. SimpleTuner wires the correct CLI flags automatically.
+                        </p>
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Offload Granularity</label>
+                                <select class="form-select"
+                                        x-model="answers.group_offload_type">
+                                    <option value="block_level">Block level (balanced)</option>
+                                    <option value="leaf_level">Leaf level (max savings)</option>
+                                </select>
+                                <div class="form-text">Block level keeps multiple layers together for higher throughput; leaf level maximises memory savings.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Blocks per Group</label>
+                                <input type="number"
+                                       min="1"
+                                       class="form-control"
+                                       :disabled="answers.group_offload_type !== 'block_level'"
+                                       x-model.number="answers.group_offload_blocks_per_group">
+                                <div class="form-text">Only used with block-level grouping. Higher values reduce transfers but require more VRAM.</div>
+                            </div>
                         </div>
-                        <div class="col-md-6">
-                            <label class="form-label">Optimizer Offload</label>
-                            <select class="form-select"
-                                    x-model="answers.deepspeed_offload_optimizer"
-                                    @change="updateDeepSpeedConfig()"
-                                    :disabled="answers.deepspeed_preset === 'disabled'">
-                                <option value="none">None</option>
-                                <option value="cpu">CPU</option>
-                                <option value="nvme">NVMe</option>
-                            </select>
-                            <div class="form-text">Optimizer offload reduces GPU memory at the cost of host or disk bandwidth.</div>
+
+                        <div class="form-check mt-3">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="group-offload-stream"
+                                   x-model="answers.group_offload_use_stream">
+                            <label class="form-check-label" for="group-offload-stream">
+                                Use CUDA streams to overlap offload transfers with compute
+                            </label>
+                        </div>
+
+                        <div class="mt-3">
+                            <label class="form-label">Optional Disk Spill Path</label>
+                            <input type="text"
+                                   class="form-control"
+                                   placeholder="/tmp/simpletuner-offload"
+                                   x-model="answers.group_offload_to_disk_path">
+                            <div class="form-text">Leave blank to keep tensors in host RAM. Provide a fast NVMe directory when memory is extremely tight.</div>
                         </div>
                     </div>
 
-                    <div class="mt-3"
-                         x-show="answers.deepspeed_preset !== 'disabled' && (answers.deepspeed_offload_param === 'nvme' || answers.deepspeed_offload_optimizer === 'nvme')">
-                        <label class="form-label">NVMe Offload Path</label>
-                        <input type="text"
-                               class="form-control"
-                               placeholder="/mnt/nvme/simpletuner"
-                               :disabled="answers.deepspeed_preset === 'disabled'"
-                               :value="answers.deepspeed_offload_path"
-                               @input="answers.deepspeed_offload_path = $event.target.value; updateDeepSpeedConfig()">
-                        <div class="form-text">Matches <code>--offload_param_path</code>. Leave blank to require a path before training starts.</div>
-                    </div>
+                    <div class="mt-4"
+                         x-show="answers.full_training_strategy === 'deepspeed'"
+                         x-transition>
+                        <h6 class="wizard-question-small">DeepSpeed Configuration</h6>
+                        <p class="text-muted small">
+                            Configure 🤗 Accelerate&rsquo;s DeepSpeed integration. Choose the ZeRO stage and optional offload targets. Advanced edits remain available from Hardware &gt; Accelerate after closing the wizard.
+                        </p>
 
-                    <div class="form-check mt-3"
-                         x-show="answers.deepspeed_preset === 'stage3'">
-                        <input class="form-check-input"
-                               type="checkbox"
-                               id="deepspeed-zero3-init"
-                               x-model="answers.deepspeed_zero3_init"
-                               @change="updateDeepSpeedConfig()">
-                        <label class="form-check-label" for="deepspeed-zero3-init">
-                            Enable zero.Init for ZeRO Stage 3 (build massive models)
-                        </label>
-                    </div>
-
-                    <div class="mt-3">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <label class="form-label mb-0">Generated DeepSpeed JSON</label>
+                        <div class="btn-group w-100 mb-3" role="group" aria-label="DeepSpeed Stage">
                             <button type="button"
-                                    class="btn btn-outline-primary btn-sm"
-                                    @click.prevent="openDeepSpeedBuilder()">
-                                DeepSpeed Builder
+                                    class="btn btn-outline-secondary"
+                                    :class="{ 'active': answers.deepspeed_preset === 'disabled' }"
+                                    @click.prevent="selectDeepSpeedPreset('disabled')">
+                                Disabled
+                            </button>
+                            <button type="button"
+                                    class="btn btn-outline-secondary"
+                                    :class="{ 'active': answers.deepspeed_preset === 'stage1' }"
+                                    @click.prevent="selectDeepSpeedPreset('stage1')">
+                                ZeRO Stage 1
+                            </button>
+                            <button type="button"
+                                    class="btn btn-outline-secondary"
+                                    :class="{ 'active': answers.deepspeed_preset === 'stage2' }"
+                                    @click.prevent="selectDeepSpeedPreset('stage2')">
+                                ZeRO Stage 2
+                            </button>
+                            <button type="button"
+                                    class="btn btn-outline-secondary"
+                                    :class="{ 'active': answers.deepspeed_preset === 'stage3' }"
+                                    @click.prevent="selectDeepSpeedPreset('stage3')">
+                                ZeRO Stage 3
                             </button>
                         </div>
-                        <textarea id="training-wizard-deepspeed-config"
-                                  class="d-none"
-                                  x-init="registerDeepSpeedBuilderField($el)"></textarea>
-                        <pre class="bg-body-tertiary p-3 rounded small mb-2" x-text="answers.deepspeed_config ? answers.deepspeed_config : 'DeepSpeed disabled for this run.'"></pre>
-                        <div class="form-text">
-                            The wizard keeps this JSON in sync. Advanced edits can be made directly from the Hardware tab after closing the wizard.
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Parameter Offload</label>
+                                <select class="form-select"
+                                        x-model="answers.deepspeed_offload_param"
+                                        @change="updateDeepSpeedConfig()"
+                                        :disabled="answers.deepspeed_preset === 'disabled'">
+                                    <option value="none">None</option>
+                                    <option value="cpu">CPU</option>
+                                    <option value="nvme">NVMe</option>
+                                </select>
+                                <div class="form-text">NVMe requires a fast disk path; CPU keeps tensors in host memory.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Optimizer Offload</label>
+                                <select class="form-select"
+                                        x-model="answers.deepspeed_offload_optimizer"
+                                        @change="updateDeepSpeedConfig()"
+                                        :disabled="answers.deepspeed_preset === 'disabled'">
+                                    <option value="none">None</option>
+                                    <option value="cpu">CPU</option>
+                                    <option value="nvme">NVMe</option>
+                                </select>
+                                <div class="form-text">Optimizer offload reduces GPU memory at the cost of host or disk bandwidth.</div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3"
+                             x-show="answers.deepspeed_preset !== 'disabled' && (answers.deepspeed_offload_param === 'nvme' || answers.deepspeed_offload_optimizer === 'nvme')">
+                            <label class="form-label">NVMe Offload Path</label>
+                            <input type="text"
+                                   class="form-control"
+                                   placeholder="/mnt/nvme/simpletuner"
+                                   :disabled="answers.deepspeed_preset === 'disabled'"
+                                   :value="answers.deepspeed_offload_path"
+                                   @input="answers.deepspeed_offload_path = $event.target.value; updateDeepSpeedConfig()">
+                            <div class="form-text">Matches <code>--offload_param_path</code>. Leave blank to require a path before training starts.</div>
+                        </div>
+
+                        <div class="form-check mt-3"
+                             x-show="answers.deepspeed_preset === 'stage3'">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="deepspeed-zero3-init"
+                                   x-model="answers.deepspeed_zero3_init"
+                                   @change="updateDeepSpeedConfig()">
+                            <label class="form-check-label" for="deepspeed-zero3-init">
+                                Enable zero.Init for ZeRO Stage 3 (build massive models)
+                            </label>
+                        </div>
+
+                        <div class="mt-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label mb-0">Generated DeepSpeed JSON</label>
+                                <button type="button"
+                                        class="btn btn-outline-primary btn-sm"
+                                        @click.prevent="openDeepSpeedBuilder()">
+                                    DeepSpeed Builder
+                                </button>
+                            </div>
+                            <textarea id="training-wizard-deepspeed-config"
+                                      class="d-none"
+                                      x-init="registerDeepSpeedBuilderField($el)"></textarea>
+                            <pre class="bg-body-tertiary p-3 rounded small mb-2" x-text="answers.deepspeed_config ? answers.deepspeed_config : 'DeepSpeed disabled for this run.'"></pre>
+                            <div class="form-text">
+                                The wizard keeps this JSON in sync. Advanced edits can be made directly from the Hardware tab after closing the wizard.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4"
+                         x-show="answers.full_training_strategy === 'fsdp2'"
+                         x-transition>
+                        <h6 class="wizard-question-small">FSDP2 Configuration</h6>
+                        <p class="text-muted small">
+                            FSDP2 shards model parameters, optimizer state, and activations across GPUs. SimpleTuner enables Accelerate&rsquo;s DTensor-backed implementation and exposes the most common toggles here.
+                        </p>
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Checkpoint Format</label>
+                                <select class="form-select"
+                                        x-model="answers.fsdp_state_dict_type">
+                                    <option value="SHARDED_STATE_DICT">Sharded (recommended)</option>
+                                    <option value="FULL_STATE_DICT">Full state dict</option>
+                                </select>
+                                <div class="form-text">Sharded checkpoints save memory by keeping tensors distributed when writing to disk.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Context Parallel Size</label>
+                                <input type="number"
+                                       min="1"
+                                       class="form-control"
+                                       x-model.number="answers.context_parallel_size">
+                                <div class="form-text">Set &gt; 1 to shard attention / context across GPUs. Requires models that support context parallelism.</div>
+                            </div>
+                        </div>
+
+                        <div class="form-check mt-3">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="fsdp-reshard"
+                                   x-model="answers.fsdp_reshard_after_forward">
+                            <label class="form-check-label" for="fsdp-reshard">
+                                Reshard parameters after forward pass (lower VRAM, more communication)
+                            </label>
+                        </div>
+
+                        <div class="form-check mt-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="fsdp-cpu-loading"
+                                   x-model="answers.fsdp_cpu_ram_efficient_loading">
+                            <label class="form-check-label" for="fsdp-cpu-loading">
+                                CPU RAM efficient checkpoint loading
+                            </label>
+                        </div>
+
+                        <div class="mt-3">
+                            <label class="form-label">Auto Wrap Policy</label>
+                            <select class="form-select"
+                                    x-model="answers.fsdp_auto_wrap_policy">
+                                <option value="TRANSFORMER_BASED_WRAP">Transformer based (recommended)</option>
+                                <option value="SIZE_BASED_WRAP">Size based</option>
+                                <option value="NO_WRAP">No wrap</option>
+                            </select>
+                            <div class="form-text">Transformer-based wrapping covers most diffusion transformers. Size-based lets you wrap by parameter count.</div>
+                        </div>
+
+                        <div class="mt-3">
+                            <label class="form-label">Custom Layer Classes (optional)</label>
+                            <input type="text"
+                                   class="form-control"
+                                   placeholder="TransformerBlock,DiffusionTransformerLayer"
+                                   x-model="answers.fsdp_transformer_layer_cls_to_wrap">
+                            <div class="form-text">Override Accelerate&rsquo;s detected layer classes when validation errors request a specific module.</div>
                         </div>
                     </div>
                 </div>

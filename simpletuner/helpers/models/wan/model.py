@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+from typing import Dict, Optional
 
 import torch
 from diffusers import AutoencoderKLWan
@@ -50,10 +51,33 @@ class Wan(VideoModelFoundation):
     HUGGINGFACE_PATHS = {
         "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
+        "i2v-14b-2.2-high": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
+        "i2v-14b-2.2-low": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
         # "i2v-480p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         # "i2v-720p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
     }
     MODEL_LICENSE = "apache-2.0"
+
+    WAN_STAGE_OVERRIDES: Dict[str, Dict[str, object]] = {
+        "i2v-14b-2.2-high": {
+            "trained_stage": "high",
+            "stage_subfolder": "high_noise_model",
+            "other_stage_subfolder": "low_noise_model",
+            "flow_shift": 5.0,
+            "sample_steps": 40,
+            "boundary_ratio": 0.90,
+            "guidance": {"high": 3.5, "low": 3.5},
+        },
+        "i2v-14b-2.2-low": {
+            "trained_stage": "low",
+            "stage_subfolder": "low_noise_model",
+            "other_stage_subfolder": "high_noise_model",
+            "flow_shift": 5.0,
+            "sample_steps": 40,
+            "boundary_ratio": 0.90,
+            "guidance": {"high": 3.5, "low": 3.5},
+        },
+    }
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -64,6 +88,122 @@ class Wan(VideoModelFoundation):
             "model": UMT5EncoderModel,
         },
     }
+
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._wan_cached_stage_modules: Dict[str, WanTransformer3DModel] = {}
+        if not hasattr(self.config, "wan_force_2_1_time_embedding"):
+            self.config.wan_force_2_1_time_embedding = False
+
+    def requires_conditioning_image_embeds(self) -> bool:
+        return self._wan_stage_info() is not None
+
+    def setup_model_flavour(self):
+        super().setup_model_flavour()
+        stage_info = self._wan_stage_info()
+        if stage_info is None:
+            return
+
+        if getattr(self.config, "pretrained_transformer_model_name_or_path", None) is None:
+            self.config.pretrained_transformer_model_name_or_path = self.config.pretrained_model_name_or_path
+        self.config.pretrained_transformer_subfolder = stage_info["stage_subfolder"]
+
+        self.config.wan_trained_stage = stage_info["trained_stage"]
+        self.config.wan_stage_main_subfolder = stage_info["stage_subfolder"]
+        self.config.wan_stage_other_subfolder = stage_info["other_stage_subfolder"]
+        self.config.wan_boundary_ratio = stage_info["boundary_ratio"]
+
+        self.config.flow_schedule_shift = stage_info["flow_shift"]
+        self.config.validation_num_inference_steps = stage_info["sample_steps"]
+        self.config.validation_guidance = stage_info["guidance"][stage_info["trained_stage"]]
+
+        if not hasattr(self.config, "wan_validation_load_other_stage"):
+            self.config.wan_validation_load_other_stage = False
+
+    def _wan_stage_info(self) -> Optional[Dict[str, object]]:
+        flavour = getattr(self.config, "model_flavour", None)
+        return self.WAN_STAGE_OVERRIDES.get(flavour)
+
+    def _apply_time_embedding_override(self, transformer: Optional[WanTransformer3DModel]) -> None:
+        if transformer is None:
+            return
+        target = self.unwrap_model(transformer)
+        setter = getattr(target, "set_time_embedding_v2_1", None)
+        if callable(setter):
+            setter(bool(getattr(self.config, "wan_force_2_1_time_embedding", False)))
+
+    def _should_load_other_stage(self) -> bool:
+        stage_info = self._wan_stage_info()
+        if stage_info is None:
+            return False
+        return bool(getattr(self.config, "wan_validation_load_other_stage", False))
+
+    def _get_or_load_wan_stage_module(self, subfolder: str) -> WanTransformer3DModel:
+        if subfolder in self._wan_cached_stage_modules:
+            return self._wan_cached_stage_modules[subfolder]
+
+        logger.info("Loading Wan stage weights for validation from subfolder '%s'.", subfolder)
+        stage = self.MODEL_CLASS.from_pretrained(
+            self.config.pretrained_model_name_or_path,
+            subfolder=subfolder,
+            torch_dtype=self.config.weight_dtype,
+            use_safetensors=True,
+        )
+        stage.requires_grad_(False)
+        stage.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        stage.eval()
+        self._apply_time_embedding_override(stage)
+        self._wan_cached_stage_modules[subfolder] = stage
+        return stage
+
+    def unload_model(self):
+        super().unload_model()
+        self._wan_cached_stage_modules.clear()
+
+    def set_prepared_model(self, model, base_model: bool = False):
+        super().set_prepared_model(model, base_model)
+        if not base_model:
+            self._apply_time_embedding_override(self.model)
+
+    def get_group_offload_components(self, pipeline):
+        components = dict(super().get_group_offload_components(pipeline))
+        transformer_2 = getattr(pipeline, "transformer_2", None)
+        if transformer_2 is not None:
+            components.setdefault("transformer_2", transformer_2)
+        return components
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        pipeline = super().get_pipeline(pipeline_type, load_base_model)
+        stage_info = self._wan_stage_info()
+        if stage_info is None:
+            return pipeline
+
+        load_other = self._should_load_other_stage()
+        trained_stage = stage_info["trained_stage"]
+        other_subfolder = stage_info["other_stage_subfolder"]
+
+        if trained_stage == "low":
+            if load_other:
+                pipeline.transformer_2 = pipeline.transformer
+                pipeline.transformer = self._get_or_load_wan_stage_module(other_subfolder)
+            else:
+                pipeline.transformer_2 = None
+        else:  # trained_stage == "high"
+            if load_other:
+                pipeline.transformer_2 = self._get_or_load_wan_stage_module(other_subfolder)
+            else:
+                pipeline.transformer_2 = None
+
+        if load_other:
+            pipeline.config.boundary_ratio = stage_info["boundary_ratio"]
+        else:
+            pipeline.config.boundary_ratio = None
+
+        self._apply_time_embedding_override(getattr(pipeline, "transformer", None))
+        if getattr(pipeline, "transformer_2", None) is not None:
+            self._apply_time_embedding_override(pipeline.transformer_2)
+
+        return pipeline
 
     def tread_init(self):
         """
@@ -97,7 +237,19 @@ class Wan(VideoModelFoundation):
         # Wan video should max out around 81 frames for efficiency.
         pipeline_kwargs["num_frames"] = min(81, self.config.validation_num_video_frames or 81)
         pipeline_kwargs["output_type"] = "pil"
-        # replace embeds with prompt
+
+        stage_info = self._wan_stage_info()
+        if stage_info is not None:
+            trained_stage = stage_info["trained_stage"]
+            pipeline_kwargs["num_inference_steps"] = stage_info["sample_steps"]
+            pipeline_kwargs["guidance_scale"] = stage_info["guidance"][trained_stage]
+            if self._should_load_other_stage():
+                other_stage = "low" if trained_stage == "high" else "high"
+                pipeline_kwargs["guidance_scale_2"] = stage_info["guidance"][other_stage]
+            else:
+                pipeline_kwargs.pop("guidance_scale_2", None)
+        else:
+            pipeline_kwargs.pop("guidance_scale_2", None)
 
         return pipeline_kwargs
 
@@ -172,6 +324,11 @@ class Wan(VideoModelFoundation):
             "return_dict": False,
         }
 
+        if prepared_batch.get("conditioning_image_embeds") is not None:
+            wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch["conditioning_image_embeds"].to(
+                self.config.weight_dtype
+            )
+
         # For masking with TREAD, avoid dropping any tokens that are in the mask
         if (
             getattr(self.config, "tread_config", None) is not None
@@ -216,6 +373,19 @@ class Wan(VideoModelFoundation):
         """
         Checks self.config values against important issues.
         """
+        stage_info = self._wan_stage_info()
+        if stage_info is not None:
+            trained_stage = stage_info["trained_stage"]
+            self.config.validation_guidance = stage_info["guidance"][trained_stage]
+            if hasattr(self.config, "validation_guidance_skip_layers"):
+                self.config.validation_guidance_skip_layers = None
+            if hasattr(self.config, "validation_guidance_skip_layers_start"):
+                self.config.validation_guidance_skip_layers_start = None
+            if hasattr(self.config, "validation_guidance_skip_layers_stop"):
+                self.config.validation_guidance_skip_layers_stop = None
+            if hasattr(self.config, "validation_guidance_skip_scale"):
+                self.config.validation_guidance_skip_scale = None
+
         if self.config.base_model_precision == "fp8-quanto":
             raise ValueError(
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."

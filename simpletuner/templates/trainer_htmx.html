@@ -277,6 +277,7 @@ function trainerComponent() {
         modelContext: {
             requiresConditioningDataset: false,
             requiresConditioningLatents: false,
+            requiresConditioningImageEmbeds: false,
             requiresConditioningValidationInputs: false,
             requiresValidationEditCaptions: false,
             supportsConditioningGenerators: false,
@@ -532,6 +533,11 @@ function trainerComponent() {
                     if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_latents')) {
                         context.requiresConditioningLatents = Boolean(requirementOverrides.requires_conditioning_latents);
                     }
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_image_embeds')) {
+                        context.requiresConditioningImageEmbeds = Boolean(
+                            requirementOverrides.requires_conditioning_image_embeds,
+                        );
+                    }
                     if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_validation_inputs')) {
                         context.requiresConditioningValidationInputs = Boolean(
                             requirementOverrides.requires_conditioning_validation_inputs,
@@ -561,6 +567,7 @@ function trainerComponent() {
             return {
                 requiresConditioningDataset: false,
                 requiresConditioningLatents: false,
+                requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: false,
                 requiresValidationEditCaptions: false,
                 conditioningDatasetType: 'conditioning',
@@ -662,6 +669,7 @@ function trainerComponent() {
             return {
                 requiresConditioningDataset: requiresDataset,
                 requiresConditioningLatents: requiresLatents,
+                requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: requiresValidationInputs,
                 requiresValidationEditCaptions,
                 conditioningDatasetType,

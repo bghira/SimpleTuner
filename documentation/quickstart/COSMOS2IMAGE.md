@@ -10,6 +10,23 @@ Cosmos2 Predict (Image) is a vision transformer-based model that uses flow match
 
 A 24GB GPU is recommended as the minimum for comfortable training without extensive optimizations.
 
+### Memory offloading (optional)
+
+To squeeze Cosmos2 into smaller GPUs, enable grouped offloading:
+
+```bash
+--enable_group_offload \
+--group_offload_type block_level \
+--group_offload_blocks_per_group 1 \
+--group_offload_use_stream \
+# optional: spill offloaded weights to disk instead of RAM
+# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
+```
+
+- Streams are only honoured on CUDA; other devices fall back automatically.
+- Do not combine this with `--enable_model_cpu_offload`.
+- Disk staging is optional and helps when system RAM is the bottleneck.
+
 ### Prerequisites
 
 Make sure that you have python installed; SimpleTuner does well with 3.10 through 3.12.

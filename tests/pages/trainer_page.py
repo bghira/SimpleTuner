@@ -145,6 +145,7 @@ class TrainerPage(BasePage):
                           return Promise.resolve(jsonResponse({
                             requiresConditioningDataset: false,
                             requiresConditioningLatents: false,
+                            requiresConditioningImageEmbeds: false,
                             requiresConditioningValidationInputs: false,
                             requiresValidationEditCaptions: false,
                             supportsConditioningGenerators: false,
@@ -317,6 +318,55 @@ class TrainerPage(BasePage):
             )
         except TimeoutException:
             pass
+
+        self.driver.execute_script(
+            """
+            (function installHarnessHtmxTracker() {
+              if (window.__trainerHarnessHtmxTrackerInstalled) {
+                return;
+              }
+              window.__trainerHarnessHtmxTrackerInstalled = true;
+              const clamp = () => {
+                if (typeof window.__trainerHarnessHtmxPending !== 'number' || window.__trainerHarnessHtmxPending < 0) {
+                  window.__trainerHarnessHtmxPending = 0;
+                }
+              };
+              window.__trainerHarnessHtmxPending = window.__trainerHarnessHtmxPending || 0;
+              const bump = (delta) => {
+                window.__trainerHarnessHtmxPending = (window.__trainerHarnessHtmxPending || 0) + delta;
+                clamp();
+              };
+              const settleIfIdle = () => {
+                clamp();
+                if (!document.querySelector('[hx-request]')) {
+                  window.__trainerHarnessHtmxPending = 0;
+                  window.dispatchEvent(new CustomEvent('trainerHarness:htmxIdle'));
+                }
+              };
+              const attachListeners = (target) => {
+                if (!target) {
+                  return false;
+                }
+                const increment = () => bump(1);
+                const decrement = () => {
+                  bump(-1);
+                  settleIfIdle();
+                };
+                target.addEventListener('htmx:beforeRequest', increment);
+                target.addEventListener('htmx:afterRequest', decrement);
+                target.addEventListener('htmx:sendError', decrement);
+                target.addEventListener('htmx:responseError', decrement);
+                target.addEventListener('htmx:timeout', decrement);
+                target.addEventListener('htmx:afterSettle', settleIfIdle);
+                return true;
+              };
+              if (!attachListeners(document.body)) {
+                document.addEventListener('DOMContentLoaded', () => attachListeners(document.body), { once: true });
+              }
+              settleIfIdle();
+            })();
+            """
+        )
 
         self._wait_for_trainer_ready("basic")
 

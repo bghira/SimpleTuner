@@ -249,6 +249,7 @@ class SeleniumTestCase(unittest.TestCase):
     """Base class that mirrors the old pytest Selenium fixtures."""
 
     BROWSERS: Iterable[str] = _DEFAULT_BROWSERS
+    MAX_BROWSERS: int | None = None
     base_url: str = ""
     _driver_cache: Dict[str, webdriver.Remote]
 
@@ -313,7 +314,11 @@ class SeleniumTestCase(unittest.TestCase):
             pass
 
     def for_each_browser(self, label: str, callback) -> None:
-        for browser in iter_browsers(self.BROWSERS):
+        browsers = list(iter_browsers(self.BROWSERS))
+        max_browsers = getattr(self, "MAX_BROWSERS", None)
+        if isinstance(max_browsers, int) and max_browsers > 0:
+            browsers = browsers[:max_browsers]
+        for browser in browsers:
             with self.subTest(browser=browser):
                 driver = self._ensure_browser(browser)
                 self._reset_browser_state(driver)

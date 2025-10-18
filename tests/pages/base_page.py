@@ -1,5 +1,7 @@
 """Base page class for Page Object Model."""
 
+import time
+
 from selenium.common.exceptions import ElementNotInteractableException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
@@ -150,19 +152,39 @@ class BasePage:
             lambda driver: driver.execute_script("return typeof jQuery !== 'undefined' ? jQuery.active == 0 : true")
         )
 
-    def wait_for_htmx(self, timeout=10):
-        """Wait for HTMX requests to complete.
+    def wait_for_htmx(self, timeout=3, poll_interval=0.05):
+        """Wait for HTMX requests to complete without incurring long timeouts.
 
         Args:
-            timeout: Maximum wait time
+            timeout: Maximum wait time in seconds.
+            poll_interval: Delay between checks in seconds.
         """
-        WebDriverWait(self.driver, timeout).until(
-            lambda driver: driver.execute_script(
-                "if (typeof htmx === 'undefined') { return true; }"
-                "const active = document.querySelector('[hx-request]');"
-                "return !active;"
-            )
-        )
+        deadline = time.monotonic() + max(timeout, 0.5)
+
+        def _pending_requests():
+            try:
+                return self.driver.execute_script(
+                    """
+                    if (typeof window.__trainerHarnessHtmxPending === 'number') {
+                      return window.__trainerHarnessHtmxPending;
+                    }
+                    if (typeof htmx === 'undefined') {
+                      return 0;
+                    }
+                    return document.querySelector('[hx-request]') ? 1 : 0;
+                    """
+                )
+            except Exception:
+                return 0
+
+        while time.monotonic() < deadline:
+            if not _pending_requests():
+                return
+            time.sleep(max(poll_interval, 0.01))
+
+        # Final check before raising a timeout to avoid false positives
+        if _pending_requests():
+            raise TimeoutException("HTMX requests did not settle within timeout")
 
     def get_toast_message(self):
         """Get the current toast notification message.

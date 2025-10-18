@@ -17,7 +17,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin
 from diffusers.models.activations import get_activation
 from diffusers.models.autoencoders.vae import DecoderOutput, DiagonalGaussianDistribution
@@ -1079,7 +1079,6 @@ class AutoencoderKLLTXVideo(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
     _supports_gradient_checkpointing = True
 
-    @register_to_config
     def __init__(
         self,
         in_channels: int = 3,
@@ -1112,6 +1111,31 @@ class AutoencoderKLLTXVideo(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         temporal_compression_ratio: int = None,
     ) -> None:
         super().__init__()
+        self.register_to_config(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            latent_channels=latent_channels,
+            block_out_channels=block_out_channels,
+            down_block_types=down_block_types,
+            decoder_block_out_channels=decoder_block_out_channels,
+            layers_per_block=layers_per_block,
+            decoder_layers_per_block=decoder_layers_per_block,
+            spatio_temporal_scaling=spatio_temporal_scaling,
+            decoder_spatio_temporal_scaling=decoder_spatio_temporal_scaling,
+            decoder_inject_noise=decoder_inject_noise,
+            downsample_type=downsample_type,
+            upsample_residual=upsample_residual,
+            upsample_factor=upsample_factor,
+            timestep_conditioning=timestep_conditioning,
+            patch_size=patch_size,
+            patch_size_t=patch_size_t,
+            resnet_norm_eps=resnet_norm_eps,
+            scaling_factor=scaling_factor,
+            encoder_causal=encoder_causal,
+            decoder_causal=decoder_causal,
+            spatial_compression_ratio=spatial_compression_ratio,
+            temporal_compression_ratio=temporal_compression_ratio,
+        )
 
         self.encoder = LTXVideoEncoder3d(
             in_channels=in_channels,

@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import AttentionMixin, AttentionModuleMixin, FeedForward
 from diffusers.models.attention_dispatch import dispatch_attention_fn
@@ -410,7 +410,6 @@ class LTXVideoTransformer3DModel(
     _skip_layerwise_casting_patterns = ["norm"]
     _repeated_blocks = ["LTXVideoTransformerBlock"]
 
-    @register_to_config
     def __init__(
         self,
         in_channels: int = 128,
@@ -431,7 +430,26 @@ class LTXVideoTransformer3DModel(
     ) -> None:
         super().__init__()
 
-        out_channels = out_channels or in_channels
+        effective_out_channels = out_channels or in_channels
+        self.register_to_config(
+            in_channels=in_channels,
+            out_channels=effective_out_channels,
+            patch_size=patch_size,
+            patch_size_t=patch_size_t,
+            num_attention_heads=num_attention_heads,
+            attention_head_dim=attention_head_dim,
+            cross_attention_dim=cross_attention_dim,
+            num_layers=num_layers,
+            activation_fn=activation_fn,
+            qk_norm=qk_norm,
+            norm_elementwise_affine=norm_elementwise_affine,
+            norm_eps=norm_eps,
+            caption_channels=caption_channels,
+            attention_bias=attention_bias,
+            attention_out_bias=attention_out_bias,
+        )
+
+        out_channels = effective_out_channels
         inner_dim = num_attention_heads * attention_head_dim
 
         self.proj_in = nn.Linear(in_channels, inner_dim)

@@ -4,7 +4,7 @@ import einops
 import numpy as np
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
@@ -839,7 +839,6 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
     _supports_gradient_checkpointing = True
     _no_split_modules = ["HiDreamImageBlock"]
 
-    @register_to_config
     def __init__(
         self,
         patch_size: Optional[int] = None,
@@ -859,7 +858,25 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         aux_loss_alpha: float = 0.0,
     ):
         super().__init__()
-        self.out_channels = out_channels or in_channels
+        effective_out_channels = out_channels or in_channels
+        self.register_to_config(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            out_channels=effective_out_channels,
+            num_layers=num_layers,
+            num_single_layers=num_single_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            caption_channels=caption_channels,
+            text_emb_dim=text_emb_dim,
+            num_routed_experts=num_routed_experts,
+            num_activated_experts=num_activated_experts,
+            axes_dims_rope=axes_dims_rope,
+            max_resolution=max_resolution,
+            llama_layers=llama_layers,
+            aux_loss_alpha=aux_loss_alpha,
+        )
+        self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
         self.llama_layers = llama_layers
 

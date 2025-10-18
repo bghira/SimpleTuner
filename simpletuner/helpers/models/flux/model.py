@@ -228,6 +228,14 @@ class Flux(ImageModelFoundation):
             return True
         return False
 
+    def get_group_offload_components(self, pipeline):
+        components = dict(super().get_group_offload_components(pipeline))
+        if "transformer" not in components and getattr(self, "model", None) is not None:
+            components["transformer"] = self.unwrap_model(self.model)
+        if self.config.controlnet and "controlnet" not in components and getattr(self, "controlnet", None) is not None:
+            components["controlnet"] = self.unwrap_model(self.controlnet)
+        return components
+
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
         Models can optionally format the stored text embedding, eg. in a dict, or

@@ -8,7 +8,7 @@ import numpy as np
 import PIL.Image
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, PeftAdapterMixin
 from diffusers.models.autoencoders import AutoencoderKL
@@ -69,7 +69,6 @@ class HiDreamControlNetOutput(BaseOutput):
 class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
 
-    @register_to_config
     def __init__(
         self,
         patch_size: int = 2,
@@ -89,6 +88,24 @@ class HiDreamControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         aux_loss_alpha: float = 0.01,
     ):
         super().__init__()
+
+        self.register_to_config(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            num_layers=num_layers,
+            num_single_layers=num_single_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            pooled_projection_dim=pooled_projection_dim,
+            guidance_embeds=guidance_embeds,
+            max_seq_length=max_seq_length,
+            conditioning_embedding_channels=conditioning_embedding_channels,
+            axes_dims_rope=axes_dims_rope,
+            num_routed_experts=num_routed_experts,
+            num_activated_experts=num_activated_experts,
+            aux_loss_alpha=aux_loss_alpha,
+        )
 
         self.inner_dim = num_attention_heads * attention_head_dim
         self.max_seq = max_seq_length

@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.attention import BasicTransformerBlock
 from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor, FusedAttnProcessor2_0
@@ -86,7 +86,6 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
-    @register_to_config
     def __init__(
         self,
         num_attention_heads: int = 16,
@@ -123,15 +122,41 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 f"When using a `patch_size` and this `norm_type` ({norm_type}), `num_embeds_ada_norm` cannot be None."
             )
 
-        # Set some common variables used across the board.
-        self.attention_head_dim = attention_head_dim
-        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
-        self.out_channels = in_channels if out_channels is None else out_channels
         if use_additional_conditions is None:
             if sample_size == 128:
                 use_additional_conditions = True
             else:
                 use_additional_conditions = False
+
+        effective_out_channels = in_channels if out_channels is None else out_channels
+        self.register_to_config(
+            num_attention_heads=num_attention_heads,
+            attention_head_dim=attention_head_dim,
+            in_channels=in_channels,
+            out_channels=effective_out_channels,
+            num_layers=num_layers,
+            dropout=dropout,
+            norm_num_groups=norm_num_groups,
+            cross_attention_dim=cross_attention_dim,
+            attention_bias=attention_bias,
+            sample_size=sample_size,
+            patch_size=patch_size,
+            activation_fn=activation_fn,
+            num_embeds_ada_norm=num_embeds_ada_norm,
+            upcast_attention=upcast_attention,
+            norm_type=norm_type,
+            norm_elementwise_affine=norm_elementwise_affine,
+            norm_eps=norm_eps,
+            interpolation_scale=interpolation_scale,
+            use_additional_conditions=use_additional_conditions,
+            caption_channels=caption_channels,
+            attention_type=attention_type,
+        )
+
+        # Set some common variables used across the board.
+        self.attention_head_dim = attention_head_dim
+        self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
+        self.out_channels = effective_out_channels
         self.use_additional_conditions = use_additional_conditions
 
         self.gradient_checkpointing = False

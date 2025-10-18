@@ -1,7 +1,7 @@
 from typing import Any, Dict, Optional
 
 import torch
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models import PixArtTransformer2DModel
 from diffusers.models.attention import BasicTransformerBlock
@@ -100,7 +100,6 @@ class PixArtSigmaControlNetAdapterBlock(nn.Module):
 
 class PixArtSigmaControlNetAdapterModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     # N=13, as specified in the paper https://arxiv.org/html/2401.05252v1/#S4 ControlNet-Transformer
-    @register_to_config
     def __init__(
         self,
         num_layers: int = 13,
@@ -110,6 +109,13 @@ class PixArtSigmaControlNetAdapterModel(ModelMixin, ConfigMixin, PeftAdapterMixi
         cross_attention_dim: Optional[int] = 1152,
     ) -> None:
         super().__init__()
+
+        self.register_to_config(
+            num_layers=num_layers,
+            num_attention_heads=num_attention_heads,
+            attention_head_dim=attention_head_dim,
+            cross_attention_dim=cross_attention_dim,
+        )
 
         self.num_layers = num_layers
         self.num_attention_heads = num_attention_heads

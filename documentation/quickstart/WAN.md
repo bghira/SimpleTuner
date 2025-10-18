@@ -29,9 +29,22 @@ Currently, image-to-video training is not supported for Wan, but T2V LoRA and Ly
 - Resolution: 1280x720
 -->
 
+#### Image to Video (Wan 2.2)
+
+Recent Wan 2.2 I2V checkpoints work with the same training flow:
+
+- High stage: https://huggingface.co/Wan-AI/Wan2.2-I2V-14B-Diffusers/tree/main/high_noise_model
+- Low stage: https://huggingface.co/Wan-AI/Wan2.2-I2V-14B-Diffusers/tree/main/low_noise_model
+
+You can target the stage you want with the `model_flavour` and `wan_validation_load_other_stage` settings outlined later in this guide.
+
 You'll need:
 - **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
+
+If you encounter shape mismatches in the time embedding layers when running Wan 2.2 checkpoints, enable the new
+`wan_force_2_1_time_embedding` flag. This forces the transformer to fall back to Wan 2.1 style time embeddings and
+resolves the compatibility issue.
 
 Apple silicon systems do not work super well with Wan 2.1 so far, something like 10 minutes for a single training step can be expected..
 
@@ -111,6 +124,23 @@ simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
+
+### Memory offloading (optional)
+
+Wan is one of the heaviest models SimpleTuner supports. Enable grouped offloading if you are close to the VRAM ceiling:
+
+```bash
+--enable_group_offload \
+--group_offload_type block_level \
+--group_offload_blocks_per_group 1 \
+--group_offload_use_stream \
+# optional: spill offloaded weights to disk instead of RAM
+# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
+```
+
+- Only CUDA devices honour `--group_offload_use_stream`; ROCm/MPS fall back automatically.
+- Leave disk staging commented out unless CPU memory is the bottleneck.
+- `--enable_model_cpu_offload` is mutually exclusive with group offload.
 
 
 If you prefer to manually configure:
