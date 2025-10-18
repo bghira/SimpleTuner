@@ -92,6 +92,8 @@ class Wan(VideoModelFoundation):
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
         self._wan_cached_stage_modules: Dict[str, WanTransformer3DModel] = {}
+        if not hasattr(self.config, "wan_force_2_1_time_embedding"):
+            self.config.wan_force_2_1_time_embedding = False
 
     def requires_conditioning_image_embeds(self) -> bool:
         return self._wan_stage_info() is not None
@@ -122,6 +124,14 @@ class Wan(VideoModelFoundation):
         flavour = getattr(self.config, "model_flavour", None)
         return self.WAN_STAGE_OVERRIDES.get(flavour)
 
+    def _apply_time_embedding_override(self, transformer: Optional[WanTransformer3DModel]) -> None:
+        if transformer is None:
+            return
+        target = self.unwrap_model(transformer)
+        setter = getattr(target, "set_time_embedding_v2_1", None)
+        if callable(setter):
+            setter(bool(getattr(self.config, "wan_force_2_1_time_embedding", False)))
+
     def _should_load_other_stage(self) -> bool:
         stage_info = self._wan_stage_info()
         if stage_info is None:
@@ -142,12 +152,18 @@ class Wan(VideoModelFoundation):
         stage.requires_grad_(False)
         stage.to(self.accelerator.device, dtype=self.config.weight_dtype)
         stage.eval()
+        self._apply_time_embedding_override(stage)
         self._wan_cached_stage_modules[subfolder] = stage
         return stage
 
     def unload_model(self):
         super().unload_model()
         self._wan_cached_stage_modules.clear()
+
+    def set_prepared_model(self, model, base_model: bool = False):
+        super().set_prepared_model(model, base_model)
+        if not base_model:
+            self._apply_time_embedding_override(self.model)
 
     def get_group_offload_components(self, pipeline):
         components = dict(super().get_group_offload_components(pipeline))
@@ -182,6 +198,10 @@ class Wan(VideoModelFoundation):
             pipeline.config.boundary_ratio = stage_info["boundary_ratio"]
         else:
             pipeline.config.boundary_ratio = None
+
+        self._apply_time_embedding_override(getattr(pipeline, "transformer", None))
+        if getattr(pipeline, "transformer_2", None) is not None:
+            self._apply_time_embedding_override(pipeline.transformer_2)
 
         return pipeline
 

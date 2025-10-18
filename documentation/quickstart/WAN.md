@@ -42,6 +42,10 @@ You'll need:
 - **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
 
+If you encounter shape mismatches in the time embedding layers when running Wan 2.2 checkpoints, enable the new
+`wan_force_2_1_time_embedding` flag. This forces the transformer to fall back to Wan 2.1 style time embeddings and
+resolves the compatibility issue.
+
 Apple silicon systems do not work super well with Wan 2.1 so far, something like 10 minutes for a single training step can be expected..
 
 ### Prerequisites

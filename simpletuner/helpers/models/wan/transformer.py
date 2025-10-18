@@ -454,6 +454,18 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
         self.gradient_checkpointing = False
+        self.force_v2_1_time_embedding: bool = False
+
+    def set_time_embedding_v2_1(self, force_2_1_time_embedding: bool) -> None:
+        """
+        Force the Wan transformer to use 2.1-style time embeddings even when running Wan 2.2 checkpoints.
+
+        Args:
+            force_2_1_time_embedding: Whether to override the default time embedding behaviour.
+        """
+        self.force_v2_1_time_embedding = bool(force_2_1_time_embedding)
+        if self.force_v2_1_time_embedding:
+            logger.info("WanTransformer3DModel: Forcing Wan 2.1 style time embedding.")
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Set the TREAD router and routing configuration."""
@@ -518,6 +530,11 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         hidden_states = self.patch_embedding(hidden_states)
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
+
+        if self.force_v2_1_time_embedding and timestep.dim() > 1:
+            # Wan 2.1 uses a single timestep per batch entry. When forcing 2.1 behaviour with Wan 2.2
+            # checkpoints we fall back to the first timestep value which matches the reference implementation.
+            timestep = timestep[..., 0].contiguous()
 
         temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
             timestep, encoder_hidden_states, encoder_hidden_states_image
