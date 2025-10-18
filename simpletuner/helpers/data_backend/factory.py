@@ -1488,13 +1488,19 @@ class FactoryRegistry:
         init_backend["data_backend"] = builder.build(config)
 
         if backend["type"] == "local":
-            init_backend["instance_data_dir"] = backend.get("instance_data_dir", backend.get("instance_data_root"))
-            if init_backend["instance_data_dir"] is None:
+            raw_instance_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
+            if raw_instance_dir is None:
                 raise ValueError(
                     "A local backend requires instance_data_dir be defined and pointing to the image data directory."
                 )
-            if init_backend["instance_data_dir"] is not None and init_backend["instance_data_dir"][-1] == "/":
-                init_backend["instance_data_dir"] = init_backend["instance_data_dir"][:-1]
+            instance_dir = str(raw_instance_dir).strip()
+            if not instance_dir:
+                raise ValueError(
+                    "A local backend requires instance_data_dir be defined and pointing to the image data directory."
+                )
+            if instance_dir.endswith("/"):
+                instance_dir = instance_dir.rstrip("/")
+            init_backend["instance_data_dir"] = instance_dir
         elif backend["type"] == "aws":
             init_backend["instance_data_dir"] = backend.get("aws_data_prefix", "")
         elif backend["type"] == "csv":
