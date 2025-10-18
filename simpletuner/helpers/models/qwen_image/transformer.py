@@ -21,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import AttentionMixin, FeedForward
 from diffusers.models.attention_dispatch import dispatch_attention_fn
@@ -552,7 +552,6 @@ class QwenImageTransformer2DModel(
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
     _repeated_blocks = ["QwenImageTransformerBlock"]
 
-    @register_to_config
     def __init__(
         self,
         patch_size: int = 2,
@@ -566,7 +565,19 @@ class QwenImageTransformer2DModel(
         axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
     ):
         super().__init__()
-        self.out_channels = out_channels or in_channels
+        effective_out_channels = out_channels or in_channels
+        self.register_to_config(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            out_channels=effective_out_channels,
+            num_layers=num_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            guidance_embeds=guidance_embeds,
+            axes_dims_rope=axes_dims_rope,
+        )
+        self.out_channels = effective_out_channels
         self.inner_dim = num_attention_heads * attention_head_dim
 
         self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True)

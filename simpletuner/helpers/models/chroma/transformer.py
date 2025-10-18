@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FluxTransformer2DLoadersMixin, FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import AttentionMixin, FeedForward
 from diffusers.models.cache_utils import CacheMixin
@@ -22,6 +22,27 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 from simpletuner.helpers.training.tread import TREADRouter
+
+
+def adjust_rotary_embedding_dim(
+    rotary_emb: Tuple[torch.Tensor, torch.Tensor],
+    target_dim: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Ensure rotary embedding tensors match the expected head dimension."""
+    if target_dim <= 0:
+        return rotary_emb
+    cos, sin = rotary_emb
+    current_dim = cos.shape[-1]
+    if current_dim == target_dim:
+        return cos, sin
+    if current_dim > target_dim:
+        return cos[..., :target_dim], sin[..., :target_dim]
+
+    pad = target_dim - current_dim
+    pad_shape = cos.shape[:-1] + (pad,)
+    cos_padded = torch.cat([cos, cos.new_zeros(pad_shape)], dim=-1)
+    sin_padded = torch.cat([sin, sin.new_zeros(pad_shape)], dim=-1)
+    return cos_padded, sin_padded
 
 
 class ChromaAdaLayerNormZeroPruned(nn.Module):
@@ -361,7 +382,6 @@ class ChromaTransformer2DModel(
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
-    @register_to_config
     def __init__(
         self,
         patch_size: int = 1,
@@ -378,7 +398,22 @@ class ChromaTransformer2DModel(
         approximator_layers: int = 5,
     ):
         super().__init__()
-        self.out_channels = out_channels or in_channels
+        effective_out_channels = out_channels or in_channels
+        self.register_to_config(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            out_channels=effective_out_channels,
+            num_layers=num_layers,
+            num_single_layers=num_single_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            axes_dims_rope=axes_dims_rope,
+            approximator_num_channels=approximator_num_channels,
+            approximator_hidden_dim=approximator_hidden_dim,
+            approximator_layers=approximator_layers,
+        )
+        self.out_channels = effective_out_channels
         self.inner_dim = num_attention_heads * attention_head_dim
 
         self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
@@ -509,6 +544,9 @@ class ChromaTransformer2DModel(
 
         ids = torch.cat((txt_ids, img_ids), dim=0)
         image_rotary_emb = self.pos_embed(ids)
+        target_rotary_dim = getattr(self.config, "attention_head_dim", None)
+        if target_rotary_dim is not None:
+            image_rotary_emb = adjust_rotary_embedding_dim(image_rotary_emb, int(target_rotary_dim))
 
         if joint_attention_kwargs is not None and "ip_adapter_image_embeds" in joint_attention_kwargs:
             ip_adapter_image_embeds = joint_attention_kwargs.pop("ip_adapter_image_embeds")

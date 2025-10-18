@@ -60,7 +60,7 @@ class ImageEmbedCache(WebhookMixin):
             self.cache_data_backend.create_directory(self.cache_dir)
         self.write_batch_size = write_batch_size
         self.read_batch_size = read_batch_size
-        self.embed_batch_size = max(embed_batch_size, 1)
+        self.embed_batch_size = self._ensure_positive_batch_size(embed_batch_size, default=1)
         self.hash_filenames = hash_filenames
         self.rank_info = rank_info()
 
@@ -81,6 +81,14 @@ class ImageEmbedCache(WebhookMixin):
 
     def set_webhook_handler(self, webhook_handler):
         self.webhook_handler = webhook_handler
+
+    @staticmethod
+    def _ensure_positive_batch_size(value, default: int) -> int:
+        try:
+            batch_size = int(value)
+        except (TypeError, ValueError):
+            return default
+        return batch_size if batch_size > 0 else default
 
     def _ensure_model_components(self):
         if self.image_encoder is not None and self.image_processor is not None:
@@ -173,16 +181,27 @@ class ImageEmbedCache(WebhookMixin):
             return Image.fromarray(first_frame).convert("RGB")
         raise ValueError(f"Unsupported sample type for conditioning embed: {type(sample)}")
 
-    def _encode_batch(self, filepaths: List[str]) -> List[torch.Tensor]:
+    def _encode_batch(self, filepaths: List[str]) -> Tuple[List[str], List[torch.Tensor]]:
         self._ensure_model_components()
-        images = [self._load_image_for_embedding(fp) for fp in filepaths]
+        valid_paths: List[str] = []
+        images: List[Image.Image] = []
+        for fp in filepaths:
+            try:
+                images.append(self._load_image_for_embedding(fp))
+                valid_paths.append(fp)
+            except FileNotFoundError:
+                self.debug_log(f"Skipping missing file during conditioning embed generation: {fp}")
+            except ValueError as exc:
+                self.debug_log(f"Skipping unsupported sample {fp}: {exc}")
+        if not images:
+            return [], []
         inputs = self.image_processor(images=images, return_tensors="pt")
         inputs = {k: v.to(self.compute_device) for k, v in inputs.items()}
 
         with torch.no_grad():
             outputs = self.image_encoder(**inputs, output_hidden_states=True)
         embeds = outputs.hidden_states[-2].detach().cpu()
-        return list(embeds)
+        return valid_paths, list(embeds)
 
     def _write_embed(self, filepath: str, embedding: torch.Tensor) -> None:
         cache_path = self.image_path_to_embed_path.get(filepath)
@@ -206,8 +225,8 @@ class ImageEmbedCache(WebhookMixin):
             return
         for idx in range(0, len(filepaths), self.embed_batch_size):
             batch_paths = filepaths[idx : idx + self.embed_batch_size]
-            embeddings = self._encode_batch(batch_paths)
-            for fp, embed in zip(batch_paths, embeddings):
+            valid_paths, embeddings = self._encode_batch(batch_paths)
+            for fp, embed in zip(valid_paths, embeddings):
                 self._write_embed(fp, embed)
         if self.cache_dir:
             StateTracker.set_conditioning_image_embed_files(
