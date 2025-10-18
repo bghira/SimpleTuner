@@ -6,13 +6,7 @@ from diffusers.image_processor import PipelineImageInput
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
 from .controlnet import ChromaControlNetModel
-from .pipeline import (
-    ChromaLoraLoaderMixin,
-    ChromaPipeline,
-    ChromaPipelineOutput,
-    XLA_AVAILABLE,
-    calculate_shift,
-)
+from .pipeline import XLA_AVAILABLE, ChromaLoraLoaderMixin, ChromaPipeline, ChromaPipelineOutput, calculate_shift
 
 if XLA_AVAILABLE:
     import torch_xla.core.xla_model as xm

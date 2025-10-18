@@ -48,9 +48,7 @@ class TestChromaControlNetTransformer(TransformerBaseTest):
             "approximator_hidden_dim": 24,
             "approximator_layers": 1,
         }
-        self.controlnet_kwargs = {
-            key: value for key, value in self.transformer_kwargs.items() if key != "out_channels"
-        }
+        self.controlnet_kwargs = {key: value for key, value in self.transformer_kwargs.items() if key != "out_channels"}
         self.expected_inner_dim = (
             self.transformer_kwargs["attention_head_dim"] * self.transformer_kwargs["num_attention_heads"]
         )
@@ -112,9 +110,7 @@ class TestChromaControlNetTransformer(TransformerBaseTest):
         self.assertEqual(len(block_samples), len(controlnet.transformer_blocks))
         self.assertEqual(len(single_block_samples), len(controlnet.single_transformer_blocks))
 
-        self.shape_validator.validate_transformer_output(
-            block_samples[0], batch_size, seq_len, self.expected_inner_dim
-        )
+        self.shape_validator.validate_transformer_output(block_samples[0], batch_size, seq_len, self.expected_inner_dim)
         self.shape_validator.validate_transformer_output(
             single_block_samples[0], batch_size, seq_len, self.expected_inner_dim
         )
