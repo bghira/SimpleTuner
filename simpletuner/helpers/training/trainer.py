@@ -3689,6 +3689,11 @@ def run_trainer_job(config):
         cli_args: list[str] = []
         if isinstance(config_payload, dict):
             train_cli_payload = dict(config_payload)
+            metadata_keys = [
+                key for key in list(train_cli_payload.keys()) if isinstance(key, str) and key.startswith("__")
+            ]
+            for key in metadata_keys:
+                train_cli_payload.pop(key, None)
             for accel_key in {
                 "accelerate_config",
                 "--accelerate_config",
