@@ -580,9 +580,17 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         arg_lookup = key if key.startswith("--") else f"--{clean_key}"
         is_required_field = _is_required_field(arg_lookup)
 
+        explicit_override = (
+            arg_lookup in config_dict
+            or clean_key in config_dict
+            or arg_lookup.lstrip("-") in config_dict
+            or clean_key in form_dict
+            or arg_lookup in form_dict
+        )
+
         if save_options.get("preserve_defaults", False) and not is_required_field:
             default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
-            if value != default_value:
+            if value != default_value or explicit_override:
                 save_config[clean_key] = value
         else:
             save_config[clean_key] = value
