@@ -73,6 +73,7 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
             "hidream",
             "auraflow",
             "chroma",
+            "chroma_controlnet",
             "cosmos",
             "sd3",
             "pixart",
@@ -95,7 +96,7 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
         self.assertEqual(
             len(self.test_files),
             len(expected_transformers),
-            f"Expected {len(expected_transformers)} test files, found {len(self.test_files)}",
+            f"Expected {len(expected_transformers)} test files, found {len(self.test_files)}: {self.test_files}",
         )
 
     def test_base_test_class_inheritance(self):
