@@ -50,7 +50,8 @@ def detect_gpu_inventory() -> Dict[str, Any]:
         import torch  # type: ignore
 
         if torch.cuda.is_available():
-            backend = "cuda"
+            is_rocm = bool(getattr(torch.version, "hip", None))
+            backend = "rocm" if is_rocm else "cuda"
             try:
                 count = torch.cuda.device_count()
             except Exception as error:
@@ -119,17 +120,9 @@ def detect_gpu_inventory() -> Dict[str, Any]:
 
 
 def _derive_capabilities(backend: Optional[str]) -> Dict[str, bool]:
-    supports_cuda = backend == "cuda"
+    supports_cuda = backend in {"cuda", "rocm"}
     supports_mps = backend == "mps"
-    supports_rocm = False
-
-    if supports_cuda:
-        try:
-            import torch  # type: ignore
-
-            supports_rocm = bool(getattr(torch.version, "hip", None))
-        except Exception:
-            supports_rocm = False
+    supports_rocm = backend == "rocm"
 
     supports_deepspeed = supports_cuda and not supports_rocm
     supports_fsdp = supports_cuda and not supports_rocm

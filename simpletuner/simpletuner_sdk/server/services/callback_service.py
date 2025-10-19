@@ -306,6 +306,9 @@ class CallbackService:
             APIState.set_state("training_progress", None)
             self._clear_startup_stages()  # Clear all stages on error
             self._broadcast_progress_reset(job_id, status=status)
+            current_job = APIState.get_state("current_job_id")
+            if job_id and current_job == job_id:
+                APIState.set_state("current_job_id", None)
         elif status in {"completed", "success"}:
             progress_state = APIState.get_state("training_progress") or {}
             if isinstance(progress_state, Mapping):
@@ -313,6 +316,9 @@ class CallbackService:
                 progress_state["percent"] = 100
                 APIState.set_state("training_progress", progress_state)
             self._clear_startup_stages()  # Clear all stages on completion
+            current_job = APIState.get_state("current_job_id")
+            if job_id and current_job == job_id:
+                APIState.set_state("current_job_id", None)
         elif status == "running":
             # Training has started running - clear initialization lifecycle stages
             self._clear_startup_stages()
@@ -335,6 +341,9 @@ class CallbackService:
         self._broadcast_progress_reset(job_id, status="failed")
         if job_id:
             self._job_status[job_id] = "failed"
+        current_job = APIState.get_state("current_job_id")
+        if job_id and current_job == job_id:
+            APIState.set_state("current_job_id", None)
 
     def _update_training_state(self, event: CallbackEvent) -> None:
         job_id = self._derive_job_id(event)
