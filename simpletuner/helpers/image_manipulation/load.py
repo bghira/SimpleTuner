@@ -190,12 +190,14 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
     else:
         raise TypeError("Unsupported type for vid_data. Expected str, bytes, or file-like object.")
 
-    # Open the video using VideoCapture.
     cap = tsr.PyVideoCapture(video_path)
     if not cap.is_opened():
         if tmp_path:
             os.remove(tmp_path)
-        raise ValueError("Failed to open video.")
+        raise ValueError(
+            "Failed to open video with trainingsample. Ensure the trainingsample package was installed with video "
+            "support (ffmpeg) and that the asset is a supported format."
+        )
 
     frames = []
     while True:
@@ -212,7 +214,10 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
         os.remove(tmp_path)
 
     if not frames:
-        raise ValueError("No frames were read from the video.")
+        raise ValueError(
+            "No frames were read from the video using trainingsample. Verify ffmpeg support is available and the "
+            "video is not corrupted."
+        )
 
     # Stack frames into a numpy array: shape (num_frames, height, width, channels)
     video_array = np.stack(frames, axis=0)
