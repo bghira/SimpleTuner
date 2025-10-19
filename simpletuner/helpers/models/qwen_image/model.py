@@ -214,12 +214,13 @@ class QwenImage(ImageModelFoundation):
             return_dict=False,
         )[0]
 
-        # unpack noise prediction
-        noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
+        # unpack noise prediction if the transformer returned packed tokens
+        if noise_pred.dim() == 3:
+            noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
 
-        # remove extra dimension from _unpack_latents
-        if noise_pred.dim() == 5:
-            noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
+            # remove extra dimension from _unpack_latents
+            if noise_pred.dim() == 5:
+                noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
 
         return {"model_prediction": noise_pred}
 
