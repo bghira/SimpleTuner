@@ -98,6 +98,36 @@ class ModelTypes(Enum):
     TEXT_ENCODER = "text_encoder"
 
 
+class PipelineConditioningImageEmbedder:
+    """Wraps a Diffusers pipeline to expose a simple conditioning image encode interface."""
+
+    def __init__(self, pipeline, image_encoder, image_processor, device, weight_dtype=None):
+        if image_encoder is None or image_processor is None:
+            raise ValueError("PipelineConditioningImageEmbedder requires both an image encoder and image processor.")
+        self.pipeline = pipeline
+        self.image_encoder = image_encoder
+        self.image_processor = image_processor
+        self.device = device if device is not None else torch.device("cpu")
+        if isinstance(weight_dtype, str):
+            weight_dtype = getattr(torch, weight_dtype, None)
+        self.weight_dtype = weight_dtype
+
+        if self.weight_dtype is not None:
+            self.image_encoder.to(self.device, dtype=self.weight_dtype)
+        else:
+            self.image_encoder.to(self.device)
+        self.image_encoder.eval()
+
+    def encode(self, images):
+        inputs = self.image_processor(images=images, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        outputs = self.image_encoder(**inputs, output_hidden_states=True)
+        embeddings = outputs.hidden_states[-2]
+        if self.weight_dtype is not None:
+            embeddings = embeddings.to(self.weight_dtype)
+        return embeddings
+
+
 class ModelFoundation(ABC):
     """
     Base class that contains all the universal logic:
@@ -866,6 +896,39 @@ class ModelFoundation(ABC):
         self._configure_pipeline_offloading(pipeline_instance)
 
         return pipeline_instance
+
+    def get_conditioning_image_embedder(self):
+        """Return an adapter capable of encoding conditioning images, or None if unavailable."""
+        pipeline_candidates = []
+        try:
+            pipeline_candidates.append(self.get_pipeline())
+        except Exception:  # pragma: no cover - defensive
+            pipeline_candidates = []
+
+        for pipeline_type in getattr(self, "PIPELINE_CLASSES", {}).keys():
+            try:
+                candidate = self.get_pipeline(pipeline_type)
+            except Exception:  # pragma: no cover - defensive
+                continue
+            if candidate not in pipeline_candidates:
+                pipeline_candidates.append(candidate)
+
+        for pipeline in pipeline_candidates:
+            image_encoder = getattr(pipeline, "image_encoder", None)
+            image_processor = getattr(pipeline, "image_processor", None)
+            if image_encoder is None or image_processor is None:
+                continue
+            device = getattr(self.accelerator, "device", torch.device("cpu"))
+            weight_dtype = getattr(self.config, "weight_dtype", None)
+            return PipelineConditioningImageEmbedder(
+                pipeline=pipeline,
+                image_encoder=image_encoder,
+                image_processor=image_processor,
+                device=device,
+                weight_dtype=weight_dtype,
+            )
+
+        return None
 
     def get_group_offload_components(self, pipeline: DiffusionPipeline):
         """

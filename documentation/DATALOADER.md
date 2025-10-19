@@ -72,7 +72,18 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 ### `conditioning_image_embeds`
 
 - **Applies to `dataset_type=image` and `dataset_type=video`**
-- When a model reports `requires_conditioning_image_embeds`, set this to the `id` of a `conditioning_image_embeds` dataset to store cached conditioning image embeddings (for example, CLIP vision features for Wan 2.2 I2V). If unset, the cache will be written alongside the training dataset's cache directory.
+- When a model reports `requires_conditioning_image_embeds`, set this to the `id` of a `conditioning_image_embeds` dataset to store cached conditioning image embeddings (for example, CLIP vision features for Wan 2.2 I2V). If unset, SimpleTuner writes the cache to `cache/conditioning_image_embeds/<dataset_id>` by default, guaranteeing it no longer collides with the VAE cache.
+- Models that need these embeds must expose an image encoder through their primary pipeline. If the model cannot supply the encoder, preprocessing will fail early instead of silently generating empty files.
+
+#### `cache_dir_conditioning_image_embeds`
+
+- **Optional override for the conditioning image embed cache destination.**
+- Set this when you want to pin the cache to a specific filesystem location or have a dedicated remote backend (`dataset_type=conditioning_image_embeds`). When omitted, the cache path described above is used automatically.
+
+#### `conditioning_image_embed_batch_size`
+
+- **Optional override for the batch size used while generating conditioning image embeds.**
+- Defaults to the `conditioning_image_embed_batch_size` trainer argument or the VAE batch size when not explicitly provided.
 
 ### `type`
 

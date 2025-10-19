@@ -2038,11 +2038,10 @@ class FactoryRegistry:
         conditioning_image_embed_backend: Dict[str, Any],
     ) -> None:
         """Configure conditioning image embed cache for the backend."""
-        cache_dir = backend.get(
-            "cache_dir_conditioning_image_embeds",
-            conditioning_image_embed_backend.get("cache_dir", backend.get("cache_dir_vae", None)),
-        )
-
+        cache_dir = backend.get("cache_dir_conditioning_image_embeds")
+        conditioning_backend_dir = conditioning_image_embed_backend.get("cache_dir")
+        if not cache_dir and conditioning_backend_dir and conditioning_backend_dir != backend.get("cache_dir_vae"):
+            cache_dir = conditioning_backend_dir
         if not cache_dir:
             default_root = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
             cache_dir = os.path.join(default_root, "conditioning_image_embeds", init_backend["id"])

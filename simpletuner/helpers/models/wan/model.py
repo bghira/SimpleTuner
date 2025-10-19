@@ -4,7 +4,7 @@ import random
 from typing import Dict, Optional
 
 import torch
-from diffusers import AutoencoderKLWan
+from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
 from torchvision import transforms
 from transformers import T5TokenizerFast, UMT5EncoderModel
 
@@ -42,6 +42,7 @@ class Wan(VideoModelFoundation):
     MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: WanPipeline,
+        PipelineTypes.IMG2VIDEO: WanImageToVideoPipeline,
         # PipelineTypes.IMG2IMG: None,
         # PipelineTypes.CONTROLNET: None,
     }

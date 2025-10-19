@@ -69,12 +69,7 @@ class ImageEmbedCache(WebhookMixin):
         self.image_path_to_embed_path: dict[str, str] = {}
         self.embed_path_to_image_path: dict[str, str] = {}
 
-        self.pipeline = None
-        self.image_encoder = None
-        self.image_processor = None
-        self.compute_device = (
-            getattr(self.accelerator, "device", torch.device("cpu")) if self.accelerator else torch.device("cpu")
-        )
+        self.embedder = None
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}{msg}")
@@ -90,18 +85,27 @@ class ImageEmbedCache(WebhookMixin):
             return default
         return batch_size if batch_size > 0 else default
 
-    def _ensure_model_components(self):
-        if self.image_encoder is not None and self.image_processor is not None:
+    def _ensure_embedder(self):
+        if self.embedder is not None:
             return
 
-        pipeline = self.model.get_pipeline()
-        if getattr(pipeline, "image_encoder", None) is None or getattr(pipeline, "image_processor", None) is None:
-            raise ValueError("Pipeline does not provide image encoder components required for conditioning embeddings.")
-        self.pipeline = pipeline
-        self.image_encoder = pipeline.image_encoder
-        self.image_processor = pipeline.image_processor
-        self.image_encoder.to(self.compute_device)
-        self.image_encoder.eval()
+        provider_factory = getattr(self.model, "get_conditioning_image_embedder", None)
+        if not callable(provider_factory):
+            raise ValueError(
+                "Model does not expose a conditioning image embed provider. "
+                "Ensure the active model implements 'get_conditioning_image_embedder'."
+            )
+
+        embedder = provider_factory()
+        if embedder is None:
+            raise ValueError(
+                "Model reported support for conditioning image embeddings but did not return a provider."
+            )
+        if not hasattr(embedder, "encode") or not callable(embedder.encode):
+            raise ValueError(
+                "Conditioning image embed provider must implement an 'encode(images)' method."
+            )
+        self.embedder = embedder
 
     def generate_embed_filename(self, filepath: str) -> Tuple[str, str]:
         if filepath.endswith(".pt"):
@@ -182,7 +186,7 @@ class ImageEmbedCache(WebhookMixin):
         raise ValueError(f"Unsupported sample type for conditioning embed: {type(sample)}")
 
     def _encode_batch(self, filepaths: List[str]) -> Tuple[List[str], List[torch.Tensor]]:
-        self._ensure_model_components()
+        self._ensure_embedder()
         valid_paths: List[str] = []
         images: List[Image.Image] = []
         for fp in filepaths:
@@ -195,13 +199,14 @@ class ImageEmbedCache(WebhookMixin):
                 self.debug_log(f"Skipping unsupported sample {fp}: {exc}")
         if not images:
             return [], []
-        inputs = self.image_processor(images=images, return_tensors="pt")
-        inputs = {k: v.to(self.compute_device) for k, v in inputs.items()}
-
         with torch.no_grad():
-            outputs = self.image_encoder(**inputs, output_hidden_states=True)
-        embeds = outputs.hidden_states[-2].detach().cpu()
-        return valid_paths, list(embeds)
+            embeddings = self.embedder.encode(images)
+        if embeddings is None:
+            return [], []
+        if not torch.is_tensor(embeddings):
+            raise ValueError("Conditioning image embed provider returned non-tensor embeddings.")
+        embeds = embeddings.detach().cpu()
+        return valid_paths, [embeds[i] for i in range(embeds.shape[0])]
 
     def _write_embed(self, filepath: str, embedding: torch.Tensor) -> None:
         cache_path = self.image_path_to_embed_path.get(filepath)
