@@ -184,8 +184,23 @@ class WebUIStateStore:
         if override:
             return Path(override).expanduser()
 
-        base_candidate = os.environ.get(_XDG_HOME_ENV) or os.environ.get(_XDG_CONFIG_HOME_ENV) or str(Path.home())
-        return Path(base_candidate).expanduser() / ".simpletuner" / "webui"
+        base_candidate = os.environ.get(_XDG_HOME_ENV) or os.environ.get(_XDG_CONFIG_HOME_ENV)
+        if base_candidate:
+            return Path(base_candidate).expanduser() / "webui"
+
+        candidate_paths = [
+            Path("/workspace/simpletuner/webui"),
+            Path("/notebooks/simpletuner/webui"),
+            Path.home() / ".simpletuner" / "webui",
+        ]
+        for candidate in candidate_paths:
+            if candidate.exists():
+                return candidate
+
+        # Nothing exists yet; default to the first workspace path to keep behaviour deterministic
+        fallback = candidate_paths[0]
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return fallback
 
     def _category_path(self, category: str) -> Path:
         safe_name = category.replace("/", "_")

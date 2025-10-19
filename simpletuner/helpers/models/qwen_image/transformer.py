@@ -525,7 +525,7 @@ class QwenImageTransformer2DModel(
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)
 
         self._patch_area = patch_size * patch_size
-        self._img_in_features = in_channels * self._patch_area
+        self._img_in_features = in_channels
         self.img_in = nn.Linear(self._img_in_features, self.inner_dim)
         self.txt_in = nn.Linear(joint_attention_dim, self.inner_dim)
 
@@ -578,6 +578,13 @@ class QwenImageTransformer2DModel(
 
         grid_h = height // patch_size
         grid_w = width // patch_size
+        token_dim = channels * patch_size * patch_size
+        if token_dim != self._img_in_features:
+            raise ValueError(
+                f"Token dimension mismatch: expected {self._img_in_features}, "
+                f"but got {token_dim} from latents (channels={channels}, patch_size={patch_size})."
+            )
+
         hidden_states = hidden_states.view(
             batch_size,
             channels,
@@ -589,7 +596,7 @@ class QwenImageTransformer2DModel(
         hidden_states = hidden_states.permute(0, 2, 4, 1, 3, 5).reshape(
             batch_size,
             grid_h * grid_w,
-            self._img_in_features,
+            token_dim,
         )
         return hidden_states, grid_h, grid_w
 

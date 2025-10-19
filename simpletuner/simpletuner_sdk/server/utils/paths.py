@@ -35,7 +35,23 @@ def get_config_directory() -> Path:
     Returns:
         Path to the config directory relative to SimpleTuner root
     """
-    return get_simpletuner_root() / "config"
+    env_override = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+    if env_override:
+        return Path(env_override).expanduser()
+
+    candidate_dirs = [
+        Path("/workspace/simpletuner/config"),
+        Path("/notebooks/simpletuner/config"),
+        Path.home() / ".simpletuner" / "config",
+    ]
+    for candidate in candidate_dirs:
+        if candidate.exists():
+            return candidate
+
+    # Fall back to project/package config directory
+    default_dir = get_simpletuner_root() / "config"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    return default_dir
 
 
 def get_template_directory() -> Path:
