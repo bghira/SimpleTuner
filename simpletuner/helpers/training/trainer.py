@@ -474,6 +474,9 @@ class Trainer:
                     self.accelerator = Accelerator(**accelerator_kwargs)
                 else:
                     raise
+            if self.accelerator:
+                os.environ["RANK"] = str(self.accelerator.process_index)
+                os.environ["WORLD_SIZE"] = str(self.accelerator.num_processes)
             self._setup_accelerator_barrier_guard()
         fsdp_active = False
         if self.accelerator and hasattr(self.accelerator, "state"):
