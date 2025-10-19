@@ -32,8 +32,6 @@
     "offload_during_startup": true,
     "optimizer": "optimi-lion",
     "output_dir": "output/examples/wan-2.2-i2v-a14b-high.peft-lora+TREAD",
-    "pretrained_model_name_or_path": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
-    "pretrained_t5_model_name_or_path": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
     "push_checkpoints_to_hub": false,
     "push_to_hub": false,
     "quantize_via": "cpu",
