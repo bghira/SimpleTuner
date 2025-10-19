@@ -75,15 +75,18 @@ class SystemStatusService:
         devices = (inventory or {}).get("devices") or []
         results: List[Dict[str, Any]] = []
         mac_utilisation: Optional[List[Optional[float]]] = None
-        nvidia_fallback: Optional[List[Optional[float]]] = None
+        mac_memory: Optional[List[Optional[float]]] = None
+        nvidia_fallback: Optional[List[Dict[str, Optional[float]]]] = None
 
         if backend == "mps":
             mac_utilisation = self._get_macos_gpu_utilisation()
+            mac_memory = self._get_mps_memory_percent()
 
         for position, device in enumerate(devices):
             index = device.get("index")
             name = device.get("name") or f"GPU {index if index is not None else '?'}"
             utilisation: Optional[float] = None
+            memory_percent: Optional[float] = None
 
             if backend == "cuda" and index is not None and torch is not None and hasattr(torch.cuda, "utilization"):
                 try:
@@ -92,6 +95,7 @@ class SystemStatusService:
                 except Exception:
                     logger.debug("Failed to read CUDA utilisation for device %s", index, exc_info=True)
                     utilisation = None
+                memory_percent = self._get_cuda_memory_percent(index)
             if utilisation is None and backend == "mps" and mac_utilisation:
                 target_idx: Optional[int] = None
                 if isinstance(index, int) and 0 <= index < len(mac_utilisation):
@@ -100,17 +104,29 @@ class SystemStatusService:
                     target_idx = position
                 if target_idx is not None:
                     utilisation = mac_utilisation[target_idx]
+                if mac_memory:
+                    mem_idx: Optional[int] = None
+                    if isinstance(index, int) and 0 <= index < len(mac_memory):
+                        mem_idx = index
+                    elif 0 <= position < len(mac_memory):
+                        mem_idx = position
+                    if mem_idx is not None:
+                        memory_percent = mac_memory[mem_idx]
             if utilisation is None and backend == "cuda":
                 if nvidia_fallback is None:
-                    nvidia_fallback = self._get_nvidia_gpu_utilisation()
+                    nvidia_fallback = self._get_nvidia_gpu_stats()
                 if nvidia_fallback:
-                    target_idx = None
+                    target_idx: Optional[int] = None
                     if isinstance(index, int) and 0 <= index < len(nvidia_fallback):
                         target_idx = index
                     elif 0 <= position < len(nvidia_fallback):
                         target_idx = position
                     if target_idx is not None:
-                        utilisation = nvidia_fallback[target_idx]
+                        fallback_entry = nvidia_fallback[target_idx]
+                        if utilisation is None:
+                            utilisation = fallback_entry.get("utilization_percent")
+                        if memory_percent is None:
+                            memory_percent = fallback_entry.get("memory_percent")
 
             results.append(
                 {
@@ -118,6 +134,7 @@ class SystemStatusService:
                     "name": name,
                     "backend": backend,
                     "utilization_percent": round(utilisation, 1) if utilisation is not None else None,
+                    "memory_percent": round(memory_percent, 1) if memory_percent is not None else None,
                 }
             )
 
@@ -294,7 +311,7 @@ class SystemStatusService:
         }
         return size, count
 
-    def _get_nvidia_gpu_utilisation(self) -> Optional[List[Optional[float]]]:
+    def _get_nvidia_gpu_stats(self) -> Optional[List[Dict[str, Optional[float]]]]:
         if platform.system() == "Darwin":
             return None
 
@@ -302,7 +319,7 @@ class SystemStatusService:
             completed = subprocess.run(
                 [
                     "nvidia-smi",
-                    "--query-gpu=utilization.gpu",
+                    "--query-gpu=utilization.gpu,memory.used,memory.total",
                     "--format=csv,noheader,nounits",
                 ],
                 check=True,
@@ -318,19 +335,82 @@ class SystemStatusService:
         if not lines:
             return None
 
-        utilisation_values: List[Optional[float]] = []
+        stats: List[Dict[str, Optional[float]]] = []
         for line in lines:
             text = line.strip()
             if not text:
-                utilisation_values.append(None)
+                stats.append({"utilization_percent": None, "memory_percent": None})
                 continue
-            try:
-                utilisation_values.append(round(float(text), 1))
-            except ValueError:
+            parts = [part.strip() for part in text.split(",")]
+            if len(parts) < 3:
                 logger.debug("Discarding unexpected nvidia-smi output: %s", text)
-                utilisation_values.append(None)
+                stats.append({"utilization_percent": None, "memory_percent": None})
+                continue
+            util_raw, mem_used_raw, mem_total_raw = parts[:3]
+            util_val: Optional[float]
+            mem_percent: Optional[float]
+            try:
+                util_val = round(float(util_raw), 1)
+            except ValueError:
+                util_val = None
+            try:
+                mem_used = float(mem_used_raw)
+                mem_total = float(mem_total_raw)
+                if mem_total > 0:
+                    mem_percent = round((mem_used / mem_total) * 100.0, 1)
+                else:
+                    mem_percent = None
+            except ValueError:
+                mem_percent = None
+            stats.append({"utilization_percent": util_val, "memory_percent": mem_percent})
 
-        return utilisation_values or None
+        return stats or None
+
+    def _get_cuda_memory_percent(self, index: int) -> Optional[float]:
+        if torch is None or not torch.cuda.is_available():  # type: ignore[attr-defined]
+            return None
+        if not hasattr(torch.cuda, "mem_get_info"):
+            return None
+        try:
+            try:
+                free_bytes, total_bytes = torch.cuda.mem_get_info(index)  # type: ignore[misc]
+            except TypeError:
+                with torch.cuda.device(index):
+                    free_bytes, total_bytes = torch.cuda.mem_get_info()  # type: ignore[call-arg]
+        except Exception:
+            logger.debug("Failed to read CUDA memory info for device %s", index, exc_info=True)
+            return None
+        if not total_bytes:
+            return None
+        used = total_bytes - free_bytes
+        if used < 0:
+            used = 0
+        try:
+            percent = (used / total_bytes) * 100.0
+        except Exception:
+            return None
+        return round(float(percent), 1)
+
+    def _get_mps_memory_percent(self) -> Optional[List[Optional[float]]]:
+        if torch is None:
+            return None
+        backend = getattr(torch.backends, "mps", None)
+        if backend is None or not backend.is_available():
+            return None
+        driver_alloc = getattr(torch.mps, "driver_allocated_memory", None)
+        driver_total = getattr(torch.mps, "driver_total_memory", None)
+        if not callable(driver_alloc) or not callable(driver_total):
+            return None
+        try:
+            allocated = float(driver_alloc())
+            total = float(driver_total())
+        except Exception:
+            logger.debug("Unable to query MPS memory statistics", exc_info=True)
+            return None
+        if total <= 0:
+            return None
+        percent = round((allocated / total) * 100.0, 1)
+        return [percent]
 
 
 __all__ = ["SystemStatusService"]
