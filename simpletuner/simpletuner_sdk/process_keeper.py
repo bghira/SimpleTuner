@@ -366,12 +366,12 @@ logger.info("Subprocess exiting")
 
                 # Update status from events
                 if event.get("type") == "state":
-                    state_data = event.get("data", {})
-                if "status" in state_data:
-                    # Don't override terminated status with aborting
-                    if not (self.status == "terminated" and state_data["status"] == "aborting"):
-                        self.status = state_data["status"]
-                        process_registry[self.job_id]["status"] = self.status
+                    state_data = event.get("data", {}) or {}
+                    if "status" in state_data:
+                        # Don't override terminated status with aborting
+                        if not (self.status == "terminated" and state_data["status"] == "aborting"):
+                            self.status = state_data["status"]
+                            process_registry[self.job_id]["status"] = self.status
 
         event_type = str(event.get("type") or "").lower()
         event_data = event.get("data") or {}
