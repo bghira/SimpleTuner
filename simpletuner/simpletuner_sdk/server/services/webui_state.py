@@ -186,21 +186,28 @@ class WebUIStateStore:
 
         base_candidate = os.environ.get(_XDG_HOME_ENV) or os.environ.get(_XDG_CONFIG_HOME_ENV)
         if base_candidate:
-            return Path(base_candidate).expanduser() / "webui"
+            root = Path(base_candidate).expanduser()
+            root.mkdir(parents=True, exist_ok=True)
+            return root / "webui"
 
-        candidate_paths = [
-            Path("/workspace/simpletuner/webui"),
-            Path("/notebooks/simpletuner/webui"),
-            Path.home() / ".simpletuner" / "webui",
-        ]
-        for candidate in candidate_paths:
-            if candidate.exists():
-                return candidate
+        candidate_roots = []
+        if Path("/workspace").exists():
+            candidate_roots.append(Path("/workspace/simpletuner"))
+        if Path("/notebooks").exists():
+            candidate_roots.append(Path("/notebooks/simpletuner"))
+        candidate_roots.append(Path.home() / ".simpletuner")
 
-        # Nothing exists yet; default to the first workspace path to keep behaviour deterministic
-        fallback = candidate_paths[0]
-        fallback.parent.mkdir(parents=True, exist_ok=True)
-        return fallback
+        for root in candidate_roots:
+            webui_dir = root / "webui"
+            if webui_dir.exists():
+                return webui_dir
+
+        # Nothing pre-existing; create the first preferred root and return its webui directory
+        preferred_root = candidate_roots[0]
+        preferred_root.mkdir(parents=True, exist_ok=True)
+        webui_dir = preferred_root / "webui"
+        webui_dir.mkdir(parents=True, exist_ok=True)
+        return webui_dir
 
     def _category_path(self, category: str) -> Path:
         safe_name = category.replace("/", "_")
@@ -338,11 +345,12 @@ class WebUIStateStore:
         return defaults
 
     def _fallback_paths(self) -> Dict[str, str]:
-        home_dir = Path.home()
+        root_dir = self.base_dir.parent
+        root_dir.mkdir(parents=True, exist_ok=True)
         return {
-            "configs_dir": str(home_dir / ".simpletuner" / "configs"),
-            "output_dir": str(home_dir / ".simpletuner" / "output"),
-            "datasets_dir": str(home_dir / ".simpletuner" / "datasets"),
+            "configs_dir": str(root_dir / "configs"),
+            "output_dir": str(root_dir / "output"),
+            "datasets_dir": str(root_dir / "datasets"),
         }
 
     def resolve_defaults(self, defaults: WebUIDefaults) -> Dict[str, Any]:
