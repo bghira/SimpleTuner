@@ -157,20 +157,22 @@ class QwenImage(ImageModelFoundation):
         else:
             batch_size, num_channels, latent_height, latent_width = latent_model_input.shape
 
-        # get pipeline class for static methods
-        pipeline_class = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
-
-        # _unpack_latents expects pixel-space dims, converts latent->pixel
-        pixel_height = latent_height * self.vae_scale_factor
-        pixel_width = latent_width * self.vae_scale_factor
-
-        # pack latents
-        latent_model_input = pipeline_class._pack_latents(
-            latent_model_input,
+        # pack latents using the same tensor transforms as the reference implementation
+        patch_size = getattr(self.model.config, "patch_size", 2)
+        grid_height = latent_height // patch_size
+        grid_width = latent_width // patch_size
+        latent_model_input = latent_model_input.view(
             batch_size,
             num_channels,
-            latent_height,
-            latent_width,
+            grid_height,
+            patch_size,
+            grid_width,
+            patch_size,
+        )
+        latent_model_input = latent_model_input.permute(0, 2, 4, 1, 3, 5).reshape(
+            batch_size,
+            grid_height * grid_width,
+            num_channels * (patch_size * patch_size),
         )
 
         # prepare text embeddings
@@ -186,8 +188,8 @@ class QwenImage(ImageModelFoundation):
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
 
-        # image shapes for patchification (latent dims / 2)
-        img_shapes = [(1, latent_height // 2, latent_width // 2)] * batch_size
+        # image shapes for patchification
+        img_shapes = [[(1, grid_height, grid_width)]] * batch_size
 
         # normalize timesteps to [0,1]
         timesteps = (
@@ -214,23 +216,21 @@ class QwenImage(ImageModelFoundation):
             return_dict=False,
         )[0]
 
-        # The transformer may return either spatial latents (4D) or packed tokens (3D).
-        # Always normalise back to spatial latent space using the pipeline helpers so we
-        # stay consistent with the Diffusers implementation.
-        if noise_pred.dim() == 4:
-            noise_pred = pipeline_class._pack_latents(
-                noise_pred,
-                batch_size,
-                num_channels,
-                latent_height,
-                latent_width,
-            )
-
-        noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
-
-        # remove extra dimension from _unpack_latents
-        if noise_pred.dim() == 5:
-            noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
+        # unpack the transformer output back to (B, C, H, W)
+        noise_pred = noise_pred.view(
+            batch_size,
+            grid_height,
+            grid_width,
+            num_channels,
+            patch_size,
+            patch_size,
+        )
+        noise_pred = noise_pred.permute(0, 3, 1, 4, 2, 5).reshape(
+            batch_size,
+            num_channels,
+            latent_height,
+            latent_width,
+        )
 
         return {"model_prediction": noise_pred}
 
