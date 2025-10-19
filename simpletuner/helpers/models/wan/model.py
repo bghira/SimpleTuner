@@ -51,8 +51,8 @@ class Wan(VideoModelFoundation):
     HUGGINGFACE_PATHS = {
         "t2v-480p-1.3b-2.1": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
         "t2v-480p-14b-2.1": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
-        "i2v-14b-2.2-high": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
-        "i2v-14b-2.2-low": "Wan-AI/Wan2.2-I2V-14B-Diffusers",
+        "i2v-14b-2.2-high": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        "i2v-14b-2.2-low": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         # "i2v-480p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         # "i2v-720p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
     }
