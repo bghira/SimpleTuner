@@ -285,6 +285,8 @@ function trainerComponent() {
             modelFlavour: null,
             controlnetEnabled: false,
             controlEnabled: false,
+            isVideoModel: false,
+            supportsVideo: false,
             conditioningDatasetType: 'conditioning',
         },
         activeEnvironmentConfig: null,
@@ -522,6 +524,9 @@ function trainerComponent() {
 
             this.modelDetails = this._modelDetailsCache[info.modelFamily];
             const context = this.computeModelContext(info, config, this.modelDetails);
+            const videoCapabilities = this.detectVideoCapabilities(info, config, metadata, this.modelDetails);
+            context.isVideoModel = videoCapabilities.isVideoModel;
+            context.supportsVideo = videoCapabilities.supportsVideo;
 
             const requirementPayload = this.buildModelRequirementPayload(info, config, metadata);
             if (requirementPayload) {
@@ -576,6 +581,8 @@ function trainerComponent() {
                 modelFlavour: null,
                 controlnetEnabled: false,
                 controlEnabled: false,
+                isVideoModel: false,
+                supportsVideo: false,
             };
         },
         extractModelInfo(config, metadata) {
@@ -679,6 +686,34 @@ function trainerComponent() {
                 controlnetEnabled,
                 controlEnabled,
             };
+        },
+        detectVideoCapabilities(info, config, metadata, details) {
+            const capabilities = details?.capabilities || {};
+            const attributes = details?.attributes || {};
+            const normalizedConfig = this.buildNormalizedConfig(config);
+            const normalizedMetadata = this.buildNormalizedConfig(metadata || {});
+            const flags = [
+                capabilities.is_video_model,
+                capabilities.supports_video,
+                attributes.is_video_model,
+                attributes.supports_video,
+                normalizedConfig.is_video_model,
+                normalizedMetadata.is_video_model,
+            ];
+            const hasVideoFlag = flags.some((value) => this.normalizeBoolean(value));
+            const typeHints = [
+                info?.modelType,
+                normalizedConfig.model_type,
+                normalizedMetadata.model_type,
+                metadata?.model_type,
+            ].map((value) => (typeof value === 'string' ? value.toLowerCase() : ''));
+            const isVideoType = typeHints.some((value) => ['video', 'video_model', 'video-diffusion', 'video_diffusion'].includes(value));
+            const family = typeof info?.modelFamily === 'string' ? info.modelFamily.toLowerCase() : '';
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const isVideoFamily = knownVideoFamilies.has(family);
+            const isVideoModel = Boolean(hasVideoFlag || isVideoType || isVideoFamily);
+            const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) || isVideoModel);
+            return { isVideoModel, supportsVideo };
         },
         cloneConfigForPayload(source) {
             if (!source || typeof source !== 'object') {

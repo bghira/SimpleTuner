@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import status
 
-from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes
+from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes, VideoModelFoundation
 from simpletuner.helpers.models.registry import ModelRegistry
 
 
@@ -149,6 +149,7 @@ class ModelsService:
             "has_controlnet_pipeline": any(
                 pt in pipeline_types for pt in {PipelineTypes.CONTROLNET.value, PipelineTypes.CONTROL.value}
             ),
+            "is_video_model": issubclass(model_cls, VideoModelFoundation),
         }
 
         default_flavour = getattr(model_cls, "DEFAULT_MODEL_FLAVOUR", None)
