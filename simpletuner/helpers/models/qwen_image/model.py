@@ -214,13 +214,23 @@ class QwenImage(ImageModelFoundation):
             return_dict=False,
         )[0]
 
-        # unpack noise prediction if the transformer returned packed tokens
-        if noise_pred.dim() == 3:
-            noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
+        # The transformer may return either spatial latents (4D) or packed tokens (3D).
+        # Always normalise back to spatial latent space using the pipeline helpers so we
+        # stay consistent with the Diffusers implementation.
+        if noise_pred.dim() == 4:
+            noise_pred = pipeline_class._pack_latents(
+                noise_pred,
+                batch_size,
+                num_channels,
+                latent_height,
+                latent_width,
+            )
 
-            # remove extra dimension from _unpack_latents
-            if noise_pred.dim() == 5:
-                noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
+        noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
+
+        # remove extra dimension from _unpack_latents
+        if noise_pred.dim() == 5:
+            noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
 
         return {"model_prediction": noise_pred}
 
