@@ -1,5 +1,6 @@
 <!-- Dataloader Configuration Section -->
 <script>
+(() => {
 const CONDITIONING_GENERATOR_TYPES = [
     { value: 'canny', label: 'Canny Edges', description: 'Detect edge maps using the Canny operator.' },
     { value: 'edges', label: 'Edges (OpenCV)', description: 'Generic edge detector (alias for Canny).' },
@@ -44,6 +45,8 @@ const SKIP_DISCOVERY_OPTIONS = [
         hint: 'Disables general file discovery. Use only when the dataset contents are frozen.'
     }
 ];
+
+window.CONDITIONING_GENERATOR_TYPES = window.CONDITIONING_GENERATOR_TYPES || CONDITIONING_GENERATOR_TYPES;
 
 function dataloaderSectionComponent() {
     return {
@@ -811,6 +814,8 @@ function dataloaderSectionComponent() {
     }
     }
 }
+window.dataloaderSectionComponent = dataloaderSectionComponent;
+})();
 </script>
 <div id="dataloaderSection" data-builder="alpine" x-data="dataloaderSectionComponent()"
      x-init="(() => {
