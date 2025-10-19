@@ -84,6 +84,7 @@ def get_cuda_dependencies():
         "torchao>=0.12.0",
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
+        "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
     ]
 
