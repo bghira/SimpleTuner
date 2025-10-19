@@ -4,37 +4,38 @@ import torch
 if torch.cuda.is_available():
     # the marlin fp8 kernel needs some help with dtype casting for some reason
     # see: https://github.com/huggingface/optimum-quanto/pull/296#issuecomment-2380719201
-    from optimum.quanto.library.extensions.cuda import ext as quanto_ext
+    if torch.device("cuda").type == "cuda" and torch.version.cuda:
+        from optimum.quanto.library.extensions.cuda import ext as quanto_ext
 
-    # Save the original operator
-    original_gemm_f16f8_marlin = torch.ops.quanto.gemm_f16f8_marlin
+        # Save the original operator
+        original_gemm_f16f8_marlin = torch.ops.quanto.gemm_f16f8_marlin
 
-    def fp8_marlin_gemm_wrapper(
-        a: torch.Tensor,
-        b_q_weight: torch.Tensor,
-        b_scales: torch.Tensor,
-        workspace: torch.Tensor,
-        num_bits: int,
-        size_m: int,
-        size_n: int,
-        size_k: int,
-    ) -> torch.Tensor:
-        # Ensure 'a' has the correct dtype
-        a = a.to(b_scales.dtype)
-        # Call the original operator
-        return original_gemm_f16f8_marlin(
-            a,
-            b_q_weight,
-            b_scales,
-            workspace,
-            num_bits,
-            size_m,
-            size_n,
-            size_k,
-        )
+        def fp8_marlin_gemm_wrapper(
+            a: torch.Tensor,
+            b_q_weight: torch.Tensor,
+            b_scales: torch.Tensor,
+            workspace: torch.Tensor,
+            num_bits: int,
+            size_m: int,
+            size_n: int,
+            size_k: int,
+        ) -> torch.Tensor:
+            # Ensure 'a' has the correct dtype
+            a = a.to(b_scales.dtype)
+            # Call the original operator
+            return original_gemm_f16f8_marlin(
+                a,
+                b_q_weight,
+                b_scales,
+                workspace,
+                num_bits,
+                size_m,
+                size_n,
+                size_k,
+            )
 
-    # Monkey-patch the operator
-    torch.ops.quanto.gemm_f16f8_marlin = fp8_marlin_gemm_wrapper
+        # Monkey-patch the operator
+        torch.ops.quanto.gemm_f16f8_marlin = fp8_marlin_gemm_wrapper
 
     class TinyGemmQBitsLinearFunction(optimum.quanto.tensor.function.QuantizedLinearFunction):
         @staticmethod

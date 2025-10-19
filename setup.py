@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from setuptools import find_packages, setup
 
@@ -68,9 +69,7 @@ def build_rocm_wheel_url(package: str, version: str, rocm_version: str) -> str:
     py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
     platform_tag = _rocm_platform_tag()
     filename = f"{package}-{version}%2Brocm{rocm_version}-{py_tag}-{py_tag}-{platform_tag}.whl"
-    base_url = os.environ.get(
-        "SIMPLETUNER_ROCM_BASE_URL", f"https://download.pytorch.org/whl/rocm{rocm_version}"
-    )
+    base_url = os.environ.get("SIMPLETUNER_ROCM_BASE_URL", f"https://download.pytorch.org/whl/rocm{rocm_version}")
     return f"{package} @ {base_url}/{filename}"
 
 
@@ -155,6 +154,25 @@ def get_platform_dependencies():
     return deps
 
 
+def _collect_package_files(*directories: str):
+    """Collect package data files relative to the simpletuner package."""
+    collected = []
+    package_root = Path("simpletuner")
+    for directory in directories:
+        root = Path(directory)
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file():
+                try:
+                    relative = path.relative_to(package_root)
+                except ValueError:
+                    # Skip files outside package root
+                    continue
+                collected.append(str(relative))
+    return collected
+
+
 # Base dependencies (minimal, works on all platforms)
 base_deps = [
     "diffusers>=0.35.1",
@@ -236,6 +254,15 @@ setup(
     author="bghira",
     # license handled by pyproject.toml
     packages=find_packages(),
+    include_package_data=True,
+    package_data={
+        "simpletuner": _collect_package_files(
+            "simpletuner/templates",
+            "simpletuner/static",
+            "simpletuner/config",
+            "simpletuner/documentation",
+        ),
+    },
     python_requires=">=3.11,<3.14",
     install_requires=base_deps + platform_deps_for_install,
     extras_require=extras_require,
