@@ -51,7 +51,7 @@ def get_timestep_embedding(
 
     Args
         timesteps (torch.Tensor):
-            a 1-D Tensor of N indices, one per batch element. These may be fractional.
+            a 1-D floating point Tensor of N indices, one per batch element. These may be fractional.
         embedding_dim (int):
             the dimension of the output.
         flip_sin_to_cos (bool):
@@ -66,13 +66,16 @@ def get_timestep_embedding(
         torch.Tensor: an [N x dim] Tensor of positional embeddings.
     """
     assert len(timesteps.shape) == 1, "Timesteps should be a 1d-array"
+    if not timesteps.is_floating_point():
+        raise TypeError("`get_timestep_embedding` expects floating-point `timesteps`. Call `.float()` on the input.")
 
     half_dim = embedding_dim // 2
     exponent = -math.log(max_period) * torch.arange(start=0, end=half_dim, dtype=torch.float32, device=timesteps.device)
     exponent = exponent / (half_dim - downscale_freq_shift)
 
-    emb = torch.exp(exponent).to(timesteps.dtype)
-    emb = timesteps[:, None].float() * emb[None, :]
+    emb = torch.exp(exponent)
+    timesteps = timesteps.float()
+    emb = timesteps[:, None] * emb[None, :]
 
     # scale embeddings
     emb = scale * emb
@@ -144,6 +147,7 @@ class QwenTimestepProjEmbeddings(nn.Module):
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, scale=1000)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.timestep_embedder.time_embed_dim = embedding_dim
 
     def forward(self, timestep, hidden_states):
         timesteps_proj = self.time_proj(timestep)
@@ -261,7 +265,8 @@ class QwenDoubleStreamAttnProcessor2_0:
     _attention_backend = None
 
     def __init__(self):
-        if not hasattr(F, "scaled_dot_product_attention"):
+        sdpa = getattr(F, "scaled_dot_product_attention", None)
+        if sdpa is None or not callable(sdpa):
             raise ImportError(
                 "QwenDoubleStreamAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0."
             )

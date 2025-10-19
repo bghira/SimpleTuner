@@ -68,7 +68,7 @@ class TestGetTimestepEmbedding(TransformerBaseTest):
 
     def test_basic_functionality(self):
         """Test basic timestep embedding generation."""
-        timesteps = torch.tensor([0, 100, 500], dtype=torch.long)
+        timesteps = torch.tensor([0.0, 100.0, 500.0], dtype=torch.float32)
         embedding_dim = 128
 
         embeddings = get_timestep_embedding(timesteps, embedding_dim)
@@ -80,7 +80,7 @@ class TestGetTimestepEmbedding(TransformerBaseTest):
 
     def test_flip_sin_to_cos_parameter(self):
         """Test flip_sin_to_cos parameter functionality."""
-        timesteps = torch.tensor([100], dtype=torch.long)
+        timesteps = torch.tensor([100.0], dtype=torch.float32)
         embedding_dim = 64
 
         emb_normal = get_timestep_embedding(timesteps, embedding_dim, flip_sin_to_cos=False)
@@ -94,7 +94,7 @@ class TestGetTimestepEmbedding(TransformerBaseTest):
 
     def test_odd_embedding_dim(self):
         """Test with odd embedding dimensions (should zero pad)."""
-        timesteps = torch.tensor([100], dtype=torch.long)
+        timesteps = torch.tensor([100.0], dtype=torch.float32)
         embedding_dim = 65  # Odd number
 
         embeddings = get_timestep_embedding(timesteps, embedding_dim)
@@ -105,7 +105,7 @@ class TestGetTimestepEmbedding(TransformerBaseTest):
 
     def test_scale_parameter(self):
         """Test scale parameter affects output magnitude."""
-        timesteps = torch.tensor([100], dtype=torch.long)
+        timesteps = torch.tensor([100.0], dtype=torch.float32)
         embedding_dim = 64
 
         emb_scale_1 = get_timestep_embedding(timesteps, embedding_dim, scale=1.0)
@@ -116,7 +116,7 @@ class TestGetTimestepEmbedding(TransformerBaseTest):
 
     def test_downscale_freq_shift(self):
         """Test downscale_freq_shift parameter."""
-        timesteps = torch.tensor([100], dtype=torch.long)
+        timesteps = torch.tensor([100.0], dtype=torch.float32)
         embedding_dim = 64
 
         emb_shift_0 = get_timestep_embedding(timesteps, embedding_dim, downscale_freq_shift=0)
@@ -127,7 +127,7 @@ class TestGetTimestepEmbedding(TransformerBaseTest):
 
     def test_max_period_parameter(self):
         """Test max_period parameter affects frequency range."""
-        timesteps = torch.tensor([100], dtype=torch.long)
+        timesteps = torch.tensor([100.0], dtype=torch.float32)
         embedding_dim = 64
 
         emb_period_1000 = get_timestep_embedding(timesteps, embedding_dim, max_period=1000)
@@ -141,25 +141,32 @@ class TestGetTimestepEmbedding(TransformerBaseTest):
         embedding_dim = 64
 
         # Test 1D timesteps (should work)
-        timesteps_1d = torch.tensor([100], dtype=torch.long)
+        timesteps_1d = torch.tensor([100.0], dtype=torch.float32)
         embeddings = get_timestep_embedding(timesteps_1d, embedding_dim)
         self.assert_tensor_shape(embeddings, (1, 64))
 
         # Test 2D timesteps (should fail)
-        timesteps_2d = torch.tensor([[100]], dtype=torch.long)
+        timesteps_2d = torch.tensor([[100.0]], dtype=torch.float32)
         with self.assertRaises(AssertionError):
             get_timestep_embedding(timesteps_2d, embedding_dim)
+
+    def test_integer_timesteps_raise(self):
+        """get_timestep_embedding should reject integer inputs to avoid silent precision loss."""
+        embedding_dim = 64
+        timesteps = torch.tensor([100], dtype=torch.long)
+        with self.assertRaises(TypeError):
+            get_timestep_embedding(timesteps, embedding_dim)
 
     def test_device_consistency(self):
         """Test device consistency between input and output."""
         if torch.cuda.is_available():
-            timesteps = torch.tensor([100], dtype=torch.long, device="cuda")
+            timesteps = torch.tensor([100.0], dtype=torch.float32, device="cuda")
             embeddings = get_timestep_embedding(timesteps, 64)
             self.assertEqual(embeddings.device, timesteps.device)
 
     def test_typo_prevention(self):
         """Test for common parameter name typos."""
-        timesteps = torch.tensor([100], dtype=torch.long)
+        timesteps = torch.tensor([100.0], dtype=torch.float32)
 
         # Test correct parameter names work
         try:
@@ -370,12 +377,12 @@ class TestQwenTimestepProjEmbeddings(TransformerBaseTest, EmbeddingTestMixin):
         module = QwenTimestepProjEmbeddings(512)
 
         # Test with zero timesteps
-        zero_timestep = torch.zeros(2, dtype=torch.long)
+        zero_timestep = torch.zeros(2, dtype=torch.float32)
         output = module(zero_timestep, self.hidden_states)
         self.assert_no_nan_or_inf(output)
 
         # Test with maximum timesteps
-        max_timestep = torch.full((2,), 1000, dtype=torch.long)
+        max_timestep = torch.full((2,), 1000.0, dtype=torch.float32)
         output = module(max_timestep, self.hidden_states)
         self.assert_no_nan_or_inf(output)
 
@@ -1506,7 +1513,7 @@ class TestQwenImageTransformerIntegration(TransformerBaseTest):
     def test_function_integration(self):
         """Test integration of standalone functions."""
         # Test get_timestep_embedding with apply_rotary_emb_qwen
-        timesteps = torch.tensor([100, 200], dtype=torch.long)
+        timesteps = torch.tensor([100.0, 200.0], dtype=torch.float32)
         emb = get_timestep_embedding(timesteps, 64)
 
         # Reshape for rotary embedding (simulate real usage)
