@@ -203,6 +203,13 @@ class ImageEmbedCache(WebhookMixin):
             embeddings = self.embedder.encode(images)
         if embeddings is None:
             return [], []
+        if isinstance(embeddings, (list, tuple)):
+            if all(torch.is_tensor(item) for item in embeddings):
+                embeddings = torch.stack(embeddings, dim=0)
+            else:
+                raise ValueError("Conditioning image embed provider returned a sequence containing non-tensors.")
+        elif isinstance(embeddings, np.ndarray):
+            embeddings = torch.from_numpy(embeddings)
         if not torch.is_tensor(embeddings):
             raise ValueError("Conditioning image embed provider returned non-tensor embeddings.")
         embeds = embeddings.detach().cpu()
