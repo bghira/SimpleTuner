@@ -783,14 +783,35 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         try:
+            if self.dataset_type == "video":
+                index = self._get_index_from_path(filepath)
+                if index is None:
+                    logger.error("Unable to resolve dataset index for %s", filepath)
+                    return None
+                item = self.get_dataset_item(index)
+                if item is None:
+                    return None
+                sample = item.get(self.video_column)
+                if sample is None:
+                    logger.error("Dataset item %s missing '%s' column", filepath, self.video_column)
+                    return None
+                video_path, temp_path = self._prepare_video_source(sample)
+                if not video_path:
+                    logger.error("Unable to prepare video source for %s", filepath)
+                    return None
+                try:
+                    return load_video(video_path)
+                finally:
+                    if temp_path:
+                        try:
+                            os.remove(temp_path)
+                        except OSError:
+                            pass
+
             image_data = self.read(filepath, as_byteIO=True)
             if image_data is None:
                 return None
-            loader = load_image
-            if self.dataset_type == "video":
-                loader = load_video
-            image = loader(image_data)
-            return image
+            return load_image(image_data)
         except Exception as e:
             logger.error(f"Error opening image {filepath}: {e}")
             if delete_problematic_images:
