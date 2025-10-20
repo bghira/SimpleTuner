@@ -769,6 +769,9 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
 
     job_config = dict(runtime_payload)
     job_config["__job_id__"] = job_id
+    # Ensure the trainer surfaces configuration parsing errors instead of silently
+    # falling back to config/config.json when launched from the WebUI.
+    job_config["__skip_config_fallback__"] = True
 
     # Remove non-CLI arguments that shouldn't be passed to the trainer
     non_cli_keys = {

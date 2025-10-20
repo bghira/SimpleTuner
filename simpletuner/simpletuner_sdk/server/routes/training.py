@@ -220,8 +220,41 @@ async def get_training_status():
     if job_id:
         try:
             # Get process status
-            job_status = process_keeper.get_process_status(job_id)
-            job_info = {"status": job_status}
+            job_status = str(process_keeper.get_process_status(job_id) or "").strip()
+            if job_status:
+                job_info = {"status": job_status}
+
+                normalized_status = job_status.lower()
+                mapped_status = None
+
+                if normalized_status in {"failed", "crashed"}:
+                    mapped_status = "error"
+                elif normalized_status == "completed":
+                    mapped_status = "completed"
+                elif normalized_status == "terminated":
+                    mapped_status = "cancelled"
+                elif normalized_status == "running":
+                    mapped_status = "running"
+                elif normalized_status in {"pending", "starting"}:
+                    mapped_status = "starting"
+
+                if mapped_status and mapped_status != status:
+                    status = mapped_status
+                    APIState.set_state("training_status", status)
+                    if mapped_status in {"error", "cancelled"}:
+                        APIState.set_state("training_progress", None)
+                    if mapped_status in {"error", "cancelled", "completed"}:
+                        APIState.set_state("training_startup_stages", {})
+                        APIState.set_state("current_job_id", None)
+                        job_id = None
+                    if mapped_status == "completed":
+                        progress_state = APIState.get_state("training_progress") or {}
+                        if isinstance(progress_state, Mapping):
+                            progress_state = dict(progress_state)
+                            progress_state["percent"] = 100
+                            APIState.set_state("training_progress", progress_state)
+            else:
+                job_info = {"status": job_status or "unknown"}
         except Exception:
             # Process keeper might not have this job
             pass

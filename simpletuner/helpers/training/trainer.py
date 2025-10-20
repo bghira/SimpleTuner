@@ -227,9 +227,26 @@ class Trainer:
             target_logs["grad_absmax"] = self.grad_norm
 
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
-        self.configure_webhook(raw_config=args)
-        self.config = load_config(args, exit_on_error=exit_on_error)
-        if self.config is None and args:
+        skip_config_fallback = False
+        args_payload = args
+
+        if isinstance(args, dict):
+            args_payload = dict(args)
+        elif hasattr(args, "__dict__"):
+            args_payload = dict(vars(args))
+
+        if isinstance(args_payload, dict):
+            skip_config_fallback = bool(args_payload.pop("__skip_config_fallback__", False))
+            # Strip any internal metadata entries that shouldn't be forwarded to the CLI parser.
+            metadata_keys = [
+                key for key in list(args_payload.keys()) if isinstance(key, str) and key.startswith("__")
+            ]
+            for key in metadata_keys:
+                args_payload.pop(key, None)
+
+        self.configure_webhook(raw_config=args_payload if isinstance(args_payload, dict) else args)
+        self.config = load_config(args_payload, exit_on_error=exit_on_error)
+        if self.config is None and args_payload and not skip_config_fallback:
             # Fallback to the user's persisted defaults when ad-hoc CLI args are incomplete.
             # This mirrors historical behaviour where we would silently load the active
             # environment when parsing failed, while still surfacing an explicit failure if

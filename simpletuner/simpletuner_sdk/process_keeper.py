@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Mapping
 
 try:  # Optional dependency; used for robust process tree termination
     import psutil  # type: ignore
@@ -45,6 +45,8 @@ class TrainerProcess:
         self.events = []
         self.events_lock = threading.Lock()
         self.output_thread = None
+        self._relayed_failure = False
+        self._relayed_completion = False
         # Create temp directory for IPC
         self.ipc_dir = tempfile.mkdtemp(prefix=f"trainer_{job_id}_")
         logger.info(f"IPC dir {self.ipc_dir}")
@@ -80,6 +82,7 @@ import signal
 import time
 import threading
 import logging
+from collections.abc import Mapping
 
 # Add parent directories to path for imports
 import os
@@ -204,15 +207,33 @@ try:
     send_event("state", {{"status": "completed", "result": str(result)}})
 except SystemExit as exc:
     exit_code = getattr(exc, "code", None)
-    if isinstance(exit_code, str) and exit_code.strip():
+    payload = {{}}
+
+    if isinstance(exit_code, Mapping):
+        payload = dict(exit_code)
+        exit_message = str(payload.get("message") or payload.get("error") or "").strip()
+    elif isinstance(exit_code, str) and exit_code.strip():
         exit_message = exit_code.strip()
     elif isinstance(exit_code, int):
         exit_message = f"Training process exited during configuration (exit code {{exit_code}}). Check the logs above for details."
+        payload["exit_code"] = exit_code
     else:
         exit_message = "Training process exited during configuration. Check the logs above for details."
+        if exit_code is not None:
+            payload["exit_code"] = exit_code
+
+    if not exit_message:
+        exit_message = "Training process exited during configuration. Check the logs above for details."
+
     logger.error(f"Training terminated via SystemExit: {{exit_message}}")
-    send_event("error", {{"message": exit_message, "exit_code": exit_code}})
-    send_event("state", {{"status": "failed", "message": exit_message, "exit_code": exit_code}})
+
+    error_event = {{"message": exit_message}}
+    error_event.update(payload)
+    send_event("error", error_event)
+
+    state_event = {{"status": "failed", "message": exit_message}}
+    state_event.update(payload)
+    send_event("state", state_event)
     raise
 except Exception as e:
     logger.error(f"Function error: {{e}}")
@@ -346,11 +367,25 @@ logger.info("Subprocess exiting")
                 # Update status from events
                 if event.get("type") == "state":
                     state_data = event.get("data", {})
-                    if "status" in state_data:
-                        # Don't override terminated status with aborting
-                        if not (self.status == "terminated" and state_data["status"] == "aborting"):
-                            self.status = state_data["status"]
-                            process_registry[self.job_id]["status"] = self.status
+                if "status" in state_data:
+                    # Don't override terminated status with aborting
+                    if not (self.status == "terminated" and state_data["status"] == "aborting"):
+                        self.status = state_data["status"]
+                        process_registry[self.job_id]["status"] = self.status
+
+        event_type = str(event.get("type") or "").lower()
+        event_data = event.get("data") or {}
+
+        if event_type == "error":
+            self._relay_failure_event(event_data)
+        elif event_type == "state":
+            status_text = str(event_data.get("status") or "").strip().lower()
+            if status_text in {"failed", "error", "fatal"}:
+                self._relay_failure_event(event_data)
+            elif status_text in {"completed", "success"}:
+                self._relay_completion_event(event_data)
+            elif status_text in {"terminated", "cancelled", "canceled", "aborted", "stopped"}:
+                self._relay_cancel_event(event_data)
 
     def send_command(self, command: str, data: Optional[Dict] = None):
         """Send a command to the trainer subprocess."""
@@ -430,6 +465,112 @@ logger.info("Subprocess exiting")
         except Exception as e:
             logger.error(f"Error terminating process {self.job_id}: {e}")
         return False
+
+    def _relay_failure_event(self, data: Dict[str, Any]) -> None:
+        if self._relayed_failure:
+            return
+        self._relayed_failure = True
+
+        message = str(data.get("message") or data.get("error") or "").strip()
+        if not message:
+            message = "Training failed due to a fatal error."
+
+        payload = {
+            "type": "error",
+            "severity": "error",
+            "message": message,
+            "job_id": self.job_id,
+            "data": (data or {}) | {"status": "failed"},
+        }
+
+        self._update_training_state_from_subprocess(status="error")
+        self._dispatch_callback_event(payload)
+        self._dispatch_training_status_event(status="failed", data=data, message=message)
+
+    def _relay_completion_event(self, data: Dict[str, Any]) -> None:
+        if self._relayed_completion:
+            return
+        self._relayed_completion = True
+
+        payload_data = dict(data or {})
+        payload_data.setdefault("status", "completed")
+        payload = {
+            "type": "training.summary",
+            "status": "completed",
+            "severity": "info",
+            "message": data.get("message") or "Training completed successfully.",
+            "job_id": self.job_id,
+            "data": payload_data,
+        }
+
+        self._update_training_state_from_subprocess(status="completed")
+        self._dispatch_callback_event(payload)
+        self._dispatch_training_status_event(status="completed", data=data, message=payload["message"])
+
+    def _relay_cancel_event(self, data: Dict[str, Any]) -> None:
+        if self._relayed_failure or self._relayed_completion:
+            return
+
+        payload_data = dict(data or {})
+        payload_data.setdefault("status", "cancelled")
+        payload = {
+            "type": "training.status",
+            "status": "cancelled",
+            "severity": "warning",
+            "message": data.get("message") or "Training was cancelled.",
+            "job_id": self.job_id,
+            "data": payload_data,
+        }
+
+        self._update_training_state_from_subprocess(status="cancelled")
+        self._dispatch_callback_event(payload)
+
+    def _update_training_state_from_subprocess(self, *, status: str) -> None:
+        normalized = status.strip().lower()
+        try:
+            from simpletuner.simpletuner_sdk.api_state import APIState
+
+            if normalized == "completed":
+                progress_state = APIState.get_state("training_progress") or {}
+                if isinstance(progress_state, Mapping):
+                    progress_state = dict(progress_state)
+                    progress_state["percent"] = 100
+                    APIState.set_state("training_progress", progress_state)
+                APIState.set_state("training_status", "completed")
+            elif normalized in {"cancelled", "canceled"}:
+                APIState.set_state("training_status", "cancelled")
+                APIState.set_state("training_progress", None)
+            else:
+                APIState.set_state("training_status", "error")
+                APIState.set_state("training_progress", None)
+
+            APIState.set_state("training_startup_stages", {})
+            current_job = APIState.get_state("current_job_id")
+            if current_job == self.job_id:
+                APIState.set_state("current_job_id", None)
+        except Exception:
+            logger.debug("Failed to update API state for subprocess status '%s'", status, exc_info=True)
+
+    def _dispatch_callback_event(self, payload: Dict[str, Any]) -> None:
+        try:
+            from simpletuner.simpletuner_sdk.server.services.callback_service import get_default_callback_service
+
+            service = get_default_callback_service()
+            service.handle_incoming(payload)
+        except Exception:
+            logger.debug("Failed to relay subprocess event to callback service", exc_info=True)
+
+    def _dispatch_training_status_event(self, *, status: str, data: Optional[Dict[str, Any]] = None, message: str = "") -> None:
+        normalized = status.strip().lower()
+        status_payload = {
+            "type": "training.status",
+            "status": normalized,
+            "severity": "error" if normalized in {"failed", "error", "fatal"} else "info",
+            "message": message or None,
+            "job_id": self.job_id,
+            "data": (data or {}) | {"status": normalized},
+        }
+        self._dispatch_callback_event(status_payload)
 
     def _force_kill_process_tree(self, timeout: int) -> None:
         """Forcefully terminate the subprocess and any children."""
