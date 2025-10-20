@@ -160,8 +160,12 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
-        device = device or self._execution_device
-        dtype = dtype or self.text_encoder.dtype
+        encoder_param = next(self.text_encoder.parameters(), None)
+        encoder_device = encoder_param.device if encoder_param is not None else torch.device("cpu")
+        encoder_dtype = encoder_param.dtype if encoder_param is not None else torch.float32
+
+        target_device = device or self._execution_device or encoder_device
+        target_dtype = dtype or encoder_dtype
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
         prompt = [prompt_clean(u) for u in prompt]
@@ -179,8 +183,11 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         text_input_ids, mask = text_inputs.input_ids, text_inputs.attention_mask
         seq_lens = mask.gt(0).sum(dim=1).long()
 
-        prompt_embeds = self.text_encoder(text_input_ids.to(device), mask.to(device)).last_hidden_state
-        prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
+        prompt_embeds = self.text_encoder(
+            text_input_ids.to(encoder_device),
+            mask.to(encoder_device),
+        ).last_hidden_state
+        prompt_embeds = prompt_embeds.to(dtype=target_dtype, device=target_device)
         prompt_embeds = [u[:v] for u, v in zip(prompt_embeds, seq_lens)]
         prompt_embeds = torch.stack(
             [torch.cat([u, u.new_zeros(max_sequence_length - u.size(0), u.size(1))]) for u in prompt_embeds], dim=0
