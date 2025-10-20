@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import threading
 from functools import partial
 from typing import Dict, Optional
 
@@ -323,6 +324,7 @@ class Wan(VideoModelFoundation):
         self._wan_cached_stage_modules: Dict[str, WanTransformer3DModel] = {}
         self._conditioning_image_embedder = None
         self._wan_logged_missing_img_encoder = False
+        self._wan_vae_patch_lock = threading.Lock()
         if not hasattr(self.config, "wan_force_2_1_time_embedding"):
             self.config.wan_force_2_1_time_embedding = False
         self._wan_expand_timesteps = False
@@ -462,6 +464,73 @@ class Wan(VideoModelFoundation):
         base = base_timesteps.to(mask_tokens.device, dtype=mask_tokens.dtype).view(-1, 1, 1, 1)
         expanded = (mask_tokens * base).flatten(1)
         return expanded.to(device=base_timesteps.device, dtype=base_timesteps.dtype)
+
+    def _wan_prepare_vae_encode_inputs(self, vae, samples: torch.Tensor) -> tuple[torch.Tensor, bool]:
+        if not torch.is_tensor(samples) or samples.ndim != 5:
+            return samples, False
+
+        vae_config = getattr(vae, "config", None)
+        if vae_config is None:
+            return samples, False
+
+        patch_size = getattr(vae_config, "patch_size", None)
+        if not isinstance(patch_size, int) or patch_size <= 1:
+            return samples, False
+
+        in_channels = getattr(vae_config, "in_channels", None)
+        if not isinstance(in_channels, int):
+            return samples, False
+
+        batch, channels, frames, height, width = samples.shape
+        if channels == in_channels:
+            return samples, False
+
+        expected_channels = channels * (patch_size**2)
+        if expected_channels != in_channels:
+            return samples, False
+
+        if height % patch_size != 0 or width % patch_size != 0:
+            logger.warning(
+                "Unable to patchify VAE inputs: shape (%s, %s) not divisible by patch size %s.",
+                height,
+                width,
+                patch_size,
+            )
+            return samples, False
+
+        reshaped = samples.contiguous().view(
+            batch,
+            channels,
+            frames,
+            height // patch_size,
+            patch_size,
+            width // patch_size,
+            patch_size,
+        )
+        patched = reshaped.permute(0, 1, 4, 6, 2, 3, 5).contiguous()
+        patched = patched.view(batch, expected_channels, frames, height // patch_size, width // patch_size)
+        return patched, True
+
+    def _wan_encode_without_internal_patchify(self, vae, samples: torch.Tensor, original_patch_size):
+        config = getattr(vae, "config", None)
+        if config is None or original_patch_size is None:
+            return vae.encode(samples)
+        try:
+            config.patch_size = None
+            return vae.encode(samples)
+        finally:
+            config.patch_size = original_patch_size
+
+    def encode_with_vae(self, vae, samples):
+        patched_samples, disable_internal_patch = self._wan_prepare_vae_encode_inputs(vae, samples)
+        if disable_internal_patch:
+            original_patch_size = getattr(getattr(vae, "config", None), "patch_size", None)
+            lock = getattr(self, "_wan_vae_patch_lock", None)
+            if lock is not None:
+                with lock:
+                    return self._wan_encode_without_internal_patchify(vae, patched_samples, original_patch_size)
+            return self._wan_encode_without_internal_patchify(vae, patched_samples, original_patch_size)
+        return super().encode_with_vae(vae, patched_samples)
 
     def _apply_i2v_conditioning_to_kwargs(self, prepared_batch, transformer_kwargs):
         if not self._is_i2v_like_flavour():

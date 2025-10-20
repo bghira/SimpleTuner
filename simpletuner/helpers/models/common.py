@@ -560,6 +560,13 @@ class ModelFoundation(ABC):
         """
         return sample
 
+    def encode_with_vae(self, vae, samples):
+        """
+        Hook for models to customize VAE encoding behaviour (e.g. applying flavour-specific patches).
+        By default this simply forwards to the provided VAE.
+        """
+        return vae.encode(samples)
+
     def post_vae_encode_transform_sample(self, sample):
         """
         Post-encode transform for the sample after passing it to the VAE.
