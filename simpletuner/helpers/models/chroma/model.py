@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 import torch
 from diffusers import AutoencoderKL
 from torch.nn import functional as F
-from transformers import T5EncoderModel, PreTrainedTokenizer
+from transformers import T5EncoderModel, AutoTokenizer
 
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
@@ -60,7 +60,7 @@ class Chroma(ImageModelFoundation):
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "T5 XXL v1.1",
-            "tokenizer": PreTrainedTokenizer,
+            "tokenizer": AutoTokenizer,
             "tokenizer_subfolder": "tokenizer",
             "model": T5EncoderModel,
         },
@@ -129,7 +129,7 @@ class Chroma(ImageModelFoundation):
             negative_prompt=None,
             device=self.accelerator.device,
             num_images_per_prompt=1,
-            max_sequence_length=int(self.config.tokenizer_max_length),
+            max_sequence_length=int(self.config.tokenizer_max_length or 512),
             do_classifier_free_guidance=False,
         )
         if getattr(self.config, "t5_padding", "unmodified") == "zero":
