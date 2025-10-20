@@ -25,6 +25,7 @@ from torch.nn import functional as F
 
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.training.wrappers import unwrap_model as accelerator_unwrap_model
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -293,6 +294,12 @@ class Wan(VideoModelFoundation):
             "i2v-14b-2.2-low",
         }
     )
+    I2V_CLIP_CONDITIONED_FLAVOURS = frozenset(
+        {
+            "i2v-14b-2.1",
+            "i2v-14b-2.1-720p",
+        }
+    )
     FLF2V_FLAVOURS = frozenset(
         {
             "flf2v-14b-2.1",
@@ -315,6 +322,7 @@ class Wan(VideoModelFoundation):
         super().__init__(config, accelerator)
         self._wan_cached_stage_modules: Dict[str, WanTransformer3DModel] = {}
         self._conditioning_image_embedder = None
+        self._wan_logged_missing_img_encoder = False
         if not hasattr(self.config, "wan_force_2_1_time_embedding"):
             self.config.wan_force_2_1_time_embedding = False
         self._wan_expand_timesteps = False
@@ -323,19 +331,20 @@ class Wan(VideoModelFoundation):
         if not self._is_i2v_like_flavour():
             return False
 
-        pipeline = self.pipelines.get(PipelineTypes.IMG2VIDEO)
-        if pipeline is None:
-            try:
-                pipeline = self.get_pipeline(PipelineTypes.IMG2VIDEO)
-            except Exception:
-                pipeline = None
-
-        if pipeline is None or getattr(pipeline, "image_encoder", None) is None:
-            logger.info(
-                "Wan flavour %s does not expose an image encoder in the IMG2VIDEO pipeline; skipping conditioning image embeds.",
-                getattr(self.config, "model_flavour", "<unknown>"),
-            )
+        if not self._wan_transformers_require_image_conditioning():
             return False
+
+        pipeline = self.pipelines.get(PipelineTypes.IMG2VIDEO)
+        if pipeline is not None:
+            if getattr(pipeline, "image_encoder", None) is None:
+                if not self._wan_logged_missing_img_encoder:
+                    logger.info(
+                        "Wan flavour %s IMG2VIDEO pipeline missing image encoder; loading conditioning components separately.",
+                        getattr(self.config, "model_flavour", "<unknown>"),
+                    )
+                    self._wan_logged_missing_img_encoder = True
+            elif self._wan_logged_missing_img_encoder:
+                self._wan_logged_missing_img_encoder = False
 
         return True
 
@@ -372,6 +381,46 @@ class Wan(VideoModelFoundation):
 
     def _uses_last_frame_conditioning(self) -> bool:
         return self._flavour_in(self.FLF2V_FLAVOURS)
+
+    def _module_requires_image_conditioning(self, module: Optional[torch.nn.Module]) -> bool:
+        if module is None:
+            return False
+        config = getattr(module, "config", None)
+        if config is None:
+            try:
+                unwrapped = accelerator_unwrap_model(self.accelerator, module)
+            except Exception:  # pragma: no cover - defensive guard
+                unwrapped = module
+            config = getattr(unwrapped, "config", None)
+        if config is None:
+            return False
+        image_dim = getattr(config, "image_dim", None)
+        return image_dim is not None and image_dim != 0
+
+    def _wan_transformers_require_image_conditioning(self) -> bool:
+        if getattr(self.config, "wan_disable_conditioning_image_embeds", False):
+            return False
+
+        if getattr(self.config, "wan_force_conditioning_image_embeds", False):
+            return True
+
+        model = getattr(self, "model", None)
+        if model is not None and self._module_requires_image_conditioning(model):
+            return True
+
+        for cached in self._wan_cached_stage_modules.values():
+            if self._module_requires_image_conditioning(cached):
+                return True
+
+        pipeline = self.pipelines.get(PipelineTypes.IMG2VIDEO)
+        if pipeline is not None:
+            if self._module_requires_image_conditioning(getattr(pipeline, "transformer", None)):
+                return True
+            if self._module_requires_image_conditioning(getattr(pipeline, "transformer_2", None)):
+                return True
+
+        flavour = self._current_flavour()
+        return flavour in self.I2V_CLIP_CONDITIONED_FLAVOURS
 
     def _extract_conditioning_frames(self, prepared_batch):
         multi = prepared_batch.get("conditioning_pixel_values_multi")
