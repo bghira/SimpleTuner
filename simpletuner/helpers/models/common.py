@@ -99,6 +99,45 @@ class ModelTypes(Enum):
     TEXT_ENCODER = "text_encoder"
 
 
+class PipelineConditioningImageEmbedder:
+    """Wraps a Diffusers pipeline to expose a simple conditioning image encode interface."""
+
+    def __init__(self, pipeline, image_encoder, image_processor, device=None, weight_dtype=None):
+        if image_encoder is None or image_processor is None:
+            raise ValueError("PipelineConditioningImageEmbedder requires both an image encoder and image processor.")
+        self.pipeline = pipeline
+        self.image_encoder = image_encoder
+        self.image_processor = image_processor
+        self.device = device if device is not None else torch.device("cpu")
+        if isinstance(weight_dtype, str):
+            weight_dtype = getattr(torch, weight_dtype, None)
+        self.weight_dtype = weight_dtype
+
+        if self.weight_dtype is not None:
+            self.image_encoder.to(self.device, dtype=self.weight_dtype)
+        else:
+            self.image_encoder.to(self.device)
+        self.image_encoder.eval()
+
+    def encode(self, images):
+        inputs = self.image_processor(images=images, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        outputs = self.image_encoder(**inputs, output_hidden_states=True)
+        embeddings = None
+        hidden_states = getattr(outputs, "hidden_states", None)
+        if isinstance(hidden_states, (list, tuple)) and len(hidden_states) > 1:
+            embeddings = hidden_states[-2]
+        elif getattr(outputs, "last_hidden_state", None) is not None:
+            embeddings = outputs.last_hidden_state
+        elif torch.is_tensor(outputs):
+            embeddings = outputs
+        if embeddings is None:
+            raise ValueError("Image encoder did not return hidden states suitable for conditioning embeds.")
+        if self.weight_dtype is not None:
+            embeddings = embeddings.to(self.weight_dtype)
+        return embeddings
+
+
 class ModelFoundation(ABC):
     """
     Base class that contains all the universal logic:
@@ -867,16 +906,22 @@ class ModelFoundation(ABC):
             and "image_encoder" not in pipeline_kwargs
             and getattr(self, "config", None) is not None
         ):
-            repo_id = getattr(
-                self.config,
-                "image_encoder_pretrained_model_name_or_path",
-                None,
-            ) or self._model_config_path()
-            processor_repo_id = getattr(
-                self.config,
-                "image_processor_pretrained_model_name_or_path",
-                None,
-            ) or repo_id
+            repo_id = (
+                getattr(
+                    self.config,
+                    "image_encoder_pretrained_model_name_or_path",
+                    None,
+                )
+                or self._model_config_path()
+            )
+            processor_repo_id = (
+                getattr(
+                    self.config,
+                    "image_processor_pretrained_model_name_or_path",
+                    None,
+                )
+                or repo_id
+            )
             explicit_encoder_source = getattr(self.config, "image_encoder_pretrained_model_name_or_path", None)
             explicit_processor_source = getattr(self.config, "image_processor_pretrained_model_name_or_path", None)
             image_encoder = None
@@ -950,9 +995,7 @@ class ModelFoundation(ABC):
                 processor_subfolders.append(config_processor_subfolder)
             processor_subfolders.extend(("image_processor", "feature_extractor"))
             processor_subfolders = _dedupe_subfolders(processor_subfolders)
-            processor_revision = getattr(
-                self.config, "image_processor_revision", getattr(self.config, "revision", None)
-            )
+            processor_revision = getattr(self.config, "image_processor_revision", getattr(self.config, "revision", None))
             for subfolder in processor_subfolders:
                 try:
                     image_processor = CLIPImageProcessor.from_pretrained(
@@ -989,11 +1032,7 @@ class ModelFoundation(ABC):
         except (OSError, EnvironmentError, ValueError) as exc:
             alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
             current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
-            if (
-                alt_repo
-                and isinstance(alt_repo, str)
-                and alt_repo != current_repo
-            ):
+            if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
                 logger.warning(
                     "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
                     current_repo,
@@ -1009,6 +1048,17 @@ class ModelFoundation(ABC):
         self._configure_pipeline_offloading(pipeline_instance)
 
         return pipeline_instance
+
+    def get_conditioning_image_embedder(self):
+        """Return an adapter capable of encoding conditioning images, or None if unavailable."""
+        if not self.requires_conditioning_image_embeds():
+            return None
+
+        return self._get_conditioning_image_embedder()
+
+    def _get_conditioning_image_embedder(self):
+        """Subclass hook for providing conditioning image embedder (default: unsupported)."""
+        return None
 
     def get_group_offload_components(self, pipeline: DiffusionPipeline):
         """

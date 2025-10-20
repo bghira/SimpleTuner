@@ -8,7 +8,14 @@ from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
 from torchvision import transforms
 from transformers import CLIPImageProcessor, CLIPVisionModel, T5TokenizerFast, UMT5EncoderModel
 
-from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation, VideoToTensor
+from simpletuner.helpers.models.common import (
+    ModelTypes,
+    PipelineConditioningImageEmbedder,
+    PipelineTypes,
+    PredictionTypes,
+    VideoModelFoundation,
+    VideoToTensor,
+)
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
 from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
 
@@ -99,6 +106,26 @@ class Wan(VideoModelFoundation):
 
     def requires_conditioning_image_embeds(self) -> bool:
         return self._wan_stage_info() is not None
+
+    def _get_conditioning_image_embedder(self):
+        pipeline = self.pipelines.get(PipelineTypes.IMG2VIDEO)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.IMG2VIDEO)
+
+        image_encoder = getattr(pipeline, "image_encoder", None)
+        image_processor = getattr(pipeline, "image_processor", None)
+        if image_encoder is None or image_processor is None:
+            raise ValueError("Wan pipeline does not expose image encoder components required for conditioning embeds.")
+
+        device = getattr(self.accelerator, "device", torch.device("cpu"))
+        weight_dtype = getattr(self.config, "weight_dtype", None)
+        return PipelineConditioningImageEmbedder(
+            pipeline=pipeline,
+            image_encoder=image_encoder,
+            image_processor=image_processor,
+            device=device,
+            weight_dtype=weight_dtype,
+        )
 
     def setup_model_flavour(self):
         super().setup_model_flavour()
