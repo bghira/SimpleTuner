@@ -47,23 +47,74 @@ class TrainerProcess:
         self.output_thread = None
         self._relayed_failure = False
         self._relayed_completion = False
-        # Create temp directory for IPC
-        self.ipc_dir = tempfile.mkdtemp(prefix=f"trainer_{job_id}_")
+        # IPC paths are initialized when the subprocess starts (needs config)
+        self.ipc_dir: Optional[str] = None
+        self.command_file: Optional[str] = None
+        self.event_file: Optional[str] = None
+        self.func_file: Optional[str] = None
+
+    def _resolve_runtime_base(self, config: Optional[Any]) -> Path:
+        """Determine a writable base directory for IPC files."""
+        candidates: List[Path] = []
+
+        def _coerce_path(value: Optional[Any]) -> Optional[Path]:
+            if not value:
+                return None
+            try:
+                return Path(str(value)).expanduser().resolve()
+            except Exception:
+                return None
+
+        output_dir = None
+        if isinstance(config, Mapping):
+            output_dir = config.get("output_dir")
+        else:
+            output_dir = getattr(config, "output_dir", None)
+        output_path = _coerce_path(output_dir)
+        if output_path is not None:
+            candidates.append(output_path / ".simpletuner_runtime")
+
+        env_runtime = _coerce_path(os.environ.get("SIMPLETUNER_RUNTIME_DIR"))
+        if env_runtime is not None:
+            candidates.append(env_runtime)
+
+        # Always fall back to the system temporary directory
+        candidates.append(Path(tempfile.gettempdir()))
+
+        for base in candidates:
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+                ipc_path = Path(
+                    tempfile.mkdtemp(prefix=f"trainer_{self.job_id}_", dir=str(base))
+                )
+                return ipc_path
+            except Exception as exc:  # pragma: no cover - best effort, continue to fallback
+                logger.debug(f"Failed to create IPC dir in {base}: {exc}")
+
+        # Final fallback - let mkdtemp choose location
+        return Path(tempfile.mkdtemp(prefix=f"trainer_{self.job_id}_"))
+
+    def _initialize_ipc_paths(self, config: Optional[Any]) -> None:
+        if self.ipc_dir is not None:
+            return
+
+        ipc_path = self._resolve_runtime_base(config)
+        self.ipc_dir = str(ipc_path)
         logger.info(f"IPC dir {self.ipc_dir}")
         self.command_file = os.path.join(self.ipc_dir, "commands.json")
         self.event_file = os.path.join(self.ipc_dir, "events.json")
         self.func_file = os.path.join(self.ipc_dir, "func.pkl")
 
-        # Initialize command file
+        # Initialize command and event files
         with open(self.command_file, "w") as f:
             json.dump([], f)
-
-        # Initialize event file
         with open(self.event_file, "w") as f:
             json.dump([], f)
 
     def start(self, target_func, config: Dict[str, Any]):
         """Start the trainer subprocess."""
+        self._initialize_ipc_paths(config)
+
         # Get function module and name for import
         func_module = target_func.__module__
         func_name = target_func.__name__
@@ -636,7 +687,7 @@ logger.info("Subprocess exiting")
         try:
             import shutil
 
-            if os.path.exists(self.ipc_dir):
+            if self.ipc_dir and os.path.exists(self.ipc_dir):
                 shutil.rmtree(self.ipc_dir)
         except Exception as e:
             logger.debug(f"Failed to clean up IPC dir: {e}")
