@@ -3813,8 +3813,13 @@ function trainerComponent() {
                 ? lr.toExponential(2)
                 : (lr ?? 'N/A');
 
+            const rawPercent = Number(detail.percent ?? detail.percentage ?? 0);
+            const safePercent = Number.isFinite(rawPercent) ? rawPercent : 0;
+            const normalizedPercent = Math.max(0, Math.min(100, safePercent));
+            const roundedPercent = Math.round(normalizedPercent * 100) / 100;
+
             $data.trainingProgress = {
-                percent: Number(detail.percent || detail.percentage || 0),
+                percent: roundedPercent,
                 step: detail.step || detail.current_step || 0,
                 total_steps: detail.total_steps || detail.total || 0,
                 epoch: detail.epoch || 0,

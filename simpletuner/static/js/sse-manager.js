@@ -188,6 +188,8 @@
             if (!Number.isFinite(percent)) {
                 percent = 0;
             }
+            var clampedPercent = Math.max(0, Math.min(100, percent));
+            var roundedPercent = Math.round(clampedPercent * 100) / 100;
 
             var epoch = toNumber(extras.epoch || extras.current_epoch);
             if (epoch === null && payload.current_epoch !== undefined) {
@@ -214,7 +216,7 @@
             return {
                 type: 'training.progress',
                 job_id: jobId,
-                percentage: Number(percent || 0),
+                percentage: roundedPercent,
                 current_step: currentStep || 0,
                 total_steps: totalSteps || 0,
                 epoch: epoch || 0,
