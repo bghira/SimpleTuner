@@ -152,19 +152,41 @@ class Chroma(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        prompt_embeds = text_embedding["prompt_embeds"]
+        attention_mask = text_embedding["attention_masks"]
+
+        if prompt_embeds.dim() == 2:
+            prompt_embeds = prompt_embeds.unsqueeze(0)
+        if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
+            attention_mask = attention_mask.squeeze(1)
+        if attention_mask.dim() == 1:
+            attention_mask = attention_mask.unsqueeze(0)
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "prompt_attention_mask": text_embedding["attention_masks"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
+            "prompt_attention_mask": attention_mask,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: str) -> dict:
-        if self.config.validation_guidance_real is None or self.config.validation_guidance_real <= 1.0:
-            return {}
-        return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_attention_mask": text_embedding["attention_masks"].unsqueeze(0),
-            "guidance_scale_real": float(self.config.validation_guidance_real),
+        neg_embeds = text_embedding["prompt_embeds"]
+        neg_mask = text_embedding["attention_masks"]
+
+        if neg_embeds.dim() == 2:
+            neg_embeds = neg_embeds.unsqueeze(0)
+        if neg_mask.dim() == 3 and neg_mask.size(1) == 1:
+            neg_mask = neg_mask.squeeze(1)
+        if neg_mask.dim() == 1:
+            neg_mask = neg_mask.unsqueeze(0)
+
+        result = {
+            "negative_prompt_embeds": neg_embeds,
+            "negative_prompt_attention_mask": neg_mask,
         }
+
+        if self.config.validation_guidance_real is not None and self.config.validation_guidance_real > 1.0:
+            result["guidance_scale_real"] = float(self.config.validation_guidance_real)
+
+        return result
 
     def get_lora_target_layers(self):
         if self.config.lora_type.lower() == "standard":

@@ -911,7 +911,7 @@ def get_aws_backend(
 
 metrics_logger = logging.getLogger("DataBackendMetrics")
 if should_log():
-    metrics_logger.setLevel(os.environ.get("SIMPLETUNER_METRICS_LOG_LEVEL", "INFO"))
+    metrics_logger.setLevel(os.environ.get("SIMPLETUNER_METRICS_LOG_LEVEL", "WARNING"))
 else:
     metrics_logger.setLevel(logging.ERROR)
 

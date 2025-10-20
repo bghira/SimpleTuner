@@ -121,6 +121,10 @@ torchdistlogger = logging.getLogger("torch.distributed.nn.jit.instantiator")
 torchdistlogger.setLevel("WARNING")
 torch_utils_logger = logging.getLogger("diffusers.utils.torch_utils")
 torch_utils_logger.setLevel("ERROR")
+starlette_sse_logger = logging.getLogger("sse_starlette.sse")
+starlette_sse_logger.setLevel("WARNING")
+py_multipart_logger = logging.getLogger("python_multipart.multipart")
+py_multipart_logger.setLevel("WARNING")
 
 # Suppress specific PIL warning
 warnings.filterwarnings(

@@ -86,7 +86,7 @@ def _setup_logger(name: str, *, env_var: str | None = None, default_level: str =
 logger = _setup_logger("SimpleTuner")
 filelock_logger = _setup_logger("filelock", default_level="WARNING")
 connection_logger = _setup_logger("urllib3.connectionpool", default_level="WARNING")
-training_logger = _setup_logger("training-loop", default_level="DEBUG", env_var="SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
+training_logger = _setup_logger("training-loop", env_var="SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
 
 
 import accelerate

@@ -119,7 +119,7 @@ async def handle_callback(request: Request):
     event = callback_service.handle_incoming(data)
 
     safe_raw = _truncate_long_strings(data)
-    logger.info("Received callback: %s", safe_raw)
+    logger.debug("Received callback: %s", safe_raw)
 
     if event:
         logger.debug("Normalised callback: %s", _truncate_long_strings(event.to_payload()))
