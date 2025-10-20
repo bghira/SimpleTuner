@@ -326,6 +326,24 @@ class Chroma(ImageModelFoundation):
         if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
             attention_mask = attention_mask.squeeze(1)
 
+        # Match pipeline behaviour by extending the attention mask to cover image tokens
+        seq_length = packed_noisy_latents.shape[1]
+        attention_mask = attention_mask.to(device=self.accelerator.device)
+        if attention_mask.dtype != torch.bool:
+            attention_mask = attention_mask > 0
+        attention_mask = torch.cat(
+            [
+                attention_mask,
+                torch.ones(
+                    attention_mask.shape[0],
+                    seq_length,
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                ),
+            ],
+            dim=1,
+        )
+
         transformer_kwargs = {
             "hidden_states": packed_noisy_latents,
             "timestep": timesteps,
@@ -419,6 +437,23 @@ class Chroma(ImageModelFoundation):
             )
         if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
             attention_mask = attention_mask.squeeze(1)
+
+        seq_length = packed_noisy_latents.shape[1]
+        attention_mask = attention_mask.to(device=self.accelerator.device)
+        if attention_mask.dtype != torch.bool:
+            attention_mask = attention_mask > 0
+        attention_mask = torch.cat(
+            [
+                attention_mask,
+                torch.ones(
+                    attention_mask.shape[0],
+                    seq_length,
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                ),
+            ],
+            dim=1,
+        )
 
         conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
 

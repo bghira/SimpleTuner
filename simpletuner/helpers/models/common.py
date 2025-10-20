@@ -901,6 +901,7 @@ class ModelFoundation(ABC):
             pipeline_kwargs["controlnet"] = self.controlnet
 
         optional_components = getattr(pipeline_class, "_optional_components", [])
+        require_conditioning_components = bool(self.requires_conditioning_image_embeds())
         if (
             "image_encoder" in optional_components
             and "image_encoder" not in pipeline_kwargs
@@ -978,7 +979,8 @@ class ModelFoundation(ABC):
                 )
                 if explicit_encoder_source:
                     raise ValueError(message) from (loader_errors[-1][1] if loader_errors else None)
-                logger.warning(
+                log_fn = logger.warning if require_conditioning_components else logger.debug
+                log_fn(
                     "%s Set `image_encoder_pretrained_model_name_or_path` (and optionally "
                     "`image_encoder_subfolder`) in your config to provide the weights manually.",
                     message,
@@ -1018,7 +1020,8 @@ class ModelFoundation(ABC):
                 )
                 if explicit_processor_source:
                     raise ValueError(message) from (processor_errors[-1][1] if processor_errors else None)
-                logger.warning(
+                log_fn = logger.warning if require_conditioning_components else logger.debug
+                log_fn(
                     "%s Set `image_processor_pretrained_model_name_or_path` (and optionally "
                     "`image_processor_subfolder`) in your config to provide the processor configuration.",
                     message,
