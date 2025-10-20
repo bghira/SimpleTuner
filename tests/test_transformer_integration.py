@@ -69,19 +69,18 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
     def test_all_test_files_discovered(self):
         """Test that all expected transformer test files are discovered."""
         expected_transformers = [
-            "flux",
-            "hidream",
             "auraflow",
             "chroma",
             "chroma_controlnet",
             "cosmos",
-            "sd3",
-            "pixart",
+            "flux",
+            "hidream",
             "ltxvideo",
-            "wan",
+            "pixart",
             "qwen_image",
             "sana",
-            "chroma_controlnet",
+            "sd3",
+            "wan",
         ]
 
         discovered_transformers = set()

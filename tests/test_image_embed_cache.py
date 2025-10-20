@@ -103,6 +103,24 @@ class DummyModel:
     def get_pipeline(self):
         return self._pipeline
 
+    def get_conditioning_image_embedder(self):
+        pipeline = self.get_pipeline()
+
+        class _Embedder:
+            def __init__(self, pipe):
+                self._pipe = pipe
+
+            def encode(self, images):
+                processed = self._pipe.image_processor(images, return_tensors="pt")
+                pixel_values = processed.get("pixel_values")
+                outputs = self._pipe.image_encoder(pixel_values, output_hidden_states=True)
+                hidden_states = getattr(outputs, "hidden_states", None)
+                if not hidden_states:
+                    raise ValueError("Dummy encoder did not return hidden states.")
+                return hidden_states[-1]
+
+        return _Embedder(pipeline)
+
 
 class TestImageEmbedCache(unittest.TestCase):
     def setUp(self):
