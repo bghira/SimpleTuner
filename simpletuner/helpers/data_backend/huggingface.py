@@ -269,9 +269,15 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         video_path, temp_path = self._prepare_video_source(sample)
         if not video_path:
             return metadata
-
+        reader = None
         capture = None
         try:
+            try:
+                reader = VideoReader(video_path, "video")
+                metadata.update(self._metadata_from_video_reader(reader))
+            except Exception as exc:
+                logger.debug("Failed to extract metadata with torchvision VideoReader: %s", exc)
+
             import trainingsample as tsr
 
             capture = tsr.PyVideoCapture(video_path)
@@ -314,6 +320,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             if capture is not None:
                 try:
                     capture.release()
+                except Exception:
+                    pass
+            if reader is not None:
+                try:
+                    reader.close()
                 except Exception:
                     pass
             if temp_path:

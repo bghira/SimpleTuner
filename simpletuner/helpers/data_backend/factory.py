@@ -2368,11 +2368,13 @@ class FactoryRegistry:
 
         metadata_backend_is_mock = hasattr(init_backend["metadata_backend"], "_mock_children")
 
+        # Register early so downstream steps (e.g. caption handling) can locate the metadata backend.
+        StateTracker.register_data_backend(init_backend)
+
         if data_backend_is_mock and not metadata_backend_is_mock:
             info_log(
                 f"(id={init_backend['id']}) Detected mocked data backend without mocked metadata backend; skipping runtime setup steps."
             )
-            StateTracker.register_data_backend(init_backend)
             self.data_backends[init_backend["id"]] = init_backend
             return
 

@@ -6,7 +6,7 @@ from typing import Dict, Optional
 import torch
 from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
 from torchvision import transforms
-from transformers import T5TokenizerFast, UMT5EncoderModel
+from transformers import CLIPImageProcessor, CLIPVisionModel, T5TokenizerFast, UMT5EncoderModel
 
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation, VideoToTensor
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
@@ -93,6 +93,7 @@ class Wan(VideoModelFoundation):
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
         self._wan_cached_stage_modules: Dict[str, WanTransformer3DModel] = {}
+        self._conditioning_image_embedder = None
         if not hasattr(self.config, "wan_force_2_1_time_embedding"):
             self.config.wan_force_2_1_time_embedding = False
 
@@ -205,6 +206,129 @@ class Wan(VideoModelFoundation):
             self._apply_time_embedding_override(pipeline.transformer_2)
 
         return pipeline
+
+    class _ConditioningImageEmbedder:
+        def __init__(self, image_encoder: CLIPVisionModel, image_processor: CLIPImageProcessor, device, dtype):
+            self.image_encoder = image_encoder
+            self.image_processor = image_processor
+            self.device = device
+            self.dtype = dtype
+            self.image_encoder.eval()
+            self.image_encoder.to(device=self.device, dtype=self.dtype)
+            for param in self.image_encoder.parameters():
+                param.requires_grad_(False)
+
+        @torch.no_grad()
+        def encode(self, images):
+            processed = self.image_processor(images=images, return_tensors="pt")
+            pixel_values = processed["pixel_values"].to(device=self.device, dtype=self.dtype)
+            outputs = self.image_encoder(pixel_values=pixel_values, output_hidden_states=True)
+            hidden = outputs.hidden_states[-2]
+            return [hidden[i] for i in range(hidden.shape[0])]
+
+    def _load_conditioning_clip_components(self, pipeline):
+        image_encoder = getattr(pipeline, "image_encoder", None)
+        image_processor = getattr(pipeline, "image_processor", None)
+
+        if image_encoder is not None and image_processor is not None:
+            return image_encoder, image_processor
+
+        repo_id = getattr(self.config, "image_encoder_pretrained_model_name_or_path", None)
+        processor_repo_id = getattr(self.config, "image_processor_pretrained_model_name_or_path", None)
+
+        if repo_id is None:
+            repo_id = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+            if processor_repo_id is None:
+                processor_repo_id = repo_id
+        if processor_repo_id is None:
+            processor_repo_id = repo_id
+
+        def build_candidates(user_value, defaults):
+            candidates = []
+            if isinstance(user_value, (list, tuple, set)):
+                candidates.extend([v for v in user_value if v])
+            elif user_value:
+                candidates.append(user_value)
+            candidates.extend(defaults)
+            seen = set()
+            ordered = []
+            for entry in candidates:
+                if entry in seen:
+                    continue
+                seen.add(entry)
+                ordered.append(entry)
+            return ordered
+
+        encoder_subfolders = build_candidates(
+            getattr(self.config, "image_encoder_subfolder", None),
+            ["image_encoder", "vision_encoder", None],
+        )
+        processor_subfolders = build_candidates(
+            getattr(self.config, "image_processor_subfolder", None),
+            ["image_processor", "feature_extractor", None],
+        )
+
+        encoder_errors = []
+        for subfolder in encoder_subfolders:
+            try:
+                kwargs = {"use_safetensors": True}
+                if subfolder is not None:
+                    kwargs["subfolder"] = subfolder
+                image_encoder = CLIPVisionModel.from_pretrained(repo_id, **kwargs)
+                break
+            except Exception as exc:  # pragma: no cover - defensive
+                encoder_errors.append(f"{repo_id}/{subfolder or '.'}: {exc}")
+
+        if image_encoder is None:
+            raise ValueError(
+                "Unable to load a CLIP vision encoder for conditioning image embeddings. "
+                "Set `image_encoder_pretrained_model_name_or_path` (and optionally `image_encoder_subfolder`) to a "
+                "compatible repository. Attempts failed with: " + "; ".join(encoder_errors)
+            )
+
+        processor_errors = []
+        for subfolder in processor_subfolders:
+            try:
+                kwargs = {}
+                if subfolder is not None:
+                    kwargs["subfolder"] = subfolder
+                image_processor = CLIPImageProcessor.from_pretrained(processor_repo_id, **kwargs)
+                break
+            except Exception as exc:  # pragma: no cover - defensive
+                processor_errors.append(f"{processor_repo_id}/{subfolder or '.'}: {exc}")
+
+        if image_processor is None:
+            raise ValueError(
+                "Unable to load a CLIP image processor for conditioning image embeddings. "
+                "Set `image_processor_pretrained_model_name_or_path` (and optionally `image_processor_subfolder`). "
+                "Attempts failed with: " + "; ".join(processor_errors)
+            )
+
+        if pipeline is not None:
+            pipeline.image_encoder = image_encoder
+            pipeline.image_processor = image_processor
+
+        return image_encoder, image_processor
+
+    def get_conditioning_image_embedder(self):
+        if self._conditioning_image_embedder is not None:
+            return self._conditioning_image_embedder
+
+        pipeline = self.get_pipeline(PipelineTypes.IMG2VIDEO)
+        image_encoder, image_processor = self._load_conditioning_clip_components(pipeline)
+
+        device = getattr(self.accelerator, "device", torch.device("cpu"))
+        dtype = getattr(self.config, "weight_dtype", torch.float32)
+        if isinstance(dtype, str):
+            dtype = getattr(torch, dtype, torch.float32)
+
+        self._conditioning_image_embedder = self._ConditioningImageEmbedder(
+            image_encoder=image_encoder,
+            image_processor=image_processor,
+            device=device,
+            dtype=dtype,
+        )
+        return self._conditioning_image_embedder
 
     def tread_init(self):
         """

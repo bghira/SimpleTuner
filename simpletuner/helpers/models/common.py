@@ -867,8 +867,18 @@ class ModelFoundation(ABC):
             and "image_encoder" not in pipeline_kwargs
             and getattr(self, "config", None) is not None
         ):
-            repo_id = self._model_config_path()
-            loader_errors: list[str] = []
+            repo_id = getattr(
+                self.config,
+                "image_encoder_pretrained_model_name_or_path",
+                None,
+            ) or self._model_config_path()
+            processor_repo_id = getattr(
+                self.config,
+                "image_processor_pretrained_model_name_or_path",
+                None,
+            ) or repo_id
+            explicit_encoder_source = getattr(self.config, "image_encoder_pretrained_model_name_or_path", None)
+            explicit_processor_source = getattr(self.config, "image_processor_pretrained_model_name_or_path", None)
             image_encoder = None
             image_processor = None
             try:
@@ -879,40 +889,122 @@ class ModelFoundation(ABC):
                     "to load the image encoder components."
                 ) from exc
 
-            for subfolder in ("image_encoder", "vision_encoder"):
+            def _dedupe_subfolders(values):
+                seen = set()
+                result = []
+                for value in values:
+                    if not value or value in seen:
+                        continue
+                    seen.add(value)
+                    result.append(value)
+                return result
+
+            encoder_subfolders = []
+            config_encoder_subfolder = getattr(self.config, "image_encoder_subfolder", None)
+            if isinstance(config_encoder_subfolder, (list, tuple, set)):
+                encoder_subfolders.extend(config_encoder_subfolder)
+            elif config_encoder_subfolder:
+                encoder_subfolders.append(config_encoder_subfolder)
+            encoder_subfolders.extend(("image_encoder", "vision_encoder"))
+            encoder_subfolders = _dedupe_subfolders(encoder_subfolders)
+
+            loader_errors: list[tuple[str, Exception]] = []
+            encoder_revision = getattr(self.config, "image_encoder_revision", getattr(self.config, "revision", None))
+            for subfolder in encoder_subfolders:
                 try:
                     image_encoder = CLIPVisionModel.from_pretrained(
                         repo_id,
                         subfolder=subfolder,
                         use_safetensors=True,
+                        revision=encoder_revision,
                     )
                     break
                 except Exception as exc:  # pragma: no cover - defensive
-                    loader_errors.append(f"{subfolder}: {exc}")
+                    loader_errors.append((subfolder, exc))
             if image_encoder is None:
-                raise ValueError(
-                    "Unable to load image encoder required for conditioning embeddings from "
-                    f"'{repo_id}'. Attempts failed with: {', '.join(loader_errors)}"
+                loader_error_text = (
+                    ", ".join(f"{repo_id}/{subfolder}: {error}" for subfolder, error in loader_errors)
+                    if loader_errors
+                    else "no matching subfolders were found."
                 )
+                message = (
+                    "Unable to automatically load image encoder required for conditioning embeddings from "
+                    f"'{repo_id}'. Attempts failed with: {loader_error_text}"
+                )
+                if explicit_encoder_source:
+                    raise ValueError(message) from (loader_errors[-1][1] if loader_errors else None)
+                logger.warning(
+                    "%s Set `image_encoder_pretrained_model_name_or_path` (and optionally "
+                    "`image_encoder_subfolder`) in your config to provide the weights manually.",
+                    message,
+                )
+            else:
+                pipeline_kwargs["image_encoder"] = image_encoder
 
-            processor_errors: list[str] = []
-            for subfolder in ("image_processor", "feature_extractor"):
+            processor_errors: list[tuple[str, Exception]] = []
+            processor_subfolders = []
+            config_processor_subfolder = getattr(self.config, "image_processor_subfolder", None)
+            if isinstance(config_processor_subfolder, (list, tuple, set)):
+                processor_subfolders.extend(config_processor_subfolder)
+            elif config_processor_subfolder:
+                processor_subfolders.append(config_processor_subfolder)
+            processor_subfolders.extend(("image_processor", "feature_extractor"))
+            processor_subfolders = _dedupe_subfolders(processor_subfolders)
+            processor_revision = getattr(
+                self.config, "image_processor_revision", getattr(self.config, "revision", None)
+            )
+            for subfolder in processor_subfolders:
                 try:
-                    image_processor = CLIPImageProcessor.from_pretrained(repo_id, subfolder=subfolder)
+                    image_processor = CLIPImageProcessor.from_pretrained(
+                        processor_repo_id,
+                        subfolder=subfolder,
+                        revision=processor_revision,
+                    )
                     break
                 except Exception as exc:  # pragma: no cover - defensive
-                    processor_errors.append(f"{subfolder}: {exc}")
+                    processor_errors.append((subfolder, exc))
             if image_processor is None:
-                raise ValueError(
-                    "Unable to load image processor required for conditioning embeddings from "
-                    f"'{repo_id}'. Attempts failed with: {', '.join(processor_errors)}"
+                processor_error_text = (
+                    ", ".join(f"{processor_repo_id}/{subfolder}: {error}" for subfolder, error in processor_errors)
+                    if processor_errors
+                    else "no matching subfolders were found."
                 )
-
-            pipeline_kwargs["image_encoder"] = image_encoder
-            pipeline_kwargs["image_processor"] = image_processor
+                message = (
+                    "Unable to automatically load image processor required for conditioning embeddings from "
+                    f"'{processor_repo_id}'. Attempts failed with: {processor_error_text}"
+                )
+                if explicit_processor_source:
+                    raise ValueError(message) from (processor_errors[-1][1] if processor_errors else None)
+                logger.warning(
+                    "%s Set `image_processor_pretrained_model_name_or_path` (and optionally "
+                    "`image_processor_subfolder`) in your config to provide the processor configuration.",
+                    message,
+                )
+            else:
+                pipeline_kwargs["image_processor"] = image_processor
 
         logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
-        pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
+        try:
+            pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
+        except (OSError, EnvironmentError, ValueError) as exc:
+            alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
+            current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
+            if (
+                alt_repo
+                and isinstance(alt_repo, str)
+                and alt_repo != current_repo
+            ):
+                logger.warning(
+                    "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
+                    current_repo,
+                    exc,
+                    alt_repo,
+                )
+                alt_kwargs = dict(pipeline_kwargs)
+                alt_kwargs["pretrained_model_name_or_path"] = alt_repo
+                pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
+            else:
+                raise
         self.pipelines[pipeline_type] = pipeline_instance
         self._configure_pipeline_offloading(pipeline_instance)
 
