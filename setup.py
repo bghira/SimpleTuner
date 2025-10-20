@@ -182,7 +182,7 @@ base_deps = [
     "wandb>=0.21.0",
     "requests>=2.32.4",
     "pillow>=11.3.0",
-    "trainingsample>=0.2.8",
+    "trainingsample>=0.2.10",
     "accelerate>=1.5.2",
     "safetensors>=0.5.3",
     "compel>=2.1.1",
@@ -217,7 +217,6 @@ base_deps = [
     "imageio[pyav]>=2.37.0",
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
-    "trainingsample>=0.2.1",
     "cryptography>=41.0.0",
 ]
 
