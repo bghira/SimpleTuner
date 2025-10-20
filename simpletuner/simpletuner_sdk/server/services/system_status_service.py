@@ -137,8 +137,6 @@ class SystemStatusService:
                             memory_percent = fallback_entry.get("memory_percent")
                         utilisation = nvidia_fallback[target_idx]
             if utilisation is None and backend == "rocm":
-                if rocm_fallback is None:
-                    rocm_fallback = self._get_rocm_gpu_utilisation()
                 if rocm_fallback:
                     target_idx = None
                     if isinstance(index, int) and 0 <= index < len(rocm_fallback):
