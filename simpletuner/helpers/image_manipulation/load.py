@@ -195,7 +195,7 @@ def load_video(vid_data: Union[bytes, IO[Any], str]) -> np.ndarray:
         if tmp_path:
             os.remove(tmp_path)
         raise ValueError(
-            "Failed to open video with trainingsample. Ensure the trainingsample package was installed with video "
+            f"Failed to open video with trainingsample at '{video_path}'. Ensure trainingsample was built with video "
             "support (ffmpeg) and that the asset is a supported format."
         )
 
