@@ -84,6 +84,7 @@ class SystemStatusService:
         mac_utilisation: Optional[List[Optional[float]]] = None
         mac_memory: Optional[List[Optional[float]]] = None
         nvidia_fallback: Optional[List[Dict[str, Optional[float]]]] = None
+        rocm_fallback: Optional[List[Optional[float]]] = None
 
         if backend == "mps":
             mac_utilisation = self._get_macos_gpu_utilisation()
@@ -134,6 +135,18 @@ class SystemStatusService:
                             utilisation = fallback_entry.get("utilization_percent")
                         if memory_percent is None:
                             memory_percent = fallback_entry.get("memory_percent")
+                        utilisation = nvidia_fallback[target_idx]
+            if utilisation is None and backend == "rocm":
+                if rocm_fallback is None:
+                    rocm_fallback = self._get_rocm_gpu_utilisation()
+                if rocm_fallback:
+                    target_idx = None
+                    if isinstance(index, int) and 0 <= index < len(rocm_fallback):
+                        target_idx = index
+                    elif 0 <= position < len(rocm_fallback):
+                        target_idx = position
+                    if target_idx is not None:
+                        utilisation = rocm_fallback[target_idx]
 
             results.append(
                 {
