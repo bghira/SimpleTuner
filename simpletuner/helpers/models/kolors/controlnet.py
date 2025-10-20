@@ -244,8 +244,8 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         ),
         global_pool_conditions: bool = False,
         addition_embed_type_num_heads: int = 64,
-   ):
-       super().__init__()
+    ):
+        super().__init__()
 
         # backwards compatibility: attention_head_dim defaults to num_attention_heads
         num_attention_heads = num_attention_heads or attention_head_dim

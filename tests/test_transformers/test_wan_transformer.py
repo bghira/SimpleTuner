@@ -1089,7 +1089,9 @@ class TestWanTransformer3DModel(TransformerBaseTest):
         encoder_hidden_states = torch.randn(batch_size, 77, self.model_config["text_dim"])
 
         with torch.no_grad():
-            output = model.forward(hidden_states=hidden_states, timestep=timestep, encoder_hidden_states=encoder_hidden_states)
+            output = model.forward(
+                hidden_states=hidden_states, timestep=timestep, encoder_hidden_states=encoder_hidden_states
+            )
 
         output_tensor = output.sample if hasattr(output, "sample") else output
         expected_shape = (batch_size, self.model_config["out_channels"], num_frames, height, width)

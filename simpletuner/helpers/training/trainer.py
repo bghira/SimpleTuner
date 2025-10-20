@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import huggingface_hub
-
 import wandb
+
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
@@ -238,9 +238,7 @@ class Trainer:
         if isinstance(args_payload, dict):
             skip_config_fallback = bool(args_payload.pop("__skip_config_fallback__", False))
             # Strip any internal metadata entries that shouldn't be forwarded to the CLI parser.
-            metadata_keys = [
-                key for key in list(args_payload.keys()) if isinstance(key, str) and key.startswith("__")
-            ]
+            metadata_keys = [key for key in list(args_payload.keys()) if isinstance(key, str) and key.startswith("__")]
             for key in metadata_keys:
                 args_payload.pop(key, None)
 
@@ -3689,9 +3687,7 @@ def run_trainer_job(config):
         cli_args: list[str] = []
         if isinstance(config_payload, dict):
             train_cli_payload = dict(config_payload)
-            metadata_keys = [
-                key for key in list(train_cli_payload.keys()) if isinstance(key, str) and key.startswith("__")
-            ]
+            metadata_keys = [key for key in list(train_cli_payload.keys()) if isinstance(key, str) and key.startswith("__")]
             for key in metadata_keys:
                 train_cli_payload.pop(key, None)
             for accel_key in {

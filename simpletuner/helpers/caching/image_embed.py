@@ -98,13 +98,9 @@ class ImageEmbedCache(WebhookMixin):
 
         embedder = provider_factory()
         if embedder is None:
-            raise ValueError(
-                "Model reported support for conditioning image embeddings but did not return a provider."
-            )
+            raise ValueError("Model reported support for conditioning image embeddings but did not return a provider.")
         if not hasattr(embedder, "encode") or not callable(embedder.encode):
-            raise ValueError(
-                "Conditioning image embed provider must implement an 'encode(images)' method."
-            )
+            raise ValueError("Conditioning image embed provider must implement an 'encode(images)' method.")
         self.embedder = embedder
 
     def generate_embed_filename(self, filepath: str) -> Tuple[str, str]:

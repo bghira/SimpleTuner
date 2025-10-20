@@ -1683,9 +1683,7 @@ class FactoryRegistry:
 
         metadata_backend = init_backend["metadata_backend"]
         if isinstance(getattr(metadata_backend, "aspect_ratio_bucket_indices", None), dict):
-            metadata_backend.aspect_ratio_bucket_indices = _coerce_bucket_keys(
-                metadata_backend.aspect_ratio_bucket_indices
-            )
+            metadata_backend.aspect_ratio_bucket_indices = _coerce_bucket_keys(metadata_backend.aspect_ratio_bucket_indices)
         if hasattr(metadata_backend, "_mock_children"):
             children = getattr(metadata_backend, "_mock_children", None)
             if isinstance(children, dict):

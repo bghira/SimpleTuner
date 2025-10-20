@@ -89,7 +89,7 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         timestep_spacing: str = "linspace",
         steps_offset: int = 0,
         final_sigmas_type: Optional[str] = "zero",  # "zero", "sigma_min"
-   ):
+    ):
         super().__init__()
         self.register_to_config(
             num_train_timesteps=num_train_timesteps,

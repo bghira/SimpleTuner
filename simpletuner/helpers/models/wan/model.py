@@ -99,11 +99,7 @@ def add_first_frame_conditioning(
     latent_condition = vae.encode(video_condition.to(device=device, dtype=dtype)).latent_dist.sample()
     latent_condition = latent_condition.to(device=device, dtype=dtype)
 
-    latents_mean = (
-        torch.tensor(vae.config.latents_mean)
-        .view(1, vae.config.z_dim, 1, 1, 1)
-        .to(device=device, dtype=dtype)
-    )
+    latents_mean = torch.tensor(vae.config.latents_mean).view(1, vae.config.z_dim, 1, 1, 1).to(device=device, dtype=dtype)
     latents_std = 1.0 / torch.tensor(vae.config.latents_std).view(1, vae.config.z_dim, 1, 1, 1).to(
         device=device, dtype=dtype
     )
@@ -365,8 +361,7 @@ class Wan(VideoModelFoundation):
         pixel_list = batch.pop("_wan_conditioning_pixel_values_list", None)
         if pixel_list:
             batch["conditioning_pixel_values_multi"] = [
-                tensor.to(device=self.accelerator.device) if hasattr(tensor, "to") else tensor
-                for tensor in pixel_list
+                tensor.to(device=self.accelerator.device) if hasattr(tensor, "to") else tensor for tensor in pixel_list
             ]
         else:
             batch["conditioning_pixel_values_multi"] = None
@@ -466,9 +461,7 @@ class Wan(VideoModelFoundation):
                 force_keep = self._mask_to_force_keep(mask)
                 if force_keep is not None:
                     existing = transformer_kwargs.get("force_keep_mask")
-                    transformer_kwargs["force_keep_mask"] = (
-                        force_keep if existing is None else (existing | force_keep)
-                    )
+                    transformer_kwargs["force_keep_mask"] = force_keep if existing is None else (existing | force_keep)
             else:
                 conditioned_latent = add_first_frame_conditioning(
                     latent_tensor,

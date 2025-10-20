@@ -15,7 +15,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 try:  # Optional dependency; used for robust process tree termination
     import psutil  # type: ignore
@@ -84,9 +84,7 @@ class TrainerProcess:
         for base in candidates:
             try:
                 base.mkdir(parents=True, exist_ok=True)
-                ipc_path = Path(
-                    tempfile.mkdtemp(prefix=f"trainer_{self.job_id}_", dir=str(base))
-                )
+                ipc_path = Path(tempfile.mkdtemp(prefix=f"trainer_{self.job_id}_", dir=str(base)))
                 return ipc_path
             except Exception as exc:  # pragma: no cover - best effort, continue to fallback
                 logger.debug(f"Failed to create IPC dir in {base}: {exc}")
@@ -611,7 +609,9 @@ logger.info("Subprocess exiting")
         except Exception:
             logger.debug("Failed to relay subprocess event to callback service", exc_info=True)
 
-    def _dispatch_training_status_event(self, *, status: str, data: Optional[Dict[str, Any]] = None, message: str = "") -> None:
+    def _dispatch_training_status_event(
+        self, *, status: str, data: Optional[Dict[str, Any]] = None, message: str = ""
+    ) -> None:
         normalized = status.strip().lower()
         status_payload = {
             "type": "training.status",

@@ -18,12 +18,7 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import TransformerBaseTest  # noqa: E402
-from transformer_test_helpers import (  # noqa: E402
-    MockDiffusersConfig,
-    ShapeValidator,
-    TensorGenerator,
-    TypoTestUtils,
-)
+from transformer_test_helpers import MockDiffusersConfig, ShapeValidator, TensorGenerator, TypoTestUtils  # noqa: E402
 
 from simpletuner.helpers.models.chroma.controlnet import ChromaControlNetModel
 from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
@@ -122,7 +117,9 @@ class TestChromaControlNetModel(TransformerBaseTest):
         self.assertEqual(len(single_block_samples), controlnet.config.num_single_layers)
 
         self.shape_validator.validate_transformer_output(block_samples[0], 2, hidden_states.shape[1], controlnet.inner_dim)
-        self.shape_validator.validate_transformer_output(single_block_samples[0], 2, hidden_states.shape[1], controlnet.inner_dim)
+        self.shape_validator.validate_transformer_output(
+            single_block_samples[0], 2, hidden_states.shape[1], controlnet.inner_dim
+        )
 
     def test_typo_prevention_for_constructor(self):
         """Ensure common constructor typos raise errors."""

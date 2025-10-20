@@ -570,16 +570,12 @@ class QwenImageTransformer2DModel(
             return hidden_states, None, None
 
         if hidden_states.ndim != 4:
-            raise ValueError(
-                f"Expected hidden_states to be 3D tokens or 4D latent map, got shape {hidden_states.shape}."
-            )
+            raise ValueError(f"Expected hidden_states to be 3D tokens or 4D latent map, got shape {hidden_states.shape}.")
 
         batch_size, channels, height, width = hidden_states.shape
         patch_size = self.config.patch_size
         if height % patch_size != 0 or width % patch_size != 0:
-            raise ValueError(
-                f"Height ({height}) and width ({width}) must be divisible by patch_size ({patch_size})."
-            )
+            raise ValueError(f"Height ({height}) and width ({width}) must be divisible by patch_size ({patch_size}).")
 
         grid_h = height // patch_size
         grid_w = width // patch_size

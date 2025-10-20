@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # pragma: no cover - legacy environments
             payload["dataset_type"] = "conditioning_image_embeds"
             return payload
 
+
 __all__ = [
     "BaseBackendConfig",
     "ImageBackendConfig",

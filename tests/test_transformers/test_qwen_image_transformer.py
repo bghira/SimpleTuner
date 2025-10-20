@@ -32,6 +32,8 @@ import torch.nn as nn
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
+from diffusers.utils import logging as diffusers_logging
+from diffusers.utils.testing_utils import CaptureLogger
 from transformer_base_test import (
     AttentionProcessorTestMixin,
     EmbeddingTestMixin,
@@ -59,8 +61,6 @@ from simpletuner.helpers.models.qwen_image.transformer import (
     apply_rotary_emb_qwen,
     get_timestep_embedding,
 )
-from diffusers.utils import logging as diffusers_logging
-from diffusers.utils.testing_utils import CaptureLogger
 
 
 class TestGetTimestepEmbedding(TransformerBaseTest):
@@ -1477,7 +1477,9 @@ class TestQwenImageTransformerIntegration(TransformerBaseTest):
         patch_size = config["patch_size"]
         height = width = 16
         latents = torch.randn(batch_size, latent_channels, height, width)
-        latents = latents.view(batch_size, latent_channels, height // patch_size, patch_size, width // patch_size, patch_size)
+        latents = latents.view(
+            batch_size, latent_channels, height // patch_size, patch_size, width // patch_size, patch_size
+        )
         latents = latents.permute(0, 2, 4, 1, 3, 5)
         hidden_states = latents.reshape(
             batch_size,

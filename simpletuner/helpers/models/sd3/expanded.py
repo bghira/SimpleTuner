@@ -213,9 +213,9 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         out_channels: int = 16,
         pos_embed_max_size: int = 96,
         qk_norm: str | None = "layer_norm",
-   ):
-       super().__init__()
-       default_out_channels = in_channels
+    ):
+        super().__init__()
+        default_out_channels = in_channels
         effective_out_channels = out_channels if out_channels is not None else default_out_channels
         self.register_to_config(
             sample_size=sample_size,

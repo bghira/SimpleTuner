@@ -18,12 +18,7 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import TransformerBaseTest  # noqa: E402
-from transformer_test_helpers import (  # noqa: E402
-    MockDiffusersConfig,
-    ShapeValidator,
-    TensorGenerator,
-    TypoTestUtils,
-)
+from transformer_test_helpers import MockDiffusersConfig, ShapeValidator, TensorGenerator, TypoTestUtils  # noqa: E402
 
 from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
 

@@ -18,11 +18,7 @@ from simpletuner.simpletuner_sdk.server.routes.checkpoints import router as chec
 from simpletuner.simpletuner_sdk.server.routes.datasets import router as dataset_router
 from simpletuner.simpletuner_sdk.server.routes.publishing import router as publishing_router
 from simpletuner.simpletuner_sdk.server.routes.web import router as web_router
-from simpletuner.simpletuner_sdk.server.utils.paths import (
-    get_config_directory,
-    get_static_directory,
-    get_template_directory,
-)
+from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_static_directory, get_template_directory
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
 
 

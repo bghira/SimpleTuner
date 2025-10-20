@@ -7,9 +7,9 @@ from typing import Union
 import diffusers
 import numpy as np
 import torch
+import wandb
 from tqdm import tqdm
 
-import wandb
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.wrappers import unwrap_model
 

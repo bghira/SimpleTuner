@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 import torch
 from diffusers import AutoencoderKL
 from torch.nn import functional as F
-from transformers import T5EncoderModel, AutoTokenizer
+from transformers import AutoTokenizer, T5EncoderModel
 
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,

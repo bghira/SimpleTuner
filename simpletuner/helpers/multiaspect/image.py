@@ -13,11 +13,12 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
 
+from numbers import Real
+
 import numpy as np
 import torch
 from PIL import Image
 from torchvision import transforms
-from numbers import Real
 
 
 class MultiaspectImage:

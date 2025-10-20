@@ -318,6 +318,7 @@ class QwenImage(ImageModelFoundation):
             logger.warning(f"{self.NAME} uses flow matching. " "Overriding prediction_type to 'flow_matching'.")
             self.config.prediction_type = "flow_matching"
 
+
 from simpletuner.helpers.models.registry import ModelRegistry
 
 ModelRegistry.register("qwen_image", QwenImage)
