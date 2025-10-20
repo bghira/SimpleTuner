@@ -1464,11 +1464,9 @@ class TestQwenImageTransformerIntegration(TransformerBaseTest):
 
         # Reshape for rotary embedding (simulate real usage)
         x = emb.view(2, 1, 1, 64)  # Add dummy spatial dims
-        cos = torch.randn(1, 64)
-        sin = torch.randn(1, 64)
-        freqs_cis = (cos, sin)
+        freqs_cis = torch.randn(1, 32, dtype=torch.complex64)
 
-        rotated = apply_rotary_emb_qwen(x, freqs_cis, use_real=True)
+        rotated = apply_rotary_emb_qwen(x, freqs_cis, use_real=False)
 
         self.assert_tensor_shape(rotated, x.shape)
         self.assert_no_nan_or_inf(rotated)
