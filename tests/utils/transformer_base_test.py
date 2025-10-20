@@ -134,9 +134,33 @@ class TransformerBaseTest(unittest.TestCase):
         self.assertEqual(tensor.dtype, expected_dtype, f"Expected dtype {expected_dtype}, got {tensor.dtype}. {msg}")
 
     def assert_tensor_device(self, tensor: torch.Tensor, expected_device: str, msg: str = ""):
-        """Assert tensor is on expected device."""
-        self.assertEqual(
-            str(tensor.device), expected_device, f"Expected device {expected_device}, got {str(tensor.device)}. {msg}"
+        """Assert tensor is on expected device. Accepts CUDA/ROCm `cuda` vs `cuda:0` equivalence."""
+
+        def _parse_device(device_str: str) -> Tuple[str, Optional[int]]:
+            if ":" not in device_str:
+                return device_str, None
+            backend, index_str = device_str.split(":", 1)
+            try:
+                return backend, int(index_str)
+            except ValueError:
+                return backend, None
+
+        actual_device = str(tensor.device)
+        expected_backend, expected_index = _parse_device(expected_device)
+        actual_backend, actual_index = _parse_device(actual_device)
+
+        devices_match = False
+        if expected_backend == actual_backend:
+            if expected_backend == "cuda":
+                exp_idx = 0 if expected_index is None else expected_index
+                act_idx = 0 if actual_index is None else actual_index
+                devices_match = exp_idx == act_idx
+            else:
+                devices_match = expected_index == actual_index
+
+        self.assertTrue(
+            devices_match,
+            f"Expected device {expected_device}, got {actual_device}. {msg}",
         )
 
     def assert_no_nan_or_inf(self, tensor: torch.Tensor, msg: str = ""):

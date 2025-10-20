@@ -2049,11 +2049,16 @@ function trainerComponent() {
                           typeof gpu?.utilization_percent === 'number' && Number.isFinite(gpu.utilization_percent)
                               ? Number(gpu.utilization_percent)
                               : null;
+                      const memoryPercent =
+                          typeof gpu?.memory_percent === 'number' && Number.isFinite(gpu.memory_percent)
+                              ? Number(gpu.memory_percent)
+                              : null;
                       return {
                           index: idx,
                           name,
                           backend: gpu?.backend || data.backend || null,
                           utilization_percent: utilization,
+                          memory_percent: memoryPercent,
                       };
                   })
                 : [];
@@ -2129,16 +2134,38 @@ function trainerComponent() {
             const gpus = Array.isArray(this.systemStatus.gpus) ? this.systemStatus.gpus : [];
             gpus.forEach((gpu, index) => {
                 const util = gpu.utilization_percent;
+                const mem = gpu.memory_percent;
                 const trimmedName = typeof gpu.name === 'string' ? gpu.name.trim() : '';
                 const displayLabel =
                     trimmedName ||
                     (typeof gpu.index === 'number' ? `GPU${gpu.index}` : `GPU${index}`);
+                const valueParts = [];
+                if (util !== null) {
+                    valueParts.push(`${Math.round(util)}%`);
+                }
+                if (mem !== null) {
+                    valueParts.push(`${Math.round(mem)}% mem`);
+                }
+                const formattedDisplay = valueParts.length > 0 ? valueParts.join(' · ') : '—';
+                const tooltipParts = [];
+                if (trimmedName) {
+                    tooltipParts.push(trimmedName);
+                } else {
+                    tooltipParts.push(displayLabel);
+                }
+                if (util !== null) {
+                    tooltipParts.push(`Util: ${util.toFixed(1)}%`);
+                }
+                if (mem !== null) {
+                    tooltipParts.push(`Mem: ${mem.toFixed(1)}%`);
+                }
                 items.push({
                     key: `gpu-${gpu.index ?? index}`,
                     label: displayLabel,
                     value: util,
-                    formatted: util !== null ? `${Math.round(util)}%` : '—',
-                    tooltip: trimmedName || displayLabel,
+                    memory: mem,
+                    formatted: formattedDisplay,
+                    tooltip: tooltipParts.join(' • '),
                 });
             });
             const offloadInfo = this.systemStatus.deepspeed_offload;
