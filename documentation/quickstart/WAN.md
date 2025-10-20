@@ -46,6 +46,13 @@ If you encounter shape mismatches in the time embedding layers when running Wan 
 `wan_force_2_1_time_embedding` flag. This forces the transformer to fall back to Wan 2.1 style time embeddings and
 resolves the compatibility issue.
 
+#### Stage presets & validation
+
+- `model_flavour=i2v-14b-2.2-high` targets the Wan 2.2 high-noise stage.
+- `model_flavour=i2v-14b-2.2-low` targets the low-noise stage (same checkpoints, different subfolder).
+- Toggle `wan_validation_load_other_stage=true` to load the opposite stage alongside the one you train for validation renders.
+- Leave the flavour unset (or use `t2v-480p-1.3b-2.1`) for the standard Wan 2.1 text-to-video run.
+
 Apple silicon systems do not work super well with Wan 2.1 so far, something like 10 minutes for a single training step can be expected..
 
 ### Prerequisites
@@ -462,6 +469,30 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ]
 ```
 
+- Wan 2.2 image-to-video runs create CLIP conditioning caches. In the **video** dataset entry, point at a dedicated backend and (optionally) override the cache path:
+
+```json
+  {
+    "id": "disney-black-and-white",
+    "type": "local",
+    "dataset_type": "video",
+    "conditioning_image_embeds": "disney-conditioning",
+    "cache_dir_conditioning_image_embeds": "cache/conditioning_image_embeds/disney-black-and-white"
+  }
+```
+
+- Define the conditioning backend once and reuse it across datasets if needed (full object shown here for clarity):
+
+```json
+  {
+    "id": "disney-conditioning",
+    "type": "local",
+    "dataset_type": "conditioning_image_embeds",
+    "cache_dir": "cache/conditioning_image_embeds/disney-conditioning",
+    "disabled": false
+  }
+```
+
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many seconds of data we'll train on.
     - At 15 fps, 75 frames is 5 seconds of video, standard output. This should be your target.
@@ -517,6 +548,8 @@ simpletuner train
 ```bash
 simpletuner train
 ```
+
+> ℹ️ Append `--model_flavour i2v-14b-2.2-high` (or `low`) and, if desired, `--wan_validation_load_other_stage` inside `TRAINER_EXTRA_ARGS` or your CLI invocation when you train Wan 2.2. Add `--wan_force_2_1_time_embedding` only when the checkpoint reports a time-embedding shape mismatch.
 
 **Option 3 (Legacy method - still works):**
 ```bash

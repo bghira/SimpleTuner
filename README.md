@@ -100,7 +100,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **T5 masked training** - Enhanced fine details for Flux and compatible models
 - **QKV fusion** - Memory and speed optimizations (Flux, Lumina2)
 - **TREAD integration** - Selective token routing for Wan and Flux models
-- **Wan 2.2 I2V** - High/low stage image-to-video presets (see Wan quickstart)
+- **Wan 2.x I2V** - High/low stage presets plus a 2.1 time-embedding fallback (see Wan quickstart)
 - **Classifier-free guidance** - Optional CFG reintroduction for distilled models
 
 ### Quickstart Guides
