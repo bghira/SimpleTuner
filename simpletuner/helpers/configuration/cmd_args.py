@@ -16,18 +16,14 @@ from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+from simpletuner.helpers.logging import get_logger
+from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import ConfigField, FieldType, ValidationRuleType
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
-logger = logging.getLogger("ArgsParser")
-from simpletuner.helpers.training.multi_process import should_log
-
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = get_logger("ArgsParser")
 
 if torch.cuda.is_available():
     os.environ["NCCL_SOCKET_NTIMEO"] = "2000000"
@@ -851,5 +847,4 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
             sys.exit(1)
 
-    info_log(f"Parsed command line arguments: {args}")
     return args

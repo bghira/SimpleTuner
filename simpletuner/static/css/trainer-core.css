@@ -241,12 +241,16 @@
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
     backdrop-filter: blur(6px);
 }
 
 .event-dock .event-list {
     flex: 1;
     overflow-y: auto;
+    min-height: 0;
+    height: 100%;
     padding: var(--spacing-lg);
     background: var(--event-list-bg);
 }

@@ -10,19 +10,14 @@ import imageio  # <-- for in-memory video encoding (MP4 or GIF)
 import numpy as np
 import requests
 
+from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.webhooks.config import WebhookConfig
 
 # Define log levels
 log_levels = {"critical": 0, "error": 1, "warning": 2, "info": 3, "debug": 4}
 
-logger = logging.getLogger(__name__)
-from simpletuner.helpers.training.multi_process import should_log
-
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = get_logger(__name__, disable_webhook=True)
 
 
 def _truncate_for_log(

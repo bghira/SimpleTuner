@@ -3,13 +3,9 @@ import logging
 import os
 from typing import Any, Dict, List
 
-logger = logging.getLogger(__name__)
-from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.logging import get_logger
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = get_logger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, field_validator

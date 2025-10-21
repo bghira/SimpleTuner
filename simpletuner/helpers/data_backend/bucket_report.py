@@ -127,7 +127,9 @@ class BucketReport:
     def record_bucket_event(self, bucket: str, reason: str, removed: int, **details: Any) -> None:
         if removed <= 0:
             return
-        event = BucketEvent(bucket=bucket, reason=reason, removed=removed, details={k: v for k, v in details.items() if v is not None})
+        event = BucketEvent(
+            bucket=bucket, reason=reason, removed=removed, details={k: v for k, v in details.items() if v is not None}
+        )
         with self._lock:
             self.bucket_events.append(event)
 
@@ -149,7 +151,9 @@ class BucketReport:
         resolution_type = self.constraints.get("resolution_type")
 
         if discovered and (discovered.image_count or 0) == 0:
-            recommendations.append("Check that 'instance_data_dir' points to a directory containing supported image or video files.")
+            recommendations.append(
+                "Check that 'instance_data_dir' points to a directory containing supported image or video files."
+            )
         if self.skip_counts.get("too_small") and min_size is not None:
             size_hint = f"{min_size}px" if resolution_type == "pixel" else f"{min_size}MP"
             recommendations.append(f"Lower 'minimum_image_size' (currently {size_hint}) or supply higher resolution media.")
@@ -163,7 +167,9 @@ class BucketReport:
         if post_refresh and post_refresh["total_images"] == 0 and not self.skip_counts:
             recommendations.append("Confirm skip filters (caption, quality, or custom filters) leave usable samples.")
         if post_split and post_split["total_images"] == 0 and post_refresh and post_refresh["total_images"] > 0:
-            recommendations.append("Increase dataset size or decrease effective batch size so each process receives samples.")
+            recommendations.append(
+                "Increase dataset size or decrease effective batch size so each process receives samples."
+            )
 
         return recommendations
 
@@ -177,7 +183,13 @@ class BucketReport:
 
         if self.constraints:
             entries = []
-            for key in ("minimum_image_size", "resolution_type", "minimum_aspect_ratio", "maximum_aspect_ratio", "effective_batch_size"):
+            for key in (
+                "minimum_image_size",
+                "resolution_type",
+                "minimum_aspect_ratio",
+                "maximum_aspect_ratio",
+                "effective_batch_size",
+            ):
                 if key in self.constraints:
                     entries.append(f"{key}={self.constraints[key]}")
             for key in ("train_batch_size", "repeats"):
@@ -221,7 +233,9 @@ class BucketReport:
             for event in self.bucket_events[:5]:
                 detail_str = ", ".join(f"{key}={value}" for key, value in event.details.items() if value is not None)
                 if detail_str:
-                    lines.append(f"bucket_event[{event.bucket}]: removed={event.removed} reason={event.reason} ({detail_str})")
+                    lines.append(
+                        f"bucket_event[{event.bucket}]: removed={event.removed} reason={event.reason} ({detail_str})"
+                    )
                 else:
                     lines.append(f"bucket_event[{event.bucket}]: removed={event.removed} reason={event.reason}")
             if len(self.bucket_events) > 5:
@@ -235,4 +249,3 @@ class BucketReport:
                 lines.append(f"  {idx}. {rec}")
 
         return "\n".join(lines)
-

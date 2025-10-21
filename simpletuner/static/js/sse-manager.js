@@ -290,13 +290,25 @@
                     }
                     break;
                 }
-                case 'debug':
-                default: {
-                    // Emit as generic notification for listeners
-                    if (payload.headline || payload.body) {
+                case 'notification': {
+                    var notifyMessage = payload.headline || payload.body || payload.message;
+                    if (notifyMessage) {
                         handleMessage({
                             type: 'notification',
-                            message: payload.headline || payload.body,
+                            message: notifyMessage,
+                            level: severityToLevel(payload.severity),
+                            payload: payload
+                        });
+                    }
+                    break;
+                }
+                case 'debug':
+                default: {
+                    var genericMessage = payload.headline || payload.body || payload.message;
+                    if (genericMessage) {
+                        handleMessage({
+                            type: 'notification',
+                            message: genericMessage,
                             level: severityToLevel(payload.severity),
                             payload: payload
                         });

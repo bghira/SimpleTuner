@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import time
 from collections import deque
 from threading import Lock
 from typing import Any, Mapping, Sequence
 
 from ...api_state import APIState
+from ...process_keeper import append_external_event
 from .callback_events import CallbackEvent, EventSeverity, EventType, ProgressData, StageData, StageStatus
 from .event_store import EventStore
 from .sse_manager import get_sse_manager
@@ -66,6 +68,7 @@ class CallbackService:
             self._append_index(index)
 
         self._update_training_state(typed_event)
+        self._mirror_to_process_keeper(typed_event)
         return typed_event
 
     def get_recent(self, limit: int = 10) -> list[CallbackEvent]:
@@ -487,6 +490,33 @@ class CallbackService:
             if event.type == EventType.TRAINING_STATUS:
                 return True
         return False
+
+    def _mirror_to_process_keeper(self, event: CallbackEvent) -> None:
+        if not event or not event.job_id:
+            return
+
+        if event.type not in {EventType.NOTIFICATION, EventType.ERROR, EventType.DEBUG}:
+            return
+
+        message = event.message or event.title
+        if not message:
+            return
+
+        if isinstance(event.severity, EventSeverity):
+            severity = event.severity.value
+        else:
+            severity = str(event.severity or "")
+
+        append_external_event(
+            event.job_id,
+            {
+                "type": event.type.value,
+                "message": message,
+                "severity": severity,
+                "timestamp": getattr(event, "timestamp", None) or time.time(),
+                "data": event.data or {},
+            },
+        )
 
     def _derive_job_id(self, event: CallbackEvent) -> str | None:
         if not event:

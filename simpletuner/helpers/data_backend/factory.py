@@ -73,9 +73,9 @@ from tqdm import tqdm
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
-from simpletuner.helpers.data_backend.bucket_report import BucketReport
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.bucket_report import BucketReport
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend

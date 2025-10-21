@@ -21,6 +21,7 @@ class EventHandler {
         this.healthCheckInFlight = false;
         this.websocketReconnectTimeout = null;
         this.isActive = false;
+        this.sseRegistered = false;
 
         // WebSocket support
         this.websocket = null;
@@ -54,9 +55,61 @@ class EventHandler {
         // Set up resize observer for dynamic row calculation
         this.setupResizeObserver();
 
+        // Subscribe to SSE notifications once available
+        this.subscribeToSSE();
+
         await this.startFetching();
         // Clean up on page unload
         window.addEventListener('beforeunload', () => this.cleanup());
+    }
+
+    subscribeToSSE() {
+        if (this.sseRegistered) {
+            return;
+        }
+
+        const attemptRegistration = () => {
+            if (this.sseRegistered) {
+                return;
+            }
+
+            if (window.sseManager && typeof window.sseManager.addEventListener === 'function') {
+                window.sseManager.addEventListener('notification', (payload) => {
+                    if (!payload) {
+                        return;
+                    }
+
+                    const message = payload.message || payload.headline || payload.body;
+                    if (!message) {
+                        return;
+                    }
+
+                    const severity = String(payload.severity || '').toLowerCase();
+                    let messageType = 'info';
+                    if (severity === 'error' || severity === 'critical' || severity === 'fatal') {
+                        messageType = 'fatal_error';
+                    } else if (severity === 'warning') {
+                        messageType = 'warning';
+                    } else if (severity === 'success') {
+                        messageType = 'success';
+                    }
+
+                    this.updateEventList([
+                        {
+                            timestamp: payload.timestamp || new Date().toISOString(),
+                            message_type: messageType,
+                            message,
+                        },
+                    ]);
+                });
+
+                this.sseRegistered = true;
+            } else {
+                setTimeout(attemptRegistration, 500);
+            }
+        };
+
+        attemptRegistration();
     }
 
     setupResizeObserver() {
@@ -72,7 +125,7 @@ class EventHandler {
                         this.currentMaxEvents = newMaxEvents;
                         // If we have more events than the new limit, remove excess events
                         while (this.eventList.children.length > newMaxEvents) {
-                            this.eventList.removeChild(this.eventList.firstChild);
+                            this.eventList.removeChild(this.eventList.lastChild);
                         }
                     }
                 }
@@ -264,7 +317,7 @@ class EventHandler {
 
             // Remove oldest event if we've reached the limit (rotation system)
             if (this.eventList.children.length >= maxEvents) {
-                this.eventList.removeChild(this.eventList.firstChild);
+                this.eventList.removeChild(this.eventList.lastChild);
             }
 
             const eventItem = document.createElement('div');
@@ -310,14 +363,25 @@ class EventHandler {
                 <div class="event-message">${messageContent}</div>
             `;
 
-            this.eventList.appendChild(eventItem);
+            if (this.eventList.firstChild) {
+                this.eventList.insertBefore(eventItem, this.eventList.firstChild);
+            } else {
+                this.eventList.appendChild(eventItem);
+            }
 
             // Handle special events
             this.handleSpecialEvents(event);
         });
 
-        // Auto-scroll to latest
-        this.eventList.scrollTop = this.eventList.scrollHeight;
+        // Auto-scroll to latest only if user is near the top already
+        const nearTop = this.eventList.scrollTop <= 5;
+        if (nearTop) {
+            this.eventList.scrollTop = 0;
+        }
+
+        if (this.eventList.children.length > 0) {
+            this.eventList.dataset.hydrated = 'true';
+        }
     }
 
     calculateDynamicMaxEvents() {
@@ -725,7 +789,7 @@ class EventHandler {
     limitEventDisplay(maxEvents = 1000) {
         // Remove old events if we have too many
         while (this.eventList.children.length > maxEvents) {
-            this.eventList.removeChild(this.eventList.firstChild);
+            this.eventList.removeChild(this.eventList.lastChild);
         }
     }
 
