@@ -87,6 +87,7 @@ class MetadataBackend:
         self.metadata_semaphor = Semaphore()
         # When a multi-gpu system splits the buckets, we no longer update.
         self.read_only = False
+        self.bucket_report = None
 
     def load_metadata(self):
         raise NotImplementedError
@@ -101,6 +102,17 @@ class MetadataBackend:
         if self.metadata_file.exists():
             self.metadata_file.unlink()
         logger.info(f"({self.id}) Cleared metadata cache.")
+
+    def attach_bucket_report(self, bucket_report) -> None:
+        """Attach a BucketReport instance for lightweight telemetry."""
+        self.bucket_report = bucket_report
+        if bucket_report:
+            bucket_report.set_constraints(
+                resolution_type=self.resolution_type,
+                minimum_image_size=self.minimum_image_size,
+                minimum_aspect_ratio=self.minimum_aspect_ratio,
+                maximum_aspect_ratio=self.maximum_aspect_ratio,
+            )
 
     def set_metadata(self, metadata_backend, update_json: bool = True):
         if not isinstance(metadata_backend, MetadataBackend):
@@ -205,6 +217,12 @@ class MetadataBackend:
         logger.info(
             f"Compressed {len(existing_files_set)} existing files from {len(self.aspect_ratio_bucket_indices.values())}."
         )
+        if self.bucket_report:
+            self.bucket_report.record_stage(
+                "existing_cache",
+                image_count=len(existing_files_set),
+                bucket_count=len(self.aspect_ratio_bucket_indices),
+            )
         aggregated_statistics = {
             "total_processed": 0,
             "skipped": {
@@ -215,9 +233,18 @@ class MetadataBackend:
                 "other": 0,
             },
         }
+        if self.bucket_report:
+            self.bucket_report.record_stage(
+                "new_files_to_process",
+                image_count=len(new_files),
+                ignore_existing_cache=ignore_existing_cache,
+            )
         if not new_files:
             logger.info("No new files discovered. Doing nothing.")
             logger.info(f"Statistics: {aggregated_statistics}")
+            if self.bucket_report:
+                self.bucket_report.update_statistics(aggregated_statistics)
+                self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
             return
         num_cpus = StateTracker.get_args().aspect_bucket_worker_count
         files_split = np.array_split(new_files, num_cpus)
@@ -311,6 +338,9 @@ class MetadataBackend:
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
+        if self.bucket_report:
+            self.bucket_report.update_statistics(aggregated_statistics)
+            self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
         """split bucket contents across processes for distributed training"""
@@ -320,6 +350,8 @@ class MetadataBackend:
 
         num_processes = self.accelerator.num_processes
         effective_batch_size = self.batch_size * num_processes * gradient_accumulation_steps
+        if self.bucket_report:
+            self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
         should_shuffle_contents = os.environ.get("SIMPLETUNER_SHUFFLE_BUCKETS", "1") == "1"
         for bucket, images in self.aspect_ratio_bucket_indices.items():
@@ -329,17 +361,34 @@ class MetadataBackend:
             total_img_count_incl_repeats = len(images) * (self.repeats + 1)
             num_batches = ceil(total_img_count_incl_repeats / effective_batch_size)
             trimmed_images = images[: num_batches * effective_batch_size]
+            removed_for_trim = len(images) - len(trimmed_images)
+            if removed_for_trim > 0 and self.bucket_report:
+                self.bucket_report.record_bucket_event(
+                    bucket=bucket,
+                    reason="trimmed_for_effective_batch",
+                    removed=removed_for_trim,
+                    effective_batch_size=effective_batch_size,
+                )
             if len(trimmed_images) == 0 and should_log():
                 logger.error(
                     f"Bucket {bucket} has no images after trimming because {len(images)} images are not enough to satisfy an effective batch size of {effective_batch_size}."
                     " Lower your batch size, increase repeat count, or increase data pool size."
                 )
+                if self.bucket_report:
+                    self.bucket_report.record_bucket_event(
+                        bucket=bucket,
+                        reason="insufficient_for_batch_after_trim",
+                        removed=len(images),
+                        effective_batch_size=effective_batch_size,
+                    )
 
             with self.accelerator.split_between_processes(trimmed_images, apply_padding=apply_padding) as images_split:
                 new_aspect_ratio_bucket_indices[bucket] = images_split
 
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
         post_total = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
+        if self.bucket_report:
+            self.bucket_report.record_bucket_snapshot("post_split", self.aspect_ratio_bucket_indices)
         if total_images != post_total:
             self.read_only = True
 
@@ -376,6 +425,13 @@ class MetadataBackend:
             # dedupe while preserving order
             filtered_images = list(dict.fromkeys(img for img in images if img in existing_files))
             self.aspect_ratio_bucket_indices[bucket] = filtered_images
+            removed = len(images) - len(filtered_images)
+            if removed > 0 and self.bucket_report:
+                self.bucket_report.record_bucket_event(
+                    bucket=bucket,
+                    reason="missing_or_duplicate",
+                    removed=removed,
+                )
         logger.debug(
             f"After updating, in all buckets, we had {sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])}."
         )
@@ -417,6 +473,14 @@ class MetadataBackend:
         )
         for bucket in self._iterate_buckets_with_progress("Enforcing minimum aspect ratio"):
             if float(bucket) < self.minimum_aspect_ratio:
+                removed = len(self.aspect_ratio_bucket_indices.get(bucket, []))
+                if self.bucket_report and removed > 0:
+                    self.bucket_report.record_bucket_event(
+                        bucket=bucket,
+                        reason="below_min_aspect_ratio",
+                        removed=removed,
+                        minimum_aspect_ratio=self.minimum_aspect_ratio,
+                    )
                 logger.info(f"Removing bucket {bucket} due to aspect ratio being less than {self.minimum_aspect_ratio}.")
                 del self.aspect_ratio_bucket_indices[bucket]
 
@@ -431,6 +495,14 @@ class MetadataBackend:
         )
         for bucket in self._iterate_buckets_with_progress("Enforcing maximum aspect ratio"):
             if float(bucket) > self.maximum_aspect_ratio:
+                removed = len(self.aspect_ratio_bucket_indices.get(bucket, []))
+                if self.bucket_report and removed > 0:
+                    self.bucket_report.record_bucket_event(
+                        bucket=bucket,
+                        reason="above_max_aspect_ratio",
+                        removed=removed,
+                        maximum_aspect_ratio=self.maximum_aspect_ratio,
+                    )
                 logger.info(f"Removing bucket {bucket} due to aspect ratio being greater than {self.maximum_aspect_ratio}.")
                 del self.aspect_ratio_bucket_indices[bucket]
 
@@ -444,6 +516,14 @@ class MetadataBackend:
             and (len(self.aspect_ratio_bucket_indices[bucket]) * (int(self.repeats) + 1)) < self.batch_size
         ):
             bucket_sample_count = len(self.aspect_ratio_bucket_indices[bucket])
+            if self.bucket_report:
+                self.bucket_report.record_bucket_event(
+                    bucket=bucket,
+                    reason="insufficient_for_batch",
+                    removed=bucket_sample_count,
+                    batch_size=self.batch_size,
+                    repeats=int(self.repeats),
+                )
             del self.aspect_ratio_bucket_indices[bucket]
             logger.warning(
                 f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={bucket_sample_count})."
@@ -486,6 +566,14 @@ class MetadataBackend:
             total_after = len(self.aspect_ratio_bucket_indices[bucket])
             total_lost = total_before - total_after
             if total_lost > 0:
+                if self.bucket_report:
+                    self.bucket_report.record_bucket_event(
+                        bucket=bucket,
+                        reason="resolution_filter",
+                        removed=total_lost,
+                        minimum_image_size=self.minimum_image_size,
+                        resolution_type=self.resolution_type,
+                    )
                 logger.info(
                     f"Had {total_before} samples before and {total_lost} that did not meet the minimum image size requirement ({self.minimum_image_size})."
                 )

@@ -309,11 +309,21 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _reset_buckets(self, raise_exhaustion_signal: bool = True):
         if len(self.metadata_backend.seen_images) == 0 and len(self._get_unseen_images()) == 0:
-            raise Exception(
-                f"No images found in the dataset: {self.metadata_backend.aspect_ratio_bucket_indices}"
-                f"\n-> Unseen {self.sample_type_strs}: {self._get_unseen_images()}"
-                f"\n-> Seen {self.sample_type_strs}: {self.metadata_backend.seen_images}"
-            )
+            bucket_report = getattr(self.metadata_backend, "bucket_report", None)
+            if bucket_report:
+                bucket_report.add_note("Sampler attempted to reset buckets but none were available.")
+                bucket_report.record_stage("sampler_batches", image_count=len(self.metadata_backend))
+                message = bucket_report.format_empty_dataset_message()
+            else:
+                message = (
+                    f"No images found in the dataset: {self.metadata_backend.aspect_ratio_bucket_indices}"
+                    f"\n-> Unseen {self.sample_type_strs}: {self._get_unseen_images()}"
+                    f"\n-> Seen {self.sample_type_strs}: {self.metadata_backend.seen_images}"
+                )
+            empty_report = getattr(self.metadata_backend, "empty_dataset_report", None)
+            if empty_report and not bucket_report:
+                message = empty_report
+            raise Exception(message)
         if StateTracker.get_args().print_sampler_statistics:
             self.logger.info(f"Resetting seen {self.sample_type_str} list and refreshing buckets. State before reset:")
             self.log_state()
