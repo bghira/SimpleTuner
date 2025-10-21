@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import os
 import re
+import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
@@ -23,10 +27,77 @@ from simpletuner.simpletuner_sdk.server.services.field_registry.types import Val
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
 from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_gpu_inventory
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
+from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
 
 logger = logging.getLogger(__name__)
+
+
+_PROMPT_LIBRARY_RUNTIME_ROOT = Path(tempfile.gettempdir()) / "simpletuner_prompt_libraries"
+
+
+def _ensure_prompt_library_runtime_dir(job_id: str) -> Path:
+    """Return a clean runtime directory for prompt libraries for a given job."""
+
+    _PROMPT_LIBRARY_RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+    job_dir = _PROMPT_LIBRARY_RUNTIME_ROOT / job_id
+    if job_dir.exists():
+        shutil.rmtree(job_dir, ignore_errors=True)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    return job_dir
+
+
+def _normalise_prompt_library_path(value: Any) -> Optional[str]:
+    """Return a cleaned string path for the prompt library CLI argument."""
+
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if trimmed and trimmed.lower() not in {"none", "null", "false"}:
+            return trimmed
+    return None
+
+
+def _prepare_user_prompt_library(
+    runtime_payload: Dict[str, Any],
+    *,
+    job_id: str,
+    configs_dir: Optional[str],
+) -> None:
+    """Copy or materialise the user prompt library into a job-scoped location."""
+
+    inline_library = runtime_payload.get("user_prompt_library")
+    library_is_inline = isinstance(inline_library, dict)
+
+    cli_path = _normalise_prompt_library_path(runtime_payload.get("--user_prompt_library"))
+    alias_path = None
+    if isinstance(inline_library, str):
+        alias_path = _normalise_prompt_library_path(inline_library)
+
+    if not library_is_inline and not cli_path and not alias_path:
+        # No prompt library configured
+        return
+
+    if library_is_inline:
+        source_path = None
+    else:
+        candidate = cli_path or alias_path
+        resolved = resolve_config_path(candidate, config_dir=configs_dir) if candidate else None
+        if resolved is None or not resolved.exists():
+            raise FileNotFoundError(f"User prompt library not found at '{candidate}'. Provide a valid JSON file.")
+        source_path = resolved
+
+    job_dir = _ensure_prompt_library_runtime_dir(job_id)
+    if library_is_inline:
+        target_path = job_dir / "user_prompt_library.json"
+        with target_path.open("w", encoding="utf-8") as handle:
+            json.dump(inline_library, handle, indent=4)
+    else:
+        target_path = job_dir / source_path.name
+        shutil.copy2(source_path, target_path)
+
+    runtime_payload["--user_prompt_library"] = str(target_path)
+    runtime_payload["user_prompt_library"] = str(target_path)
 
 
 @dataclass
@@ -580,9 +651,17 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         arg_lookup = key if key.startswith("--") else f"--{clean_key}"
         is_required_field = _is_required_field(arg_lookup)
 
+        explicit_override = (
+            arg_lookup in config_dict
+            or clean_key in config_dict
+            or arg_lookup.lstrip("-") in config_dict
+            or clean_key in form_dict
+            or arg_lookup in form_dict
+        )
+
         if save_options.get("preserve_defaults", False) and not is_required_field:
             default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
-            if value != default_value:
+            if value != default_value or explicit_override:
                 save_config[clean_key] = value
         else:
             save_config[clean_key] = value
@@ -746,6 +825,22 @@ def validate_training_config(
         if not value:
             errors.append(message)
 
+    inline_prompt_library = _read_required("user_prompt_library")
+    if not isinstance(inline_prompt_library, dict):
+        prompt_library_path = _read_required("--user_prompt_library")
+        if isinstance(prompt_library_path, str):
+            candidate = prompt_library_path.strip()
+            if candidate and candidate.lower() not in {"none", "null", "false"}:
+                resolved = resolve_config_path(
+                    candidate,
+                    config_dir=getattr(store, "config_dir", None),
+                    check_cwd_first=True,
+                )
+                if resolved is None or not resolved.exists():
+                    errors.append(
+                        f"User prompt library not found at '{candidate}'. " "Please provide a valid JSON file path."
+                    )
+
     return TrainingValidationResult(
         errors=errors,
         warnings=warnings,
@@ -757,15 +852,23 @@ def validate_training_config(
 def start_training_job(runtime_config: Dict[str, Any]) -> str:
     """Submit a training job via the process keeper and return the job identifier."""
 
+    job_id = str(uuid.uuid4())[:8]
+
     runtime_payload = dict(runtime_config)
     runtime_payload.setdefault("--webhook_config", copy.deepcopy(DEFAULT_WEBHOOK_CONFIG))
+
+    # Resolve the prompt library into a job-scoped path if one was configured.
+    try:
+        _, defaults = get_webui_state()
+    except Exception:
+        defaults = WebUIDefaults()
+    configs_dir = getattr(defaults, "configs_dir", None)
+    _prepare_user_prompt_library(runtime_payload, job_id=job_id, configs_dir=configs_dir)
 
     APIState.set_state("training_config", runtime_payload)
     APIState.set_state("training_status", "starting")
     APIState.set_state("training_progress", None)
     APIState.set_state("training_startup_stages", {})
-
-    job_id = str(uuid.uuid4())[:8]
 
     job_config = dict(runtime_payload)
     job_config["__job_id__"] = job_id

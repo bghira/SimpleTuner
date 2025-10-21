@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.schedulers.scheduling_utils import KarrasDiffusionSchedulers, SchedulerMixin, SchedulerOutput
 from diffusers.utils import deprecate, is_scipy_available
 
@@ -71,7 +71,6 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
     _compatibles = [e.name for e in KarrasDiffusionSchedulers]
     order = 1
 
-    @register_to_config
     def __init__(
         self,
         num_train_timesteps: int = 1000,
@@ -91,6 +90,25 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         steps_offset: int = 0,
         final_sigmas_type: Optional[str] = "zero",  # "zero", "sigma_min"
     ):
+        super().__init__()
+        self.register_to_config(
+            num_train_timesteps=num_train_timesteps,
+            solver_order=solver_order,
+            prediction_type=prediction_type,
+            shift=shift,
+            use_dynamic_shifting=use_dynamic_shifting,
+            thresholding=thresholding,
+            dynamic_thresholding_ratio=dynamic_thresholding_ratio,
+            sample_max_value=sample_max_value,
+            predict_x0=predict_x0,
+            solver_type=solver_type,
+            lower_order_final=lower_order_final,
+            disable_corrector=disable_corrector,
+            solver_p=solver_p,
+            timestep_spacing=timestep_spacing,
+            steps_offset=steps_offset,
+            final_sigmas_type=final_sigmas_type,
+        )
 
         if solver_type not in ["bh1", "bh2"]:
             if solver_type in ["midpoint", "heun", "logrho"]:

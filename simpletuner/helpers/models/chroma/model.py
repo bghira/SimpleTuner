@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 import torch
 from diffusers import AutoencoderKL
 from torch.nn import functional as F
-from transformers import T5EncoderModel, T5TokenizerFast
+from transformers import AutoTokenizer, T5EncoderModel
 
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
@@ -60,7 +60,7 @@ class Chroma(ImageModelFoundation):
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "T5 XXL v1.1",
-            "tokenizer": T5TokenizerFast,
+            "tokenizer": AutoTokenizer,
             "tokenizer_subfolder": "tokenizer",
             "model": T5EncoderModel,
         },
@@ -129,7 +129,7 @@ class Chroma(ImageModelFoundation):
             negative_prompt=None,
             device=self.accelerator.device,
             num_images_per_prompt=1,
-            max_sequence_length=int(self.config.tokenizer_max_length),
+            max_sequence_length=int(self.config.tokenizer_max_length or 512),
             do_classifier_free_guidance=False,
         )
         if getattr(self.config, "t5_padding", "unmodified") == "zero":
@@ -152,19 +152,41 @@ class Chroma(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        prompt_embeds = text_embedding["prompt_embeds"]
+        attention_mask = text_embedding["attention_masks"]
+
+        if prompt_embeds.dim() == 2:
+            prompt_embeds = prompt_embeds.unsqueeze(0)
+        if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
+            attention_mask = attention_mask.squeeze(1)
+        if attention_mask.dim() == 1:
+            attention_mask = attention_mask.unsqueeze(0)
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "prompt_attention_mask": text_embedding["attention_masks"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
+            "prompt_attention_mask": attention_mask,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: str) -> dict:
-        if self.config.validation_guidance_real is None or self.config.validation_guidance_real <= 1.0:
-            return {}
-        return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_attention_mask": text_embedding["attention_masks"].unsqueeze(0),
-            "guidance_scale_real": float(self.config.validation_guidance_real),
+        neg_embeds = text_embedding["prompt_embeds"]
+        neg_mask = text_embedding["attention_masks"]
+
+        if neg_embeds.dim() == 2:
+            neg_embeds = neg_embeds.unsqueeze(0)
+        if neg_mask.dim() == 3 and neg_mask.size(1) == 1:
+            neg_mask = neg_mask.squeeze(1)
+        if neg_mask.dim() == 1:
+            neg_mask = neg_mask.unsqueeze(0)
+
+        result = {
+            "negative_prompt_embeds": neg_embeds,
+            "negative_prompt_attention_mask": neg_mask,
         }
+
+        if self.config.validation_guidance_real is not None and self.config.validation_guidance_real > 1.0:
+            result["guidance_scale_real"] = float(self.config.validation_guidance_real)
+
+        return result
 
     def get_lora_target_layers(self):
         if self.config.lora_type.lower() == "standard":
@@ -326,6 +348,24 @@ class Chroma(ImageModelFoundation):
         if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
             attention_mask = attention_mask.squeeze(1)
 
+        # Match pipeline behaviour by extending the attention mask to cover image tokens
+        seq_length = packed_noisy_latents.shape[1]
+        attention_mask = attention_mask.to(device=self.accelerator.device)
+        if attention_mask.dtype != torch.bool:
+            attention_mask = attention_mask > 0
+        attention_mask = torch.cat(
+            [
+                attention_mask,
+                torch.ones(
+                    attention_mask.shape[0],
+                    seq_length,
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                ),
+            ],
+            dim=1,
+        )
+
         transformer_kwargs = {
             "hidden_states": packed_noisy_latents,
             "timestep": timesteps,
@@ -419,6 +459,23 @@ class Chroma(ImageModelFoundation):
             )
         if attention_mask.dim() == 3 and attention_mask.size(1) == 1:
             attention_mask = attention_mask.squeeze(1)
+
+        seq_length = packed_noisy_latents.shape[1]
+        attention_mask = attention_mask.to(device=self.accelerator.device)
+        if attention_mask.dtype != torch.bool:
+            attention_mask = attention_mask > 0
+        attention_mask = torch.cat(
+            [
+                attention_mask,
+                torch.ones(
+                    attention_mask.shape[0],
+                    seq_length,
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                ),
+            ],
+            dim=1,
+        )
 
         conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
 

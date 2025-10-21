@@ -405,6 +405,8 @@ def collate_fn(batch):
     batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
+    data_backend = StateTracker.get_data_backend(data_backend_id)
+
     debug_log("Compute latents")
     model = StateTracker.get_model()
     batch_data = compute_latents(filepaths, data_backend_id, model)
@@ -416,13 +418,28 @@ def collate_fn(batch):
         debug_log("Check latents")
         latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
 
+    conditioning_image_embeds = None
+    if model.requires_conditioning_image_embeds():
+        cache = data_backend.get("conditioning_image_embed_cache")
+        if cache is None:
+            raise ValueError("Conditioning image embed cache is required but was not configured.")
+        embed_tensors = []
+        for path in filepaths:
+            embed_tensor = cache.retrieve_from_cache(path)
+            if isinstance(embed_tensor, dict):
+                raise ValueError("Conditioning image embed cache returned an unexpected structure.")
+            if not torch.backends.mps.is_available():
+                embed_tensor = embed_tensor.to("cpu").pin_memory()
+            embed_tensors.append(embed_tensor)
+        if embed_tensors:
+            conditioning_image_embeds = torch.stack(embed_tensors, dim=0)
+
     training_filepaths = []
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
 
     # get multiple backend ids
-    data_backend = StateTracker.get_data_backend(data_backend_id)
     conditioning_backends = data_backend.get("conditioning_data", [])
     if len(conditioning_examples) > 0:
         # check the # of conditioning backends
@@ -553,6 +570,7 @@ def collate_fn(batch):
         "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_pixel_values,
         "conditioning_latents": conditioning_latents,
+        "conditioning_image_embeds": conditioning_image_embeds,
         "encoder_attention_mask": all_text_encoder_outputs.get("attention_masks"),
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,

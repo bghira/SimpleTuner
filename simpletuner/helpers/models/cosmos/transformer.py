@@ -20,7 +20,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin
 from diffusers.loaders.peft import PeftAdapterMixin
 from diffusers.models.attention import FeedForward
@@ -495,7 +495,6 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
     _no_split_modules = ["CosmosTransformerBlock"]
     _keep_in_fp32_modules = ["learnable_pos_embed"]
 
-    @register_to_config
     def __init__(
         self,
         in_channels: int = 16,
@@ -513,6 +512,21 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         extra_pos_embed_type: Optional[str] = "learnable",
     ) -> None:
         super().__init__()
+        self.register_to_config(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            num_attention_heads=num_attention_heads,
+            attention_head_dim=attention_head_dim,
+            num_layers=num_layers,
+            mlp_ratio=mlp_ratio,
+            text_embed_dim=text_embed_dim,
+            adaln_lora_dim=adaln_lora_dim,
+            max_size=max_size,
+            patch_size=patch_size,
+            rope_scale=rope_scale,
+            concat_padding_mask=concat_padding_mask,
+            extra_pos_embed_type=extra_pos_embed_type,
+        )
         hidden_size = num_attention_heads * attention_head_dim
 
         # 1. Patch Embedding

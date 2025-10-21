@@ -18,6 +18,7 @@ from simpletuner.simpletuner_sdk.server.routes.checkpoints import router as chec
 from simpletuner.simpletuner_sdk.server.routes.datasets import router as dataset_router
 from simpletuner.simpletuner_sdk.server.routes.publishing import router as publishing_router
 from simpletuner.simpletuner_sdk.server.routes.web import router as web_router
+from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_static_directory, get_template_directory
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
 
 
@@ -54,9 +55,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+# Mount static files from the package location
+static_dir = get_static_directory()
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+# Ensure templates resolve to the packaged directory unless overridden
+os.environ.setdefault("TEMPLATE_DIR", str(get_template_directory()))
 
 # Include web interface router (uses TabService with all tabs)
 app.include_router(web_router)
@@ -108,11 +113,9 @@ def main():
     """Main entry point for the server worker."""
     import uvicorn
 
-    # Create necessary directories
-    os.makedirs("static/css", exist_ok=True)
-    os.makedirs("static/js", exist_ok=True)
-    os.makedirs("templates", exist_ok=True)
-    os.makedirs("configs", exist_ok=True)
+    # Ensure configuration directory exists (uses configured/default path)
+    config_dir = get_config_directory()
+    os.environ.setdefault("SIMPLETUNER_CONFIG_DIR", str(config_dir))
 
     # Check for SSL configuration
     ssl_enabled = os.environ.get("SIMPLETUNER_SSL_ENABLED", "false").lower() == "true"

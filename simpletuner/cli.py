@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_template_directory
+
 
 def find_config_file() -> Optional[str]:
     """Find config file in current directory or config/ subdirectory."""
@@ -609,6 +611,13 @@ def cmd_server(args) -> int:
         os.environ["SIMPLETUNER_SSL_KEYFILE"] = ssl_config["keyfile"]
         os.environ["SIMPLETUNER_SSL_CERTFILE"] = ssl_config["certfile"]
 
+    # Ensure template resolution points to packaged templates unless overridden
+    os.environ.setdefault("TEMPLATE_DIR", str(get_template_directory()))
+
+    # Ensure a configuration directory exists and record it for downstream services
+    config_dir = get_config_directory()
+    os.environ.setdefault("SIMPLETUNER_CONFIG_DIR", str(config_dir))
+
     try:
         import uvicorn
 
@@ -621,12 +630,6 @@ def cmd_server(args) -> int:
 
         # Create app with specified mode
         app = create_app(mode=server_mode, ssl_no_verify=ssl_no_verify)
-
-        # Create necessary directories
-        os.makedirs("static/css", exist_ok=True)
-        os.makedirs("static/js", exist_ok=True)
-        os.makedirs("templates", exist_ok=True)
-        os.makedirs("configs", exist_ok=True)
 
         # Configure uvicorn SSL
         uvicorn_config = {"app": app, "host": host, "port": port, "reload": reload, "log_level": "info"}

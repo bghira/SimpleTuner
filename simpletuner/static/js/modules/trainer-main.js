@@ -438,9 +438,12 @@ class TrainerMain {
                     return { reset: true };
                 }
                 const percentValue = Number(progress.percent || progress.percentage || 0);
-                const clampedPercent = Number.isFinite(percentValue) ? Math.max(0, Math.min(100, percentValue)) : 0;
+                const clampedPercent = Number.isFinite(percentValue)
+                    ? Math.max(0, Math.min(100, percentValue))
+                    : 0;
+                const roundedPercent = Math.round(clampedPercent * 100) / 100;
                 return {
-                    percent: clampedPercent,
+                    percent: roundedPercent,
                     step: progress.step || progress.current_step || 0,
                     total_steps: progress.total_steps || progress.total || 0,
                     epoch: progress.epoch || 0,

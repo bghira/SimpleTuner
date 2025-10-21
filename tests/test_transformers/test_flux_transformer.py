@@ -120,10 +120,7 @@ class TestApplyRotaryEmbAnyshape(TransformerBaseTest):
 
     def test_device_consistency(self):
         """Test that output maintains proper device placement."""
-        if torch.cuda.is_available():
-            device = "cuda"
-        else:
-            device = "cpu"
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
         x = torch.randn(2, 4, 8, 64, device=device)
         cos = torch.randn(8, 64, device=device)
@@ -131,7 +128,7 @@ class TestApplyRotaryEmbAnyshape(TransformerBaseTest):
         freqs_cis = (cos, sin)
 
         result = _apply_rotary_emb_anyshape(x, freqs_cis)
-        self.assertEqual(str(result.device), device)
+        self.assertEqual(result.device, x.device)
 
     def test_dtype_preservation(self):
         """Test that output preserves input dtype."""

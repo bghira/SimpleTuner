@@ -536,7 +536,7 @@ class VAECache(WebhookMixin):
                 )
                 processed_images = self.prepare_video_latents(processed_images)
                 processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
-                latents_uncached = self.vae.encode(processed_images)
+                latents_uncached = self.model.encode_with_vae(self.vae, processed_images)
                 latents_uncached = self.model.post_vae_encode_transform_sample(latents_uncached)
 
                 if StateTracker.get_model_family() in ["wan"]:

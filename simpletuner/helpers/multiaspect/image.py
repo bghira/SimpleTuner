@@ -13,19 +13,26 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 logger = logging.getLogger("MultiaspectImage")
 logger.setLevel(os.environ.get("SIMPLETUNER_IMAGE_PREP_LOG_LEVEL", "INFO"))
 
+from numbers import Real
+
+import numpy as np
+import torch
+from PIL import Image
+from torchvision import transforms
+
 
 class MultiaspectImage:
     @staticmethod
     def _coerce_positive_int(value, default: int = 1) -> int:
         """Return a positive integer from value or fallback to default."""
         if isinstance(value, Real):
-            candidate = int(value)
+            result = int(value)
         else:
             try:
-                candidate = int(value)
+                result = int(value)
             except (TypeError, ValueError):
                 return default
-        return candidate if candidate > 0 else default
+        return result if result > 0 else default
 
     @staticmethod
     def _get_alignment(default: int = 1) -> int:
@@ -37,10 +44,16 @@ class MultiaspectImage:
     def _get_rounding(default: int) -> int:
         args = StateTracker.get_args()
         rounding = getattr(args, "aspect_bucket_rounding", None) if args is not None else None
-        if rounding is None:
+        if isinstance(rounding, Real):
+            rounding = int(rounding)
+        else:
+            try:
+                rounding = int(rounding)
+            except (TypeError, ValueError):
+                rounding = None
+        if rounding is None or rounding < 0:
             return default
-        rounding = MultiaspectImage._coerce_positive_int(rounding, default)
-        return rounding if rounding >= 0 else default
+        return rounding
 
     @staticmethod
     def limit_canvas_size(width: int, height: int, max_size: int) -> dict:
@@ -92,7 +105,7 @@ class MultiaspectImage:
             multiple = MultiaspectImage._get_alignment()
         else:
             multiple = MultiaspectImage._coerce_positive_int(multiple, default=1)
-        rounded = int(round(value / multiple) * multiple)
+        rounded = round(value / multiple) * multiple
         return max(rounded, multiple)  # Ensure it's at least the value of 'multiple'
 
     @staticmethod
@@ -298,9 +311,7 @@ class MultiaspectImage:
         Returns:
             float: The rounded aspect ratio of the image.
         """
-        to_round = StateTracker.get_args().aspect_bucket_rounding
-        if to_round is None:
-            to_round = rounding
+        to_round = MultiaspectImage._get_rounding(rounding)
         if isinstance(image, Image.Image):
             # An actual image was passed in.
             width, height = image.size

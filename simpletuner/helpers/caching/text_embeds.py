@@ -247,11 +247,12 @@ class TextEmbeddingCache(WebhookMixin):
     ):
         if self.model.TEXT_ENCODER_CONFIGURATION == {}:
             # This is a model that doesn't use text encoders.
+            self.debug_log(f"Model type {self.model_type} does not use text encoders, skipping text embed caching.")
             self.disabled = True
             return None
-        logger.debug("Initialising text embed calculator...")
+        self.debug_log("Initialising text embed calculator...")
         if not self.batch_write_thread.is_alive():
-            logger.debug("Restarting background write thread.")
+            self.debug_log("Restarting background write thread.")
             # Start the thread again.
             self.process_write_batches = True
             self.batch_write_thread = Thread(target=self.batch_write_embeddings)

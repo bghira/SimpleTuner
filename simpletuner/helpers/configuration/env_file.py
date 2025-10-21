@@ -175,8 +175,6 @@ def load_env():
 def load_env_config():
     mapped_args = []
     ignored_accelerate_kwargs = [
-        "--num_processes",
-        "--num_machines",
         "--dynamo_backend",
     ]
     for env_var, arg_name in env_to_args_map.items():

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers import FluxTransformer2DModel as OriginalFluxTransformer2DModel
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import Attention, AttentionProcessor
@@ -396,7 +396,6 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
-    @register_to_config
     def __init__(
         self,
         patch_size: int = 1,
@@ -411,6 +410,18 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         axes_dims_rope: Tuple[int] = (16, 56, 56),
     ):
         super().__init__()
+        self.register_to_config(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            num_layers=num_layers,
+            num_single_layers=num_single_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            pooled_projection_dim=pooled_projection_dim,
+            guidance_embeds=guidance_embeds,
+            axes_dims_rope=axes_dims_rope,
+        )
         self.out_channels = in_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
 

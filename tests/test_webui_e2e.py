@@ -21,6 +21,8 @@ class _TrainerPageMixin:
 class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test basic configuration and save flow."""
 
+    MAX_BROWSERS = 1
+
     def test_save_basic_configuration(self) -> None:
         self.with_sample_environment()
 
@@ -171,6 +173,8 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
 class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test configuring and starting training."""
 
+    MAX_BROWSERS = 1
+
     def test_configure_and_start_training(self) -> None:
         self.with_sample_environment()
 
@@ -212,6 +216,8 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
 
 class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
     """Test dataset management functionality."""
+
+    MAX_BROWSERS = 1
 
     def test_add_and_remove_dataset(self) -> None:
         self.seed_defaults()

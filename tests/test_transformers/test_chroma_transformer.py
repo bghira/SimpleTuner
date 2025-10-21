@@ -18,12 +18,7 @@ import torch
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
 
 from transformer_base_test import TransformerBaseTest  # noqa: E402
-from transformer_test_helpers import (  # noqa: E402
-    MockDiffusersConfig,
-    ShapeValidator,
-    TensorGenerator,
-    TypoTestUtils,
-)
+from transformer_test_helpers import MockDiffusersConfig, ShapeValidator, TensorGenerator, TypoTestUtils  # noqa: E402
 
 from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
 
@@ -67,7 +62,9 @@ class TestChromaTransformer2DModel(TransformerBaseTest):
         """Ensure the transformer can be constructed and exposes expected config."""
         transformer = self._build_transformer()
 
-        self.assertEqual(transformer.inner_dim, self.default_config["num_attention_heads"] * self.default_config["attention_head_dim"])
+        self.assertEqual(
+            transformer.inner_dim, self.default_config["num_attention_heads"] * self.default_config["attention_head_dim"]
+        )
         self.assertEqual(transformer.config.patch_size, self.default_config["patch_size"])
         self.assertEqual(transformer.config.num_layers, self.default_config["num_layers"])
 
@@ -87,7 +84,9 @@ class TestChromaTransformer2DModel(TransformerBaseTest):
         transformer = self._build_transformer()
 
         batch_size = 2
-        hidden_states = self.tensor_gen.create_hidden_states(batch_size=batch_size, seq_len=8, hidden_dim=transformer.config.in_channels)
+        hidden_states = self.tensor_gen.create_hidden_states(
+            batch_size=batch_size, seq_len=8, hidden_dim=transformer.config.in_channels
+        )
         encoder_hidden_states = self.tensor_gen.create_encoder_hidden_states(
             batch_size=batch_size, seq_len=3, hidden_dim=self.default_config["joint_attention_dim"]
         )

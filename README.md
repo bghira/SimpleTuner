@@ -89,6 +89,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **Gradient checkpointing** - Configurable intervals for memory/speed optimization
 - **Loss functions** - L2, Huber, Smooth L1 with scheduling support
 - **SNR weighting** - Min-SNR gamma weighting for improved training dynamics
+- **Group offloading** - Diffusers v0.33+ module-group CPU/disk staging with optional CUDA streams
 
 ### Model-Specific Features
 
@@ -99,6 +100,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **T5 masked training** - Enhanced fine details for Flux and compatible models
 - **QKV fusion** - Memory and speed optimizations (Flux, Lumina2)
 - **TREAD integration** - Selective token routing for Wan and Flux models
+- **Wan 2.x I2V** - High/low stage presets plus a 2.1 time-embedding fallback (see Wan quickstart)
 - **Classifier-free guidance** - Optional CFG reintroduction for distilled models
 
 ### Quickstart Guides

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders.single_file_model import FromOriginalModelMixin
 from diffusers.models.attention_processor import (
     ADDED_KV_ATTENTION_PROCESSORS,
@@ -200,7 +200,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
     _supports_gradient_checkpointing = True
 
-    @register_to_config
     def __init__(
         self,
         in_channels: int = 4,
@@ -269,6 +268,42 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         if isinstance(transformer_layers_per_block, int):
             transformer_layers_per_block = [transformer_layers_per_block] * len(down_block_types)
+        transformer_layers_per_block_tuple = tuple(transformer_layers_per_block)
+
+        self.register_to_config(
+            in_channels=in_channels,
+            conditioning_channels=conditioning_channels,
+            flip_sin_to_cos=flip_sin_to_cos,
+            freq_shift=freq_shift,
+            down_block_types=down_block_types,
+            mid_block_type=mid_block_type,
+            only_cross_attention=only_cross_attention,
+            block_out_channels=block_out_channels,
+            layers_per_block=layers_per_block,
+            downsample_padding=downsample_padding,
+            mid_block_scale_factor=mid_block_scale_factor,
+            act_fn=act_fn,
+            norm_num_groups=norm_num_groups,
+            norm_eps=norm_eps,
+            cross_attention_dim=cross_attention_dim,
+            transformer_layers_per_block=transformer_layers_per_block_tuple,
+            encoder_hid_dim=encoder_hid_dim,
+            encoder_hid_dim_type=encoder_hid_dim_type,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            use_linear_projection=use_linear_projection,
+            class_embed_type=class_embed_type,
+            addition_embed_type=addition_embed_type,
+            addition_time_embed_dim=addition_time_embed_dim,
+            num_class_embeds=num_class_embeds,
+            upcast_attention=upcast_attention,
+            resnet_time_scale_shift=resnet_time_scale_shift,
+            projection_class_embeddings_input_dim=projection_class_embeddings_input_dim,
+            controlnet_conditioning_channel_order=controlnet_conditioning_channel_order,
+            conditioning_embedding_out_channels=conditioning_embedding_out_channels,
+            global_pool_conditions=global_pool_conditions,
+            addition_embed_type_num_heads=addition_embed_type_num_heads,
+        )
 
         # input
         conv_in_kernel = 3

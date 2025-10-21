@@ -26,6 +26,7 @@ from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -66,6 +67,7 @@ def get_model_config_path(model_family: str, model_path: str):
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
+    IMG2VIDEO = "img2video"
     CONTROLNET = "controlnet"
     CONTROL = "control"
 
@@ -95,6 +97,45 @@ class ModelTypes(Enum):
     TRANSFORMER = "transformer"
     VAE = "vae"
     TEXT_ENCODER = "text_encoder"
+
+
+class PipelineConditioningImageEmbedder:
+    """Wraps a Diffusers pipeline to expose a simple conditioning image encode interface."""
+
+    def __init__(self, pipeline, image_encoder, image_processor, device=None, weight_dtype=None):
+        if image_encoder is None or image_processor is None:
+            raise ValueError("PipelineConditioningImageEmbedder requires both an image encoder and image processor.")
+        self.pipeline = pipeline
+        self.image_encoder = image_encoder
+        self.image_processor = image_processor
+        self.device = device if device is not None else torch.device("cpu")
+        if isinstance(weight_dtype, str):
+            weight_dtype = getattr(torch, weight_dtype, None)
+        self.weight_dtype = weight_dtype
+
+        if self.weight_dtype is not None:
+            self.image_encoder.to(self.device, dtype=self.weight_dtype)
+        else:
+            self.image_encoder.to(self.device)
+        self.image_encoder.eval()
+
+    def encode(self, images):
+        inputs = self.image_processor(images=images, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        outputs = self.image_encoder(**inputs, output_hidden_states=True)
+        embeddings = None
+        hidden_states = getattr(outputs, "hidden_states", None)
+        if isinstance(hidden_states, (list, tuple)) and len(hidden_states) > 1:
+            embeddings = hidden_states[-2]
+        elif getattr(outputs, "last_hidden_state", None) is not None:
+            embeddings = outputs.last_hidden_state
+        elif torch.is_tensor(outputs):
+            embeddings = outputs
+        if embeddings is None:
+            raise ValueError("Image encoder did not return hidden states suitable for conditioning embeds.")
+        if self.weight_dtype is not None:
+            embeddings = embeddings.to(self.weight_dtype)
+        return embeddings
 
 
 class ModelFoundation(ABC):
@@ -179,6 +220,9 @@ class ModelFoundation(ABC):
         return False
 
     def requires_conditioning_latents(self) -> bool:
+        return False
+
+    def requires_conditioning_image_embeds(self) -> bool:
         return False
 
     def requires_validation_edit_captions(self) -> bool:
@@ -516,6 +560,13 @@ class ModelFoundation(ABC):
         """
         return sample
 
+    def encode_with_vae(self, vae, samples):
+        """
+        Hook for models to customize VAE encoding behaviour (e.g. applying flavour-specific patches).
+        By default this simply forwards to the provided VAE.
+        """
+        return vae.encode(samples)
+
     def post_vae_encode_transform_sample(self, sample):
         """
         Post-encode transform for the sample after passing it to the VAE.
@@ -801,18 +852,16 @@ class ModelFoundation(ABC):
         """
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
+            pipeline_instance = active_pipelines[pipeline_type]
             setattr(
-                active_pipelines[pipeline_type],
+                pipeline_instance,
                 self.MODEL_TYPE.value,
                 self.unwrap_model(model=self.model),
             )
             if self.config.controlnet:
-                setattr(
-                    active_pipelines[pipeline_type],
-                    "controlnet",
-                    self.unwrap_model(model=self.controlnet),
-                )
-            return active_pipelines[pipeline_type]
+                setattr(pipeline_instance, "controlnet", self.unwrap_model(model=self.controlnet))
+            self._configure_pipeline_offloading(pipeline_instance)
+            return pipeline_instance
 
         pipeline_kwargs = {
             "pretrained_model_name_or_path": self._model_config_path(),
@@ -858,12 +907,240 @@ class ModelFoundation(ABC):
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
             pipeline_kwargs["controlnet"] = self.controlnet
 
-        logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
-        self.pipelines[pipeline_type] = pipeline_class.from_pretrained(
-            **pipeline_kwargs,
-        )
+        optional_components = getattr(pipeline_class, "_optional_components", [])
+        require_conditioning_components = bool(self.requires_conditioning_image_embeds())
+        if (
+            "image_encoder" in optional_components
+            and "image_encoder" not in pipeline_kwargs
+            and getattr(self, "config", None) is not None
+        ):
+            repo_id = (
+                getattr(
+                    self.config,
+                    "image_encoder_pretrained_model_name_or_path",
+                    None,
+                )
+                or self._model_config_path()
+            )
+            processor_repo_id = (
+                getattr(
+                    self.config,
+                    "image_processor_pretrained_model_name_or_path",
+                    None,
+                )
+                or repo_id
+            )
+            explicit_encoder_source = getattr(self.config, "image_encoder_pretrained_model_name_or_path", None)
+            explicit_processor_source = getattr(self.config, "image_processor_pretrained_model_name_or_path", None)
+            image_encoder = None
+            image_processor = None
+            try:
+                from transformers import CLIPImageProcessor, CLIPVisionModel  # type: ignore
+            except Exception as exc:  # pragma: no cover - optional dependency guard
+                raise ValueError(
+                    "Model requires conditioning image embeds but transformers is unavailable "
+                    "to load the image encoder components."
+                ) from exc
 
-        return self.pipelines[pipeline_type]
+            def _dedupe_subfolders(values):
+                seen = set()
+                result = []
+                for value in values:
+                    if not value or value in seen:
+                        continue
+                    seen.add(value)
+                    result.append(value)
+                return result
+
+            encoder_subfolders = []
+            config_encoder_subfolder = getattr(self.config, "image_encoder_subfolder", None)
+            if isinstance(config_encoder_subfolder, (list, tuple, set)):
+                encoder_subfolders.extend(config_encoder_subfolder)
+            elif config_encoder_subfolder:
+                encoder_subfolders.append(config_encoder_subfolder)
+            encoder_subfolders.extend(("image_encoder", "vision_encoder"))
+            encoder_subfolders = _dedupe_subfolders(encoder_subfolders)
+
+            loader_errors: list[tuple[str, Exception]] = []
+            encoder_revision = getattr(self.config, "image_encoder_revision", getattr(self.config, "revision", None))
+            for subfolder in encoder_subfolders:
+                try:
+                    image_encoder = CLIPVisionModel.from_pretrained(
+                        repo_id,
+                        subfolder=subfolder,
+                        use_safetensors=True,
+                        revision=encoder_revision,
+                    )
+                    break
+                except Exception as exc:  # pragma: no cover - defensive
+                    loader_errors.append((subfolder, exc))
+            if image_encoder is None:
+                loader_error_text = (
+                    ", ".join(f"{repo_id}/{subfolder}: {error}" for subfolder, error in loader_errors)
+                    if loader_errors
+                    else "no matching subfolders were found."
+                )
+                message = (
+                    "Unable to automatically load image encoder required for conditioning embeddings from "
+                    f"'{repo_id}'. Attempts failed with: {loader_error_text}"
+                )
+                if explicit_encoder_source:
+                    raise ValueError(message) from (loader_errors[-1][1] if loader_errors else None)
+                log_fn = logger.warning if require_conditioning_components else logger.debug
+                log_fn(
+                    "%s Set `image_encoder_pretrained_model_name_or_path` (and optionally "
+                    "`image_encoder_subfolder`) in your config to provide the weights manually.",
+                    message,
+                )
+            else:
+                pipeline_kwargs["image_encoder"] = image_encoder
+
+            processor_errors: list[tuple[str, Exception]] = []
+            processor_subfolders = []
+            config_processor_subfolder = getattr(self.config, "image_processor_subfolder", None)
+            if isinstance(config_processor_subfolder, (list, tuple, set)):
+                processor_subfolders.extend(config_processor_subfolder)
+            elif config_processor_subfolder:
+                processor_subfolders.append(config_processor_subfolder)
+            processor_subfolders.extend(("image_processor", "feature_extractor"))
+            processor_subfolders = _dedupe_subfolders(processor_subfolders)
+            processor_revision = getattr(self.config, "image_processor_revision", getattr(self.config, "revision", None))
+            for subfolder in processor_subfolders:
+                try:
+                    image_processor = CLIPImageProcessor.from_pretrained(
+                        processor_repo_id,
+                        subfolder=subfolder,
+                        revision=processor_revision,
+                    )
+                    break
+                except Exception as exc:  # pragma: no cover - defensive
+                    processor_errors.append((subfolder, exc))
+            if image_processor is None:
+                processor_error_text = (
+                    ", ".join(f"{processor_repo_id}/{subfolder}: {error}" for subfolder, error in processor_errors)
+                    if processor_errors
+                    else "no matching subfolders were found."
+                )
+                message = (
+                    "Unable to automatically load image processor required for conditioning embeddings from "
+                    f"'{processor_repo_id}'. Attempts failed with: {processor_error_text}"
+                )
+                if explicit_processor_source:
+                    raise ValueError(message) from (processor_errors[-1][1] if processor_errors else None)
+                log_fn = logger.warning if require_conditioning_components else logger.debug
+                log_fn(
+                    "%s Set `image_processor_pretrained_model_name_or_path` (and optionally "
+                    "`image_processor_subfolder`) in your config to provide the processor configuration.",
+                    message,
+                )
+            else:
+                pipeline_kwargs["image_processor"] = image_processor
+
+        logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
+        try:
+            pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
+        except (OSError, EnvironmentError, ValueError) as exc:
+            alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
+            current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
+            if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
+                logger.warning(
+                    "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
+                    current_repo,
+                    exc,
+                    alt_repo,
+                )
+                alt_kwargs = dict(pipeline_kwargs)
+                alt_kwargs["pretrained_model_name_or_path"] = alt_repo
+                pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
+            else:
+                raise
+        self.pipelines[pipeline_type] = pipeline_instance
+        self._configure_pipeline_offloading(pipeline_instance)
+
+        return pipeline_instance
+
+    def get_conditioning_image_embedder(self):
+        """Return an adapter capable of encoding conditioning images, or None if unavailable."""
+        if not self.requires_conditioning_image_embeds():
+            return None
+
+        return self._get_conditioning_image_embedder()
+
+    def _get_conditioning_image_embedder(self):
+        """Subclass hook for providing conditioning image embedder (default: unsupported)."""
+        return None
+
+    def get_group_offload_components(self, pipeline: DiffusionPipeline):
+        """
+        Return the component mapping used for group offloading.
+        Sub-classes can override to prune or extend the mapping.
+        """
+        return getattr(pipeline, "components", {})
+
+    def get_group_offload_exclusions(self, pipeline: DiffusionPipeline):
+        """
+        Names of components that should be excluded from group offloading.
+        """
+        return ()
+
+    def _resolve_group_offload_device(self, pipeline: DiffusionPipeline):
+        pipeline_device = getattr(pipeline, "device", None)
+        if pipeline_device is not None:
+            return torch.device(pipeline_device)
+        if hasattr(self.accelerator, "device"):
+            return torch.device(self.accelerator.device)
+        return torch.device("cpu")
+
+    def _resolve_group_offload_disk_path(self):
+        raw_path = getattr(self.config, "group_offload_to_disk_path", None)
+        if not raw_path:
+            return None
+        expanded = os.path.expanduser(raw_path)
+        return expanded
+
+    def _configure_pipeline_offloading(self, pipeline: DiffusionPipeline):
+        if pipeline is None:
+            return
+
+        enable_group_offload = bool(getattr(self.config, "enable_group_offload", False))
+        enable_model_cpu_offload = bool(getattr(self.config, "enable_model_cpu_offload", False))
+
+        if enable_group_offload and enable_model_cpu_offload:
+            logger.warning(
+                "Both group offload and model CPU offload requested; prioritising group offload. "
+                "Disable one of the options to silence this warning."
+            )
+
+        if enable_group_offload:
+            try:
+                device = self._resolve_group_offload_device(pipeline)
+                use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
+                if use_stream:
+                    if device.type != "cuda" or not torch.cuda.is_available():
+                        use_stream = False
+                enable_group_offload_on_components(
+                    self.get_group_offload_components(pipeline),
+                    device=device,
+                    offload_type=getattr(self.config, "group_offload_type", "block_level"),
+                    number_blocks_per_group=getattr(self.config, "group_offload_blocks_per_group", 1),
+                    use_stream=use_stream,
+                    offload_to_disk_path=self._resolve_group_offload_disk_path(),
+                    exclude=self.get_group_offload_exclusions(pipeline),
+                )
+                logger.info("Group offloading enabled for pipeline components.")
+            except ImportError as error:
+                logger.warning("Group offloading unavailable: %s", error)
+            except ValueError as error:
+                logger.warning("Group offloading validation error: %s", error)
+            except Exception as error:
+                logger.warning("Failed to configure group offloading: %s", error)
+            return
+
+        if enable_model_cpu_offload and hasattr(pipeline, "enable_model_cpu_offload"):
+            try:
+                pipeline.enable_model_cpu_offload()
+            except RuntimeError as error:
+                logger.warning("Model CPU offload unavailable: %s", error)
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
@@ -971,6 +1248,8 @@ class ModelFoundation(ABC):
             batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
         if isinstance(batch.get("conditioning_latents"), list) and len(batch["conditioning_latents"]) > 0:
             batch["conditioning_latents"] = batch["conditioning_latents"][0]
+        if isinstance(batch.get("conditioning_image_embeds"), list) and len(batch["conditioning_image_embeds"]) > 0:
+            batch["conditioning_image_embeds"] = batch["conditioning_image_embeds"][0]
         return batch
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
@@ -1016,6 +1295,10 @@ class ModelFoundation(ABC):
         encoder_attention_mask = batch.get("encoder_attention_mask")
         if encoder_attention_mask is not None and hasattr(encoder_attention_mask, "to"):
             batch["encoder_attention_mask"] = encoder_attention_mask.to(**target_device_kwargs)
+
+        conditioning_image_embeds = batch.get("conditioning_image_embeds")
+        if conditioning_image_embeds is not None and hasattr(conditioning_image_embeds, "to"):
+            batch["conditioning_image_embeds"] = conditioning_image_embeds.to(**target_device_kwargs)
 
         # Sample noise
         noise = torch.randn_like(batch["latents"])

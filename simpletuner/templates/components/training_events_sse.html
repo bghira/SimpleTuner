@@ -577,7 +577,8 @@
         if (!Number.isFinite(num)) {
             return 0;
         }
-        return Math.max(0, Math.min(100, num));
+        const clamped = Math.max(0, Math.min(100, num));
+        return Math.round(clamped * 100) / 100;
     }
 
     function toNumber(value) {

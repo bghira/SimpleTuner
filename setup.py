@@ -69,9 +69,7 @@ def build_rocm_wheel_url(package: str, version: str, rocm_version: str) -> str:
     py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
     platform_tag = _rocm_platform_tag()
     filename = f"{package}-{version}%2Brocm{rocm_version}-{py_tag}-{py_tag}-{platform_tag}.whl"
-    base_url = os.environ.get(
-        "SIMPLETUNER_ROCM_BASE_URL", f"https://download.pytorch.org/whl/rocm{rocm_version}"
-    )
+    base_url = os.environ.get("SIMPLETUNER_ROCM_BASE_URL", f"https://download.pytorch.org/whl/rocm{rocm_version}")
     return f"{package} @ {base_url}/{filename}"
 
 
@@ -86,6 +84,7 @@ def get_cuda_dependencies():
         "torchao>=0.12.0",
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
+        "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
     ]
 
@@ -183,7 +182,7 @@ base_deps = [
     "wandb>=0.21.0",
     "requests>=2.32.4",
     "pillow>=11.3.0",
-    "trainingsample>=0.2.1",
+    "trainingsample>=0.2.10",
     "accelerate>=1.5.2",
     "safetensors>=0.5.3",
     "compel>=2.1.1",
@@ -218,7 +217,6 @@ base_deps = [
     "imageio[pyav]>=2.37.0",
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
-    "trainingsample>=0.2.1",
     "cryptography>=41.0.0",
 ]
 

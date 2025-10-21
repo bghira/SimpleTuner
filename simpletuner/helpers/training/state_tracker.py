@@ -20,6 +20,7 @@ filename_mapping = {
     "all_image_files": "image",
     "all_vae_cache_files": "vae",
     "all_text_cache_files": "text",
+    "all_conditioning_image_embed_files": "conditioning_image_embeds",
 }
 
 
@@ -42,6 +43,7 @@ class StateTracker:
     all_image_files = {}
     all_vae_cache_files = {}
     all_text_cache_files = {}
+    all_conditioning_image_embed_files = {}
     all_caption_files = None
 
     ## Backend entities for retrieval
@@ -77,6 +79,7 @@ class StateTracker:
             "all_image_files",
             "all_vae_cache_files",
             "all_text_cache_files",
+            "all_conditioning_image_embed_files",
         ]:
             if filename_mapping[cache_name] in str(preserve_data_backend_cache):
                 continue
@@ -371,6 +374,36 @@ class StateTracker:
         if data_backend_id not in cls.all_vae_cache_files or cls.all_vae_cache_files.get(data_backend_id) is None:
             cls.all_vae_cache_files[data_backend_id] = cls._load_from_disk("all_vae_cache_files_{}".format(data_backend_id))
         return cls.all_vae_cache_files[data_backend_id] or {}
+
+    @classmethod
+    def set_conditioning_image_embed_files(cls, raw_file_list: list, data_backend_id: str):
+        raw_file_list = raw_file_list or []
+        if cls.all_conditioning_image_embed_files.get(data_backend_id) is not None:
+            cls.all_conditioning_image_embed_files[data_backend_id].clear()
+        else:
+            cls.all_conditioning_image_embed_files[data_backend_id] = {}
+        for subdirectory_list in raw_file_list:
+            if isinstance(subdirectory_list, (list, tuple)) and len(subdirectory_list) == 3:
+                _, _, files = subdirectory_list
+            else:
+                files = subdirectory_list if isinstance(subdirectory_list, list) else [subdirectory_list]
+            for embed_path in files:
+                cls.all_conditioning_image_embed_files[data_backend_id][embed_path] = False
+        cls._save_to_disk(
+            f"all_conditioning_image_embed_files_{data_backend_id}",
+            cls.all_conditioning_image_embed_files[data_backend_id],
+        )
+
+    @classmethod
+    def get_conditioning_image_embed_files(cls, data_backend_id: str, retry_limit: int = 0):
+        if (
+            data_backend_id not in cls.all_conditioning_image_embed_files
+            or cls.all_conditioning_image_embed_files.get(data_backend_id) is None
+        ):
+            cls.all_conditioning_image_embed_files[data_backend_id] = cls._load_from_disk(
+                f"all_conditioning_image_embed_files_{data_backend_id}", retry_limit=retry_limit
+            )
+        return cls.all_conditioning_image_embed_files[data_backend_id] or {}
 
     @classmethod
     def set_text_cache_files(cls, raw_file_list: list, data_backend_id: str):
