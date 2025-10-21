@@ -73,6 +73,7 @@ from tqdm import tqdm
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.data_backend.bucket_report import BucketReport
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
@@ -233,6 +234,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     # Image backend config
     output["dataset_type"] = backend.get("dataset_type", "image")
+    bucket_report = BucketReport(dataset_id=output["id"], dataset_type=output["dataset_type"])
+    output["bucket_report"] = bucket_report
+    bucket_report.set_constraints(
+        train_batch_size=_get_arg_value(args, "train_batch_size"),
+        repeats=int(backend.get("repeats", 0) or 0),
+    )
     choices = ["image", "conditioning", "eval", "video"]
     controlnet_enabled = getattr(StateTracker.get_args(), "controlnet", False)
     if not isinstance(controlnet_enabled, bool):
@@ -395,6 +402,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     target_downsample_size = backend.get("target_downsample_size", _get_arg_value(args, "target_downsample_size"))
     output["config"]["maximum_image_size"] = maximum_image_size
     output["config"]["target_downsample_size"] = target_downsample_size
+    bucket_report.set_constraints(
+        minimum_image_size=backend.get("minimum_image_size", _get_arg_value(args, "minimum_image_size")),
+        minimum_aspect_ratio=backend.get("minimum_aspect_ratio", None),
+        maximum_aspect_ratio=backend.get("maximum_aspect_ratio", None),
+        resolution_type=output["config"].get("resolution_type"),
+    )
     output["config"]["dataset_type"] = output["dataset_type"]
 
     if maximum_image_size and not target_downsample_size:
@@ -1559,14 +1572,17 @@ class FactoryRegistry:
             if instance_dir.endswith("/"):
                 instance_dir = instance_dir.rstrip("/")
             init_backend["instance_data_dir"] = instance_dir
+            init_backend["bucket_report"].set_instance_data_dir(instance_dir)
         elif backend["type"] == "aws":
             init_backend["instance_data_dir"] = backend.get("aws_data_prefix", "")
+            init_backend["bucket_report"].set_instance_data_dir(init_backend["instance_data_dir"])
         elif backend["type"] == "csv":
             init_backend["instance_data_dir"] = None
             if init_backend["instance_data_dir"] is not None and init_backend["instance_data_dir"][-1] == "/":
                 init_backend["instance_data_dir"] = init_backend["instance_data_dir"][:-1]
         elif backend["type"] == "huggingface":
             init_backend["instance_data_dir"] = ""
+            init_backend["bucket_report"].set_instance_data_dir(init_backend["instance_data_dir"])
 
             if "cache_dir_vae" not in backend:
                 backend["cache_dir_vae"] = os.path.join(self.args.cache_dir, "vae", self.args.model_family, backend["id"])
@@ -1684,6 +1700,8 @@ class FactoryRegistry:
         metadata_backend = init_backend["metadata_backend"]
         if isinstance(getattr(metadata_backend, "aspect_ratio_bucket_indices", None), dict):
             metadata_backend.aspect_ratio_bucket_indices = _coerce_bucket_keys(metadata_backend.aspect_ratio_bucket_indices)
+        if hasattr(metadata_backend, "attach_bucket_report"):
+            metadata_backend.attach_bucket_report(init_backend.get("bucket_report"))
         if hasattr(metadata_backend, "_mock_children"):
             children = getattr(metadata_backend, "_mock_children", None)
             if isinstance(children, dict):
@@ -1724,6 +1742,10 @@ class FactoryRegistry:
                     warning_log(
                         f"(id={init_backend['id']}) Skipping bucket refresh because data directory was not found: {init_backend.get('instance_data_dir')}"
                     )
+                    if init_backend.get("bucket_report"):
+                        init_backend["bucket_report"].add_note(
+                            "Bucket refresh skipped because instance_data_dir could not be found."
+                        )
                     return
 
         if self._is_multi_process():
@@ -1858,15 +1880,28 @@ class FactoryRegistry:
             isinstance(instance_dir, str) and instance_dir not in ("", None) and not os.path.exists(instance_dir)
         )
 
+        dataset_type = init_backend.get("dataset_type")
+        dataset_empty = len(init_backend["metadata_backend"]) == 0
         if (
             not missing_instance_dir
-            and len(init_backend["metadata_backend"]) == 0
+            and dataset_empty
             and backend.get("conditioning_type") is None
+            and dataset_type in ("image", "video")
         ):
+            bucket_report = init_backend.get("bucket_report")
+            if bucket_report:
+                bucket_report.record_stage("sampler_batches", image_count=len(init_backend["metadata_backend"]))
+                message = bucket_report.format_empty_dataset_message()
+            else:
+                message = (
+                    f"(id={init_backend['id']}) No images were discovered by the bucket manager; "
+                    "continuing without bucket information."
+                )
+            raise Exception(message)
+        elif not missing_instance_dir and dataset_empty:
             warning_log(
                 f"(id={init_backend['id']}) No images were discovered by the bucket manager; continuing without bucket information."
             )
-            return
         print_bucket_info(init_backend["metadata_backend"], init_backend.get("dataset_type"))
 
     def _create_dataset_and_sampler(
@@ -2338,6 +2373,8 @@ class FactoryRegistry:
         self._handle_resolution_conversion(backend)
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
+        if init_backend.get("bucket_report"):
+            StateTracker.attach_bucket_report(init_backend["id"], init_backend["bucket_report"])
         StateTracker.set_data_backend_config(
             data_backend_id=init_backend["id"],
             config=init_backend["config"],

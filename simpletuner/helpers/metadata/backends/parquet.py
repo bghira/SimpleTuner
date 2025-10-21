@@ -277,6 +277,12 @@ class ParquetMetadataBackend(MetadataBackend):
         # build buckets from parquet metadata without loading actual files
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
+        if self.bucket_report:
+            self.bucket_report.record_stage(
+                "existing_cache",
+                image_count=len(existing_files_set),
+                bucket_count=len(self.aspect_ratio_bucket_indices),
+            )
         statistics = {
             "total_processed": 0,
             "skipped": {
@@ -287,7 +293,16 @@ class ParquetMetadataBackend(MetadataBackend):
                 "other": 0,
             },
         }
+        if self.bucket_report:
+            self.bucket_report.record_stage(
+                "new_files_to_process",
+                image_count=len(new_files),
+                ignore_existing_cache=ignore_existing_cache,
+            )
         if not new_files:
+            if self.bucket_report:
+                self.bucket_report.update_statistics(statistics)
+                self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
             return
 
         try:
@@ -344,6 +359,9 @@ class ParquetMetadataBackend(MetadataBackend):
         logger.info(f"Image processing statistics: {statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
+        if self.bucket_report:
+            self.bucket_report.update_statistics(statistics)
+            self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
 
     def _get_first_value(self, series_or_scalar):
         import numpy as np

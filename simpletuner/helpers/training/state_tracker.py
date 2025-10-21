@@ -191,10 +191,10 @@ class StateTracker:
 
     @classmethod
     def set_image_files(cls, raw_file_list: list, data_backend_id: str):
-        if cls.all_image_files[data_backend_id] is not None:
-            cls.all_image_files[data_backend_id].clear()
-        else:
+        if data_backend_id not in cls.all_image_files or cls.all_image_files[data_backend_id] is None:
             cls.all_image_files[data_backend_id] = {}
+        else:
+            cls.all_image_files[data_backend_id].clear()
         for subdirectory_list in raw_file_list:
             _, _, files = subdirectory_list
             for image in files:
@@ -204,6 +204,13 @@ class StateTracker:
             cls.all_image_files[data_backend_id],
         )
         logger.debug(f"set_image_files found {len(cls.all_image_files[data_backend_id])} images.")
+        bucket_report = cls.data_backends.get(data_backend_id, {}).get("bucket_report")
+        if bucket_report:
+            bucket_report.record_stage(
+                "file_discovery",
+                image_count=len(cls.all_image_files[data_backend_id]),
+                directories=len(raw_file_list),
+            )
         return cls.all_image_files[data_backend_id]
 
     @classmethod
@@ -483,6 +490,12 @@ class StateTracker:
         if data_backend_id not in cls.data_backends:
             cls.data_backends[data_backend_id] = {}
         cls.data_backends[data_backend_id]["config"] = config
+
+    @classmethod
+    def attach_bucket_report(cls, data_backend_id: str, bucket_report) -> None:
+        if data_backend_id not in cls.data_backends:
+            cls.data_backends[data_backend_id] = {}
+        cls.data_backends[data_backend_id]["bucket_report"] = bucket_report
 
     @classmethod
     def get_conditioning_mappings(cls) -> list[tuple[str, str]]:

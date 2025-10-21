@@ -589,11 +589,24 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         else:
             self.aspect_ratio_bucket_indices = {}
             existing_files = set()
+        if self.bucket_report:
+            self.bucket_report.record_stage(
+                "existing_cache",
+                image_count=len(existing_files),
+                bucket_count=len(self.aspect_ratio_bucket_indices),
+            )
         last_save_time = time.time()
         aspect_ratio_bucket_updates = {}
         metadata_updates = {}
 
         total_items = len(self.data_backend.dataset)
+        if self.bucket_report:
+            pending_items = max(total_items - len(existing_files), 0)
+            self.bucket_report.record_stage(
+                "new_files_to_process",
+                image_count=pending_items,
+                ignore_existing_cache=ignore_existing_cache,
+            )
         for idx in tqdm(
             range(total_items),
             desc="Processing HF dataset items",
@@ -638,6 +651,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         logger.info(f"Processing complete. Statistics: {statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
+        if self.bucket_report:
+            self.bucket_report.update_statistics(statistics)
+            self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
 
     def __len__(self):
 
