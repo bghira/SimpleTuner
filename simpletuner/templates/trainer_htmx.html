@@ -291,6 +291,10 @@ function trainerComponent() {
         },
         activeEnvironmentConfig: null,
         activeEnvironmentMetadata: null,
+        configValues: {},
+        showConfigJsonModal: false,
+        configJsonDraft: '',
+        configJsonError: '',
         _modelDetailsCache: {},
          overlayVisible: false,
          overlaySaving: false,
@@ -480,12 +484,14 @@ function trainerComponent() {
                 }
 
                 const payload = await response.json();
-                const config = payload?.config || {};
+                const rawConfig = payload?.config || {};
                 const metadata = payload?.metadata || null;
-                this.activeEnvironmentConfig = config;
+                const canonicalConfig = this.normalizeConfigInput(rawConfig);
+                this.activeEnvironmentConfig = canonicalConfig;
                 this.activeEnvironmentMetadata = metadata;
-                this.seedFormValueStoreFromConfig(config);
-                await this.updateModelContextFromConfig(config, metadata);
+                this.configValues = { ...canonicalConfig };
+                this.seedFormValueStoreFromConfig(canonicalConfig);
+                await this.updateModelContextFromConfig(canonicalConfig, metadata);
                 return payload;
             } catch (error) {
                 console.error('Error loading active environment config:', error);
@@ -493,8 +499,199 @@ function trainerComponent() {
                 this.activeEnvironmentMetadata = null;
                 this.seedFormValueStoreFromConfig(null);
                 await this.updateModelContextFromConfig(null, null);
+                this.configValues = {};
                 return null;
             }
+        },
+        async openConfigJsonModal() {
+            this.configJsonError = '';
+            const activeName = sanitizeConfigName(this.activeEnvironment);
+            if (!activeName) {
+                window.showToast && window.showToast('Select a configuration first', 'warning');
+                return;
+            }
+
+            if (!this.activeEnvironmentConfig) {
+                try {
+                    await this.fetchActiveEnvironmentConfig();
+                } catch (error) {
+                    console.error('Failed to fetch active configuration before opening JSON modal:', error);
+                }
+            }
+
+            if (!this.activeEnvironmentConfig || typeof this.activeEnvironmentConfig !== 'object') {
+                window.showToast && window.showToast('Unable to load configuration JSON', 'error');
+                return;
+            }
+
+            if (!this.resetConfigJsonDraft()) {
+                return;
+            }
+
+            this.showConfigJsonModal = true;
+        },
+        closeConfigJsonModal() {
+            this.showConfigJsonModal = false;
+            this.configJsonError = '';
+        },
+        canonicalizeConfigKey(rawKey) {
+            if (rawKey === null || rawKey === undefined) {
+                return null;
+            }
+            const stringKey = typeof rawKey === 'string' ? rawKey : String(rawKey);
+            const trimmed = stringKey.trim();
+            if (!trimmed) {
+                return null;
+            }
+            if (trimmed.startsWith('_')) {
+                return trimmed;
+            }
+            const withoutPrefix = trimmed.replace(/^--+/, '').trim();
+            return withoutPrefix || trimmed;
+        },
+        isCliConfigKey(rawKey) {
+            return typeof rawKey === 'string' && rawKey.trim().startsWith('--');
+        },
+        normalizeConfigForJson(config) {
+            if (!config || typeof config !== 'object' || Array.isArray(config)) {
+                return {};
+            }
+            const map = new Map();
+            Object.entries(config).forEach(([key, value]) => {
+                const canonical = this.canonicalizeConfigKey(key);
+                if (!canonical) {
+                    return;
+                }
+                const isCli = this.isCliConfigKey(key);
+                if (!map.has(canonical) || !isCli) {
+                    map.set(canonical, value);
+                }
+            });
+            const sortedKeys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
+            const normalized = {};
+            sortedKeys.forEach((key) => {
+                normalized[key] = map.get(key);
+            });
+            return normalized;
+        },
+        normalizeConfigInput(config) {
+            if (!config || typeof config !== 'object' || Array.isArray(config)) {
+                return {};
+            }
+            const normalized = {};
+            Object.entries(config).forEach(([key, value]) => {
+                const canonical = this.canonicalizeConfigKey(key);
+                if (!canonical) {
+                    return;
+                }
+                normalized[canonical] = value;
+            });
+            return normalized;
+        },
+        formatConfigJsonDraft() {
+            try {
+                const formatted = JSON.stringify(JSON.parse(this.configJsonDraft), null, 2);
+                this.configJsonDraft = formatted;
+                this.configJsonError = '';
+            } catch (error) {
+                this.configJsonError = `Invalid JSON: ${error.message}`;
+            }
+        },
+        resetConfigJsonDraft() {
+            try {
+                const normalized = this.normalizeConfigForJson(this.activeEnvironmentConfig);
+                this.configJsonDraft = JSON.stringify(normalized, null, 2);
+                this.configJsonError = '';
+                return true;
+            } catch (error) {
+                console.error('Failed to reset configuration JSON draft:', error);
+                window.showToast && window.showToast('Unable to reset JSON draft', 'error');
+                return false;
+            }
+        },
+        async copyConfigJsonDraft() {
+            const value = this.configJsonDraft || '';
+            if (!value) {
+                window.showToast && window.showToast('Nothing to copy', 'info');
+                return;
+            }
+
+            try {
+                if (window.navigator?.clipboard?.writeText) {
+                    await window.navigator.clipboard.writeText(value);
+                } else {
+                    throw new Error('Clipboard API unavailable');
+                }
+                window.showToast && window.showToast('Configuration copied to clipboard', 'success');
+            } catch (error) {
+                console.warn('Clipboard API failed, attempting fallback copy.', error);
+                try {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = value;
+                    textarea.setAttribute('readonly', '');
+                    textarea.style.position = 'absolute';
+                    textarea.style.left = '-9999px';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    const successful = document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    if (successful) {
+                        window.showToast && window.showToast('Configuration copied to clipboard', 'success');
+                        return;
+                    }
+                    throw new Error('execCommand copy returned false');
+                } catch (fallbackError) {
+                    console.error('Fallback clipboard copy failed:', fallbackError);
+                    window.showToast && window.showToast('Copy failed. Please use Ctrl/Cmd+C.', 'warning');
+                }
+            }
+        },
+        async applyConfigJsonDraft() {
+            this.configJsonError = '';
+            let parsed;
+            try {
+                parsed = JSON.parse(this.configJsonDraft);
+            } catch (error) {
+                this.configJsonError = `Invalid JSON: ${error.message}`;
+                return;
+            }
+
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                this.configJsonError = 'Configuration must be a JSON object.';
+                return;
+            }
+
+            const normalized = this.normalizeConfigInput(parsed);
+            this.activeEnvironmentConfig = normalized;
+            this.formValueStore = {};
+            this.configValues = { ...normalized };
+            this.seedFormValueStoreFromConfig(normalized);
+            await this.$nextTick();
+            this.applyStoredValues();
+            this.captureFormValues();
+            this.markFormDirty();
+
+            try {
+                await this.updateModelContextFromConfig(normalized, this.activeEnvironmentMetadata);
+            } catch (error) {
+                console.error('Failed to update model context after JSON apply:', error);
+            }
+
+            try {
+                await this.loadDatasetsAfterEnvironmentChange();
+            } catch (error) {
+                console.error('Failed to refresh datasets after JSON apply:', error);
+            }
+
+            this.showConfigJsonModal = false;
+            window.dispatchEvent(new CustomEvent('environment-config-updated', {
+                detail: {
+                    environment: this.activeEnvironment,
+                    source: 'json-edit',
+                    config: normalized
+                }
+            }));
+            window.showToast && window.showToast('Configuration updated from JSON', 'success');
         },
         async updateModelContextFromConfig(config, metadata) {
             const info = this.extractModelInfo(config, metadata);
@@ -4450,6 +4647,8 @@ function trainerComponent() {
                  x-init="(() => {
                     loadConfigs();
                     $watch('$store.trainer.activeEnvironment', (value) => { activeConfig = value; loadConfigs(); });
+                    $watch('$store.trainer.formDirty', (value) => { hasChanges = Boolean(value); });
+                    hasChanges = Boolean($store.trainer?.formDirty);
 
                     // Listen for environment changes from other components
                     const handleEnvironmentChange = (event) => {
@@ -4475,95 +4674,105 @@ function trainerComponent() {
                  @click.away="open = false"
                  style="position: relative;">
 
-                <button @click="open = !open"
-                        class="btn btn-sm d-flex align-items-center gap-2"
-                        :class="{
-                            'btn-outline-danger': validationState && !validationState.is_valid,
-                            'btn-outline-warning': validationState && validationState.is_valid && validationState.warnings && validationState.warnings.length > 0,
-                            'btn-outline-success': validationState && validationState.is_valid && (!validationState.warnings || validationState.warnings.length === 0),
-                            'btn-outline-secondary': !validationState
-                        }"
-                        :disabled="loading">
-                    <i class="fas fa-cog" x-show="!loading"></i>
-                    <span class="spinner-border spinner-border-sm" x-show="loading"></span>
-                    <span x-text="activeConfig || 'No Config Selected'"></span>
+                <div class="config-selector__toggle-wrapper" style="position: relative;">
+                    <button @click="open = !open"
+                            class="btn btn-sm d-flex align-items-center gap-2"
+                            :class="{
+                                'btn-outline-danger': validationState && !validationState.is_valid,
+                                'btn-outline-warning': validationState && validationState.is_valid && validationState.warnings && validationState.warnings.length > 0,
+                                'btn-outline-success': validationState && validationState.is_valid && (!validationState.warnings || validationState.warnings.length === 0),
+                                'btn-outline-secondary': !validationState
+                            }"
+                            :disabled="loading">
+                        <i class="fas fa-cog" x-show="!loading"></i>
+                        <span class="spinner-border spinner-border-sm" x-show="loading"></span>
+                        <span x-text="activeConfig || 'No Config Selected'"></span>
 
-                    <!-- Validation state indicators -->
-                    <span x-show="validationState && !validationState.is_valid"
-                          class="badge bg-danger ms-1"
-                          title="Configuration has errors">
-                        <i class="fas fa-exclamation-circle"></i>
-                    </span>
-                    <span x-show="validationState && validationState.is_valid && validationState.warnings && validationState.warnings.length > 0"
-                          class="badge bg-warning text-dark ms-1"
-                          title="Configuration has warnings">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </span>
-                    <span x-show="validationState && validationState.is_valid && (!validationState.warnings || validationState.warnings.length === 0)"
-                          class="badge bg-success ms-1"
-                          title="Configuration is valid">
-                        <i class="fas fa-check-circle"></i>
-                    </span>
+                        <!-- Validation state indicators -->
+                        <span x-show="validationState && !validationState.is_valid"
+                              class="badge bg-danger ms-1"
+                              title="Configuration has errors">
+                            <i class="fas fa-exclamation-circle"></i>
+                        </span>
+                        <span x-show="validationState && validationState.is_valid && validationState.warnings && validationState.warnings.length > 0"
+                              class="badge bg-warning text-dark ms-1"
+                              title="Configuration has warnings">
+                            <i class="fas fa-exclamation-triangle"></i>
+                        </span>
+                        <span x-show="validationState && validationState.is_valid && (!validationState.warnings || validationState.warnings.length === 0)"
+                              class="badge bg-success ms-1"
+                              title="Configuration is valid">
+                            <i class="fas fa-check-circle"></i>
+                        </span>
 
-                    <span x-show="hasChanges" class="badge bg-warning ms-2">Modified</span>
-                    <i class="fas fa-chevron-down ms-2"></i>
+                        <span x-show="hasChanges" class="badge bg-warning ms-2">Modified</span>
+                        <i class="fas fa-chevron-down ms-2"></i>
+                    </button>
+                    <div x-show="open"
+                         x-transition
+                         class="dropdown-menu show config-selector__menu"
+                         style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px; transform: translateX(calc(50% - var(--spacing-xl)));">
+
+                        <div class="dropdown-header">Configurations</div>
+
+                        <!-- Validation feedback -->
+                        <div x-show="validationState && (!validationState.is_valid || (validationState.warnings && validationState.warnings.length > 0))"
+                             class="px-3 py-2 border-bottom">
+                            <div x-show="validationState && validationState.errors && validationState.errors.length > 0" class="mb-2">
+                                <small class="text-danger fw-bold">Errors:</small>
+                                <template x-for="error in (validationState && validationState.errors ? validationState.errors : [])" :key="error">
+                                    <small class="text-danger d-block" x-text="`• ${error}`"></small>
+                                </template>
+                            </div>
+                            <div x-show="validationState && validationState.warnings && validationState.warnings.length > 0">
+                                <small class="text-warning fw-bold">Warnings:</small>
+                                <template x-for="warning in (validationState && validationState.warnings ? validationState.warnings : [])" :key="warning">
+                                    <small class="text-warning d-block" x-text="`• ${warning}`"></small>
+                                </template>
+                            </div>
+                        </div>
+
+                        <template x-for="config in (configs || [])" :key="config.name || $id('config')">
+                            <a @click.prevent="Alpine.store('trainer').switchEnvironment(config.name); open = false;"
+                               class="dropdown-item"
+                               :class="{'active': config.name === activeConfig}"
+                               href="javascript:void(0)">
+                                <span x-text="config.name"></span>
+                            </a>
+                        </template>
+
+                        <div class="dropdown-divider"></div>
+
+                        <a @click.prevent="Alpine.store('trainer').saveConfig()"
+                           class="dropdown-item"
+                           href="#">
+                            <i class="fas fa-save me-2"></i> Save
+                        </a>
+
+                        <a @click="saveAsNew()"
+                           class="dropdown-item"
+                           href="#">
+                            <i class="fas fa-plus me-2"></i> Save As...
+                        </a>
+
+                        <div class="dropdown-divider"></div>
+
+                        <a href="#environments"
+                           @click="open = false; $nextTick(() => window.location.hash = 'environments')"
+                           class="dropdown-item">
+                            <i class="fas fa-folder-open me-2"></i> Manage Configs
+                        </a>
+                    </div>
+                </div>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary ms-2"
+                        title="View and edit the composed training JSON"
+                        :disabled="!$store.trainer.activeEnvironment"
+                        @click.stop="$store.trainer.openConfigJsonModal()">
+                    <i class="fas fa-code"></i>
+                    View JSON
                 </button>
 
-                <div x-show="open"
-                     x-transition
-                     class="dropdown-menu show config-selector__menu"
-                     style="position: absolute; top: calc(100% + 0.5rem); right: 0; min-width: 240px; transform: translateX(calc(50% - var(--spacing-xl)));">
-
-                    <div class="dropdown-header">Configurations</div>
-
-                    <!-- Validation feedback -->
-                    <div x-show="validationState && (!validationState.is_valid || (validationState.warnings && validationState.warnings.length > 0))"
-                         class="px-3 py-2 border-bottom">
-                        <div x-show="validationState && validationState.errors && validationState.errors.length > 0" class="mb-2">
-                            <small class="text-danger fw-bold">Errors:</small>
-                            <template x-for="error in (validationState && validationState.errors ? validationState.errors : [])" :key="error">
-                                <small class="text-danger d-block" x-text="`• ${error}`"></small>
-                            </template>
-                        </div>
-                        <div x-show="validationState && validationState.warnings && validationState.warnings.length > 0">
-                            <small class="text-warning fw-bold">Warnings:</small>
-                            <template x-for="warning in (validationState && validationState.warnings ? validationState.warnings : [])" :key="warning">
-                                <small class="text-warning d-block" x-text="`• ${warning}`"></small>
-                            </template>
-                        </div>
-                    </div>
-
-                    <template x-for="config in (configs || [])" :key="config.name || $id('config')">
-                        <a @click.prevent="Alpine.store('trainer').switchEnvironment(config.name); open = false;"
-                           class="dropdown-item"
-                           :class="{'active': config.name === activeConfig}"
-                           href="javascript:void(0)">
-                            <span x-text="config.name"></span>
-                        </a>
-                    </template>
-
-                    <div class="dropdown-divider"></div>
-
-                    <a @click.prevent="Alpine.store('trainer').saveConfig()"
-                       class="dropdown-item"
-                       href="#">
-                        <i class="fas fa-save me-2"></i> Save
-                    </a>
-
-                    <a @click="saveAsNew()"
-                       class="dropdown-item"
-                       href="#">
-                        <i class="fas fa-plus me-2"></i> Save As...
-                    </a>
-
-                    <div class="dropdown-divider"></div>
-
-                    <a href="#environments"
-                       @click="open = false; $nextTick(() => window.location.hash = 'environments')"
-                       class="dropdown-item">
-                        <i class="fas fa-folder-open me-2"></i> Manage Configs
-                    </a>
-                </div>
             </div>
 
             <div class="topbar-right">
@@ -4651,6 +4860,77 @@ function trainerComponent() {
             </form>
         </div>
     </main>
+
+    <!-- Config JSON Modal -->
+    <div class="save-dataset-overlay"
+         x-cloak
+         x-show="showConfigJsonModal"
+         x-transition.opacity.duration.150ms
+         @click.self="closeConfigJsonModal()"
+         @keydown.escape.window="showConfigJsonModal && closeConfigJsonModal()">
+        <div class="save-dataset-modal config-json-modal"
+             style="width: min(900px, 95vw); max-height: 90vh; display: flex; flex-direction: column;"
+             @click.stop>
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <h3 class="mb-1">Training Configuration JSON</h3>
+                    <p class="text-muted mb-0">
+                        Editing environment
+                        <strong x-text="activeEnvironment || 'unknown'"></strong>
+                    </p>
+                </div>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        title="Close"
+                        @click="closeConfigJsonModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        @click="formatConfigJsonDraft()">
+                    <i class="fas fa-magic me-1"></i> Format
+                </button>
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        @click="copyConfigJsonDraft()">
+                    <i class="fas fa-copy me-1"></i> Copy
+                </button>
+                <button type="button"
+                        class="btn btn-outline-secondary btn-sm"
+                        @click="resetConfigJsonDraft()">
+                    <i class="fas fa-undo me-1"></i> Reset
+                </button>
+            </div>
+
+            <div class="alert alert-danger py-2 px-3 mb-3"
+                 x-show="configJsonError"
+                 x-text="configJsonError"></div>
+
+            <div class="flex-grow-1 mb-3" style="min-height: 320px;">
+                <textarea
+                    class="form-control h-100 font-monospace"
+                    x-model="configJsonDraft"
+                    spellcheck="false"
+                    style="resize: vertical; min-height: 320px;"></textarea>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2">
+                <button type="button"
+                        class="btn btn-secondary"
+                        @click="closeConfigJsonModal()">
+                    Cancel
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        @click="applyConfigJsonDraft()">
+                    <i class="fas fa-save me-1"></i> Apply Changes
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Save Dataset Dialog -->
     <div class="save-dataset-overlay"
