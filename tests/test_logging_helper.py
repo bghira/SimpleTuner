@@ -82,7 +82,10 @@ class WebhookLoggerTests(unittest.TestCase):
         handler_instance.send.assert_called_once()
         handler_instance.send_raw.assert_called_once()
 
-    @patch("simpletuner.helpers.logging._fallback_webhook_config", return_value=[{"webhook_type": "raw", "webhook_url": "https://fallback.test"}])
+    @patch(
+        "simpletuner.helpers.logging._fallback_webhook_config",
+        return_value=[{"webhook_type": "raw", "webhook_url": "https://fallback.test"}],
+    )
     @patch("simpletuner.helpers.logging._extract_webhook_config", return_value=None)
     @patch("simpletuner.helpers.webhooks.handler.WebhookHandler")
     def test_fallback_config_used_when_args_missing(
@@ -96,12 +99,12 @@ class WebhookLoggerTests(unittest.TestCase):
         handler_instance = MagicMock()
         webhook_handler_cls.return_value = handler_instance
 
-        with patch.object(tracker_module.StateTracker, "get_webhook_handler", return_value=None) as get_handler, patch.object(
-            tracker_module.StateTracker, "set_webhook_handler"
-        ) as set_handler, patch.object(tracker_module.StateTracker, "get_args", return_value=None), patch.object(
-            tracker_module.StateTracker, "get_accelerator", return_value=None
-        ), patch.object(
-            tracker_module.StateTracker, "get_job_id", return_value="job-123"
+        with (
+            patch.object(tracker_module.StateTracker, "get_webhook_handler", return_value=None) as get_handler,
+            patch.object(tracker_module.StateTracker, "set_webhook_handler") as set_handler,
+            patch.object(tracker_module.StateTracker, "get_args", return_value=None),
+            patch.object(tracker_module.StateTracker, "get_accelerator", return_value=None),
+            patch.object(tracker_module.StateTracker, "get_job_id", return_value="job-123"),
         ):
             logger = get_logger("tests.logging.fallback")
             logger.error("fallback message")
