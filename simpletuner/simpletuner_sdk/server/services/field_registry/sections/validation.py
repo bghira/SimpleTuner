@@ -12,12 +12,13 @@ logger = logging.getLogger(__name__)
 
 def register_validation_fields(registry: "FieldRegistry") -> None:
     """Add validation configuration fields."""
-    # Validation Steps
+    # Validation Step Interval
     registry._add_field(
         ConfigField(
-            name="validation_steps",
-            arg_name="--validation_steps",
-            ui_label="Validation Steps",
+            name="validation_step_interval",
+            arg_name="--validation_step_interval",
+            aliases=["--validation_steps"],
+            ui_label="Validation Step Interval",
             field_type=FieldType.NUMBER,
             tab="validation",
             section="validation_schedule",
@@ -27,6 +28,26 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="How often to generate validation images during training. Lower = more frequent validation.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+        )
+    )
+
+    # Validation Epoch Interval
+    registry._add_field(
+        ConfigField(
+            name="validation_epoch_interval",
+            arg_name="--validation_epoch_interval",
+            ui_label="Validation Epoch Interval",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_schedule",
+            default_value=None,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Validation epoch interval must be positive")
+            ],
+            help_text="Run validation every N training epochs (leave blank to disable)",
+            tooltip="Schedule validation runs based on completed epochs. Combine with step interval for finer control.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
         )
     )
 
@@ -42,7 +63,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Skip generating baseline comparison images before training starts",
             tooltip="Disable if you want to reduce startup time; recommended to keep enabled for qualitative comparisons.",
             importance=ImportanceLevel.ADVANCED,
-            order=2,
+            order=3,
             subsection="advanced",
         )
     )
