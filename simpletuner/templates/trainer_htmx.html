@@ -3797,6 +3797,26 @@ function trainerComponent() {
                 const descriptor = buildDescriptor(key, value);
                 appendValue(key, descriptor);
             });
+
+            if (!formData.has('--job_id')) {
+                let jobId =
+                    config['--job_id'] ??
+                    config['job_id'] ??
+                    this.formValueStore?.['--job_id']?.value ??
+                    this.formValueStore?.['job_id']?.value;
+
+                if (Array.isArray(jobId)) {
+                    jobId = jobId.length ? jobId[0] : '';
+                }
+
+                if (jobId === undefined || jobId === null) {
+                    const jobInput = document.getElementById('job_id');
+                    const dashedInput = document.querySelector('[name="--job_id"]');
+                    jobId = jobInput?.value ?? dashedInput?.value ?? '';
+                }
+
+                formData.append('--job_id', String(jobId));
+            }
         },
 
         seedFormValueStoreFromConfig(config) {
