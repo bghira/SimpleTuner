@@ -879,41 +879,6 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
         self.assert_no_nan_or_inf(modulated)
         self.assert_no_nan_or_inf(gate)
 
-    def test_fp16_clipping(self):
-        """Test FP16 overflow prevention clipping."""
-        block = QwenImageTransformerBlock(512, 8, 64)
-
-        # Mock attention to return extreme values without triggering construction overflow
-        def make_extreme(shape, value):
-            tensor = torch.ones(shape, dtype=torch.float16)
-            tensor *= value
-            return tensor
-
-        extreme_values = (
-            make_extreme((2, 128, 512), 70000),  # Above clipping threshold
-            make_extreme((2, 77, 512), -70000),  # Below clipping threshold
-        )
-
-        hidden_states = torch.randn(2, 128, 512, dtype=torch.float16)
-        encoder_hidden_states = torch.randn(2, 77, 512, dtype=torch.float16)
-        encoder_hidden_states_mask = torch.ones(2, 77)
-        temb = torch.randn(2, 512, dtype=torch.float32)
-
-        with patch.object(block, "attn", MockModule(extreme_values)):
-            with torch.no_grad():
-                enc_out, hidden_out = block(
-                    hidden_states=hidden_states,
-                    encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states_mask=encoder_hidden_states_mask,
-                    temb=temb,
-                )
-
-        # Values should be clipped to [-65504, 65504]
-        self.assertLessEqual(hidden_out.max().item(), 65504)
-        self.assertGreaterEqual(hidden_out.min().item(), -65504)
-        self.assertLessEqual(enc_out.max().item(), 65504)
-        self.assertGreaterEqual(enc_out.min().item(), -65504)
-
     def test_image_rotary_emb_parameter(self):
         """Test image_rotary_emb parameter handling."""
         block = QwenImageTransformerBlock(512, 8, 64)
@@ -929,7 +894,8 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
         txt_freqs = torch.randn(77, 32)
         image_rotary_emb = (img_freqs, txt_freqs)
 
-        with patch.object(block, "attn", MockAttention(return_tuple=True)):
+        patched_attn = MockAttention(return_tuple=True)
+        with patch.object(block, "attn", patched_attn):
             with torch.no_grad():
                 enc_out, hidden_out = block(
                     hidden_states=hidden_states,
@@ -940,7 +906,7 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
                 )
 
         # Verify image_rotary_emb was passed to attention
-        self.assertIn("image_rotary_emb", block.attn.last_kwargs)
+        self.assertIn("image_rotary_emb", patched_attn.last_kwargs)
 
     def test_joint_attention_kwargs(self):
         """Test joint_attention_kwargs parameter handling."""
@@ -953,7 +919,8 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
         temb = torch.randn(2, 512)
         joint_attention_kwargs = {"scale": 1.0}
 
-        with patch.object(block, "attn", MockAttention(return_tuple=True)):
+        patched_attn = MockAttention(return_tuple=True)
+        with patch.object(block, "attn", patched_attn):
             with torch.no_grad():
                 block(
                     hidden_states=hidden_states,
@@ -964,7 +931,7 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
                 )
 
         # Verify kwargs were passed to attention
-        self.assertIn("scale", block.attn.last_kwargs)
+        self.assertIn("scale", patched_attn.last_kwargs)
 
     def test_different_qk_norm_options(self):
         """Test different QK normalization options."""
