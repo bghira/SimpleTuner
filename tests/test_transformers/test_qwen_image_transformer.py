@@ -897,7 +897,7 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
         hidden_states = torch.randn(2, 128, 512, dtype=torch.float16)
         encoder_hidden_states = torch.randn(2, 77, 512, dtype=torch.float16)
         encoder_hidden_states_mask = torch.ones(2, 77)
-        temb = torch.randn(2, 512, dtype=torch.float16)
+        temb = torch.randn(2, 512, dtype=torch.float32)
 
         with patch.object(block, "attn", MockModule(extreme_values)):
             with torch.no_grad():
@@ -940,8 +940,7 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
                 )
 
         # Verify image_rotary_emb was passed to attention
-        call_kwargs = block.attn.call_args.kwargs
-        self.assertIn("image_rotary_emb", call_kwargs)
+        self.assertIn("image_rotary_emb", block.attn.last_kwargs)
 
     def test_joint_attention_kwargs(self):
         """Test joint_attention_kwargs parameter handling."""
@@ -965,8 +964,7 @@ class TestQwenImageTransformerBlock(TransformerBaseTest, TransformerBlockTestMix
                 )
 
         # Verify kwargs were passed to attention
-        call_kwargs = block.attn.call_args.kwargs
-        self.assertIn("scale", call_kwargs)
+        self.assertIn("scale", block.attn.last_kwargs)
 
     def test_different_qk_norm_options(self):
         """Test different QK normalization options."""
