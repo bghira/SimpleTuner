@@ -410,6 +410,14 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
                 existing_config_cli.pop(alias, None)
                 config_dict.pop(alias, None)
 
+    if _field_was_cleared("--user_prompt_library"):
+        logger.debug("User cleared --user_prompt_library; removing from existing config merge.")
+        cleared_keys = {"--user_prompt_library", "user_prompt_library"}
+        cleared_keys.update({key.lstrip("-") for key in cleared_keys})
+        for key in cleared_keys:
+            existing_config_cli.pop(key, None)
+            config_dict.pop(key, None)
+
     all_defaults = get_all_field_defaults()
 
     def _has_accelerate_config(*sources: Dict[str, Any]) -> bool:
