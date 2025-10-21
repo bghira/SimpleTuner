@@ -1131,3 +1131,36 @@ class Wan(VideoModelFoundation):
 from simpletuner.helpers.models.registry import ModelRegistry
 
 ModelRegistry.register("wan", Wan)
+
+
+# Monkeypatch to fix the device meta issue when the text encoder is moved to meta
+def _patch_wan_pipeline_execution_device():
+    """
+    Monkeypatch the WanPipeline to fix the _execution_device property when text encoder is on meta device.
+    This prevents the "device meta is invalid" error when using group offloading.
+    """
+    from diffusers import WanPipeline
+
+    # Store the original property
+    original_execution_device = WanPipeline._execution_device
+
+    def _fixed_execution_device(self):
+        """
+        Fixed _execution_device property that returns the transformer device instead of meta.
+        This fixes the issue when text encoder is moved to meta but transformer is on GPU.
+        """
+        # If we have a transformer and it's not on meta, use its device
+        if hasattr(self, "transformer") and self.transformer is not None:
+            transformer_device = next(self.transformer.parameters()).device
+            if transformer_device.type != "meta":
+                return transformer_device
+
+        # Fall back to the original implementation
+        return original_execution_device.fget(self)
+
+    # Apply the monkeypatch
+    WanPipeline._execution_device = property(_fixed_execution_device)
+
+
+# Apply the monkeypatch when the module is imported
+_patch_wan_pipeline_execution_device()
