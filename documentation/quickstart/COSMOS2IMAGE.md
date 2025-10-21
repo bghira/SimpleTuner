@@ -146,7 +146,7 @@ Your config.json will look something like this:
     "validation_prompt_library": false,
     "validation_resolution": "512x512",
     "validation_seed": 42,
-    "validation_steps": 500
+    "validation_step_interval": 500
 }
 ```
 

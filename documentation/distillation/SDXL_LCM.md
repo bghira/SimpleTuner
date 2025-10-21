@@ -75,7 +75,7 @@ Create your `config/config.json` for SDXL LCM:
   "lora_alpha": 64,
   "lora_dropout": 0.0,
 
-  "validation_steps": 250,
+  "validation_step_interval": 250,
   "validation_num_inference_steps": 4,
   "validation_guidance": 0.0,
   "validation_prompt": "A portrait of a woman with flowers in her hair, highly detailed, professional photography",

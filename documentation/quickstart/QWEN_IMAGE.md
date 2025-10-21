@@ -121,7 +121,7 @@ Your config.json will look something like this for a minimal setup:
     "validation_num_inference_steps": 30,
     "validation_seed": 42,
     "validation_prompt": "A photo-realistic image of a cat",
-    "validation_steps": 100,
+    "validation_step_interval": 100,
     "vae_batch_size": 1,
     "seed": 42,
     "resume_from_checkpoint": "latest",

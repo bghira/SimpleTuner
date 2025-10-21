@@ -160,7 +160,7 @@ Your configuration will look something like this in the end:
     "validation_num_inference_steps": 20,
     "validation_resolution": "1024x1024",
     "validation_seed": 42,
-    "validation_steps": 10,
+    "validation_step_interval": 10,
     "validation_torch_compile": false
 }
 ```

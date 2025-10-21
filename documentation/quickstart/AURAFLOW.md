@@ -120,7 +120,7 @@ Your config.json will look something like mine by the end:
 ```json
 {
     "validation_torch_compile": "false",
-    "validation_steps": 200,
+    "validation_step_interval": 200,
     "validation_seed": 42,
     "validation_resolution": "1024x1024",
     "validation_prompt": "A photo-realistic image of a cat",

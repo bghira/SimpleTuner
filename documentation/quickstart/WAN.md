@@ -197,7 +197,7 @@ Your config at the end will look like mine:
   "resolution_type": "pixel_area",
   "resolution": 480,
   "validation_seed": 42,
-  "validation_steps": 100,
+  "validation_step_interval": 100,
   "validation_resolution": "832x480",
   "validation_prompt": "两只拟人化的猫咪身穿舒适的拳击装备，戴着鲜艳的手套，在聚光灯照射的舞台上激烈对战",
   "validation_negative_prompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
