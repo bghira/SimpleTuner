@@ -875,6 +875,24 @@ def get_process_events(job_id: str, since_index: int = 0) -> List[Dict[str, Any]
         return events[since_index:]
 
 
+def append_external_event(job_id: str, event: Dict[str, Any]) -> None:
+    """
+    Append an externally-generated event (e.g., Webhook notification) to a process event log.
+    """
+    if not job_id:
+        return
+
+    timestamp = event.get("timestamp") or time.time()
+    event.setdefault("timestamp", timestamp)
+
+    with lock:
+        entry = process_registry.get(job_id)
+        if not entry:
+            return
+        events = entry.setdefault("events", [])
+        events.append(event)
+
+
 def list_processes() -> Dict[str, Dict[str, Any]]:
     """List all registered processes and their status."""
     with lock:

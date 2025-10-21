@@ -1105,7 +1105,18 @@
         var validationCompleteHandler = function(_data) {};
         trackListener('validation_complete', validationCompleteHandler);
 
-        var notificationHandler = function(_data) {};
+        var notificationHandler = function(data) {
+            const notifyMessage = data?.headline || data?.body || data?.message;
+            if (!notifyMessage) {
+                return;
+            }
+            handleMessage({
+                type: 'notification',
+                message: notifyMessage,
+                level: severityToLevel(data?.severity),
+                payload: data
+            });
+        };
         trackListener('notification', notificationHandler);
 
         var trainingStatusHandler = function(data) {

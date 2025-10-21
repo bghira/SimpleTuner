@@ -3,18 +3,12 @@ import json
 import logging
 import os
 import time
-from os import environ
 from pathlib import Path
 
+from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.models.all import model_families
 
-logger = logging.getLogger("StateTracker")
-from simpletuner.helpers.training.multi_process import should_log
-
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = get_logger("StateTracker")
 
 filename_mapping = {
     "all_image_files": "image",

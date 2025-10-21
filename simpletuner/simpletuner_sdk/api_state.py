@@ -10,13 +10,9 @@ import logging
 import os
 from pathlib import Path
 
-logger = logging.getLogger("SimpleTunerSDK")
-from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.logging import get_logger
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = get_logger("SimpleTunerSDK")
 
 
 class APIState:

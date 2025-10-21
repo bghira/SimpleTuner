@@ -75,6 +75,8 @@ button:hover {
 #eventList {
     max-height: 300px; /* Set max height */
     overflow-y: auto; /* Enable vertical scrolling */
+    overflow-x: hidden;
+    min-height: 0;
     padding: 10px;
     border: 1px solid #ddd;
     border-radius: 5px;

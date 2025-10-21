@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Mapping
+import json
+from datetime import datetime
+from typing import Any, Mapping
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
@@ -18,6 +20,17 @@ from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services import training_service
+
+
+def _json_default(obj: Any):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, set):
+        return list(obj)
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="ignore")
+    raise TypeError(f"Object of type {type(obj)!r} is not JSON serialisable")
+
 
 router = APIRouter(prefix="/api/training", tags=["training"])
 
@@ -320,7 +333,8 @@ async def stream_training_events(websocket: WebSocket):
                         # Send each event
                         for event in events:
                             try:
-                                await websocket.send_json({"job_id": job_id, "event": event})
+                                serialisable_event = json.loads(json.dumps(event, default=_json_default))
+                                await websocket.send_json({"job_id": job_id, "event": serialisable_event})
                             except (WebSocketDisconnect, ConnectionClosed, ConnectionClosedOK, RuntimeError):
                                 return
 

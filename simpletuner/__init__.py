@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import warnings
 
+from simpletuner.helpers import logging as webhook_logging  # noqa: F401
+
 warnings.filterwarnings(
     "ignore",
     message=r"torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly",

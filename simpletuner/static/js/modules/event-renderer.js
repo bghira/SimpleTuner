@@ -38,8 +38,15 @@
                 return;
             }
 
-            // Clear loading message
-            eventList.innerHTML = '';
+            // Clear placeholder loading message but keep any existing events
+            const firstChild = eventList.firstElementChild;
+            if (
+                eventList.childElementCount <= 1 &&
+                firstChild &&
+                firstChild.classList.contains('text-muted')
+            ) {
+                eventList.innerHTML = '';
+            }
 
             // Register SSE listeners
             if (window.sseManager) {
