@@ -1882,26 +1882,25 @@ class FactoryRegistry:
 
         dataset_type = init_backend.get("dataset_type")
         dataset_empty = len(init_backend["metadata_backend"]) == 0
-        if (
-            not missing_instance_dir
-            and dataset_empty
-            and backend.get("conditioning_type") is None
-            and dataset_type in ("image", "video")
-        ):
+        if bucket_report := init_backend.get("bucket_report"):
+            bucket_report.record_stage("sampler_batches", image_count=len(init_backend["metadata_backend"]))
+
+        if dataset_empty and not missing_instance_dir:
             bucket_report = init_backend.get("bucket_report")
-            if bucket_report:
-                bucket_report.record_stage("sampler_batches", image_count=len(init_backend["metadata_backend"]))
+            if bucket_report and dataset_type in ("image", "video") and backend.get("conditioning_type") is None:
                 message = bucket_report.format_empty_dataset_message()
+                init_backend["empty_dataset_report"] = message
+                try:
+                    setattr(init_backend["metadata_backend"], "empty_dataset_report", message)
+                except Exception:
+                    pass
+                warning_log(f"(id={init_backend['id']}) Dataset produced no usable samples; continuing with empty buckets.")
+                for line in message.splitlines():
+                    logger.warning(line)
             else:
-                message = (
-                    f"(id={init_backend['id']}) No images were discovered by the bucket manager; "
-                    "continuing without bucket information."
+                warning_log(
+                    f"(id={init_backend['id']}) No images were discovered by the bucket manager; continuing without bucket information."
                 )
-            raise Exception(message)
-        elif not missing_instance_dir and dataset_empty:
-            warning_log(
-                f"(id={init_backend['id']}) No images were discovered by the bucket manager; continuing without bucket information."
-            )
         print_bucket_info(init_backend["metadata_backend"], init_backend.get("dataset_type"))
 
     def _create_dataset_and_sampler(
