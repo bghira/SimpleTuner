@@ -325,8 +325,8 @@ class Chroma(ImageModelFoundation):
             self.accelerator.device,
             self.config.weight_dtype,
         )
-        if img_ids.dim() == 2:
-            img_ids = img_ids.unsqueeze(0).expand(batch_size, -1, -1)
+        if img_ids.dim() == 3:
+            img_ids = img_ids[0]
 
         timesteps = (
             torch.tensor(prepared_batch["timesteps"], device=self.accelerator.device).expand(batch_size)
@@ -437,8 +437,8 @@ class Chroma(ImageModelFoundation):
             self.accelerator.device,
             self.config.weight_dtype,
         )
-        if img_ids.dim() == 2:
-            img_ids = img_ids.unsqueeze(0).expand(batch_size, -1, -1)
+        if img_ids.dim() == 3:
+            img_ids = img_ids[0]
 
         timesteps = (
             torch.tensor(prepared_batch["timesteps"], device=self.accelerator.device).expand(batch_size)
