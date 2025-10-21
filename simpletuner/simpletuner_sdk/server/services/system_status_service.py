@@ -28,6 +28,11 @@ try:  # torch is required for CUDA utilisation but might be unavailable in some 
 except Exception:  # pragma: no cover - optional dependency in CPU-only environments
     torch = None  # type: ignore
 
+try:  # nvidia-ml-py exposes the pynvml module
+    import pynvml  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    pynvml = None  # type: ignore
+
 
 class SystemStatusService:
     """Expose basic system statistics for display in the Web UI."""
@@ -77,16 +82,19 @@ class SystemStatusService:
         devices = (inventory or {}).get("devices") or []
         results: List[Dict[str, Any]] = []
         mac_utilisation: Optional[List[Optional[float]]] = None
-        nvidia_fallback: Optional[List[Optional[float]]] = None
+        mac_memory: Optional[List[Optional[float]]] = None
+        nvidia_fallback: Optional[List[Dict[str, Optional[float]]]] = None
         rocm_fallback: Optional[List[Optional[float]]] = None
 
         if backend == "mps":
             mac_utilisation = self._get_macos_gpu_utilisation()
+            mac_memory = self._get_mps_memory_percent()
 
         for position, device in enumerate(devices):
             index = device.get("index")
             name = device.get("name") or f"GPU {index if index is not None else '?'}"
             utilisation: Optional[float] = None
+            memory_percent: Optional[float] = None
 
             if backend == "cuda" and index is not None and torch is not None and hasattr(torch.cuda, "utilization"):
                 try:
@@ -95,6 +103,7 @@ class SystemStatusService:
                 except Exception:
                     logger.debug("Failed to read CUDA utilisation for device %s", index, exc_info=True)
                     utilisation = None
+                memory_percent = self._get_cuda_memory_percent(index)
             if utilisation is None and backend == "mps" and mac_utilisation:
                 target_idx: Optional[int] = None
                 if isinstance(index, int) and 0 <= index < len(mac_utilisation):
@@ -103,20 +112,31 @@ class SystemStatusService:
                     target_idx = position
                 if target_idx is not None:
                     utilisation = mac_utilisation[target_idx]
+                if mac_memory:
+                    mem_idx: Optional[int] = None
+                    if isinstance(index, int) and 0 <= index < len(mac_memory):
+                        mem_idx = index
+                    elif 0 <= position < len(mac_memory):
+                        mem_idx = position
+                    if mem_idx is not None:
+                        memory_percent = mac_memory[mem_idx]
             if utilisation is None and backend == "cuda":
                 if nvidia_fallback is None:
-                    nvidia_fallback = self._get_nvidia_gpu_utilisation()
+                    nvidia_fallback = self._get_nvidia_gpu_stats()
                 if nvidia_fallback:
-                    target_idx = None
+                    target_idx: Optional[int] = None
                     if isinstance(index, int) and 0 <= index < len(nvidia_fallback):
                         target_idx = index
                     elif 0 <= position < len(nvidia_fallback):
                         target_idx = position
                     if target_idx is not None:
+                        fallback_entry = nvidia_fallback[target_idx]
+                        if utilisation is None:
+                            utilisation = fallback_entry.get("utilization_percent")
+                        if memory_percent is None:
+                            memory_percent = fallback_entry.get("memory_percent")
                         utilisation = nvidia_fallback[target_idx]
             if utilisation is None and backend == "rocm":
-                if rocm_fallback is None:
-                    rocm_fallback = self._get_rocm_gpu_utilisation()
                 if rocm_fallback:
                     target_idx = None
                     if isinstance(index, int) and 0 <= index < len(rocm_fallback):
@@ -132,6 +152,7 @@ class SystemStatusService:
                     "name": name,
                     "backend": backend,
                     "utilization_percent": round(utilisation, 1) if utilisation is not None else None,
+                    "memory_percent": round(memory_percent, 1) if memory_percent is not None else None,
                 }
             )
 
@@ -308,141 +329,99 @@ class SystemStatusService:
         }
         return size, count
 
-    def _get_rocm_gpu_utilisation(self) -> Optional[List[Optional[float]]]:
-        rocm_smi = shutil.which("rocm-smi")
-        if not rocm_smi:
-            for candidate in ("/opt/rocm/bin/rocm-smi", "/usr/bin/rocm-smi"):
-                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                    rocm_smi = candidate
-                    break
-        if not rocm_smi:
-            return None
-
-        commands = [
-            [rocm_smi, "--showuse", "--json"],
-            [rocm_smi, "--showuse"],
-        ]
-
-        for command in commands:
-            try:
-                completed = subprocess.run(
-                    command,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-            except (FileNotFoundError, subprocess.SubprocessError) as exc:
-                logger.debug("Unable to query GPU utilisation via rocm-smi (%s): %s", " ".join(command[1:]), exc, exc_info=True)
-                continue
-
-            output = (completed.stdout or "").strip()
-            if not output:
-                continue
-
-            if "--json" in command:
-                try:
-                    data = json.loads(output)
-                except json.JSONDecodeError as exc:
-                    logger.debug("Failed to parse rocm-smi JSON output: %s", exc, exc_info=True)
-                    continue
-
-                if isinstance(data, dict):
-                    values: Dict[int, Optional[float]] = {}
-                    for key, entry in data.items():
-                        if not isinstance(entry, dict):
-                            continue
-                        gpu_idx = self._coerce_int(key.lstrip("card")) if isinstance(key, str) else self._coerce_int(key)
-                        raw_value = (
-                            entry.get("GPU use (%)")
-                            or entry.get("GPU use (%) (avg)")
-                            or entry.get("GPU use (%) (average)")
-                            or entry.get("GPU use (%) (peak)")
-                            or entry.get("GPU use (%) (current)")
-                        )
-                        values[gpu_idx] = self._coerce_percent(raw_value)
-                    if values:
-                        ordered = [values.get(idx, None) for idx in sorted(values.keys())]
-                        return ordered or None
-                continue
-
-            parsed_values = self._parse_rocm_smi_text(output)
-            if parsed_values:
-                return parsed_values
-
-        return None
-
-    def _parse_rocm_smi_text(self, output: str) -> Optional[List[Optional[float]]]:
-        pattern = re.compile(r"GPU\s*\[\s*(\d+)\s*\].*?GPU use.*?:\s*([0-9]+(?:\.[0-9]+)?)")
-        matches = pattern.findall(output)
-        values: Dict[int, Optional[float]] = {}
-        if matches:
-            for gpu, raw in matches:
-                idx = self._coerce_int(gpu)
-                if idx is None or idx in values:
-                    continue
-                values[idx] = self._coerce_percent(raw)
-        else:
-            lines = output.splitlines()
-            header_index = None
-            headers = []
-            for line in lines:
-                if "GPU use" in line and header_index is None:
-                    headers = [token for token in line.strip().split() if token]
-                    if headers:
-                        try:
-                            header_index = headers.index("use") - 1 if "use" in headers else None
-                        except ValueError:
-                            header_index = None
-                    continue
-                if not line or not line.strip():
-                    continue
-                tokens = [token for token in line.strip().split() if token]
-                if len(tokens) < 2:
-                    continue
-                gpu_token = tokens[0]
-                gpu_idx = self._coerce_int(gpu_token.strip("GPU[]"))
-                if gpu_idx is None or gpu_idx in values:
-                    continue
-                percent_value = None
-                for token in tokens[1:]:
-                    maybe_percent = self._coerce_percent(token)
-                    if maybe_percent is not None:
-                        percent_value = maybe_percent
-                        break
-                values[gpu_idx] = percent_value
-
-        if not values:
-            return None
-
-        ordered = [values.get(idx, None) for idx in sorted(values.keys())]
-        return ordered or None
-
-    @staticmethod
-    def _coerce_percent(value: Any) -> Optional[float]:
-        if isinstance(value, (int, float)):
-            return round(float(value), 1)
-        if isinstance(value, str):
-            text = value.strip()
-            if not text:
-                return None
-            if text.endswith("%"):
-                text = text[:-1]
-            try:
-                return round(float(text), 1)
-            except ValueError:
-                return None
-        return None
-
-    def _get_nvidia_gpu_utilisation(self) -> Optional[List[Optional[float]]]:
+    def _get_nvidia_gpu_stats(self) -> Optional[List[Dict[str, Optional[float]]]]:
         if platform.system() == "Darwin":
             return None
 
+        nvml_stats = self._get_nvml_gpu_stats()
+        if nvml_stats:
+            return nvml_stats
+
+        return self._get_nvidia_smi_stats()
+
+    def _get_nvml_gpu_stats(self) -> Optional[List[Dict[str, Optional[float]]]]:
+        if pynvml is None:
+            return None
+
+        initialised_here = False
+        try:
+            pynvml.nvmlInit()  # type: ignore[attr-defined]
+            initialised_here = True
+        except Exception as exc:  # pragma: no cover - NVML optional
+            try:
+                already_init_cls = getattr(pynvml, "NVMLError_AlreadyInitialized", None)  # type: ignore[attr-defined]
+                if already_init_cls and isinstance(exc, already_init_cls):
+                    initialised_here = False
+                else:
+                    logger.debug("Unable to initialise NVML: %s", exc, exc_info=True)
+                    return None
+            except Exception:
+                logger.debug("Unable to initialise NVML: %s", exc, exc_info=True)
+                return None
+
+        try:
+            try:
+                device_count = pynvml.nvmlDeviceGetCount()  # type: ignore[attr-defined]
+            except Exception as exc:
+                logger.debug("Failed to query NVML device count: %s", exc, exc_info=True)
+                return None
+
+            if device_count <= 0:
+                return None
+
+            stats: List[Dict[str, Optional[float]]] = []
+            for index in range(device_count):
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(index)  # type: ignore[attr-defined]
+                except Exception as exc:
+                    logger.debug("Failed to acquire NVML handle for device %s: %s", index, exc, exc_info=True)
+                    stats.append({"utilization_percent": None, "memory_percent": None})
+                    continue
+
+                utilisation_value: Optional[float] = None
+                memory_percent: Optional[float] = None
+
+                try:
+                    utilisation = pynvml.nvmlDeviceGetUtilizationRates(handle)  # type: ignore[attr-defined]
+                    gpu_util = getattr(utilisation, "gpu", None)
+                    if gpu_util is not None:
+                        utilisation_value = float(gpu_util)
+                except Exception as exc:
+                    logger.debug("Failed to read NVML utilisation for device %s: %s", index, exc, exc_info=True)
+
+                try:
+                    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)  # type: ignore[attr-defined]
+                    total_raw = getattr(mem_info, "total", None)
+                    used_raw = getattr(mem_info, "used", None)
+                    if total_raw not in (None, 0):
+                        total = float(total_raw)
+                        used = float(used_raw or 0.0)
+                        if total > 0:
+                            memory_percent = (used / total) * 100.0
+                except Exception as exc:
+                    logger.debug("Failed to read NVML memory info for device %s: %s", index, exc, exc_info=True)
+
+                stats.append(
+                    {
+                        "utilization_percent": round(utilisation_value, 1) if utilisation_value is not None else None,
+                        "memory_percent": round(memory_percent, 1) if memory_percent is not None else None,
+                    }
+                )
+
+            return stats or None
+        finally:
+            if initialised_here:
+                try:
+                    pynvml.nvmlShutdown()  # type: ignore[attr-defined]
+                except Exception as exc:
+                    logger.debug("Failed to shutdown NVML cleanly: %s", exc, exc_info=True)
+
+    def _get_nvidia_smi_stats(self) -> Optional[List[Dict[str, Optional[float]]]]:
         try:
             completed = subprocess.run(
                 [
                     "nvidia-smi",
-                    "--query-gpu=utilization.gpu",
+                    "--query-gpu=utilization.gpu,memory.used,memory.total",
                     "--format=csv,noheader,nounits",
                 ],
                 check=True,
@@ -458,19 +437,82 @@ class SystemStatusService:
         if not lines:
             return None
 
-        utilisation_values: List[Optional[float]] = []
+        stats: List[Dict[str, Optional[float]]] = []
         for line in lines:
             text = line.strip()
             if not text:
-                utilisation_values.append(None)
+                stats.append({"utilization_percent": None, "memory_percent": None})
                 continue
-            try:
-                utilisation_values.append(round(float(text), 1))
-            except ValueError:
+            parts = [part.strip() for part in text.split(",")]
+            if len(parts) < 3:
                 logger.debug("Discarding unexpected nvidia-smi output: %s", text)
-                utilisation_values.append(None)
+                stats.append({"utilization_percent": None, "memory_percent": None})
+                continue
+            util_raw, mem_used_raw, mem_total_raw = parts[:3]
+            util_val: Optional[float]
+            mem_percent: Optional[float]
+            try:
+                util_val = round(float(util_raw), 1)
+            except ValueError:
+                util_val = None
+            try:
+                mem_used = float(mem_used_raw)
+                mem_total = float(mem_total_raw)
+                if mem_total > 0:
+                    mem_percent = round((mem_used / mem_total) * 100.0, 1)
+                else:
+                    mem_percent = None
+            except ValueError:
+                mem_percent = None
+            stats.append({"utilization_percent": util_val, "memory_percent": mem_percent})
 
-        return utilisation_values or None
+        return stats or None
+
+    def _get_cuda_memory_percent(self, index: int) -> Optional[float]:
+        if torch is None or not torch.cuda.is_available():  # type: ignore[attr-defined]
+            return None
+        if not hasattr(torch.cuda, "mem_get_info"):
+            return None
+        try:
+            try:
+                free_bytes, total_bytes = torch.cuda.mem_get_info(index)  # type: ignore[misc]
+            except TypeError:
+                with torch.cuda.device(index):
+                    free_bytes, total_bytes = torch.cuda.mem_get_info()  # type: ignore[call-arg]
+        except Exception:
+            logger.debug("Failed to read CUDA memory info for device %s", index, exc_info=True)
+            return None
+        if not total_bytes:
+            return None
+        used = total_bytes - free_bytes
+        if used < 0:
+            used = 0
+        try:
+            percent = (used / total_bytes) * 100.0
+        except Exception:
+            return None
+        return round(float(percent), 1)
+
+    def _get_mps_memory_percent(self) -> Optional[List[Optional[float]]]:
+        if torch is None:
+            return None
+        backend = getattr(torch.backends, "mps", None)
+        if backend is None or not backend.is_available():
+            return None
+        driver_alloc = getattr(torch.mps, "driver_allocated_memory", None)
+        driver_total = getattr(torch.mps, "driver_total_memory", None)
+        if not callable(driver_alloc) or not callable(driver_total):
+            return None
+        try:
+            allocated = float(driver_alloc())
+            total = float(driver_total())
+        except Exception:
+            logger.debug("Unable to query MPS memory statistics", exc_info=True)
+            return None
+        if total <= 0:
+            return None
+        percent = round((allocated / total) * 100.0, 1)
+        return [percent]
 
 
 __all__ = ["SystemStatusService"]

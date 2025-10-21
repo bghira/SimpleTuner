@@ -15,7 +15,7 @@
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.attention_processor import Attention, AttentionProcessor, AttnProcessor2_0, SanaLinearAttnProcessor2_0
 from diffusers.models.embeddings import PatchEmbed, PixArtAlphaTextProjection
@@ -289,7 +289,6 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     _no_split_modules = ["SanaTransformerBlock", "PatchEmbed"]
     _skip_layerwise_casting_patterns = ["patch_embed", "norm"]
 
-    @register_to_config
     def __init__(
         self,
         in_channels: int = 32,
@@ -312,9 +311,6 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     ) -> None:
         super().__init__()
 
-        out_channels = out_channels or in_channels
-        inner_dim = num_attention_heads * attention_head_dim
-
         # Normalise patch size to a 2D tuple for consistency with diffusers' PatchEmbed
         if isinstance(patch_size, int):
             patch_size_int = patch_size
@@ -328,6 +324,30 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             raise ValueError("`patch_size` must be an int or a tuple/list of length 2.")
 
         patch_area = patch_size_tuple[0] * patch_size_tuple[1]
+
+        effective_out_channels = out_channels or in_channels
+        self.register_to_config(
+            in_channels=in_channels,
+            out_channels=effective_out_channels,
+            num_attention_heads=num_attention_heads,
+            attention_head_dim=attention_head_dim,
+            num_layers=num_layers,
+            num_cross_attention_heads=num_cross_attention_heads,
+            cross_attention_head_dim=cross_attention_head_dim,
+            cross_attention_dim=cross_attention_dim,
+            caption_channels=caption_channels,
+            mlp_ratio=mlp_ratio,
+            dropout=dropout,
+            attention_bias=attention_bias,
+            sample_size=sample_size,
+            patch_size=patch_size_int,
+            norm_elementwise_affine=norm_elementwise_affine,
+            norm_eps=norm_eps,
+            interpolation_scale=interpolation_scale,
+        )
+
+        out_channels = effective_out_channels
+        inner_dim = num_attention_heads * attention_head_dim
 
         # Ensure the normalised patch size is reflected in the stored config
         self.config.patch_size = patch_size_int

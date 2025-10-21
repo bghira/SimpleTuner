@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import Attention
@@ -377,7 +377,6 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
     ]
     _keys_to_ignore_on_load_unexpected = ["norm_added_q"]
 
-    @register_to_config
     def __init__(
         self,
         patch_size: Tuple[int] = (1, 2, 2),
@@ -397,9 +396,27 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         rope_max_seq_len: int = 1024,
     ) -> None:
         super().__init__()
+        effective_out_channels = out_channels or in_channels
+        self.register_to_config(
+            patch_size=patch_size,
+            num_attention_heads=num_attention_heads,
+            attention_head_dim=attention_head_dim,
+            in_channels=in_channels,
+            out_channels=effective_out_channels,
+            text_dim=text_dim,
+            freq_dim=freq_dim,
+            ffn_dim=ffn_dim,
+            num_layers=num_layers,
+            cross_attn_norm=cross_attn_norm,
+            qk_norm=qk_norm,
+            eps=eps,
+            image_dim=image_dim,
+            added_kv_proj_dim=added_kv_proj_dim,
+            rope_max_seq_len=rope_max_seq_len,
+        )
 
         inner_dim = num_attention_heads * attention_head_dim
-        out_channels = out_channels or in_channels
+        out_channels = effective_out_channels
 
         # 1. Patch & position embedding
         self.rope = WanRotaryPosEmbed(attention_head_dim, patch_size, rope_max_seq_len)
@@ -437,6 +454,18 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
         self.gradient_checkpointing = False
+        self.force_v2_1_time_embedding: bool = False
+
+    def set_time_embedding_v2_1(self, force_2_1_time_embedding: bool) -> None:
+        """
+        Force the Wan transformer to use 2.1-style time embeddings even when running Wan 2.2 checkpoints.
+
+        Args:
+            force_2_1_time_embedding: Whether to override the default time embedding behaviour.
+        """
+        self.force_v2_1_time_embedding = bool(force_2_1_time_embedding)
+        if self.force_v2_1_time_embedding:
+            logger.info("WanTransformer3DModel: Forcing Wan 2.1 style time embedding.")
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Set the TREAD router and routing configuration."""
@@ -501,6 +530,11 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         hidden_states = self.patch_embedding(hidden_states)
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
+
+        if self.force_v2_1_time_embedding and timestep.dim() > 1:
+            # Wan 2.1 uses a single timestep per batch entry. When forcing 2.1 behaviour with Wan 2.2
+            # checkpoints we fall back to the first timestep value which matches the reference implementation.
+            timestep = timestep[..., 0].contiguous()
 
         temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
             timestep, encoder_hidden_states, encoder_hidden_states_image

@@ -1,5 +1,6 @@
 <!-- Dataloader Configuration Section -->
 <script>
+(() => {
 const CONDITIONING_GENERATOR_TYPES = [
     { value: 'canny', label: 'Canny Edges', description: 'Detect edge maps using the Canny operator.' },
     { value: 'edges', label: 'Edges (OpenCV)', description: 'Generic edge detector (alias for Canny).' },
@@ -44,6 +45,8 @@ const SKIP_DISCOVERY_OPTIONS = [
         hint: 'Disables general file discovery. Use only when the dataset contents are frozen.'
     }
 ];
+
+window.CONDITIONING_GENERATOR_TYPES = window.CONDITIONING_GENERATOR_TYPES || CONDITIONING_GENERATOR_TYPES;
 
 function dataloaderSectionComponent() {
     return {
@@ -606,6 +609,16 @@ function dataloaderSectionComponent() {
         }
     },
 
+    onAddDatasetClick(type) {
+        if (type === 'video' && !this.isVideoModel) {
+            const confirmed = window.confirm('This model is not marked as video-capable. Add a video dataset anyway?');
+            if (!confirmed) {
+                return;
+            }
+        }
+        this.addDataset(type);
+    },
+
     addDataset(type) {
         const trainer = Alpine.store('trainer');
         if (!trainer || !trainer.addDataset) {
@@ -811,6 +824,8 @@ function dataloaderSectionComponent() {
     }
     }
 }
+window.dataloaderSectionComponent = dataloaderSectionComponent;
+})();
 </script>
 <div id="dataloaderSection" data-builder="alpine" x-data="dataloaderSectionComponent()"
      x-init="(() => {
@@ -940,9 +955,9 @@ function dataloaderSectionComponent() {
                     <i class="fas fa-plus"></i> 🖼️ Add Image Dataset
                 </button>
                 <button type="button" class="add-dataset-btn"
-                        @click="addDataset('video')"
-                        :disabled="!isVideoModel"
-                        :title="isVideoModel ? 'Add a video dataset' : 'Video datasets are only available for video models'">
+                        @click="onAddDatasetClick('video')"
+                        :disabled="!storeReady"
+                        :title="isVideoModel ? 'Add a video dataset' : 'Add a video dataset (advanced users only)'">
                     <i class="fas fa-plus"></i> 🎬 Add Video Dataset
                 </button>
                 <button type="button" class="add-dataset-btn" @click="addDataset('text_embeds')">

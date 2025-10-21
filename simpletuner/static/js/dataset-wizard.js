@@ -59,6 +59,7 @@
             },
             conditioningGenerators: CONDITIONING_GENERATOR_TYPES,
             newAspectBucket: null,
+            videoWarningAcknowledged: false,
 
             // Separate cache dataset configs
             textEmbedsDataset: {
@@ -345,6 +346,24 @@
                         identifier_includes_extension: false
                     }
                 };
+            },
+
+            selectDatasetType(type) {
+                if (!type) {
+                    return;
+                }
+                if (type === 'video' && !this.isVideoModel && !this.videoWarningAcknowledged) {
+                    window.showToast('Current model is not marked as video-capable. Proceed only if you expect to train with video datasets.', 'warning');
+                    this.videoWarningAcknowledged = true;
+                }
+                this.currentDataset.dataset_type = type;
+                if (this.selectedBlueprint && !this.selectedBlueprint.datasetTypes.includes(type)) {
+                    this.selectedBlueprint = null;
+                    this.selectedBackend = null;
+                }
+                if (type !== 'conditioning') {
+                    this.conditioningConfigured = false;
+                }
             },
 
             selectBackend(backendType) {

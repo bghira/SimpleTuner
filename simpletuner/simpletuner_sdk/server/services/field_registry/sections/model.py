@@ -506,6 +506,24 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="wan_force_2_1_time_embedding",
+            arg_name="--wan_force_2_1_time_embedding",
+            ui_label="Force Wan 2.1 Time Embedding",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_config",
+            subsection="wan_specific",
+            default_value=False,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="wan", action="show")],
+            help_text="Use Wan 2.1 style time embeddings even when running Wan 2.2 checkpoints.",
+            tooltip="Enable this if Wan 2.2 checkpoints report shape mismatches in the time embedding layers.",
+            importance=ImportanceLevel.ADVANCED,
+            order=30,
+        )
+    )
+
     # Fused QKV Projections
     registry._add_field(
         ConfigField(

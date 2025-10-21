@@ -43,6 +43,12 @@ class MultiAspectDataset(Dataset):
         return sum([len(dataset) for dataset in self.datasets])
 
     def __getitem__(self, image_tuple: list[dict[str, Any] | TrainingSample]):
+        state_args = StateTracker.get_args()
+        model_family = ""
+        if state_args is not None:
+            model_family = getattr(state_args, "model_family", "") or ""
+        model_family = str(model_family)
+
         output_data = {
             "training_samples": [],
             "conditioning_samples": [],
@@ -67,7 +73,7 @@ class MultiAspectDataset(Dataset):
                         f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {calculated_aspect_ratio}"
                     )
 
-            if "deepfloyd" not in StateTracker.get_args().model_family and (
+            if "deepfloyd" not in model_family and (
                 image_metadata["original_size"] is None or image_metadata["target_size"] is None
             ):
                 raise Exception(

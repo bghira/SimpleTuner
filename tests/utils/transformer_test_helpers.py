@@ -154,12 +154,16 @@ class MockAttention(nn.Module):
         self.heads = 8
         self.return_tuple = return_tuple
         self.hidden_dim = hidden_dim
+        self.last_args = ()
+        self.last_kwargs = {}
         self.to_q = nn.Linear(hidden_dim, hidden_dim)
         self.to_k = nn.Linear(hidden_dim, hidden_dim)
         self.to_v = nn.Linear(hidden_dim, hidden_dim)
         self.to_out = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim), nn.Dropout(0.0)])
 
     def forward(self, *args, **kwargs):
+        self.last_args = args
+        self.last_kwargs = kwargs.copy()
         # Get hidden_states from kwargs or args
         hidden_states = kwargs.get("hidden_states", args[0] if args else None)
 

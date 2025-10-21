@@ -1204,6 +1204,13 @@ class ConfigsService:
                     except json.JSONDecodeError:
                         # Keep original string if parsing fails; validation will surface errors later
                         pass
+            if config_key in {"--tread_config", "tread_config"} and isinstance(converted_value, str):
+                trimmed = converted_value.strip()
+                if trimmed.startswith("{") or trimmed.startswith("["):
+                    try:
+                        converted_value = json.loads(trimmed)
+                    except json.JSONDecodeError:
+                        pass
 
             config_dict[config_key] = converted_value
 

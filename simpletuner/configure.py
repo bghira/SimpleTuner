@@ -36,6 +36,7 @@ model_classes = {
         "lumina2",
         "cosmos2image",
         "qwen_image",
+        "chroma",
     ],
     "lora": [
         "flux",
@@ -51,6 +52,7 @@ model_classes = {
         "hidream",
         "lumina2",
         "qwen_image",
+        "chroma",
     ],
     "controlnet": [
         "sdxl",
@@ -62,6 +64,7 @@ model_classes = {
         "pixart_sigma",
         "sd3",
         "kolors",
+        "chroma",
     ],
 }
 

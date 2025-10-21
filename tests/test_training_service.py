@@ -1,6 +1,9 @@
 import copy
+import json
+import tempfile
 import unittest
 from contextlib import ExitStack
+from pathlib import Path
 from typing import Any, Dict, Optional
 from unittest.mock import patch
 
@@ -158,6 +161,27 @@ class TrainingServiceTests(unittest.TestCase):
 
         self.assertTrue(any("Warmup steps" in error for error in result.errors))
 
+    def test_validate_training_config_checks_prompt_library_path(self) -> None:
+        store = DummyStore(DummyValidation())
+        result = training_service.validate_training_config(
+            store,
+            {"--user_prompt_library": "/not/a/real/file.json"},
+        )
+
+        self.assertTrue(any("User prompt library" in error for error in result.errors))
+
+    def test_validate_training_config_accepts_existing_prompt_library(self) -> None:
+        store = DummyStore(DummyValidation())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_file = Path(tmpdir) / "library.json"
+            prompt_file.write_text(json.dumps({"a": "b"}), encoding="utf-8")
+            result = training_service.validate_training_config(
+                store,
+                {"--user_prompt_library": str(prompt_file)},
+            )
+
+        self.assertFalse(any("User prompt library" in error for error in result.errors))
+
     def test_build_config_bundle_uses_onboarding_accelerate_defaults(self) -> None:
         bundle = self._build_bundle({})
 
@@ -231,7 +255,10 @@ class TrainingServiceTests(unittest.TestCase):
             captured["func"] = func
             captured["config"] = config
 
-        with patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit):
+        with (
+            patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
+            patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+        ):
             job_id = training_service.start_training_job({"--foo": "bar"})
 
         self.assertEqual(job_id, captured["job_id"])
@@ -244,6 +271,38 @@ class TrainingServiceTests(unittest.TestCase):
             training_service.APIState.get_state("training_config")["--webhook_config"],
             training_service.DEFAULT_WEBHOOK_CONFIG,
         )
+
+    def test_start_training_job_copies_prompt_library(self) -> None:
+        captured = {}
+
+        def fake_submit(job_id, func, config):
+            captured["job_id"] = job_id
+            captured["config"] = config
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
+            patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+        ):
+            source = Path(tmpdir) / "library.json"
+            source.write_text(json.dumps({"prompt": "value"}), encoding="utf-8")
+            job_id = training_service.start_training_job({"--user_prompt_library": str(source)})
+
+        runtime_path = Path(captured["config"]["--user_prompt_library"])
+        self.assertEqual(job_id, captured["job_id"])
+        self.assertNotEqual(runtime_path, source)
+        self.assertTrue(runtime_path.exists())
+        self.assertEqual(json.loads(runtime_path.read_text(encoding="utf-8")), {"prompt": "value"})
+
+    def test_start_training_job_missing_prompt_library_raises(self) -> None:
+        with (
+            patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
+            patch.object(training_service.process_keeper, "submit_job", side_effect=AssertionError("should not submit")),
+        ):
+            with self.assertRaises(FileNotFoundError):
+                training_service.start_training_job({"--user_prompt_library": "/missing/library.json"})
+
+        self.assertIsNone(training_service.APIState.get_state("current_job_id"))
 
     def test_terminate_training_job_clears_state(self) -> None:
         terminated = {}

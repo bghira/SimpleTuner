@@ -69,17 +69,18 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
     def test_all_test_files_discovered(self):
         """Test that all expected transformer test files are discovered."""
         expected_transformers = [
-            "flux",
-            "hidream",
             "auraflow",
             "chroma",
+            "chroma_controlnet",
             "cosmos",
-            "sd3",
-            "pixart",
+            "flux",
+            "hidream",
             "ltxvideo",
-            "wan",
+            "pixart",
             "qwen_image",
             "sana",
+            "sd3",
+            "wan",
         ]
 
         discovered_transformers = set()
@@ -95,7 +96,7 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
         self.assertEqual(
             len(self.test_files),
             len(expected_transformers),
-            f"Expected {len(expected_transformers)} test files, found {len(self.test_files)}",
+            f"Expected {len(expected_transformers)} test files, found {len(self.test_files)}: {self.test_files}",
         )
 
     def test_base_test_class_inheritance(self):

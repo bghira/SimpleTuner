@@ -23,8 +23,6 @@ else:
 
 class QwenImage(ImageModelFoundation):
     NAME = "Qwen-Image"
-    MODEL_DESCRIPTION = "Qwen's multimodal image generation model"
-    ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLQwenImage
@@ -63,7 +61,9 @@ class QwenImage(ImageModelFoundation):
         self.vae_scale_factor = 8
 
     def setup_training_noise_schedule(self):
-        # load flow matching scheduler for qwen image
+        """
+        Loads the noise schedule for Qwen Image (flow matching).
+        """
         from diffusers import FlowMatchEulerDiscreteScheduler
 
         scheduler_config = {
@@ -89,12 +89,23 @@ class QwenImage(ImageModelFoundation):
         return self.config, self.noise_schedule
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
+        """
+        Encode prompts using Qwen's text encoder.
+
+        Args:
+            prompts: List of text prompts to encode
+            is_negative_prompt: Whether these are negative prompts
+
+        Returns:
+            Tuple of (prompt_embeds, prompt_embeds_mask)
+        """
         if self.text_encoders is None or len(self.text_encoders) == 0:
             self.load_text_encoder()
 
         text_encoder = self.text_encoders[0]
         tokenizer = self.tokenizers[0]
 
+        # Move to device if needed
         if text_encoder.device != self.accelerator.device:
             text_encoder.to(self.accelerator.device)
 
@@ -111,6 +122,15 @@ class QwenImage(ImageModelFoundation):
         return prompt_embeds, prompt_embeds_mask
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
+        """
+        Format the text embeddings for Qwen Image.
+
+        Args:
+            text_embedding: The embedding tuple from _encode_prompts
+
+        Returns:
+            Dictionary with formatted embeddings
+        """
         prompt_embeds, prompt_embeds_mask = text_embedding
 
         return {
@@ -119,6 +139,9 @@ class QwenImage(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
+        """
+        Convert text embeddings for pipeline use.
+        """
         attention_mask = text_embedding.get("attention_masks", None)
         if attention_mask is not None and attention_mask.dim() == 1:
             attention_mask = attention_mask.unsqueeze(0)
@@ -133,6 +156,9 @@ class QwenImage(ImageModelFoundation):
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+        """
+        Convert negative text embeddings for pipeline use.
+        """
         attention_mask = text_embedding.get("attention_masks", None)
         if attention_mask is not None and attention_mask.dim() == 1:
             attention_mask = attention_mask.unsqueeze(0)
@@ -147,6 +173,9 @@ class QwenImage(ImageModelFoundation):
         }
 
     def model_predict(self, prepared_batch):
+        """
+        Perform a forward pass with the Qwen Image model.
+        """
         latent_model_input = prepared_batch["noisy_latents"]
         timesteps = prepared_batch["timesteps"]
 
@@ -157,52 +186,54 @@ class QwenImage(ImageModelFoundation):
         else:
             batch_size, num_channels, latent_height, latent_width = latent_model_input.shape
 
-        # get pipeline class for static methods
+        # Get the pipeline class to use its static methods
         pipeline_class = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
-        # _unpack_latents expects pixel-space dims, converts latent->pixel
+        # Note: _unpack_latents expects pixel-space dimensions and will apply vae_scale_factor
+        # So we need to convert our latent dimensions back to pixel space
         pixel_height = latent_height * self.vae_scale_factor
         pixel_width = latent_width * self.vae_scale_factor
 
-        # pack latents
-        latent_model_input = pipeline_class._pack_latents(
+        # Pack latents using the official method
+        flat_latents = pipeline_class._pack_latents(
             latent_model_input,
             batch_size,
             num_channels,
             latent_height,
             latent_width,
         )
+        latent_model_input = flat_latents
 
-        # prepare text embeddings
+        # Prepare text embeddings
         prompt_embeds = prepared_batch["prompt_embeds"].to(
             device=self.accelerator.device,
             dtype=self.config.weight_dtype,
         )
 
-        # get attention mask
+        # Get attention mask
         prompt_embeds_mask = prepared_batch.get("encoder_attention_mask")
         if prompt_embeds_mask is not None:
             prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
 
-        # image shapes for patchification (latent dims / 2)
+        # Prepare image shapes - using the LATENT dimensions divided by 2 (for patchification)
         img_shapes = [(1, latent_height // 2, latent_width // 2)] * batch_size
 
-        # normalize timesteps to [0,1]
+        # Prepare timesteps (normalize to 0-1 range)
         timesteps = (
             torch.tensor(prepared_batch["timesteps"]).expand(batch_size).to(device=self.accelerator.device)
             / 1000.0  # Normalize to [0, 1]
         )
 
-        # text sequence lengths
+        # Get text sequence lengths
         txt_seq_lens = (
             prompt_embeds_mask.sum(dim=1).tolist()
             if prompt_embeds_mask is not None
             else [prompt_embeds.shape[1]] * batch_size
         )
 
-        # forward pass
+        # Forward pass through transformer
         noise_pred = self.model(
             hidden_states=latent_model_input.to(self.accelerator.device, self.config.weight_dtype),
             timestep=timesteps,
@@ -214,24 +245,32 @@ class QwenImage(ImageModelFoundation):
             return_dict=False,
         )[0]
 
-        # unpack noise prediction
+        # Unpack the noise prediction back to original shape
         noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
 
-        # remove extra dimension from _unpack_latents
+        # Remove the extra dimension that _unpack_latents adds
         if noise_pred.dim() == 5:
             noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
 
         return {"model_prediction": noise_pred}
 
     def pre_vae_encode_transform_sample(self, sample):
-        # qwen vae expects 5D input
+        """
+        Pre-encode transform for the sample before passing it to the VAE.
+        Qwen Image VAE expects 5D input (adds frame dimension).
+        """
+        # Add frame dimension for Qwen VAE if needed
         if sample.dim() == 4:
             sample = sample.unsqueeze(2)  # (B, C, H, W) -> (B, C, 1, H, W)
         return sample
 
     def post_vae_encode_transform_sample(self, sample):
-        # normalize latents and remove frame dimension
-        # qwen vae normalization, remove frame dimension
+        """
+        Post-encode transform for Qwen Image VAE output.
+        Normalizes latents and removes frame dimension.
+        """
+        # Qwen Image VAE normalization
+        # Remove frame dimension if present
         sample_latents = sample.latent_dist.sample()
         if sample_latents.dim() == 5:
             sample_latents = sample_latents.squeeze(2)  # (B, C, 1, H, W) -> (B, C, H, W)
@@ -249,6 +288,9 @@ class QwenImage(ImageModelFoundation):
         return sample_latents
 
     def check_user_config(self):
+        """
+        Check and validate user configuration for Qwen Image.
+        """
         super().check_user_config()
 
         # Qwen Image specific checks

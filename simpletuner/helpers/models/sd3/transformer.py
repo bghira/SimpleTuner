@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import JointTransformerBlock
 from diffusers.models.attention_processor import Attention, AttentionProcessor, FusedJointAttnProcessor2_0
@@ -58,7 +58,6 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
-    @register_to_config
     def __init__(
         self,
         sample_size: int = 128,
@@ -77,7 +76,23 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
     ):
         super().__init__()
         default_out_channels = in_channels
-        self.out_channels = out_channels if out_channels is not None else default_out_channels
+        effective_out_channels = out_channels if out_channels is not None else default_out_channels
+        self.register_to_config(
+            sample_size=sample_size,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            num_layers=num_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            caption_projection_dim=caption_projection_dim,
+            pooled_projection_dim=pooled_projection_dim,
+            out_channels=effective_out_channels,
+            pos_embed_max_size=pos_embed_max_size,
+            dual_attention_layers=dual_attention_layers,
+            qk_norm=qk_norm,
+        )
+        self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
 
         self.pos_embed = PatchEmbed(

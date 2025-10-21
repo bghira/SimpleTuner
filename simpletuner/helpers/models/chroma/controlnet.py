@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.attention_processor import AttentionProcessor
 from diffusers.models.controlnets.controlnet import ControlNetConditioningEmbedding, zero_module
@@ -17,6 +17,7 @@ from .transformer import (
     ChromaCombinedTimestepTextProjEmbeddings,
     ChromaSingleTransformerBlock,
     ChromaTransformerBlock,
+    adjust_rotary_embedding_dim,
 )
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -31,7 +32,6 @@ class ChromaControlNetOutput(BaseOutput):
 class ChromaControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
 
-    @register_to_config
     def __init__(
         self,
         patch_size: int = 1,
@@ -48,6 +48,20 @@ class ChromaControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         conditioning_embedding_channels: Optional[int] = None,
     ):
         super().__init__()
+        self.register_to_config(
+            patch_size=patch_size,
+            in_channels=in_channels,
+            num_layers=num_layers,
+            num_single_layers=num_single_layers,
+            attention_head_dim=attention_head_dim,
+            num_attention_heads=num_attention_heads,
+            joint_attention_dim=joint_attention_dim,
+            axes_dims_rope=axes_dims_rope,
+            approximator_num_channels=approximator_num_channels,
+            approximator_hidden_dim=approximator_hidden_dim,
+            approximator_layers=approximator_layers,
+            conditioning_embedding_channels=conditioning_embedding_channels,
+        )
         self.out_channels = in_channels
         self.inner_dim = num_attention_heads * attention_head_dim
 
@@ -269,8 +283,15 @@ class ChromaControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         ids = torch.cat((txt_ids, img_ids), dim=0)
         image_rotary_emb = self.pos_embed(ids)
+        target_rotary_dim = getattr(self.config, "attention_head_dim", None)
+        if target_rotary_dim is not None:
+            image_rotary_emb = adjust_rotary_embedding_dim(image_rotary_emb, int(target_rotary_dim))
 
         txt_len = encoder_hidden_states.shape[1]
+        if txt_len > 0 and image_rotary_emb[0].shape[0] >= txt_len:
+            image_only_rotary_emb = tuple(r[txt_len:] for r in image_rotary_emb)
+        else:
+            image_only_rotary_emb = image_rotary_emb
 
         block_samples: Tuple[torch.Tensor, ...] = ()
         current_hidden_states = hidden_states
@@ -326,7 +347,7 @@ class ChromaControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 current_hidden_states = block(
                     hidden_states=current_hidden_states,
                     temb=temb,
-                    image_rotary_emb=image_rotary_emb,
+                    image_rotary_emb=image_only_rotary_emb,
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
