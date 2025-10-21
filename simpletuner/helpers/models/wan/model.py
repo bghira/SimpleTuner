@@ -228,8 +228,6 @@ class Wan(VideoModelFoundation):
         "i2v-14b-2.2-high": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "i2v-14b-2.2-low": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
         "flf2v-14b-2.1": "Wan-AI/Wan2.1-FLF2V-14B-720P-diffusers",
-        "flf2v-14b-2.2-high": "Wan-AI/Wan2.1-FLF2V-14B-720P-diffusers",
-        "flf2v-14b-2.2-low": "Wan-AI/Wan2.1-FLF2V-14B-720P-diffusers",
         "vace-1.3b-2.1": "Wan-AI/Wan2.1-VACE-1.3B-diffusers",
         "vace-14b-2.1": "Wan-AI/Wan2.1-VACE-14B-diffusers",
         "ti2v-5b-2.2": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
