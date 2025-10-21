@@ -1,6 +1,6 @@
 {
     "base_model_precision": "int8-quanto",
-    "checkpointing_steps": 50,
+    "checkpoint_step_interval": 50,
     "data_backend_config": "config/examples/multidatabackend-small-dreambooth-512px.json",
     "disable_bucket_pruning": true,
     "flow_schedule_auto_shift": true,

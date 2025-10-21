@@ -331,6 +331,21 @@ class Trainer:
             report_to_value = "none"
             setattr(self.config, "report_to", report_to_value)
 
+        checkpoint_step_interval_value = getattr(self.config, "checkpoint_step_interval", None)
+        if checkpoint_step_interval_value in (None, "", "None", 0):
+            legacy_checkpoint_steps = getattr(self.config, "checkpointing_steps", None)
+            if legacy_checkpoint_steps not in (None, "", "None", 0):
+                setattr(self.config, "checkpoint_step_interval", legacy_checkpoint_steps)
+                checkpoint_step_interval_value = legacy_checkpoint_steps
+        else:
+            legacy_checkpoint_steps = getattr(self.config, "checkpointing_steps", None)
+            if legacy_checkpoint_steps in (None, "", "None", 0):
+                setattr(self.config, "checkpointing_steps", checkpoint_step_interval_value)
+
+        checkpoint_epoch_interval_value = getattr(self.config, "checkpoint_epoch_interval", None)
+        if checkpoint_epoch_interval_value in ("", "None", 0):
+            setattr(self.config, "checkpoint_epoch_interval", None)
+
         if isinstance(report_to_value, str):
             normalized_report = report_to_value.strip().lower()
             report_to = None if normalized_report == "none" else report_to_value.strip()
@@ -2376,6 +2391,85 @@ class Trainer:
             logger.debug("Setting optimiser into eval() mode.")
             self.optimizer.eval()
 
+    def _checkpoint_step_interval(self) -> int | None:
+        raw_value = getattr(self.config, "checkpoint_step_interval", None)
+        if raw_value in (None, "", "None", 0):
+            raw_value = getattr(self.config, "checkpointing_steps", None)
+        try:
+            interval = int(raw_value)
+        except (TypeError, ValueError):
+            return None
+        return interval if interval > 0 else None
+
+    def _checkpoint_epoch_interval(self) -> int | None:
+        raw_value = getattr(self.config, "checkpoint_epoch_interval", None)
+        if raw_value in (None, "", "None"):
+            return None
+        try:
+            interval = int(raw_value)
+        except (TypeError, ValueError):
+            return None
+        return interval if interval > 0 else None
+
+    def _should_checkpoint_epoch(self, epoch: int) -> bool:
+        interval = self._checkpoint_epoch_interval()
+        if interval is None or epoch is None:
+            return False
+        return epoch > 0 and epoch % interval == 0
+
+    def _run_standard_checkpoint(self, webhook_message: str | None, parent_loss, epoch: int, *, upload_to_hub: bool = False):
+        if webhook_message:
+            self._send_webhook_msg(
+                message=f"Checkpoint: `{webhook_message}`",
+                message_level="info",
+            )
+        # Also send structured progress update at checkpoint time
+        current_state = self.state.copy()
+        current_state.pop("args", None)
+        capped_step = min(
+            current_state.get("global_step", 0),
+            current_state.get("total_num_steps", float("inf")),
+        )
+        event = training_status_event(
+            status="running",
+            job_id=self.job_id,
+            progress={
+                "current": capped_step,
+                "total": current_state.get("total_num_steps"),
+                "metrics": {
+                    "loss": self.train_loss,
+                    "parent_loss": parent_loss,
+                    "learning_rate": float(self.lr),
+                    "epoch": epoch,
+                },
+            },
+            extra={
+                "final_epoch": self.config.num_train_epochs,
+                **current_state,
+            },
+        )
+        self._emit_event(event)
+        if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
+            self.checkpoint_state_cleanup(
+                self.config.output_dir,
+                self.config.checkpoints_total_limit,
+            )
+
+        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+            self.checkpoint_state_save(self.config.output_dir)
+
+        if upload_to_hub and self.hub_manager is not None:
+            if self.accelerator.is_main_process:
+                try:
+                    self.hub_manager.upload_latest_checkpoint(
+                        validation_images=(
+                            getattr(self.validation, "validation_images") if self.validation is not None else None
+                        ),
+                        webhook_handler=self.webhook_handler,
+                    )
+                except Exception as e:
+                    logger.error(f"Error uploading to hub: {e}, continuing training.")
+
     def _send_webhook_msg(
         self, message: str, message_level: str = "info", store_response: bool = False, emit_event: bool = True
     ):
@@ -2804,6 +2898,9 @@ class Trainer:
                     text_encoder.train()
                     training_models.append(text_encoder)
 
+            epoch_checkpoint_pending = False
+            last_step_saved_checkpoint = False
+
             if current_epoch_step is not None:
                 # We are resetting to the next epoch, if it is not none.
                 current_epoch_step = 0
@@ -2842,6 +2939,7 @@ class Trainer:
                 iterator_fn = self.bf.next_response
 
             while True:
+                checkpoint_saved_this_step = False
                 self._exit_on_signal()
                 step += 1
                 prepared_batch = self.prepare_batch(iterator_fn(step, *iterator_args))
@@ -2856,6 +2954,12 @@ class Trainer:
 
                 # If we receive a False from the enumerator, we know we reached the next epoch.
                 if prepared_batch is False:
+                    if (
+                        self._should_checkpoint_epoch(epoch)
+                        and not last_step_saved_checkpoint
+                        and self.state["global_step"] > self.state["global_resume_step"]
+                    ):
+                        epoch_checkpoint_pending = True
                     logger.debug(f"Reached the end of epoch {epoch}")
                     break
 
@@ -3107,47 +3211,20 @@ class Trainer:
                         )
                         self._emit_event(event)
 
-                    if self.config.checkpointing_steps and self.state["global_step"] % self.config.checkpointing_steps == 0:
-                        self._send_webhook_msg(
-                            message=f"Checkpoint: `{webhook_pending_msg}`",
-                            message_level="info",
+                    checkpoint_step_interval = self._checkpoint_step_interval()
+                    upload_to_hub = (
+                        self.hub_manager is not None
+                        and step % self.config.gradient_accumulation_steps == 0
+                        and self.state["global_step"] > self.state["global_resume_step"]
+                    )
+                    if checkpoint_step_interval and self.state["global_step"] % checkpoint_step_interval == 0:
+                        self._run_standard_checkpoint(
+                            webhook_message=webhook_pending_msg,
+                            parent_loss=parent_loss,
+                            epoch=epoch,
+                            upload_to_hub=upload_to_hub,
                         )
-                        # Also send structured progress update at checkpoint time
-                        current_state = self.state.copy()
-                        current_state.pop("args", None)
-                        # Cap global_step to prevent exceeding total when resuming completed runs
-                        capped_step = min(
-                            current_state.get("global_step", 0),
-                            current_state.get("total_num_steps", float("inf")),
-                        )
-                        event = training_status_event(
-                            status="running",
-                            job_id=self.job_id,
-                            progress={
-                                "current": capped_step,
-                                "total": current_state.get("total_num_steps"),
-                                "metrics": {
-                                    "loss": self.train_loss,
-                                    "parent_loss": parent_loss,
-                                    "learning_rate": float(self.lr),
-                                    "epoch": epoch,
-                                },
-                            },
-                            extra={
-                                "final_epoch": self.config.num_train_epochs,
-                                **current_state,
-                            },
-                        )
-                        self._emit_event(event)
-                        if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
-                            # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                            self.checkpoint_state_cleanup(
-                                self.config.output_dir,
-                                self.config.checkpoints_total_limit,
-                            )
-
-                        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
-                            self.checkpoint_state_save(self.config.output_dir)
+                        checkpoint_saved_this_step = True
                     elif (
                         self.config.checkpointing_rolling_steps
                         and self.state["global_step"] % self.config.checkpointing_rolling_steps == 0
@@ -3227,6 +3304,7 @@ class Trainer:
                     # Reset some values for the next go.
                     training_luminance_values = []
                     self.train_loss = 0.0
+                    last_step_saved_checkpoint = checkpoint_saved_this_step
 
                 logs = {
                     "step_loss": loss.detach().item(),
@@ -3255,22 +3333,6 @@ class Trainer:
                         self.disable_sageattention_inference()
                         self.enable_gradient_checkpointing()
                         self.mark_optimizer_train()
-                if (
-                    self.hub_manager is not None
-                    and step % self.config.gradient_accumulation_steps == 0
-                    and self.state["global_step"] % self.config.checkpointing_steps == 0
-                    and self.state["global_step"] > self.state["global_resume_step"]
-                ):
-                    if self.accelerator.is_main_process:
-                        try:
-                            self.hub_manager.upload_latest_checkpoint(
-                                validation_images=(
-                                    getattr(self.validation, "validation_images") if self.validation is not None else None
-                                ),
-                                webhook_handler=self.webhook_handler,
-                            )
-                        except Exception as e:
-                            logger.error(f"Error uploading to hub: {e}, continuing training.")
                 self.accelerator.wait_for_everyone()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
@@ -3282,6 +3344,18 @@ class Trainer:
                     )
                     # Note: training_complete event is emitted after final validation and model save
                     break
+            if epoch_checkpoint_pending:
+                epoch_message = f"Epoch {epoch} completed at step {self.state['global_step']}"
+                epoch_upload_to_hub = self.hub_manager is not None and (
+                    self.state["global_step"] > self.state["global_resume_step"]
+                )
+                self._run_standard_checkpoint(
+                    webhook_message=epoch_message,
+                    parent_loss=parent_loss,
+                    epoch=epoch,
+                    upload_to_hub=epoch_upload_to_hub,
+                )
+
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
             ):

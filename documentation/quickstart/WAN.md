@@ -178,7 +178,7 @@ Your config at the end will look like mine:
   "lycoris_config": "config/wan/lycoris_config.json",
   "max_train_steps": 400000,
   "num_train_epochs": 0,
-  "checkpointing_steps": 1000,
+  "checkpoint_step_interval": 1000,
   "checkpoints_total_limit": 5,
   "hub_model_id": "wan-disney",
   "push_to_hub": "true",

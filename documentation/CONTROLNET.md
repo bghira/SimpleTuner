@@ -128,7 +128,7 @@ Your configuration will look something like this in the end:
 {
     "aspect_bucket_rounding": 2,
     "caption_dropout_probability": 0.1,
-    "checkpointing_steps": 100,
+    "checkpoint_step_interval": 100,
     "checkpoints_total_limit": 5,
     "controlnet": true,
     "data_backend_config": "config/controlnet-sdxl/multidatabackend.json",

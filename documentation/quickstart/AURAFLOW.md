@@ -157,7 +157,7 @@ Your config.json will look something like mine by the end:
     "disable_benchmark": false,
     "data_backend_config": "config/auraflow/multidatabackend.json",
     "checkpoints_total_limit": 5,
-    "checkpointing_steps": 500,
+    "checkpoint_step_interval": 500,
     "caption_dropout_probability": 0.0,
     "base_model_precision": "int8-quanto",
     "aspect_bucket_rounding": 2

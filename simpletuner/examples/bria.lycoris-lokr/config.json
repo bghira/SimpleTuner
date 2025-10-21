@@ -1,7 +1,7 @@
 {
     "base_model_precision": "int8-quanto",
     "caption_dropout_probability": 0.0,
-    "checkpointing_steps": 50,
+    "checkpoint_step_interval": 50,
     "checkpoints_total_limit": 5,
     "compress_disk_cache": false,
     "data_backend_config": "config/examples/multidatabackend-small-dreambooth-1024px.json",

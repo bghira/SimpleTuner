@@ -84,7 +84,7 @@ This goes into `config.json`
 ```json
 {
     "base_model_precision": "int8-torchao",
-    "checkpointing_steps": 50,
+    "checkpoint_step_interval": 50,
     "data_backend_config": "config/lumina2/multidatabackend.json",
     "disable_bucket_pruning": true,
     "eval_steps_interval": 50,

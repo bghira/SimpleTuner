@@ -144,7 +144,7 @@ At the end, your config should resemble mine:
   "lycoris_config": "config/ltxvideo/lycoris_config.json",
   "max_train_steps": 400000,
   "num_train_epochs": 0,
-  "checkpointing_steps": 1000,
+  "checkpoint_step_interval": 1000,
   "checkpoints_total_limit": 5,
   "hub_model_id": "ltxvideo-disney",
   "push_to_hub": "true",

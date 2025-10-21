@@ -36,11 +36,12 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Checkpointing Steps
+    # Checkpoint Step Interval
     registry._add_field(
         ConfigField(
-            name="checkpointing_steps",
-            arg_name="--checkpointing_steps",
+            name="checkpoint_step_interval",
+            arg_name="--checkpoint_step_interval",
+            aliases=["--checkpointing_steps"],
             ui_label="Checkpoint Every N Steps",
             field_type=FieldType.NUMBER,
             tab="basic",
@@ -51,6 +52,24 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Regular checkpoints let you resume training and test different training stages",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+        )
+    )
+
+    # Checkpoint Epoch Interval
+    registry._add_field(
+        ConfigField(
+            name="checkpoint_epoch_interval",
+            arg_name="--checkpoint_epoch_interval",
+            ui_label="Checkpoint Every N Epochs",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="checkpointing",
+            default_value=None,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
+            help_text="Save a checkpoint after every N completed epochs (leave blank to disable)",
+            tooltip="Combine with step interval for fine-grained and end-of-epoch checkpointing.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
         )
     )
 
@@ -69,7 +88,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Rolling checkpoint window size for continuous checkpointing",
             tooltip="When set, maintains a rolling window of recent checkpoints instead of individual files. Higher values keep more history.",
             importance=ImportanceLevel.ADVANCED,
-            order=2,
+            order=3,
         )
     )
 
@@ -87,7 +106,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Use temporary directory for checkpoint files before final save",
             tooltip="Reduces I/O overhead during checkpointing by writing to temp dir first, then moving to final location.",
             importance=ImportanceLevel.ADVANCED,
-            order=3,
+            order=4,
         )
     )
 
@@ -106,7 +125,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             help_text="Maximum number of rolling checkpoints to keep",
             tooltip="When using rolling checkpoints, limit the number of checkpoints in the rolling window.",
             importance=ImportanceLevel.ADVANCED,
-            order=4,
+            order=5,
         )
     )
 

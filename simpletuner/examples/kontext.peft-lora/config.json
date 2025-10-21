@@ -2,7 +2,7 @@
     "aspect_bucket_rounding": 2,
     "base_model_precision": "int8-quanto",
     "caption_dropout_probability": 0.1,
-    "checkpointing_steps": 50,
+    "checkpoint_step_interval": 50,
     "checkpoints_total_limit": 5,
     "conditioning_multidataset_sampling": "random",
     "data_backend_config": "config/examples/multidatabackend-controlnet-512px.json",

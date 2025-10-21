@@ -1170,7 +1170,15 @@ class SimpleTunerNCurses:
             else:
                 current_values["Training Duration"] = "Not configured"
 
-            current_values["Checkpointing Interval"] = f"{self.state.env_contents.get('checkpointing_steps', 500)} steps"
+            step_interval = self.state.env_contents.get(
+                "checkpoint_step_interval", self.state.env_contents.get("checkpointing_steps", 500)
+            )
+            epoch_interval = self.state.env_contents.get("checkpoint_epoch_interval")
+            current_values["Checkpointing Interval (Steps)"] = f"{step_interval} steps"
+            if epoch_interval:
+                current_values["Checkpointing Interval (Epochs)"] = f"every {epoch_interval} epochs"
+            else:
+                current_values["Checkpointing Interval (Epochs)"] = "Disabled"
             current_values["Checkpoints to Keep"] = str(self.state.env_contents.get("checkpoints_total_limit", 5))
 
             # Scheduler configuration
@@ -1186,7 +1194,8 @@ class SimpleTunerNCurses:
 
             menu_items = [
                 ("Training Duration", self._configure_training_duration),
-                ("Checkpointing Interval", self._configure_checkpoint_interval),
+                ("Checkpointing Interval (Steps)", self._configure_checkpoint_interval_steps),
+                ("Checkpointing Interval (Epochs)", self._configure_checkpoint_interval_epochs),
                 ("Checkpoints to Keep", self._configure_checkpoint_limit),
                 ("Training Scheduler Spacing", self._configure_training_scheduler),
                 ("Inference Scheduler Spacing", self._configure_inference_scheduler),
@@ -1244,8 +1253,8 @@ class SimpleTunerNCurses:
                 self.state.env_contents["num_train_epochs"] = 100
                 self.state.env_contents["max_train_steps"] = 0
 
-    def _configure_checkpoint_interval(self, stdscr):
-        """Configure checkpointing interval"""
+    def _configure_checkpoint_interval_steps(self, stdscr):
+        """Configure checkpointing interval in steps"""
         default_interval = 500
         if self.state.env_contents.get("max_train_steps", 0) > 0:
             if self.state.env_contents["max_train_steps"] < default_interval:
@@ -1254,9 +1263,34 @@ class SimpleTunerNCurses:
         checkpoint_interval = self.get_input(stdscr, "Set the checkpointing interval (in steps):", str(default_interval))
 
         try:
-            self.state.env_contents["checkpointing_steps"] = int(checkpoint_interval)
+            value = int(checkpoint_interval)
         except ValueError:
-            self.state.env_contents["checkpointing_steps"] = default_interval
+            value = default_interval
+
+        self.state.env_contents["checkpoint_step_interval"] = value
+        # Maintain legacy key for compatibility while migrating configs
+        self.state.env_contents["checkpointing_steps"] = value
+
+    def _configure_checkpoint_interval_epochs(self, stdscr):
+        """Configure checkpointing interval in epochs"""
+        current = self.state.env_contents.get("checkpoint_epoch_interval", "")
+        checkpoint_interval = self.get_input(
+            stdscr,
+            "Run a checkpoint after every N epochs (leave blank to disable):",
+            str(current) if current not in (None, "") else "",
+        )
+
+        if checkpoint_interval.strip() == "":
+            self.state.env_contents["checkpoint_epoch_interval"] = None
+            return
+
+        try:
+            value = int(checkpoint_interval)
+            if value < 1:
+                raise ValueError
+            self.state.env_contents["checkpoint_epoch_interval"] = value
+        except ValueError:
+            self.show_error(stdscr, "Invalid value. Keeping current setting.")
 
     def _configure_checkpoint_limit(self, stdscr):
         """Configure checkpoint limit"""
@@ -2791,11 +2825,14 @@ class SimpleTunerNCurses:
 
         while True:
             # Get current values
+            checkpoint_default = self.state.env_contents.get(
+                "checkpoint_step_interval", self.state.env_contents.get("checkpointing_steps", 500)
+            )
             current_values = {
                 "Validation Seed": self.state.env_contents.get("validation_seed", "42"),
                 "Validation Steps": self.state.env_contents.get(
                     "validation_steps",
-                    str(self.state.env_contents.get("checkpointing_steps", 500)),
+                    str(checkpoint_default),
                 ),
                 "Validation Resolution": self.state.env_contents.get("validation_resolution", "1024x1024"),
                 "Guidance Scale": self.state.env_contents.get("validation_guidance", "3.0"),
@@ -2847,7 +2884,9 @@ class SimpleTunerNCurses:
 
     def _configure_val_steps(self, stdscr):
         """Configure validation steps"""
-        default_val_steps = str(self.state.env_contents.get("checkpointing_steps", 500))
+        default_val_steps = str(
+            self.state.env_contents.get("checkpoint_step_interval", self.state.env_contents.get("checkpointing_steps", 500))
+        )
         current = self.state.env_contents.get("validation_steps", default_val_steps)
         val_steps = self.get_input(stdscr, "How many steps between validation outputs?", current)
         self.state.env_contents["validation_steps"] = val_steps

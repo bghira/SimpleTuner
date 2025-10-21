@@ -61,7 +61,8 @@ function trainingWizardComponent() {
             max_train_steps: 0,
             push_to_hub: false,  // Default to keeping files local
             push_checkpoints_to_hub: null,
-            checkpointing_steps: 100,  // Default to 100 steps
+            checkpoint_step_interval: 100,  // Default to 100 steps
+            checkpoint_epoch_interval: null,
             enable_validations: true,
             validation_steps: 100,
             validation_prompt: '',
@@ -183,7 +184,19 @@ function trainingWizardComponent() {
                 label: 'Checkpoints',
                 title: 'Training Configuration Wizard - Step 6: Checkpoints',
                 required: true,
-                validate: function() { return this.answers.checkpointing_steps > 0; }
+                validate: function() {
+                    const stepRaw = this.answers.checkpoint_step_interval;
+                    const epochRaw = this.answers.checkpoint_epoch_interval;
+
+                    const stepValue = typeof stepRaw === 'number' ? stepRaw : parseInt(stepRaw);
+                    const epochValue = typeof epochRaw === 'number' ? epochRaw : parseInt(epochRaw);
+
+                    const stepValid = Number.isFinite(stepValue) && stepValue > 0;
+                    const epochProvided = epochRaw !== null && epochRaw !== '' && typeof epochRaw !== 'undefined';
+                    const epochValid = !epochProvided || (Number.isFinite(epochValue) && epochValue > 0);
+
+                    return epochValid && (stepValid || (epochProvided && epochValid));
+                }
             },
             {
                 id: 'validations-enable',
@@ -274,7 +287,7 @@ function trainingWizardComponent() {
         },
 
         get validationAlignmentDetails() {
-            const checkpointRaw = this.answers.checkpointing_steps;
+            const checkpointRaw = this.answers.checkpoint_step_interval;
             const validationRaw = this.answers.validation_steps;
             const checkpointingSteps = typeof checkpointRaw === 'number' ? checkpointRaw : parseInt(checkpointRaw);
             const validationSteps = typeof validationRaw === 'number' ? validationRaw : parseInt(validationRaw);
@@ -400,7 +413,23 @@ function trainingWizardComponent() {
                     if (config.push_checkpoints_to_hub !== undefined) {
                         this.answers.push_checkpoints_to_hub = config.push_checkpoints_to_hub === true || config.push_checkpoints_to_hub === 'true';
                     }
-                    if (config.checkpointing_steps) this.answers.checkpointing_steps = parseInt(config.checkpointing_steps);
+                    const rawCheckpointSteps = config.checkpoint_step_interval
+                        ?? config['--checkpoint_step_interval']
+                        ?? config.checkpointing_steps
+                        ?? config['--checkpointing_steps'];
+                    if (rawCheckpointSteps !== undefined && rawCheckpointSteps !== null && rawCheckpointSteps !== '') {
+                        const parsedCheckpointSteps = parseInt(rawCheckpointSteps);
+                        if (!Number.isNaN(parsedCheckpointSteps)) {
+                            this.answers.checkpoint_step_interval = parsedCheckpointSteps;
+                        }
+                    }
+                    const rawCheckpointEpochs = config.checkpoint_epoch_interval ?? config['--checkpoint_epoch_interval'];
+                    if (rawCheckpointEpochs !== undefined && rawCheckpointEpochs !== null && rawCheckpointEpochs !== '') {
+                        const parsedCheckpointEpochs = parseInt(rawCheckpointEpochs);
+                        if (!Number.isNaN(parsedCheckpointEpochs)) {
+                            this.answers.checkpoint_epoch_interval = parsedCheckpointEpochs;
+                        }
+                    }
                     if (config.validation_steps) this.answers.validation_steps = parseInt(config.validation_steps);
                     if (config.validation_prompt) this.answers.validation_prompt = config.validation_prompt;
                     if (config.validation_resolution !== undefined && config.validation_resolution !== null) {
@@ -641,7 +670,8 @@ function trainingWizardComponent() {
                         model_family: trainerStore.activeEnvironmentConfig?.model_family,
                         model_flavour: trainerStore.activeEnvironmentConfig?.model_flavour,
                         model_type: trainerStore.activeEnvironmentConfig?.model_type,
-                        checkpointing_steps: trainerStore.activeEnvironmentConfig?.checkpointing_steps,
+                        checkpoint_step_interval: trainerStore.activeEnvironmentConfig?.checkpoint_step_interval,
+                        checkpoint_epoch_interval: trainerStore.activeEnvironmentConfig?.checkpoint_epoch_interval,
                         push_to_hub: trainerStore.activeEnvironmentConfig?.push_to_hub
                     }, null, 2)
                 );
@@ -1175,13 +1205,24 @@ function trainingWizardComponent() {
                     if (trainerStore.configValues) {
                         delete trainerStore.configValues[key];
                         delete trainerStore.configValues[fieldName];
+                        if (key === 'checkpoint_step_interval') {
+                            delete trainerStore.configValues['checkpointing_steps'];
+                            delete trainerStore.configValues['--checkpointing_steps'];
+                        }
                     }
                     if (trainerStore.formValueStore) {
                         delete trainerStore.formValueStore[fieldName];
+                        if (key === 'checkpoint_step_interval') {
+                            delete trainerStore.formValueStore['--checkpointing_steps'];
+                        }
                     }
                     if (trainerStore.activeEnvironmentConfig) {
                         delete trainerStore.activeEnvironmentConfig[key];
                         delete trainerStore.activeEnvironmentConfig[fieldName];
+                        if (key === 'checkpoint_step_interval') {
+                            delete trainerStore.activeEnvironmentConfig['checkpointing_steps'];
+                            delete trainerStore.activeEnvironmentConfig['--checkpointing_steps'];
+                        }
                     }
                     return;
                 }
@@ -1196,6 +1237,10 @@ function trainingWizardComponent() {
                     if (trainerStore.configValues) {
                         trainerStore.configValues[key] = storeValue;
                         trainerStore.configValues[fieldName] = storeValue;
+                        if (key === 'checkpoint_step_interval') {
+                            trainerStore.configValues['checkpointing_steps'] = storeValue;
+                            trainerStore.configValues['--checkpointing_steps'] = storeValue;
+                        }
                     }
 
                     // 2. Update formValueStore (used by ensureCompleteFormData)
@@ -1204,12 +1249,22 @@ function trainingWizardComponent() {
                             value: value,
                             kind: typeof value === 'boolean' ? 'checkbox' : 'text'
                         };
+                        if (key === 'checkpoint_step_interval') {
+                            trainerStore.formValueStore['--checkpointing_steps'] = {
+                                value: value,
+                                kind: 'text'
+                            };
+                        }
                     }
 
                     // 3. Update activeEnvironmentConfig (this is what appendConfigValuesToFormData uses!)
                     if (trainerStore.activeEnvironmentConfig) {
                         trainerStore.activeEnvironmentConfig[key] = storeValue;
                         trainerStore.activeEnvironmentConfig[fieldName] = storeValue;
+                        if (key === 'checkpoint_step_interval') {
+                            trainerStore.activeEnvironmentConfig['checkpointing_steps'] = storeValue;
+                            trainerStore.activeEnvironmentConfig['--checkpointing_steps'] = storeValue;
+                        }
                     }
 
                     console.log(`[TRAINING WIZARD] Updated ${fieldName}`, storeValue);
@@ -1649,8 +1704,9 @@ function trainingWizardComponent() {
                 'model_type': 'basic',
                 'push_to_hub': 'publishing',
                 'push_checkpoints_to_hub': 'publishing',
-                'checkpointing_steps': 'checkpoints',
-                'validation_steps': 'validations',
+                'checkpoint_step_interval': 'checkpoints',
+                'checkpoint_epoch_interval': 'checkpoints',
+                'validation_step_interval': 'validations',
                 'validation_prompt': 'validations',
                 'validation_resolution': 'validations',
                 'validation_num_inference_steps': 'validations',

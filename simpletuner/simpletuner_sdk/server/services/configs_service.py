@@ -1282,8 +1282,9 @@ class ConfigsService:
             migrated["--webhook_config"] = legacy_webhook
 
         legacy_checkpoint_steps = ConfigsService._pop_legacy_value(migrated, "save_every_n_steps")
-        if legacy_checkpoint_steps is not None and "--checkpointing_steps" not in migrated:
-            migrated["--checkpointing_steps"] = legacy_checkpoint_steps
+        if legacy_checkpoint_steps is not None:
+            if "--checkpoint_step_interval" not in migrated and "--checkpointing_steps" not in migrated:
+                migrated["--checkpoint_step_interval"] = legacy_checkpoint_steps
 
         legacy_max_caption = ConfigsService._pop_legacy_value(migrated, "maximum_caption_length")
         if legacy_max_caption is not None and "--tokenizer_max_length" not in migrated:
