@@ -666,6 +666,8 @@ class Validation:
         self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.deepspeed = is_deepspeed
         self.fsdp = is_fsdp
+        self._epoch_validations_completed: set[int] = set()
+        self._pending_epoch_validation: int | None = None
         if is_deepspeed:
             if args.use_ema:
                 if args.ema_validation != "none":
@@ -985,6 +987,8 @@ class Validation:
         """Updates internal state with the latest from StateTracker."""
         self.global_step = StateTracker.get_global_step()
         self.global_resume_step = StateTracker.get_global_resume_step() or 1
+        self.current_epoch = StateTracker.get_epoch()
+        self.current_epoch_step = StateTracker.get_epoch_step()
 
     def would_validate(
         self,
@@ -1014,6 +1018,12 @@ class Validation:
             step, self.validation_prompt_metadata, validation_type
         )
         is_base_model_benchmark = step == 0 and validation_type == "base_model"
+        epoch_validation_pending = (
+            validation_type == "intermediary"
+            and current_step_aligns_with_interval
+            and self._pending_epoch_validation is not None
+            and self._pending_epoch_validation == self.current_epoch
+        )
         current_validation_will_execute = has_validation_prompts and (
             current_step_aligns_with_interval or is_base_model_benchmark
         )
@@ -1062,18 +1072,63 @@ class Validation:
                 )
             self.clean_pipeline()
 
+        if epoch_validation_pending and current_validation_will_execute and validation_type == "intermediary":
+            self._epoch_validations_completed.add(self._pending_epoch_validation)
+            self._pending_epoch_validation = None
+
         return self
 
     def should_perform_intermediary_validation(self, step, validation_prompts, validation_type):
         if validation_prompts is None or (isinstance(validation_prompts, list) and len(validation_prompts) == 0):
             return False
-        should_do_intermediary_validation = (
+        step_interval_value = getattr(self.config, "validation_step_interval", None)
+        if step_interval_value in ("", "None"):
+            step_interval_value = None
+        if step_interval_value is None:
+            step_interval_value = getattr(self.config, "validation_steps", None)
+        try:
+            step_interval = int(step_interval_value) if step_interval_value is not None else None
+        except (TypeError, ValueError):
+            step_interval = None
+
+        epoch_interval_value = getattr(self.config, "validation_epoch_interval", None)
+        if epoch_interval_value in ("", "None"):
+            epoch_interval_value = None
+        try:
+            epoch_interval = int(epoch_interval_value) if epoch_interval_value is not None else None
+        except (TypeError, ValueError):
+            epoch_interval = None
+
+        should_do_step_validation = False
+        if (
             validation_prompts
-            and self.global_step % self.config.validation_steps == 0
-            and step % self.config.gradient_accumulation_steps == 0
+            and step_interval is not None
+            and step_interval > 0
             and self.global_step > self.global_resume_step
+        ):
+            should_do_step_validation = self.global_step % step_interval == 0 and (
+                step % self.config.gradient_accumulation_steps == 0
+            )
+
+        should_do_epoch_validation = False
+        if (
+            validation_prompts
+            and epoch_interval is not None
+            and epoch_interval > 0
+            and self.global_step > self.global_resume_step
+            and self.current_epoch is not None
+            and self.current_epoch > 0
+        ):
+            if self._pending_epoch_validation is not None and self._pending_epoch_validation == self.current_epoch:
+                should_do_epoch_validation = True
+            elif self.current_epoch % epoch_interval == 0 and (self.current_epoch not in self._epoch_validations_completed):
+                self._pending_epoch_validation = self.current_epoch
+                should_do_epoch_validation = True
+
+        should_validate = (should_do_step_validation or should_do_epoch_validation) and (
+            self.accelerator.is_main_process or self.deepspeed
         )
-        return should_do_intermediary_validation and (self.accelerator.is_main_process or self.deepseed)
+        return should_validate
 
     def setup_scheduler(self):
         if self.distiller is not None:
