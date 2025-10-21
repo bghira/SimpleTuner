@@ -239,8 +239,8 @@ class Wan(VideoModelFoundation):
     WAN_STAGE_OVERRIDES: Dict[str, Dict[str, object]] = {
         "i2v-14b-2.2-high": {
             "trained_stage": "high",
-            "stage_subfolder": "high_noise_model",
-            "other_stage_subfolder": "low_noise_model",
+            "stage_subfolder": "transformer_2",
+            "other_stage_subfolder": "transformer",
             "flow_shift": 5.0,
             "sample_steps": 40,
             "boundary_ratio": 0.90,
@@ -248,8 +248,8 @@ class Wan(VideoModelFoundation):
         },
         "i2v-14b-2.2-low": {
             "trained_stage": "low",
-            "stage_subfolder": "low_noise_model",
-            "other_stage_subfolder": "high_noise_model",
+            "stage_subfolder": "transformer",
+            "other_stage_subfolder": "transformer_2",
             "flow_shift": 5.0,
             "sample_steps": 40,
             "boundary_ratio": 0.90,
@@ -257,8 +257,8 @@ class Wan(VideoModelFoundation):
         },
         "flf2v-14b-2.2-high": {
             "trained_stage": "high",
-            "stage_subfolder": "high_noise_model",
-            "other_stage_subfolder": "low_noise_model",
+            "stage_subfolder": "transformer_2",
+            "other_stage_subfolder": "transformer",
             "flow_shift": 5.0,
             "sample_steps": 40,
             "boundary_ratio": 0.90,
@@ -266,8 +266,8 @@ class Wan(VideoModelFoundation):
         },
         "flf2v-14b-2.2-low": {
             "trained_stage": "low",
-            "stage_subfolder": "low_noise_model",
-            "other_stage_subfolder": "high_noise_model",
+            "stage_subfolder": "transformer",
+            "other_stage_subfolder": "transformer_2",
             "flow_shift": 5.0,
             "sample_steps": 40,
             "boundary_ratio": 0.90,
