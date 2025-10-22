@@ -2574,7 +2574,7 @@ class FactoryRegistry:
 
         if (
             self.model.requires_conditioning_image_embeds()
-            and init_backend.get("dataset_type") in ["image", "video"]
+            and init_backend.get("dataset_type") in ["image", "video", "conditioning"]
             and conditioning_type not in ["mask"]
         ):
             self._configure_conditioning_image_embed_cache(
