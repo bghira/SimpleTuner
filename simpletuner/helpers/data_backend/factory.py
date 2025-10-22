@@ -6,6 +6,7 @@ import sys
 import time
 import tracemalloc
 from contextlib import nullcontext
+from copy import deepcopy
 from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
@@ -1154,20 +1155,54 @@ class FactoryRegistry:
                     f"linked conditioning datasets: {len(linked_conditioning)}; "
                     f"instance_data_dir={backend.get('instance_data_dir')}"
                 )
+                if conditioning_spec_count == 0 and len(linked_conditioning) == 0:
+                    virtual_id = f"{backend['id']}_conditioning_i2v"
+                    if any(cfg.get("id") == virtual_id for cfg in data_backend_config):
+                        info_log(
+                            f"(id={backend['id']}) I2V conditioning dataset {virtual_id} already present; skipping regeneration."
+                        )
+                    else:
+                        info_log(
+                            f"(id={backend['id']}) No explicit conditioning datasets provided; creating virtual I2V conditioning dataset {virtual_id}."
+                        )
+                        virtual_backend = deepcopy(backend)
+                        virtual_backend["id"] = virtual_id
+                        virtual_backend["dataset_type"] = "conditioning"
+                        virtual_backend.pop("conditioning", None)
+                        virtual_backend["conditioning_data"] = []
+                        virtual_backend["conditioning_type"] = "reference_strict"
+                        virtual_backend["source_dataset_id"] = backend["id"]
+                        virtual_backend["auto_generated"] = False
+                        # ensure video stanza exists for downstream size alignment
+                        if isinstance(virtual_backend.get("video"), dict):
+                            virtual_backend["video"] = dict(virtual_backend["video"])
+                            virtual_backend["video"].setdefault("is_i2v", True)
+                        if backend.get("cache_dir_vae"):
+                            virtual_backend["cache_dir_vae"] = os.path.join(
+                                backend["cache_dir_vae"], virtual_id
+                            )
+                        else:
+                            virtual_backend["cache_dir_vae"] = os.path.join(
+                                self.args.cache_dir, "vae", virtual_id
+                            )
+                        backend.setdefault("conditioning_data", []).append(virtual_id)
+                        conditioning_datasets.append(virtual_backend)
 
             if backend.get("conditioning", None) is not None:
                 info_log(f"Found conditioning configuration for backend {backend['id']}. Generating conditioning dataset.")
-                modified_backend, conditioning_datasets = DatasetDuplicator.generate_conditioning_datasets(
+                modified_backend, generated_datasets = DatasetDuplicator.generate_conditioning_datasets(
                     global_config=self.args, source_backend_config=backend
                 )
                 backend = data_backend_config[backend_idx] = modified_backend
                 logger.debug(f"Current backend list: {data_backend_config}")
 
-                for conditioning_dataset in conditioning_datasets:
+                for conditioning_dataset in generated_datasets:
                     info_log(
                         f"Generated conditioning dataset {conditioning_dataset['id']} from backend {backend['id']}: {conditioning_dataset}"
                     )
-                if is_i2v_dataset and not conditioning_datasets:
+                if generated_datasets:
+                    conditioning_datasets.extend(generated_datasets)
+                if is_i2v_dataset and not generated_datasets:
                     warning_log(
                         f"(id={backend['id']}) I2V dataset provided a conditioning block but no conditioning datasets were generated."
                     )
@@ -1177,7 +1212,7 @@ class FactoryRegistry:
                     "ensure virtual conditioning dataset creation handles this case."
                 )
 
-        if conditioning_datasets is not None:
+        if conditioning_datasets:
             data_backend_config.extend(conditioning_datasets)
 
         return data_backend_config
