@@ -776,6 +776,19 @@ class VAECache(WebhookMixin):
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
 
+                if (
+                    self.dataset_type == "conditioning"
+                    and hasattr(self.model, "_is_i2v_like_flavour")
+                    and callable(self.model._is_i2v_like_flavour)
+                    and self.model._is_i2v_like_flavour()
+                ):
+                    if isinstance(image, np.ndarray) and image.ndim >= 4:
+                        image = image[0]
+                    elif torch.is_tensor(image) and image.ndim >= 4:
+                        image = image[0]
+                    elif isinstance(image, list) and len(image) > 0:
+                        image = image[0]
+
                 pixel_values = self.transform_sample(image).to(self.accelerator.device, dtype=self.vae.dtype)
                 output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)
                 output_values.append(output_value)

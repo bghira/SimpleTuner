@@ -2434,7 +2434,8 @@ class FactoryRegistry:
             if backend_conditionings:
                 has_conditioning_dataset = True
                 StateTracker.set_conditioning_datasets(backend["id"], backend_conditionings)
-                info_log(f"Successfully configured conditioning image dataset for {backend['id']}")
+                linked_ids = [cfg.get("id") for cfg in backend_conditionings if isinstance(cfg, dict)]
+                info_log("(id={backend['id']}) Connected conditioning datasets: {linked_ids if linked_ids else '<unknown>'}")
 
         return has_conditioning_dataset
 

@@ -136,7 +136,15 @@ def fetch_conditioning_pixel_values(fp, training_fp, conditioning_data_backend_i
         data_backend_id=conditioning_data_backend_id,
     )
 
-    # Prepare the conditioning sample to match the training sample
+    cond_image = conditioning_sample.image
+    if isinstance(cond_image, np.ndarray) and cond_image.ndim >= 4:
+        conditioning_sample.image = cond_image[0]
+    elif isinstance(cond_image, list) and len(cond_image) > 0:
+        conditioning_sample.image = cond_image[0]
+
+    if conditioning_sample.model is not None:
+        conditioning_sample.transforms = conditioning_sample.model.get_transforms(dataset_type="image")
+
     prepared_like = conditioning_sample.prepare_like(training_sample, return_tensor=True).image
 
     return prepared_like
