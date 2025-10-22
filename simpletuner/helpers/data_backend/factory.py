@@ -1184,7 +1184,9 @@ class FactoryRegistry:
                         backend.setdefault("conditioning_data", []).append(virtual_id)
                         conditioning_datasets.append(virtual_backend)
 
-            if backend.get("conditioning", None) is not None:
+            conditioning_block = backend.get("conditioning", None)
+            has_explicit_conditioning = conditioning_block not in (None, [], {})
+            if has_explicit_conditioning:
                 info_log(f"Found conditioning configuration for backend {backend['id']}. Generating conditioning dataset.")
                 modified_backend, generated_datasets = DatasetDuplicator.generate_conditioning_datasets(
                     global_config=self.args, source_backend_config=backend
