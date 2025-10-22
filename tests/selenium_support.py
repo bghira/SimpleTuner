@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import atexit
 import multiprocessing
-import sys
 import os
+import sys
 import tempfile
 import time
 from contextlib import contextmanager

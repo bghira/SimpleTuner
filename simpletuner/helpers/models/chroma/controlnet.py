@@ -7,9 +7,9 @@ from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.attention_processor import AttentionProcessor
 from diffusers.models.controlnets.controlnet import ControlNetConditioningEmbedding, zero_module
-from diffusers.models.transformers.transformer_flux import FluxPosEmbed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
+from diffusers.models.transformers.transformer_flux import FluxPosEmbed
 from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, logging, scale_lora_layers, unscale_lora_layers
 
 from .transformer import (
