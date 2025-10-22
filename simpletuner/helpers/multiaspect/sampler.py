@@ -2,8 +2,10 @@ import logging
 import os
 import random
 
+import numpy as np
 import torch
 from accelerate.logging import get_logger
+from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
@@ -542,6 +544,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             conditioning_type=self.conditioning_type,
             model=self.model,
         )
+
+        sample_image = conditioning_sample.image
+        if isinstance(sample_image, np.ndarray) and sample_image.ndim >= 4:
+            conditioning_sample.image = sample_image[0]
+        elif isinstance(sample_image, list) and len(sample_image) > 0:
+            conditioning_sample.image = sample_image[0]
+        if isinstance(conditioning_sample.image, np.ndarray) and conditioning_sample.image.ndim == 3:
+            conditioning_sample.image = Image.fromarray(conditioning_sample.image.astype(np.uint8))
         # Use the magic prompt handler to retrieve the captions.
         prompt_kwargs = {
             "caption_strategy": self.caption_strategy,

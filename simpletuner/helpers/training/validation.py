@@ -221,8 +221,9 @@ def retrieve_validation_images():
             args.control,
         ]
     )
+    dataset_type = StateTracker.get_model().conditioning_validation_dataset_type() if requires_cond_input else "image"
     data_backends = StateTracker.get_data_backends(
-        _type=(StateTracker.get_model().conditioning_validation_dataset_type() if requires_cond_input else "image")
+        _type=dataset_type, _types=None if requires_cond_input else ["image", "video"]
     )
     validation_data_backend_id = args.eval_dataset_id
     validation_set = []

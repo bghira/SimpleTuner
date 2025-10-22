@@ -786,8 +786,12 @@ class VAECache(WebhookMixin):
                         image = image[0]
                     elif torch.is_tensor(image) and image.ndim >= 4:
                         image = image[0]
+                    if torch.is_tensor(image) and image.ndim == 3:
+                        image = image.cpu().numpy()
                     elif isinstance(image, list) and len(image) > 0:
                         image = image[0]
+                    if isinstance(image, np.ndarray) and image.ndim == 3:
+                        image = Image.fromarray(image.astype(np.uint8))
 
                 pixel_values = self.transform_sample(image).to(self.accelerator.device, dtype=self.vae.dtype)
                 output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)
