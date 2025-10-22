@@ -12,13 +12,16 @@ import traceback
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from fastapi.templating import Jinja2Templates
+import simpletuner.helpers.models  # noqa: F401  # Ensure model registry population
+from simpletuner.helpers.models.registry import ModelRegistry
 
-from simpletuner.simpletuner_sdk.server.services.field_registry.types import FieldType
-from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
-from simpletuner.simpletuner_sdk.server.services.tab_service import TabService
+if TYPE_CHECKING:
+    from fastapi.templating import Jinja2Templates
+
+    from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
+    from simpletuner.simpletuner_sdk.server.services.tab_service import TabService
 
 
 @dataclass
@@ -31,10 +34,108 @@ class TabEntry:
     id: str
 
 
+def _build_model_class_map() -> Dict[str, List[str]]:
+    """Construct capability-aware model family listings used by legacy consumers."""
+
+    families: List[tuple[str, str]] = []
+    lora_supported = set()
+    control_supported = set()
+
+    for family, model_cls in ModelRegistry.model_families().items():
+        if not getattr(model_cls, "ENABLED_IN_WIZARD", True):
+            continue
+
+        display_name = getattr(model_cls, "NAME", family)
+        families.append((family, display_name.lower()))
+
+        try:
+            if hasattr(model_cls, "supports_lora") and model_cls.supports_lora():
+                lora_supported.add(family)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(model_cls, "supports_controlnet") and model_cls.supports_controlnet():
+                control_supported.add(family)
+        except Exception:
+            pass
+
+    families.sort(key=lambda item: item[1])
+    ordered = [family for family, _ in families]
+
+    return {
+        "full": ordered,
+        "lora": [family for family in ordered if family in lora_supported],
+        "controlnet": [family for family in ordered if family in control_supported],
+    }
+
+
+model_classes = _build_model_class_map()
+
+default_models = {
+    "flux": "black-forest-labs/FLUX.1-dev",
+    "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
+    "pixart_sigma": "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS",
+    "kolors": "kwai-kolors/kolors-diffusers",
+    "terminus": "ptx0/terminus-xl-velocity-v2",
+    "sd3": "stabilityai/stable-diffusion-3.5-large",
+    "sd2x": "stabilityai/stable-diffusion-2-1-base",
+    "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "sana": "terminusresearch/sana-1.6b-1024px",
+    "ltxvideo": "Lightricks/LTX-Video",
+    "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "hidream": "HiDream-ai/HiDream-I1-Full",
+    "auraflow": "terminusresearch/auraflow-v0.3",
+    "deepfloyd": "DeepFloyd/DeepFloyd-IF-I-XL-v1.0",
+    "omnigen": "Shitao/OmniGen-v1-diffusers",
+}
+
+default_cfg = {
+    "flux": 3.0,
+    "sdxl": 4.2,
+    "pixart_sigma": 3.4,
+    "kolors": 5.0,
+    "terminus": 8.0,
+    "sd3": 5.0,
+    "ltxvideo": 4.0,
+    "hidream": 2.5,
+    "wan": 4.0,
+    "sana": 3.8,
+    "omnigen": 3.2,
+    "deepfloyd": 6.0,
+    "sd2x": 7.0,
+    "sd1x": 6.0,
+}
+
+model_labels = {
+    "flux": "FLUX",
+    "pixart_sigma": "PixArt Sigma",
+    "kolors": "Kwai Kolors",
+    "terminus": "Terminus",
+    "sdxl": "Stable Diffusion XL",
+    "sd3": "Stable Diffusion 3",
+    "sd2x": "Stable Diffusion 2",
+    "sd1x": "Stable Diffusion",
+    "ltxvideo": "LTX Video",
+    "wan": "WanX",
+    "hidream": "HiDream I1",
+    "sana": "Sana",
+}
+
+lora_ranks = [1, 16, 64, 128, 256]
+learning_rates_by_rank = {
+    1: "3e-4",
+    16: "1e-4",
+    64: "8e-5",
+    128: "6e-5",
+    256: "5.09e-5",
+}
+
+
 class ConfigState:
     """Holds configuration values and interacts with the FieldRegistry."""
 
-    def __init__(self, field_service: FieldService):
+    def __init__(self, field_service: "FieldService"):
         self.field_service = field_service
         self.registry = field_service.field_registry
         self.field_defs = self._load_field_definitions()
@@ -46,7 +147,12 @@ class ConfigState:
 
     def _load_field_definitions(self) -> Dict[str, Any]:
         definitions: Dict[str, Any] = {}
-        for field in self.registry.get_all_fields():
+        try:
+            fields_iterable = self.registry.get_all_fields()
+        except AttributeError:
+            fields_iterable = getattr(self.registry, "_fields", {}).values()
+
+        for field in fields_iterable or []:
             if not field:
                 continue
             definitions[field.name] = field
@@ -242,6 +348,11 @@ class SimpleTunerNCurses:
     """Interactive curses interface powered by FieldRegistry metadata."""
 
     def __init__(self):
+        from fastapi.templating import Jinja2Templates
+
+        from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
+        from simpletuner.simpletuner_sdk.server.services.tab_service import TabService
+
         templates_dir = Path(__file__).resolve().parent / "templates"
         self.templates = Jinja2Templates(directory=str(templates_dir))
 
@@ -615,7 +726,7 @@ class SimpleTunerNCurses:
         nav = MenuNavigator(stdscr)
 
         while True:
-            fields, sections, tab_values = self._get_tab_structure(tab_name)
+            fields, sections, _ = self._get_tab_structure(tab_name)
             section_fields = {
                 section["id"]: [field for field in fields if field.get("section_id") == section["id"]]
                 for section in sections
@@ -652,7 +763,7 @@ class SimpleTunerNCurses:
         section_title = section_id.replace("_", " ").title()
 
         while True:
-            fields, sections, tab_values = self._get_tab_structure(tab_name)
+            fields, sections, _ = self._get_tab_structure(tab_name)
             section_fields = [field for field in fields if field.get("section_id") == section_id]
 
             if not section_fields:
@@ -685,7 +796,7 @@ class SimpleTunerNCurses:
     def edit_field(self, stdscr, tab_name: str, field_name: str) -> None:
         """Prompt the user to edit a specific field."""
 
-        fields, _sections, tab_values = self._get_tab_structure(tab_name)
+        fields, _sections, _ = self._get_tab_structure(tab_name)
         field_dict = next((field for field in fields if field["name"] == field_name), None)
         if not field_dict:
             self.show_error(stdscr, f"Field '{field_name}' is not available in the current context.")
