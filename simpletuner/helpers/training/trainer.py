@@ -3934,6 +3934,8 @@ def run_trainer_job(config):
         raise e
 
     def _abort_monitor():
+        import time
+
         if not callable(should_abort_callable):
             return
         while not trainer.should_abort:

@@ -155,6 +155,53 @@ def retrieve_eval_images(dataset_name=None):
     return output
 
 
+def _coerce_validation_image_input(image_data):
+    """
+    Convert validation conditioning inputs into formats compatible with downstream pipelines.
+    """
+    if isinstance(image_data, (list, tuple)):
+        coerced = [_coerce_validation_image_input(item) for item in image_data]
+        return coerced if isinstance(image_data, list) else tuple(coerced)
+
+    if torch.is_tensor(image_data):
+        tensor = image_data.detach().cpu()
+        if tensor.ndim >= 4:
+            tensor = tensor[0]
+        if tensor.ndim == 3 and tensor.shape[0] in (1, 3, 4):
+            tensor = tensor.permute(1, 2, 0)
+        image_data = tensor.numpy()
+
+    if isinstance(image_data, np.ndarray):
+        if image_data.ndim == 4:
+            if image_data.shape[0] == 0:
+                raise ValueError("Validation conditioning video contains no frames.")
+            frame = image_data[0]
+        elif image_data.ndim == 3:
+            frame = image_data
+        else:
+            raise ValueError(f"Unsupported validation image array shape: {image_data.shape}")
+        if np.issubdtype(frame.dtype, np.floating):
+            frame = np.clip(frame, 0.0, 1.0) * 255.0
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+        return Image.fromarray(frame)
+
+    return image_data
+
+
+def _normalise_validation_sample(sample):
+    """
+    Ensure validation samples carry Image inputs (or lists/tuples of Images) instead of raw tensors/arrays.
+    """
+    if isinstance(sample, tuple):
+        if len(sample) == 4:
+            shortname, prompt, image_path, image_data = sample
+            return shortname, prompt, image_path, _coerce_validation_image_input(image_data)
+        if len(sample) == 3:
+            shortname, prompt, image_data = sample
+            return shortname, prompt, _coerce_validation_image_input(image_data)
+    return sample
+
+
 def retrieve_validation_images():
     """
     From each data backend, collect the top 5 images for validation, such that
@@ -201,6 +248,9 @@ def retrieve_validation_images():
             validation_samples_from_sampler = data_backend["sampler"].retrieve_validation_set(
                 batch_size=args.num_eval_images
             )
+            validation_samples_from_sampler = [
+                _normalise_validation_sample(sample) for sample in validation_samples_from_sampler
+            ]
             validation_input_image_pixel_edge_len = StateTracker.get_model().validation_image_input_edge_length()
             if validation_input_image_pixel_edge_len is not None:
                 logger.debug(

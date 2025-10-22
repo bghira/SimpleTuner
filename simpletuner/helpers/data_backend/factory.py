@@ -1898,6 +1898,11 @@ class FactoryRegistry:
                 for line in message.splitlines():
                     logger.warning(line)
             else:
+                if dataset_type == "conditioning":
+                    raise ValueError(
+                        f"(id={init_backend['id']}) Conditioning dataset produced no usable samples. "
+                        "Check that conditioning_data paths are correct and contain images."
+                    )
                 warning_log(
                     f"(id={init_backend['id']}) No images were discovered by the bucket manager; continuing without bucket information."
                 )
