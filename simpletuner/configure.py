@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import huggingface_hub
 import torch
 
+import simpletuner.helpers.models  # noqa: F401  # Ensure model registry is populated
+from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training import lycoris_defaults, quantised_precision_levels
 from simpletuner.helpers.training.optimizer_param import optimizer_choices
 
@@ -17,56 +19,46 @@ from simpletuner.helpers.training.optimizer_param import optimizer_choices
 bf16_only_optims = [key for key, value in optimizer_choices.items() if value.get("precision", "any") == "bf16"]
 any_precision_optims = [key for key, value in optimizer_choices.items() if value.get("precision", "any") == "any"]
 
-model_classes = {
-    "full": [
-        "flux",
-        "sdxl",
-        "pixart_sigma",
-        "kolors",
-        "sd3",
-        "sd1x",
-        "sd2x",
-        "ltxvideo",
-        "wan",
-        "sana",
-        "deepfloyd",
-        "omnigen",
-        "hidream",
-        "auraflow",
-        "lumina2",
-        "cosmos2image",
-        "qwen_image",
-        "chroma",
-    ],
-    "lora": [
-        "flux",
-        "sdxl",
-        "kolors",
-        "sd3",
-        "sd1x",
-        "sd2x",
-        "ltxvideo",
-        "wan",
-        "deepfloyd",
-        "auraflow",
-        "hidream",
-        "lumina2",
-        "qwen_image",
-        "chroma",
-    ],
-    "controlnet": [
-        "sdxl",
-        "sd1x",
-        "sd2x",
-        "hidream",
-        "auraflow",
-        "flux",
-        "pixart_sigma",
-        "sd3",
-        "kolors",
-        "chroma",
-    ],
-}
+
+def _build_model_class_map() -> Dict[str, List[str]]:
+    """Construct capability-aware model family listings from the registry."""
+    family_entries: List[Tuple[str, str]] = []
+    lora_supported = set()
+    control_supported = set()
+
+    for family, model_cls in ModelRegistry.model_families().items():
+        if not getattr(model_cls, "ENABLED_IN_WIZARD", True):
+            continue
+
+        display_name = getattr(model_cls, "NAME", family)
+        family_entries.append((family, display_name.lower()))
+
+        try:
+            if hasattr(model_cls, "supports_lora") and model_cls.supports_lora():
+                lora_supported.add(family)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(model_cls, "supports_controlnet") and model_cls.supports_controlnet():
+                control_supported.add(family)
+        except Exception:
+            pass
+
+    family_entries.sort(key=lambda item: item[1])
+    ordered_families = [family for family, _ in family_entries]
+
+    lora_families = [family for family in ordered_families if family in lora_supported]
+    controlnet_families = [family for family in ordered_families if family in control_supported]
+
+    return {
+        "full": ordered_families,
+        "lora": lora_families,
+        "controlnet": controlnet_families,
+    }
+
+
+model_classes = _build_model_class_map()
 
 default_models = {
     "flux": "black-forest-labs/FLUX.1-dev",
@@ -843,12 +835,33 @@ class SimpleTunerNCurses:
         if model_type_idx >= 0:
             self.state.model_type = "lora" if model_type_idx == 0 else "full"
             self.state.env_contents["model_type"] = self.state.model_type
-
             if self.state.model_type == "lora":
+                if not model_classes["lora"]:
+                    self.show_error(
+                        stdscr,
+                        "No registered model families currently support LoRA fine-tuning. Falling back to full training.",
+                    )
+                    self.state.model_type = "full"
+                    self.state.env_contents["model_type"] = "full"
+                    self.state.use_lora = False
+                    return
+
                 self.state.use_lora = True
+
+                current_family = self.state.env_contents.get("model_family")
+                if current_family and current_family not in model_classes["lora"]:
+                    self.show_error(
+                        stdscr,
+                        f"Model family '{current_family}' does not support LoRA training. Please select a compatible family.",
+                    )
+                    self.state.env_contents.pop("model_family", None)
+                    self.state.env_contents.pop("pretrained_model_name_or_path", None)
+
                 # Ensure we have a default lora_type
                 if "lora_type" not in self.state.env_contents:
                     self.state.env_contents["lora_type"] = "standard"
+            else:
+                self.state.use_lora = False
 
     def _configure_lora_type(self, stdscr):
         """Configure LoRA type (Standard vs LyCORIS)"""
@@ -1821,6 +1834,12 @@ class SimpleTunerNCurses:
         """Configure model family"""
         model_type = self.state.model_type or "lora"
         available_models = model_classes["full"]
+
+        if model_type == "lora":
+            available_models = model_classes["lora"]
+            if not available_models:
+                self.show_error(stdscr, "No registered model families currently support LoRA fine-tuning.")
+                return
 
         current_family = self.state.env_contents.get("model_family", "")
         default_idx = 0
@@ -3423,6 +3442,26 @@ class SimpleTunerNCurses:
 
     def controlnet_config(self, stdscr):
         """Step 13: ControlNet Configuration"""
+        model_family = self.state.env_contents.get("model_family")
+        if not model_family:
+            self.show_error(stdscr, "Select a model family before configuring ControlNet.")
+            return
+
+        model_cls = ModelRegistry.get(model_family)
+        supports_control = False
+        if model_cls and hasattr(model_cls, "supports_controlnet"):
+            try:
+                supports_control = model_cls.supports_controlnet()
+            except Exception:
+                supports_control = False
+
+        if not supports_control:
+            self.show_error(
+                stdscr,
+                f"Model family '{model_family}' does not advertise ControlNet support.",
+            )
+            return
+
         current_control = "control" in self.state.env_contents or "controlnet" in self.state.env_contents
 
         use_control = self.show_options(

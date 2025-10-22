@@ -149,6 +149,8 @@ class ModelFoundation(ABC):
     MODEL_LICENSE = "other"
     CONTROLNET_LORA_STATE_DICT_PREFIX = "controlnet"
     MAXIMUM_CANVAS_SIZE = None
+    SUPPORTS_LORA = None
+    SUPPORTS_CONTROLNET = None
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -158,6 +160,26 @@ class ModelFoundation(ABC):
         self._qkv_projections_fused = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
+
+    @classmethod
+    def supports_lora(cls) -> bool:
+        """
+        Indicates whether this model family supports LoRA fine-tuning.
+        Subclasses may override. Defaults to False unless explicitly enabled.
+        """
+        if cls.SUPPORTS_LORA is not None:
+            return bool(cls.SUPPORTS_LORA)
+        return False
+
+    @classmethod
+    def supports_controlnet(cls) -> bool:
+        """
+        Indicates whether this model family supports ControlNet training.
+        Subclasses may override. Defaults to False unless explicitly enabled.
+        """
+        if cls.SUPPORTS_CONTROLNET is not None:
+            return bool(cls.SUPPORTS_CONTROLNET)
+        return False
 
     def log_model_devices(self):
         """
@@ -1666,6 +1688,55 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
+
+    @classmethod
+    def _iter_pipeline_classes(cls):
+        pipelines = getattr(cls, "PIPELINE_CLASSES", {})
+        if not isinstance(pipelines, dict):
+            return []
+        pipeline_classes = []
+        for pipeline_cls in pipelines.values():
+            if inspect.isclass(pipeline_cls):
+                pipeline_classes.append(pipeline_cls)
+        return pipeline_classes
+
+    @staticmethod
+    def _pipeline_has_lora_loader(pipeline_cls) -> bool:
+        if not inspect.isclass(pipeline_cls):
+            return False
+        for base in inspect.getmro(pipeline_cls):
+            if base.__name__.endswith("LoraLoaderMixin"):
+                return True
+        return False
+
+    @classmethod
+    def supports_lora(cls) -> bool:
+        if cls.SUPPORTS_LORA is not None:
+            return bool(cls.SUPPORTS_LORA)
+
+        for pipeline_cls in cls._iter_pipeline_classes():
+            if cls._pipeline_has_lora_loader(pipeline_cls):
+                return True
+        return False
+
+    @classmethod
+    def supports_controlnet(cls) -> bool:
+        if cls.SUPPORTS_CONTROLNET is not None:
+            return bool(cls.SUPPORTS_CONTROLNET)
+
+        pipelines = getattr(cls, "PIPELINE_CLASSES", {})
+        if not isinstance(pipelines, dict):
+            return False
+
+        for pipeline_type, pipeline_cls in pipelines.items():
+            if pipeline_cls is None:
+                continue
+            if isinstance(pipeline_type, PipelineTypes):
+                if pipeline_type in (PipelineTypes.CONTROLNET, PipelineTypes.CONTROL):
+                    return True
+            elif isinstance(pipeline_type, str) and pipeline_type.lower() in {"controlnet", "control"}:
+                return True
+        return False
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
