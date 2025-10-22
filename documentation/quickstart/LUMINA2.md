@@ -122,7 +122,7 @@ This goes into `config.json`
     "validation_prompt_library": false,
     "validation_resolution": "1024x1024",
     "validation_seed": 42,
-    "validation_steps": 50
+    "validation_step_interval": 50
 }
 ```
 

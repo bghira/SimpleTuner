@@ -532,7 +532,8 @@ usage: train.py [-h] --model_family
                 [--vae_batch_size VAE_BATCH_SIZE]
                 [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                 [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
-                [--validation_steps VALIDATION_STEPS]
+                [--validation_step_interval VALIDATION_STEP_INTERVAL]
+                [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
                 [--num_validation_images NUM_VALIDATION_IMAGES]
@@ -902,8 +903,10 @@ options:
                         probability
   --tokenizer_max_length TOKENIZER_MAX_LENGTH
                         Override the tokenizer sequence length (advanced).
-  --validation_steps VALIDATION_STEPS
-                        Run validation every N training steps
+  --validation_step_interval VALIDATION_STEP_INTERVAL
+                        Run validation every N training steps (deprecated alias: --validation_steps)
+  --validation_epoch_interval VALIDATION_EPOCH_INTERVAL
+                        Run validation every N training epochs
   --disable_benchmark [DISABLE_BENCHMARK]
                         Skip generating baseline comparison images before
                         training starts

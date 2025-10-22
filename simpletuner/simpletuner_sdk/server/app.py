@@ -2,6 +2,7 @@
 FastAPI application factory for SimpleTuner server with multiple modes.
 """
 
+import asyncio
 import logging
 import os
 import signal
@@ -88,10 +89,14 @@ async def lifespan(app: FastAPI):
     except ValueError:
         # signal.signal() only works in main thread - ignore in test environments
         logger.debug("Could not register signal handlers (not in main thread)")
-    yield
-    # Shutdown
-    logger.info("SimpleTuner server shutting down...")
-    cleanup_training_processes()
+    try:
+        yield
+    except asyncio.CancelledError:
+        logger.debug("Application lifespan cancelled; continuing shutdown")
+    finally:
+        # Shutdown
+        logger.info("SimpleTuner server shutting down...")
+        cleanup_training_processes()
 
 
 def create_app(

@@ -63,9 +63,25 @@ class GLUMBConv(PatchableModule):
         if norm_type == "rms_norm":
             self.norm = RMSNorm(out_channels, eps=1e-5, elementwise_affine=True, bias=True)
 
+        self._parameter_dtype = self.conv_inverted.weight.dtype
+
+    def _ensure_parameter_dtype(self, dtype: torch.dtype) -> None:
+        if dtype == self._parameter_dtype:
+            return
+
+        for module in (self.conv_inverted, self.conv_depth, self.conv_point):
+            module.to(dtype=dtype)
+
+        if self.norm is not None:
+            self.norm.to(dtype=dtype)
+
+        self._parameter_dtype = dtype
+
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         if self.residual_connection:
             residual = hidden_states
+
+        self._ensure_parameter_dtype(hidden_states.dtype)
 
         hidden_states = self.conv_inverted(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)

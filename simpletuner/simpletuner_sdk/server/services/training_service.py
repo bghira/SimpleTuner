@@ -871,7 +871,18 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
     except Exception:
         defaults = WebUIDefaults()
     configs_dir = getattr(defaults, "configs_dir", None)
-    _prepare_user_prompt_library(runtime_payload, job_id=job_id, configs_dir=configs_dir)
+    try:
+        _prepare_user_prompt_library(runtime_payload, job_id=job_id, configs_dir=configs_dir)
+    except FileNotFoundError:
+        # Ensure API state does not retain a stale job identifier when the
+        # prompt library is missing. This mirrors the expectations in the
+        # training service unit tests and prevents state leakage between tests.
+        APIState.set_state("training_config", None)
+        APIState.set_state("training_status", None)
+        APIState.set_state("current_job_id", None)
+        APIState.set_state("training_progress", None)
+        APIState.set_state("training_startup_stages", {})
+        raise
 
     APIState.set_state("training_config", runtime_payload)
     APIState.set_state("training_status", "starting")

@@ -109,7 +109,7 @@ Edit your `config/config.json`:
     "validation_prompt_library": false,
     "validation_resolution": "832x480",
     "validation_seed": 42,
-    "validation_steps": 4,
+    "validation_step_interval": 4,
     "webhook_config": "config/wan/webhook.json"
 }
 ```

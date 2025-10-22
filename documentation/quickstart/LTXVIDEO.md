@@ -162,7 +162,7 @@ At the end, your config should resemble mine:
   "resolution_type": "pixel_area",
   "resolution": 800,
   "validation_seed": 42,
-  "validation_steps": 100,
+  "validation_step_interval": 100,
   "validation_resolution": "768x512",
   "validation_negative_prompt": "worst quality, inconsistent motion, blurry, jittery, distorted",
   "validation_guidance": 3.0,
