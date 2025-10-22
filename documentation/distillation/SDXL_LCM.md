@@ -81,7 +81,7 @@ Create your `config/config.json` for SDXL LCM:
   "validation_prompt": "A portrait of a woman with flowers in her hair, highly detailed, professional photography",
   "validation_negative_prompt": "blurry, low quality, distorted, amateur",
 
-  "checkpointing_steps": 500,
+  "checkpoint_step_interval": 500,
   "checkpoints_total_limit": 5,
   "resume_from_checkpoint": "latest",
 

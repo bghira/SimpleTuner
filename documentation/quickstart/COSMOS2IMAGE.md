@@ -109,7 +109,7 @@ Your config.json will look something like this:
 ```json
 {
     "base_model_precision": "no_change",
-    "checkpointing_steps": 500,
+    "checkpoint_step_interval": 500,
     "data_backend_config": "config/cosmos2image/multidatabackend.json",
     "disable_bucket_pruning": true,
     "flow_schedule_shift": 0.0,

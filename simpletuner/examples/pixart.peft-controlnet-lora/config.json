@@ -1,5 +1,5 @@
 {
-    "checkpointing_steps": 50,
+    "checkpoint_step_interval": 50,
     "controlnet": true,
     "data_backend_config": "config/examples/multidatabackend-controlnet-1024px.json",
     "disable_bucket_pruning": true,

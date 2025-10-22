@@ -105,6 +105,23 @@ def _handle_legacy_validation_steps(value: object, cli_args: list[str], extras: 
     return True
 
 
+@_legacy_handler("checkpointing_steps")
+def _handle_legacy_checkpointing_steps(value: object, cli_args: list[str], extras: dict[str, object]) -> bool:
+    """Translate legacy checkpointing_steps to checkpoint_step_interval."""
+
+    if value in (None, ""):
+        return True
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return True
+        value = stripped
+
+    cli_args.append(_format_key_value("checkpoint_step_interval", value))
+    return True
+
+
 def mapping_to_cli_args(
     mapping: Mapping[str, object], *, transform: TransformFunc = None, extras: Optional[dict[str, object]] = None
 ) -> list[str]:

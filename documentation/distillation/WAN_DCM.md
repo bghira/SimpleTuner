@@ -48,7 +48,7 @@ Edit your `config/config.json`:
     "attention_mechanism": "diffusers",
     "base_model_precision": "int8-quanto",
     "caption_dropout_probability": 0.1,
-    "checkpointing_steps": 100,
+    "checkpoint_step_interval": 100,
     "checkpoints_total_limit": 5,
     "compress_disk_cache": true,
     "data_backend_config": "config/wan/multidatabackend.json",

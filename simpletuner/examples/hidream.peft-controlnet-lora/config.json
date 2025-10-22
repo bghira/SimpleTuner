@@ -1,6 +1,6 @@
 {
     "base_model_precision": "int8-quanto",
-    "checkpointing_steps": 2,
+    "checkpoint_step_interval": 2,
     "controlnet": true,
     "controlnet_custom_config": {
         "num_layers": 1,

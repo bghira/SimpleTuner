@@ -606,17 +606,31 @@
                     <label>Save every N steps:</label>
                     <input type="number"
                            class="form-control"
-                           x-model.number="answers.checkpointing_steps"
-                           @input="wizardNavigateToField('checkpointing_steps')"
+                           x-model.number="answers.checkpoint_step_interval"
+                           @input="wizardNavigateToField('checkpoint_step_interval')"
                            min="50"
                            step="50"
                            placeholder="100">
                     <div class="form-text">
                         Recommended:
-                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 50)">50</a> for quick experiments,
-                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 100)">100</a> for short runs,
-                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 500)">500</a> for more files,
-                        <a href="#" @click.prevent="selectAnswer('checkpointing_steps', 1000)">1000</a> for very long runs with many files
+                        <a href="#" @click.prevent="selectAnswer('checkpoint_step_interval', 50)">50</a> for quick experiments,
+                        <a href="#" @click.prevent="selectAnswer('checkpoint_step_interval', 100)">100</a> for short runs,
+                        <a href="#" @click.prevent="selectAnswer('checkpoint_step_interval', 500)">500</a> for more files,
+                        <a href="#" @click.prevent="selectAnswer('checkpoint_step_interval', 1000)">1000</a> for very long runs with many files
+                    </div>
+                </div>
+
+                <div class="wizard-input-group mt-4">
+                    <label>Optionally also save every N epochs:</label>
+                    <input type="number"
+                           class="form-control"
+                           x-model.number="answers.checkpoint_epoch_interval"
+                           @input="wizardNavigateToField('checkpoint_epoch_interval')"
+                           min="1"
+                           step="1"
+                           placeholder="Leave blank to disable">
+                    <div class="form-text">
+                        Epoch-based checkpoints fire when an epoch finishes. Combine with step checkpoints for extra safety.
                     </div>
                 </div>
             </div>
@@ -921,7 +935,7 @@
                     </div>
                     <div class="review-item">
                         <label>Checkpoints:</label>
-                        <span x-text="`Every ${answers.checkpointing_steps || 500} steps`"></span>
+                        <span x-text="answers.checkpoint_epoch_interval ? `Every ${answers.checkpoint_step_interval || 500} steps + every ${answers.checkpoint_epoch_interval} epochs` : `Every ${answers.checkpoint_step_interval || 500} steps`"></span>
                         <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 5 : 4)">Edit</button>
                     </div>
                     <div class="review-item">

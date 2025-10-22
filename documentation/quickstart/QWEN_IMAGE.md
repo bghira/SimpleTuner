@@ -146,7 +146,7 @@ Your config.json will look something like this for a minimal setup:
     "disable_benchmark": false,
     "data_backend_config": "config/qwen_image/multidatabackend.json",
     "checkpoints_total_limit": 5,
-    "checkpointing_steps": 500,
+    "checkpoint_step_interval": 500,
     "caption_dropout_probability": 0.0,
     "aspect_bucket_rounding": 2
 }

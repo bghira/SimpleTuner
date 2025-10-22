@@ -412,10 +412,15 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 ## 🔄 Checkpointing and Resumption
 
-### `--checkpointing_steps`
+### `--checkpoint_step_interval` (alias: `--checkpointing_steps`)
 
-- **What**: Interval at which training state checkpoints are saved.
+- **What**: Interval at which training state checkpoints are saved (in steps).
 - **Why**: Useful for resuming training and for inference. Every _n_ iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
+
+### `--checkpoint_epoch_interval`
+
+- **What**: Run checkpointing every N completed epochs.
+- **Why**: Complements step-based checkpoints by ensuring you always capture the state at epoch boundaries, even when step counts vary with multi-dataset sampling.
 
 ### `--resume_from_checkpoint`
 
@@ -675,7 +680,8 @@ usage: train.py [-h] --model_family
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--report_to {tensorboard,wandb,comet_ml,all,none}]
-                [--checkpointing_steps CHECKPOINTING_STEPS]
+                [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
+                [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
                 [--checkpointing_use_tempdir [CHECKPOINTING_USE_TEMPDIR]]
                 [--checkpoints_rolling_total_limit CHECKPOINTS_ROLLING_TOTAL_LIMIT]
@@ -1315,8 +1321,10 @@ options:
                         model card.
   --report_to {tensorboard,wandb,comet_ml,all,none}
                         Where to log training metrics
-  --checkpointing_steps CHECKPOINTING_STEPS
-                        Save model checkpoint every N steps
+  --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL
+                        Save model checkpoint every N steps (deprecated alias: --checkpointing_steps)
+  --checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL
+                        Save model checkpoint every N epochs
   --checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS
                         Rolling checkpoint window size for continuous
                         checkpointing
