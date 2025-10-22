@@ -317,7 +317,10 @@ class SimpleTunerNCurses:
 
     def _main_loop(self, stdscr):
         """Main curses loop"""
-        curses.curs_set(0)  # Hide cursor
+        try:
+            curses.curs_set(0)  # Hide cursor when supported
+        except curses.error:
+            pass
         stdscr.clear()
 
         # Show startup screen
