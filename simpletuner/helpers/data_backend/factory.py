@@ -1178,13 +1178,9 @@ class FactoryRegistry:
                             virtual_backend["video"] = dict(virtual_backend["video"])
                             virtual_backend["video"].setdefault("is_i2v", True)
                         if backend.get("cache_dir_vae"):
-                            virtual_backend["cache_dir_vae"] = os.path.join(
-                                backend["cache_dir_vae"], virtual_id
-                            )
+                            virtual_backend["cache_dir_vae"] = os.path.join(backend["cache_dir_vae"], virtual_id)
                         else:
-                            virtual_backend["cache_dir_vae"] = os.path.join(
-                                self.args.cache_dir, "vae", virtual_id
-                            )
+                            virtual_backend["cache_dir_vae"] = os.path.join(self.args.cache_dir, "vae", virtual_id)
                         backend.setdefault("conditioning_data", []).append(virtual_id)
                         conditioning_datasets.append(virtual_backend)
 
