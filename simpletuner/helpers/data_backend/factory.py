@@ -1107,6 +1107,99 @@ class FactoryRegistry:
 
         return data_backend_config
 
+    def _inject_i2v_conditioning_configs(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Auto-configure Wan I2V datasets to generate first-frame conditioning data and
+        matching conditioning-image-embed backends when none were supplied explicitly.
+        """
+        model_family = str(getattr(self.args, "model_family", "") or "")
+        if model_family.lower() != "wan":
+            return data_backend_config
+
+        auto_embed_configs: List[Dict[str, Any]] = []
+        cache_root = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
+        existing_ids = {cfg.get("id") for cfg in data_backend_config if isinstance(cfg, dict)}
+
+        for backend in data_backend_config:
+            if not isinstance(backend, dict):
+                continue
+            if backend.get("_wan_i2v_autoconditioning_attached", False):
+                continue
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            backend_type = backend.get("type", "local")
+            if backend_type not in {"local"}:
+                continue
+
+            dataset_type = backend.get("dataset_type", None)
+            video_cfg = backend.get("video", {})
+            is_video_dataset = dataset_type == "video" or bool(video_cfg)
+            if not is_video_dataset:
+                continue
+
+            if not video_cfg.get("is_i2v", False):
+                continue
+
+            if backend.get("conditioning_data") or backend.get("conditioning"):
+                continue
+
+            conditioning_entries = backend.get("conditioning", [])
+            if isinstance(conditioning_entries, dict):
+                conditioning_entries = [conditioning_entries]
+            if isinstance(conditioning_entries, list) and any(
+                entry.get("type") == "i2v_first_frame" for entry in conditioning_entries if isinstance(entry, dict)
+            ):
+                continue
+
+            source_id = backend.get("id")
+            if not source_id:
+                continue
+
+            backend["_wan_i2v_autoconditioning_attached"] = True
+
+            new_conditioning_entry = {
+                "type": "i2v_first_frame",
+                "conditioning_type": "reference_strict",
+            }
+
+            if conditioning_entries:
+                conditioning_entries.append(new_conditioning_entry)
+                backend["conditioning"] = conditioning_entries
+            else:
+                backend["conditioning"] = [new_conditioning_entry]
+
+            target_conditioning_id = f"{source_id}_conditioning_i2v_first_frame"
+            embed_backend_id_base = f"{target_conditioning_id}_embeds"
+            embed_backend_id = embed_backend_id_base
+            suffix = 1
+            while embed_backend_id in existing_ids:
+                embed_backend_id = f"{embed_backend_id_base}_{suffix}"
+                suffix += 1
+            existing_ids.add(embed_backend_id)
+
+            conditioning_image_root = os.path.join(cache_root, "conditioning_data", target_conditioning_id)
+            conditioning_embed_cache_dir = os.path.join(cache_root, "conditioning_image_embeds", target_conditioning_id)
+
+            backend.setdefault("cache_dir_conditioning_image_embeds", conditioning_embed_cache_dir)
+            if not backend.get("conditioning_image_embeds"):
+                backend["conditioning_image_embeds"] = embed_backend_id
+
+            auto_embed_configs.append(
+                {
+                    "id": embed_backend_id,
+                    "type": backend_type,
+                    "dataset_type": "conditioning_image_embeds",
+                    "instance_data_dir": conditioning_image_root,
+                    "cache_dir": conditioning_embed_cache_dir,
+                    "auto_generated": True,
+                }
+            )
+
+        if auto_embed_configs:
+            data_backend_config.extend(auto_embed_configs)
+
+        return data_backend_config
+
     def process_conditioning_datasets(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process auto-conditioning configurations and generate conditioning datasets."""
         conditioning_datasets = []
@@ -2514,6 +2607,7 @@ class FactoryRegistry:
         if data_backend_config is None:
             data_backend_config = self.load_configuration()
 
+        data_backend_config = self._inject_i2v_conditioning_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
 
         self.configure_text_embed_backends(data_backend_config)
