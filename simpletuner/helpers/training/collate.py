@@ -142,7 +142,7 @@ def fetch_conditioning_pixel_values(fp, training_fp, conditioning_data_backend_i
     elif isinstance(cond_image, list) and len(cond_image) > 0:
         conditioning_sample.image = cond_image[0]
 
-    if conditioning_sample.model is not None:
+    if conditioning_sample.model is not None and getattr(conditioning_sample.model, "_is_i2v_like_flavour", lambda: False)():
         conditioning_sample.transforms = conditioning_sample.model.get_transforms(dataset_type="image")
 
     prepared_like = conditioning_sample.prepare_like(training_sample, return_tensor=True).image

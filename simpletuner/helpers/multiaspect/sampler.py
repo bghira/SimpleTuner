@@ -529,7 +529,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         except Exception as e:
             self.logger.error(f"Could not fetch conditioning sample: {e}")
             return None
-        if not conditioning_sample_data:
+        if conditioning_sample_data is None:
             self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
             return None
 
