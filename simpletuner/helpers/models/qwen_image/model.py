@@ -60,6 +60,7 @@ class QwenImage(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.vae_scale_factor = 8
         self._conditioning_image_embedder = None
+        self._conditioning_processor = None
 
     def setup_training_noise_schedule(self):
         """

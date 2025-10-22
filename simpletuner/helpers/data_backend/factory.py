@@ -1173,7 +1173,6 @@ class FactoryRegistry:
                         virtual_backend["conditioning_type"] = "reference_strict"
                         virtual_backend["source_dataset_id"] = backend["id"]
                         virtual_backend["auto_generated"] = False
-                        virtual_backend["disable_vae_cache"] = True
                         # ensure video stanza exists for downstream size alignment
                         if isinstance(virtual_backend.get("video"), dict):
                             virtual_backend["video"] = dict(virtual_backend["video"])
@@ -2416,7 +2415,7 @@ class FactoryRegistry:
         }
         for backend in data_backend_config:
             dataset_type = backend.get("dataset_type", "image")
-            if dataset_type is not None and dataset_type != "image":
+            if dataset_type is not None and dataset_type not in ["image", "video"]:
                 continue
             if backend.get("disabled", False) or backend.get("disable", False):
                 info_log(f"Skipping disabled data backend {backend['id']} in config file.")
