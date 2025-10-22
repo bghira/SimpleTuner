@@ -2489,7 +2489,6 @@ class Trainer:
             logger.error(f"_emit_event expected dict payload, received {type(event)}.")
             return False
         if not self.webhook_handler:
-            logger.warning("No webhook handler is configured.")
             return False
         if self.job_id and event.get("job_id") is None:
             event["job_id"] = self.job_id
