@@ -100,6 +100,39 @@ window.sanitizeConfigName = sanitizeConfigName;
 window.sanitizeConfigEntry = sanitizeConfigEntry;
 
 function trainerComponent() {
+    const canonicalNameFor = (name) => {
+        if (!name || typeof name !== 'string' || name.startsWith('__')) {
+            return null;
+        }
+        if (name.startsWith('--')) {
+            return name;
+        }
+        const trimmed = name.replace(/^[-]+/, '');
+        return trimmed ? `--${trimmed}` : null;
+    };
+
+    const syncCanonicalFormValues = (formData) => {
+        if (!(formData instanceof FormData)) {
+            return;
+        }
+        const pending = new Map();
+        formData.forEach((value, key) => {
+            const canonical = canonicalNameFor(key);
+            if (!canonical || canonical === key) {
+                return;
+            }
+            if (!pending.has(canonical)) {
+                pending.set(canonical, []);
+            }
+            pending.get(canonical).push(value);
+        });
+
+        pending.forEach((values, canonical) => {
+            formData.delete(canonical);
+            values.forEach((val) => formData.append(canonical, val));
+        });
+    };
+
     return {
         init() {
             const handler = (event) => {
@@ -3694,12 +3727,13 @@ function trainerComponent() {
                 }
                 return false;
             };
-            const appendValue = (name, descriptor) => {
+            const appendValue = (name, descriptor, options = {}) => {
+                const { force = false } = options;
                 if (!descriptor) {
                     return;
                 }
 
-                if (hasUserOverride(name)) {
+                if (!force && hasUserOverride(name)) {
                     console.log(`[TRAINER] Skipping ${name} – user supplied value present`);
                     return;
                 }
@@ -3935,7 +3969,7 @@ function trainerComponent() {
             if (resolve) resolve();
         },
 
-        // Perform the actual save
+// Perform the actual save
         async doSaveConfig(options = {}) {
             const formElement = document.getElementById('trainer-form');
             if (!formElement) return;
@@ -3962,21 +3996,178 @@ function trainerComponent() {
 
                 // Final checkbox normalization after all merges
                 this.normalizeCheckboxFormData(formData);
+                syncCanonicalFormValues(formData);
 
-                const response = await fetch('/api/training/config', {
-                    method: 'POST',
-                    body: formData
+                const params = {};
+                formData.forEach((value, key) => {
+                    if (Object.prototype.hasOwnProperty.call(params, key)) {
+                        const existing = params[key];
+                        if (Array.isArray(existing)) {
+                            existing.push(value);
+                        } else {
+                            params[key] = [existing, value];
+                        }
+                    } else {
+                        params[key] = value;
+                    }
                 });
 
-                if (response.ok) {
-                    this.markFormClean();
-                    window.showToast('Configuration saved', 'success');
+                const saveButton = document.getElementById('confirmSaveConfigButton');
+                const indicatorTargets = [];
+                const indicatorTargetSelector = saveButton ? saveButton.getAttribute('hx-indicator') : null;
+                const indicatorTarget = indicatorTargetSelector ? document.querySelector(indicatorTargetSelector) : null;
+                if (indicatorTarget) {
+                    indicatorTargets.push({ element: indicatorTarget, forceDisplay: true });
+                }
 
-                    // Dispatch event for other components (e.g., publishing tab)
-                    window.dispatchEvent(new CustomEvent('config-saved'));
-                } else {
-                    const error = await response.json();
-                    window.showToast(error.detail || 'Failed to save configuration', 'error');
+                const primaryIndicatorButton = document.querySelector('button[hx-indicator], a[hx-indicator]');
+                const primaryIndicatorSelector = primaryIndicatorButton ? primaryIndicatorButton.getAttribute('hx-indicator') : null;
+                const primaryIndicator = primaryIndicatorSelector ? document.querySelector(primaryIndicatorSelector) : null;
+                if (primaryIndicator && (!indicatorTarget || primaryIndicator !== indicatorTarget)) {
+                    indicatorTargets.push({ element: primaryIndicator, forceDisplay: false });
+                }
+
+                const loadingIndicator = document.querySelector('[data-htmx-indicator]');
+
+                const dispatchHTMXEvent = (name, detail) => {
+                    try {
+                        document.body.dispatchEvent(new CustomEvent(name, { detail }));
+                    } catch (err) {
+                        console.debug(`Failed to dispatch ${name}`, err);
+                    }
+                };
+
+                const requestDetail = {
+                    path: '/api/training/config',
+                    verb: 'post',
+                    method: 'post',
+                    parameters: params,
+                    headers: { 'HX-Request': 'true' },
+                    xhr: null,
+                };
+
+                const activateIndicators = () => {
+                    indicatorTargets.forEach(({ element, forceDisplay }) => {
+                        if (!element) {
+                            return;
+                        }
+                        element.classList.add('htmx-request');
+                        if (forceDisplay) {
+                            element.classList.remove('d-none');
+                            if (element.style && !element.style.display) {
+                                element.style.display = 'inline-flex';
+                            }
+                        }
+                    });
+                };
+                const deactivateIndicators = () => {
+                    indicatorTargets.forEach(({ element, forceDisplay }) => {
+                        if (!element) {
+                            return;
+                        }
+                        element.classList.remove('htmx-request');
+                        if (forceDisplay) {
+                            element.classList.add('d-none');
+                            if (element.style && element.style.display === 'inline-flex') {
+                                element.style.display = '';
+                            }
+                        }
+                    });
+                };
+
+                activateIndicators();
+                if (loadingIndicator) {
+                    loadingIndicator.classList.remove('d-none');
+                    loadingIndicator.classList.add('htmx-request');
+                }
+                dispatchHTMXEvent('htmx:configRequest', requestDetail);
+
+                let response;
+                let responseText = '';
+                let successful = false;
+                const buildResponseShim = (res, text) => {
+                    const safeText = text || '';
+                    if (!res) {
+                        return {
+                            status: 0,
+                            responseText: safeText,
+                            getResponseHeader: () => null,
+                            headers: null,
+                        };
+                    }
+                    return {
+                        status: res.status,
+                        responseText: safeText,
+                        getResponseHeader: (header) => {
+                            if (!header) {
+                                return null;
+                            }
+                            try {
+                                return res.headers.get(header);
+                            } catch (err) {
+                                console.debug('Failed to read response header', err);
+                                return null;
+                            }
+                        },
+                        headers: res.headers,
+                    };
+                };
+                try {
+                    response = await fetch('/api/training/config', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    responseText = await response.text();
+                    successful = response.ok;
+
+                    if (response.ok) {
+                        this.markFormClean();
+                        window.showToast('Configuration saved', 'success');
+
+                        const feedbackTarget = document.getElementById('htmx-save-feedback');
+                        if (feedbackTarget) {
+                            feedbackTarget.innerHTML = responseText || '<div class="text-success">Configuration saved</div>';
+                            feedbackTarget.classList.remove('visually-hidden');
+                            if (!feedbackTarget.dataset.persist) {
+                                setTimeout(() => {
+                                    feedbackTarget.classList.add('visually-hidden');
+                                }, 3500);
+                            }
+                        }
+
+                        // Dispatch event for other components (e.g., publishing tab)
+                        window.dispatchEvent(new CustomEvent('config-saved'));
+                    } else {
+                        let detail = null;
+                        try {
+                            detail = JSON.parse(responseText);
+                        } catch (_) {
+                            detail = null;
+                        }
+                        const message =
+                            (detail && (detail.detail || detail.message)) ||
+                            (responseText || '').trim() ||
+                            'Failed to save configuration';
+                        window.showToast(message, 'error');
+                    }
+                } catch (error) {
+                    successful = false;
+                    responseText = error instanceof Error ? error.message : String(error);
+                    console.error('Error saving config:', error);
+                    window.showToast('Failed to save configuration', 'error');
+                    throw error;
+                } finally {
+                    deactivateIndicators();
+                    if (loadingIndicator) {
+                        loadingIndicator.classList.add('d-none');
+                        loadingIndicator.classList.remove('htmx-request');
+                    }
+                    dispatchHTMXEvent('htmx:afterRequest', {
+                        ...requestDetail,
+                        successful,
+                        xhr: buildResponseShim(response, responseText),
+                        elt: saveButton
+                    });
                 }
             } catch (error) {
                 console.error('Error saving config:', error);
@@ -4154,6 +4345,47 @@ function trainerComponent() {
              $data.ensureEventDockWithinBounds();
          });
      })()">
+
+    <div id="save-config-indicator"
+         class="htmx-indicator d-none"
+         aria-hidden="true">
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+        <span class="visually-hidden">Saving configuration…</span>
+    </div>
+
+    <div id="save-config-loading"
+         data-htmx-indicator
+         class="save-config-loading-banner d-none"
+         role="status"
+         aria-live="polite">
+        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+        <span>Saving configuration…</span>
+    </div>
+
+    <div id="htmx-save-feedback" class="visually-hidden" aria-live="polite"></div>
+
+    <style>
+    .dashboard-wrapper {
+        position: relative;
+    }
+    .save-config-loading-banner {
+        display: none;
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        z-index: 1055;
+        padding: 0.5rem 0.75rem;
+        border-radius: 0.5rem;
+        background: rgba(15, 23, 42, 0.92);
+        color: #f8fafc;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.35);
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .save-config-loading-banner:not(.d-none) {
+        display: flex;
+    }
+    </style>
 
     <div class="onboarding-overlay"
          x-show="overlayVisible"
@@ -5035,7 +5267,9 @@ function trainerComponent() {
                     Cancel
                 </button>
                 <button type="button"
+                        id="confirmSaveConfigButton"
                         class="btn btn-primary"
+                        hx-indicator="#save-config-indicator"
                         @click="confirmSaveConfig()">
                     Save Configuration
                 </button>

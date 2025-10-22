@@ -12,6 +12,15 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
+# Hide noisy Pydantic field attribute warnings emitted by optional integrations
+try:  # pragma: no cover - depends on pydantic availability
+    from pydantic.fields import UnsupportedFieldAttributeWarning
+except Exception:  # pragma: no cover - pydantic may be absent
+    UnsupportedFieldAttributeWarning = None
+
+if UnsupportedFieldAttributeWarning is not None:
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+
 # Filter out websockets deprecation warning about ws_handler second argument
 warnings.filterwarnings(
     "ignore",
@@ -28,6 +37,8 @@ def _suppress_swigvarlink(message, *args, **kwargs):
     if "swigvarlink" in text and category is DeprecationWarning:
         return None
     if "MPS autocast" in text:
+        return None
+    if "UnsupportedFieldAttributeWarning" in text:
         return None
     return _original_warn(message, *args, **kwargs)
 

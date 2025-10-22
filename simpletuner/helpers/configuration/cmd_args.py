@@ -607,13 +607,25 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if torch.cuda.is_available():
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        matmul_backend = getattr(torch.backends.cuda, "matmul", None)
+        cudnn_conv_backend = getattr(getattr(torch.backends, "cudnn", None), "conv", None)
+
+        def _set_tf32(enabled: bool) -> None:
+            if matmul_backend is not None and hasattr(matmul_backend, "fp32_precision"):
+                matmul_backend.fp32_precision = "tf32" if enabled else "ieee"
+            elif hasattr(torch.backends.cuda.matmul, "allow_tf32"):
+                torch.backends.cuda.matmul.allow_tf32 = enabled
+
+            if cudnn_conv_backend is not None and hasattr(cudnn_conv_backend, "fp32_precision"):
+                cudnn_conv_backend.fp32_precision = "tf32" if enabled else "fp32"
+            elif hasattr(torch.backends.cudnn, "allow_tf32"):
+                torch.backends.cudnn.allow_tf32 = enabled
+
         if args.disable_tf32:
             warning_log("--disable_tf32 is provided, not enabling. Training will potentially be much slower.")
-            torch.backends.cuda.matmul.allow_tf32 = False
-            torch.backends.cudnn.allow_tf32 = False
+            _set_tf32(False)
         else:
+            _set_tf32(True)
             info_log(
                 "Enabled NVIDIA TF32 for faster training on Ampere GPUs. Use --disable_tf32 if this causes any problems."
             )

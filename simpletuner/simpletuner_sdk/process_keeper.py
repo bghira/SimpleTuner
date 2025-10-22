@@ -5,6 +5,7 @@ Uses subprocess module for true process isolation and termination capability.
 
 import json
 import logging
+import marshal
 import os
 import pickle
 import signal
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -52,6 +54,43 @@ class TrainerProcess:
         self.command_file: Optional[str] = None
         self.event_file: Optional[str] = None
         self.func_file: Optional[str] = None
+
+    def _build_callable_payload(self, target_func) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "mode": "callable",
+            "name": target_func.__name__,
+            "code": marshal.dumps(target_func.__code__),
+            "defaults": target_func.__defaults__,
+            "kwdefaults": target_func.__kwdefaults__,
+            "globals": {
+                "modules": {},
+                "values": {},
+            },
+        }
+
+        global_modules: Dict[str, str] = payload["globals"]["modules"]
+        global_values: Dict[str, Any] = payload["globals"]["values"]
+
+        func_globals = getattr(target_func, "__globals__", {}) or {}
+
+        for name in set(target_func.__code__.co_names or ()):  # type: ignore[attr-defined]
+            if name not in func_globals:
+                continue
+
+            value = func_globals[name]
+
+            if isinstance(value, types.ModuleType):
+                global_modules[name] = value.__name__
+                continue
+
+            try:
+                pickle.dumps(value)
+            except Exception:
+                continue
+
+            global_values[name] = value
+
+        return payload
 
     def _resolve_runtime_base(self, config: Optional[Any]) -> Path:
         """Determine a writable base directory for IPC files."""
@@ -113,31 +152,43 @@ class TrainerProcess:
         """Start the trainer subprocess."""
         self._initialize_ipc_paths(config)
 
-        # Get function module and name for import
+        # Prepare callable payload
         func_module = target_func.__module__
         func_name = target_func.__name__
 
-        # Save function info as JSON instead of pickling
-        func_info = {"module": func_module, "name": func_name}
-        with open(self.func_file, "w") as f:
-            json.dump(func_info, f)
+        try:
+            func_payload = self._build_callable_payload(target_func)
+        except Exception as exc:
+            logger.debug(f"Falling back to module import for {func_module}.{func_name}: {exc}")
+            func_payload = {
+                "mode": "module",
+                "module": func_module,
+                "name": func_name,
+            }
+
+        with open(self.func_file, "wb") as f:
+            pickle.dump(func_payload, f)
 
         # Create the subprocess runner script inline
         runner_code = f'''
 import sys
 import os
 import json
+import pickle
+import marshal
 import signal
 import time
 import threading
 import logging
+import types
+import importlib
 from collections.abc import Mapping
 
 # Add parent directories to path for imports
 import os
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("SubprocessRunner")
 
 # IPC paths
@@ -174,24 +225,56 @@ def send_event(event_type, data=None):
     except Exception as e:
         logger.error(f"Failed to write event: {{e}}")
 
-# Load function info
-with open(func_file, 'r') as f:
-    func_info = json.load(f)
-
-# Import the function
+# Load function payload
 try:
-    import importlib
-    logger.info(f"Importing module: {func_info['module']}")
-    module = importlib.import_module(func_info['module'])
-    logger.info(f"Getting function: {func_info['name']}")
-    target_func = getattr(module, func_info['name'])
-    logger.info("Function loaded successfully")
+    with open(func_file, 'rb') as f:
+        func_payload = pickle.load(f)
 except Exception as e:
-    logger.error(f"Failed to import function: {{e}}")
-    import_error = f"Import error: {{e}}"
-    send_event("error", {{"message": import_error}})
-    send_event("state", {{"status": "failed", "message": import_error}})
+    logger.error(f"Failed to load function payload: {{e}}")
+    payload_error = f"Payload error: {{e}}"
+    send_event("error", {{"message": payload_error}})
+    send_event("state", {{"status": "failed", "message": payload_error}})
     sys.exit(1)
+
+mode = func_payload.get("mode")
+
+if mode == "callable":
+    try:
+        globals_dict = {{"__builtins__": __builtins__}}
+        globals_meta = func_payload.get("globals", {{}}) or {{}}
+        modules_meta = globals_meta.get("modules", {{}}) or {{}}
+        values_meta = globals_meta.get("values", {{}}) or {{}}
+
+        for name, module_name in modules_meta.items():
+            globals_dict[name] = importlib.import_module(module_name)
+        for name, value in values_meta.items():
+            globals_dict[name] = value
+
+        code_obj = marshal.loads(func_payload["code"])
+        func_name = func_payload.get("name") or "target_func"
+        target_func = types.FunctionType(code_obj, globals_dict, func_name)
+        target_func.__defaults__ = func_payload.get("defaults")
+        target_func.__kwdefaults__ = func_payload.get("kwdefaults")
+        logger.info("Callable payload reconstructed successfully")
+    except Exception as e:
+        logger.error(f"Failed to reconstruct function: {{e}}")
+        import_error = f"Import error: {{e}}"
+        send_event("error", {{"message": import_error}})
+        send_event("state", {{"status": "failed", "message": import_error}})
+        sys.exit(1)
+else:
+    try:
+        logger.info(f"Importing module: {{func_payload['module']}}")
+        module = importlib.import_module(func_payload["module"])
+        logger.info(f"Getting function: {{func_payload['name']}}")
+        target_func = getattr(module, func_payload["name"])
+        logger.info("Function loaded successfully")
+    except Exception as e:
+        logger.error(f"Failed to import function: {{e}}")
+        import_error = f"Import error: {{e}}"
+        send_event("error", {{"message": import_error}})
+        send_event("state", {{"status": "failed", "message": import_error}})
+        sys.exit(1)
 
 # Load config from JSON string
 config_json = {repr(json.dumps(config))}
@@ -803,12 +886,11 @@ def get_process_status(job_id: str) -> str:
 
         # Check if process is actually alive
         if not process.is_alive():
-            # Don't override completed/failed/terminated status with crashed
+            return_code = process.process.returncode if process.process else None
+
             if process.status == "running":
-                # Give the event thread a moment to process final events
+                # Give the event thread a chance to flush remaining events
                 if process.event_thread and process.event_thread.is_alive():
-                    # Event thread is still running, wait briefly for it to finish
-                    # Release lock while waiting to avoid deadlock
                     event_thread = process.event_thread
                     lock.release()
                     try:
@@ -816,17 +898,15 @@ def get_process_status(job_id: str) -> str:
                     finally:
                         lock.acquire()
 
-                    # Re-check status after waiting
-                    if process.status == "running":
-                        # Event thread finished but status still running = crashed
+                if process.status == "running":
+                    if return_code == 0:
+                        process.status = "completed"
+                    elif return_code is None:
                         process.status = "crashed"
-                        entry["status"] = "crashed"
-                else:
-                    # Event thread finished, if still running then it crashed
-                    process.status = "crashed"
-                    entry["status"] = "crashed"
-            elif process.status not in ["completed", "failed", "terminated"]:
-                # Update entry status to match process status
+                    else:
+                        process.status = "failed"
+                    entry["status"] = process.status
+            elif process.status not in ["completed", "failed", "terminated", "crashed"]:
                 entry["status"] = process.status
 
         return process.status
