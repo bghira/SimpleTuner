@@ -3936,6 +3936,132 @@ class SimpleTunerNCurses:
             elif selected >= 0:
                 menu_items[selected][1](stdscr)
 
+    def _configure_advanced_settings(self, stdscr, dataset):
+        """Configure advanced dataset settings"""
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            current_values = {
+                "Metadata Backend": dataset.get("metadata_backend", "discovery"),
+                "Metadata Update Interval": str(dataset.get("metadata_update_interval", 65)),
+                "Conditioning Dataset": dataset.get("conditioning_data", "Not set"),
+                "Split Composite Images": "Yes" if dataset.get("split_composite_images", False) else "No",
+                "Composite Image Column": dataset.get("composite_image_column", "image"),
+            }
+
+            menu_items: List[Tuple[str, Any]] = [
+                ("Metadata Backend", lambda s: self._set_metadata_backend(s, dataset)),
+                ("Metadata Update Interval", lambda s: self._set_metadata_update_interval(s, dataset)),
+                ("Conditioning Dataset Link", lambda s: self._set_conditioning_dataset_ref(s, dataset)),
+                (
+                    "Split Composite Images",
+                    lambda s: self._toggle_split_composites(s, dataset),
+                ),
+                (
+                    "Composite Image Column",
+                    lambda s: self._set_composite_column(s, dataset),
+                ),
+            ]
+
+            # Skip composite options for non-huggingface metadata
+            if dataset.get("metadata_backend") not in ["huggingface"]:
+                menu_items = menu_items[:-2]  # remove composite entries
+
+            selected = nav.show_menu("Advanced Dataset Settings", menu_items, current_values)
+
+            if selected == -1 or selected == -2:
+                return
+            elif selected >= 0:
+                menu_items[selected][1](stdscr)
+
+    def _set_metadata_backend(self, stdscr, dataset):
+        """Select metadata backend"""
+        if dataset.get("type") == "huggingface":
+            self.show_message(stdscr, "Hugging Face datasets always use metadata_backend='huggingface'.")
+            dataset["metadata_backend"] = "huggingface"
+            return
+
+        options = ["discovery", "json", "parquet", "huggingface", "none"]
+        if dataset.get("caption_strategy") == "parquet" and "parquet" not in options:
+            options.append("parquet")
+
+        current = dataset.get("metadata_backend", "discovery")
+        default_idx = options.index(current) if current in options else 0
+        idx = self.show_options(
+            stdscr,
+            "Select metadata backend:",
+            options,
+            default_idx,
+        )
+
+        if idx >= 0:
+            dataset["metadata_backend"] = options[idx]
+
+    def _set_metadata_update_interval(self, stdscr, dataset):
+        """Set metadata refresh interval"""
+        current = str(dataset.get("metadata_update_interval", 65))
+        value = self.get_input(
+            stdscr,
+            "Metadata update interval (seconds between scans):",
+            current,
+        )
+        try:
+            interval = int(value)
+            if interval <= 0:
+                raise ValueError
+            dataset["metadata_update_interval"] = interval
+        except ValueError:
+            self.show_error(stdscr, "Interval must be a positive integer.")
+
+    def _set_conditioning_dataset_ref(self, stdscr, dataset):
+        """Link a conditioning dataset by ID"""
+        conditioning_datasets = [d for d in getattr(self, "_datasets", []) if d.get("dataset_type") == "conditioning"]
+        if not conditioning_datasets:
+            self.show_message(stdscr, "No conditioning datasets configured yet.")
+            return
+
+        options = ["Not set"] + [d.get("id", "conditioning") for d in conditioning_datasets]
+        current_id = dataset.get("conditioning_data")
+        default_idx = 0
+        if current_id:
+            for idx, d in enumerate(conditioning_datasets, start=1):
+                if d.get("id") == current_id:
+                    default_idx = idx
+                    break
+
+        idx = self.show_options(stdscr, "Select conditioning dataset to pair:", options, default_idx)
+        if idx < 0:
+            return
+        if idx == 0:
+            dataset.pop("conditioning_data", None)
+        else:
+            dataset["conditioning_data"] = conditioning_datasets[idx - 1].get("id")
+
+    def _toggle_split_composites(self, stdscr, dataset):
+        """Toggle splitting composite images"""
+        current = dataset.get("split_composite_images", False)
+        idx = self.show_options(
+            stdscr,
+            "Split composite images into separate entries?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["split_composite_images"] = idx == 1
+
+    def _set_composite_column(self, stdscr, dataset):
+        """Set composite image column name"""
+        value = self.get_input(
+            stdscr,
+            "Column name containing composite image payload (leave blank for default 'image'):",
+            dataset.get("composite_image_column", "image"),
+        ).strip()
+
+        if value:
+            dataset["composite_image_column"] = value
+        else:
+            dataset.pop("composite_image_column", None)
+
     def _configure_resolution_settings(self, stdscr, dataset):
         """Configure resolution and image size settings"""
         nav = MenuNavigator(stdscr)
@@ -4228,6 +4354,34 @@ class SimpleTunerNCurses:
         except ValueError:
             pass
 
+    def _set_repeats(self, stdscr, dataset):
+        """Set dataset repeats"""
+        current = str(dataset.get("repeats", 0))
+        value = self.get_input(
+            stdscr,
+            "How many times should each item repeat per epoch? (0 disables repeats)",
+            current,
+        )
+        try:
+            repeats = int(value)
+            if repeats < 0:
+                raise ValueError
+            dataset["repeats"] = repeats
+        except ValueError:
+            self.show_error(stdscr, "Repeats must be a non-negative integer.")
+
+    def _toggle_regularization(self, stdscr, dataset):
+        """Toggle regularization flag"""
+        current = dataset.get("is_regularisation_data", False)
+        idx = self.show_options(
+            stdscr,
+            "Mark this dataset as regularization data?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["is_regularisation_data"] = idx == 1
+
     def _configure_parquet(self, stdscr, dataset):
         """Configure parquet settings"""
         if "parquet" not in dataset:
@@ -4286,6 +4440,36 @@ class SimpleTunerNCurses:
                 return
             elif selected >= 0:
                 menu_items[selected][1](stdscr)
+
+    def _set_parquet_path(self, stdscr, parquet):
+        """Set parquet file path"""
+        parquet["path"] = self.get_input(
+            stdscr,
+            "Enter parquet/JSONL file path or URL:",
+            parquet.get("path", "dataset.parquet"),
+        )
+
+    def _set_parquet_column(self, stdscr, parquet, field, prompt):
+        """Set a parquet column name"""
+        current = parquet.get(field, "")
+        value = self.get_input(stdscr, prompt + "\n(Leave blank to clear optional fields)", current).strip()
+
+        if not value:
+            parquet.pop(field, None)
+        else:
+            parquet[field] = value
+
+    def _toggle_parquet_extension(self, stdscr, parquet):
+        """Toggle identifier extension flag"""
+        current = parquet.get("identifier_includes_extension", False)
+        idx = self.show_options(
+            stdscr,
+            "Do identifiers include filename extensions?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            parquet["identifier_includes_extension"] = idx == 1
 
     def _configure_dataset_id(self, stdscr):
         """Configure dataset ID"""
@@ -4722,6 +4906,30 @@ class SimpleTunerNCurses:
             elif selected >= 0:
                 menu_items[selected][1](stdscr)
 
+    def _set_video_frames(self, stdscr, video_config, field, prompt):
+        """Set video frame counts"""
+        current = str(video_config.get(field, 0))
+        value = self.get_input(stdscr, prompt, current)
+        try:
+            frames = int(value)
+            if frames < 0:
+                raise ValueError
+            video_config[field] = frames
+        except ValueError:
+            self.show_error(stdscr, "Frame count must be a non-negative integer.")
+
+    def _toggle_i2v(self, stdscr, video_config):
+        """Toggle I2V flag"""
+        current = video_config.get("is_i2v", True)
+        idx = self.show_options(
+            stdscr,
+            "Is this an image-to-video dataset?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            video_config["is_i2v"] = idx == 1
+
     def _configure_conditioning_dataset(self, stdscr, dataset):
         """Configure a conditioning dataset"""
         # Set conditioning type
@@ -4829,6 +5037,255 @@ class SimpleTunerNCurses:
             cond_config["captions"] = captions
 
         dataset["conditioning"].append(cond_config)
+
+    def _configure_superresolution_params(self, stdscr, cond_config):
+        """Configure superresolution conditioning parameters"""
+        params = cond_config.setdefault("params", {})
+        params.setdefault("blur_radius", 2.5)
+        params.setdefault("blur_type", "gaussian")
+        params.setdefault("add_noise", True)
+        params.setdefault("noise_level", 0.03)
+        params.setdefault("jpeg_quality", 85)
+        params.setdefault("downscale_factor", 2)
+
+        value = self.get_input(
+            stdscr,
+            "Blur radius (float, e.g., 2.5):",
+            str(params["blur_radius"]),
+        )
+        try:
+            params["blur_radius"] = float(value)
+        except ValueError:
+            self.show_error(stdscr, "Invalid blur radius; keeping previous value.")
+
+        blur_types = ["gaussian", "motion", "box"]
+        idx = self.show_options(stdscr, "Blur type:", blur_types, blur_types.index(params["blur_type"]))
+        if idx >= 0:
+            params["blur_type"] = blur_types[idx]
+
+        idx = self.show_options(
+            stdscr,
+            "Add noise before downscaling?",
+            ["No", "Yes"],
+            1 if params["add_noise"] else 0,
+        )
+        if idx >= 0:
+            params["add_noise"] = idx == 1
+
+        value = self.get_input(
+            stdscr,
+            "Noise level (0-1):",
+            str(params["noise_level"]),
+        )
+        try:
+            level = float(value)
+            if level < 0 or level > 1:
+                raise ValueError
+            params["noise_level"] = level
+        except ValueError:
+            self.show_error(stdscr, "Noise level must be between 0 and 1.")
+
+        value = self.get_input(
+            stdscr,
+            "JPEG quality (10-100):",
+            str(params["jpeg_quality"]),
+        )
+        try:
+            quality = int(value)
+            if not 10 <= quality <= 100:
+                raise ValueError
+            params["jpeg_quality"] = quality
+        except ValueError:
+            self.show_error(stdscr, "JPEG quality must be between 10 and 100.")
+
+        value = self.get_input(
+            stdscr,
+            "Downscale factor (>=1):",
+            str(params["downscale_factor"]),
+        )
+        try:
+            factor = int(value)
+            if factor < 1:
+                raise ValueError
+            params["downscale_factor"] = factor
+        except ValueError:
+            self.show_error(stdscr, "Downscale factor must be at least 1.")
+
+    def _configure_jpeg_params(self, stdscr, cond_config):
+        """Configure JPEG artifact parameters"""
+        params = cond_config.setdefault("params", {})
+        params.setdefault("quality_mode", "range")
+        params.setdefault("quality_range", "[10, 30]")
+        params.setdefault("compression_rounds", 1)
+        params.setdefault("enhance_blocks", False)
+
+        modes = ["fixed", "range"]
+        idx = self.show_options(stdscr, "JPEG quality mode:", modes, modes.index(params["quality_mode"]))
+        if idx >= 0:
+            params["quality_mode"] = modes[idx]
+
+        params["quality_range"] = self.get_input(
+            stdscr,
+            "Quality value or range (e.g., 20 or [10, 30]):",
+            params["quality_range"],
+        )
+
+        value = self.get_input(
+            stdscr,
+            "Number of compression rounds (1-5):",
+            str(params["compression_rounds"]),
+        )
+        try:
+            rounds = int(value)
+            if rounds < 1 or rounds > 5:
+                raise ValueError
+            params["compression_rounds"] = rounds
+        except ValueError:
+            self.show_error(stdscr, "Compression rounds must be between 1 and 5.")
+
+        idx = self.show_options(
+            stdscr,
+            "Enhance block artifacts?",
+            ["No", "Yes"],
+            1 if params["enhance_blocks"] else 0,
+        )
+        if idx >= 0:
+            params["enhance_blocks"] = idx == 1
+
+    def _configure_depth_params(self, stdscr, cond_config):
+        """Configure depth map parameters"""
+        params = cond_config.setdefault("params", {})
+        params.setdefault("model_type", "DPT")
+        models = ["DPT", "DPT_Large", "DPT_Hybrid"]
+        idx = self.show_options(stdscr, "MiDaS model:", models, models.index(params["model_type"]))
+        if idx >= 0:
+            params["model_type"] = models[idx]
+
+    def _configure_mask_params(self, stdscr, cond_config):
+        """Configure random mask parameters"""
+        params = cond_config.setdefault("params", {})
+        params.setdefault("mask_types", '["rectangle", "circle", "brush", "irregular"]')
+        params.setdefault("min_coverage", 0.1)
+        params.setdefault("max_coverage", 0.5)
+        params.setdefault("output_mode", "mask")
+
+        params["mask_types"] = self.get_input(
+            stdscr,
+            "Mask types (JSON list):",
+            params["mask_types"],
+        )
+
+        value = self.get_input(
+            stdscr,
+            "Minimum coverage (0-1):",
+            str(params["min_coverage"]),
+        )
+        try:
+            coverage = float(value)
+            if coverage < 0 or coverage > 1:
+                raise ValueError
+            params["min_coverage"] = coverage
+        except ValueError:
+            self.show_error(stdscr, "Coverage must be between 0 and 1.")
+
+        value = self.get_input(
+            stdscr,
+            "Maximum coverage (0-1):",
+            str(params["max_coverage"]),
+        )
+        try:
+            coverage = float(value)
+            if coverage < 0 or coverage > 1:
+                raise ValueError
+            params["max_coverage"] = coverage
+        except ValueError:
+            self.show_error(stdscr, "Coverage must be between 0 and 1.")
+
+        modes = ["mask", "composite"]
+        idx = self.show_options(stdscr, "Output mode:", modes, modes.index(params["output_mode"]))
+        if idx >= 0:
+            params["output_mode"] = modes[idx]
+
+    def _configure_canny_params(self, stdscr, cond_config):
+        """Configure Canny edge parameters"""
+        params = cond_config.setdefault("params", {})
+        params.setdefault("low_threshold", 100)
+        params.setdefault("high_threshold", 200)
+
+        value = self.get_input(
+            stdscr,
+            "Low threshold (0-255):",
+            str(params["low_threshold"]),
+        )
+        try:
+            thresh = int(value)
+            if not 0 <= thresh <= 255:
+                raise ValueError
+            params["low_threshold"] = thresh
+        except ValueError:
+            self.show_error(stdscr, "Threshold must be between 0 and 255.")
+
+        value = self.get_input(
+            stdscr,
+            "High threshold (0-255):",
+            str(params["high_threshold"]),
+        )
+        try:
+            thresh = int(value)
+            if not 0 <= thresh <= 255:
+                raise ValueError
+            params["high_threshold"] = thresh
+        except ValueError:
+            self.show_error(stdscr, "Threshold must be between 0 and 255.")
+
+    def _remove_conditioning_type(self, stdscr, dataset):
+        """Remove a conditioning type"""
+        conditioning = dataset.get("conditioning", [])
+        if not conditioning:
+            self.show_message(stdscr, "No conditioning types to remove.")
+            return
+
+        options = [f"{idx + 1}. {cond.get('type', 'unknown')}" for idx, cond in enumerate(conditioning)]
+        idx = self.show_options(stdscr, "Select conditioning entry to remove:", options, 0)
+        if idx >= 0:
+            removed = conditioning.pop(idx)
+            self.show_message(stdscr, f"Removed conditioning type '{removed.get('type', 'unknown')}'.")
+
+    def _review_conditioning(self, stdscr, dataset):
+        """Review configured conditioning types"""
+        conditioning = dataset.get("conditioning", [])
+        if not conditioning:
+            self.show_message(stdscr, "No conditioning types configured.")
+            return
+
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+        stdscr.addstr(1, 2, "Configured Conditioning", curses.A_BOLD)
+
+        y = 3
+        for cond in conditioning:
+            if y >= h - 2:
+                stdscr.addstr(h - 2, 2, "Press any key for more...")
+                stdscr.getch()
+                stdscr.clear()
+                stdscr.addstr(1, 2, "Configured Conditioning (continued)", curses.A_BOLD)
+                y = 3
+
+            stdscr.addstr(y, 2, f"- Type: {cond.get('type', 'unknown')}")
+            params = cond.get("params", {})
+            for key, value in params.items():
+                line = f"    {key}: {value}"
+                if len(line) > w - 4:
+                    line = line[: w - 7] + "..."
+                stdscr.addstr(y + 1, 4, line)
+                y += 1
+
+            captions = cond.get("captions", "source")
+            stdscr.addstr(y + 1, 4, f"Captions: {captions}")
+            y += 3
+
+        stdscr.addstr(h - 2, 2, "Press any key to continue...")
+        stdscr.getch()
 
     def _configure_local_paths(self, stdscr, dataset):
         """Configure local filesystem paths"""
@@ -4957,6 +5414,90 @@ class SimpleTunerNCurses:
         if idx >= 0:
             dataset["resolution_type"] = types[idx]
 
+    def _set_min_image_size(self, stdscr, dataset):
+        """Set minimum image size"""
+        default = str(dataset.get("minimum_image_size", 0))
+        value = self.get_input(
+            stdscr,
+            "Minimum image size before processing (0 disables min check):",
+            default,
+        )
+        try:
+            size = int(value)
+            if size < 0:
+                raise ValueError
+            dataset["minimum_image_size"] = size
+        except ValueError:
+            self.show_error(stdscr, "Minimum image size must be a non-negative integer.")
+
+    def _set_max_image_size(self, stdscr, dataset):
+        """Set maximum image size"""
+        default = str(dataset.get("maximum_image_size", "0"))
+        value = self.get_input(
+            stdscr,
+            "Maximum image size (0 or blank disables the cap):",
+            default,
+        ).strip()
+
+        if not value or value == "0":
+            dataset.pop("maximum_image_size", None)
+            return
+
+        try:
+            size = int(value)
+            if size < 0:
+                raise ValueError
+            dataset["maximum_image_size"] = size
+        except ValueError:
+            self.show_error(stdscr, "Maximum image size must be a non-negative integer.")
+
+    def _set_target_downsample(self, stdscr, dataset):
+        """Set target downsample size"""
+        default = str(dataset.get("target_downsample_size", "0"))
+        value = self.get_input(
+            stdscr,
+            "Target downsample size (0 or blank disables):",
+            default,
+        ).strip()
+
+        if not value or value == "0":
+            dataset.pop("target_downsample_size", None)
+            return
+
+        try:
+            size = int(value)
+            if size < 0:
+                raise ValueError
+            dataset["target_downsample_size"] = size
+        except ValueError:
+            self.show_error(stdscr, "Target downsample size must be a non-negative integer.")
+
+    def _set_aspect_limits(self, stdscr, dataset):
+        """Set aspect ratio limits"""
+        min_default = str(dataset.get("minimum_aspect_ratio", 0.5))
+        max_default = str(dataset.get("maximum_aspect_ratio", 3.0))
+
+        min_value = self.get_input(
+            stdscr,
+            "Minimum aspect ratio (e.g., 0.5 for 1:2 images):",
+            min_default,
+        )
+        max_value = self.get_input(
+            stdscr,
+            "Maximum aspect ratio (e.g., 3.0 for 3:1 images):",
+            max_default,
+        )
+
+        try:
+            min_ratio = float(min_value)
+            max_ratio = float(max_value)
+            if min_ratio <= 0 or max_ratio <= 0 or min_ratio > max_ratio:
+                raise ValueError
+            dataset["minimum_aspect_ratio"] = min_ratio
+            dataset["maximum_aspect_ratio"] = max_ratio
+        except ValueError:
+            self.show_error(stdscr, "Aspect ratios must be positive numbers and min <= max.")
+
     # Caption strategy helpers
     def _set_caption_strategy(self, stdscr, dataset):
         """Set caption strategy"""
@@ -4985,7 +5526,74 @@ class SimpleTunerNCurses:
         if idx >= 0:
             dataset["caption_strategy"] = strategies[idx]
 
+    def _set_instance_prompt(self, stdscr, dataset):
+        """Set the instance prompt"""
+        prompt = self.get_input(
+            stdscr,
+            "Instance prompt to prepend to captions (leave blank to remove):",
+            dataset.get("instance_prompt", ""),
+        )
+        prompt = prompt.strip()
+        if prompt:
+            dataset["instance_prompt"] = prompt
+        else:
+            dataset.pop("instance_prompt", None)
+
+    def _toggle_prepend_instance(self, stdscr, dataset):
+        """Toggle whether the instance prompt is prepended"""
+        current = dataset.get("prepend_instance_prompt", False)
+        idx = self.show_options(
+            stdscr,
+            "Prepend the instance prompt to generated captions?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["prepend_instance_prompt"] = idx == 1
+
+    def _toggle_only_instance(self, stdscr, dataset):
+        """Toggle whether only the instance prompt is used"""
+        current = dataset.get("only_instance_prompt", False)
+        idx = self.show_options(
+            stdscr,
+            "Use only the instance prompt for captions?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["only_instance_prompt"] = idx == 1
+
+    def _set_caption_filter(self, stdscr, dataset):
+        """Set caption filter list path"""
+        current = dataset.get("caption_filter_list", "")
+        value = self.get_input(
+            stdscr,
+            "Path to caption filter list (.txt or .json). Leave blank to clear.",
+            current,
+        ).strip()
+
+        if value:
+            dataset["caption_filter_list"] = value
+        else:
+            dataset.pop("caption_filter_list", None)
+
     # Crop configuration helpers
+    def _toggle_crop(self, stdscr, dataset):
+        """Toggle cropping"""
+        current = dataset.get("crop", False)
+        idx = self.show_options(
+            stdscr,
+            "Enable cropping before resizing?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            enabled = idx == 1
+            dataset["crop"] = enabled
+            if enabled:
+                dataset.setdefault("crop_style", "center")
+                dataset.setdefault("crop_aspect", "square")
+
     def _set_crop_style(self, stdscr, dataset):
         """Set crop style"""
         if not dataset.get("crop", False):
@@ -5036,10 +5644,162 @@ class SimpleTunerNCurses:
         except ValueError:
             self.show_error(stdscr, "Invalid bucket values")
 
+    def _set_aspect_rounding(self, stdscr, dataset):
+        """Set aspect bucket rounding"""
+        current = str(dataset.get("aspect_bucket_rounding", self.state.env_contents.get("aspect_bucket_rounding", 2)))
+        value = self.get_input(
+            stdscr,
+            "Aspect ratio rounding precision (integer, e.g., 2):",
+            current,
+        )
+        try:
+            rounding = int(value)
+            if rounding < 0:
+                raise ValueError
+            dataset["aspect_bucket_rounding"] = rounding
+        except ValueError:
+            self.show_error(stdscr, "Rounding must be a non-negative integer.")
+
+    # Cache helpers
+    def _set_vae_cache_dir(self, stdscr, dataset):
+        """Set VAE cache directory"""
+        dataset["cache_dir_vae"] = self.get_input(
+            stdscr,
+            "Path for VAE cache files:",
+            dataset.get("cache_dir_vae", "cache/vae"),
+        )
+
+    def _toggle_vae_clear(self, stdscr, dataset):
+        """Toggle clearing VAE cache each epoch"""
+        current = dataset.get("vae_cache_clear_each_epoch", False)
+        idx = self.show_options(
+            stdscr,
+            "Clear VAE cache at the end of each epoch?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["vae_cache_clear_each_epoch"] = idx == 1
+
+    def _toggle_hash_filenames(self, stdscr, dataset):
+        """Toggle filename hashing"""
+        current = dataset.get("hash_filenames", False)
+        idx = self.show_options(
+            stdscr,
+            "Hash filenames inside cache directories?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["hash_filenames"] = idx == 1
+
+    def _set_skip_discovery(self, stdscr, dataset):
+        """Configure skip_file_discovery flags"""
+        hints = (
+            "Enter space or comma separated tokens (e.g., 'vae aspect').\n"
+            "Valid tokens include: vae, aspect, metadata, text."
+        )
+        current = str(dataset.get("skip_file_discovery", "") or "")
+        value = self.get_input(stdscr, hints, current).strip()
+        if not value:
+            dataset.pop("skip_file_discovery", None)
+            return
+        dataset["skip_file_discovery"] = value
+
+    def _toggle_preserve_cache(self, stdscr, dataset):
+        """Toggle preservation of backend cache"""
+        current = dataset.get("preserve_data_backend_cache", False)
+        idx = self.show_options(
+            stdscr,
+            "Preserve data backend cache between runs?",
+            ["No", "Yes"],
+            1 if current else 0,
+        )
+        if idx >= 0:
+            dataset["preserve_data_backend_cache"] = idx == 1
+
+    def _set_text_embeds_ref(self, stdscr, dataset):
+        """Link a text embeds dataset"""
+        text_datasets = [d for d in getattr(self, "_datasets", []) if d.get("dataset_type") == "text_embeds"]
+        if not text_datasets:
+            self.show_message(stdscr, "No text embeds datasets configured yet.")
+            return
+
+        options = ["Use default"]
+        for d in text_datasets:
+            label = d.get("id", "unnamed")
+            if d.get("default"):
+                label += " (default)"
+            options.append(label)
+
+        current_id = dataset.get("text_embeds")
+        default_idx = 0
+        if current_id:
+            for idx, d in enumerate(text_datasets, start=1):
+                if d.get("id") == current_id:
+                    default_idx = idx
+                    break
+
+        idx = self.show_options(stdscr, "Select text embeds dataset:", options, default_idx)
+        if idx < 0:
+            return
+        if idx == 0:
+            dataset.pop("text_embeds", None)
+        else:
+            dataset["text_embeds"] = text_datasets[idx - 1].get("id")
+
+    def _set_image_embeds_ref(self, stdscr, dataset):
+        """Link an image embeds dataset"""
+        image_datasets = [d for d in getattr(self, "_datasets", []) if d.get("dataset_type") == "image_embeds"]
+        if not image_datasets:
+            self.show_message(stdscr, "No image embeds datasets configured yet.")
+            return
+
+        options = ["Not set"] + [d.get("id", "unnamed") for d in image_datasets]
+        current_id = dataset.get("image_embeds")
+        default_idx = 0
+        if current_id:
+            for idx, d in enumerate(image_datasets, start=1):
+                if d.get("id") == current_id:
+                    default_idx = idx
+                    break
+
+        idx = self.show_options(stdscr, "Select image embeds dataset:", options, default_idx)
+        if idx < 0:
+            return
+        if idx == 0:
+            dataset.pop("image_embeds", None)
+        else:
+            dataset["image_embeds"] = image_datasets[idx - 1].get("id")
+
     # AWS helpers
     def _set_aws_bucket(self, stdscr, dataset):
         """Set AWS bucket name"""
         dataset["aws_bucket_name"] = self.get_input(stdscr, "S3 bucket name:", dataset.get("aws_bucket_name", "my-bucket"))
+
+    def _set_aws_prefix(self, stdscr, dataset):
+        """Set AWS key prefix"""
+        dataset["aws_data_prefix"] = self.get_input(
+            stdscr,
+            "Object prefix within the bucket (can be blank):",
+            dataset.get("aws_data_prefix", ""),
+        )
+
+    def _set_aws_region(self, stdscr, dataset):
+        """Set AWS region"""
+        dataset["aws_region_name"] = self.get_input(
+            stdscr,
+            "AWS region name (e.g., us-east-1). Leave blank for default:",
+            dataset.get("aws_region_name", ""),
+        )
+
+    def _set_aws_endpoint(self, stdscr, dataset):
+        """Set custom AWS endpoint"""
+        dataset["aws_endpoint_url"] = self.get_input(
+            stdscr,
+            "Custom endpoint URL (leave blank for AWS default):",
+            dataset.get("aws_endpoint_url", ""),
+        )
 
     def _set_aws_credentials(self, stdscr, dataset):
         """Set AWS credentials"""
