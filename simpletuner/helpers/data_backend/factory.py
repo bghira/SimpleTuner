@@ -1116,6 +1116,10 @@ class FactoryRegistry:
                 info_log(f"Skipping disabled data backend {backend['id']} in config file.")
                 continue
 
+            dataset_type = backend.get("dataset_type")
+            if dataset_type != "video":
+                continue
+
             if backend.get("conditioning", None) is not None:
                 info_log(f"Found conditioning configuration for backend {backend['id']}. Generating conditioning dataset.")
                 modified_backend, conditioning_datasets = DatasetDuplicator.generate_conditioning_datasets(
