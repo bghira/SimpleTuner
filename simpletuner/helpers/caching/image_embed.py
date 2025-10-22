@@ -1,7 +1,7 @@
 import logging
 import os
 from hashlib import sha256
-from typing import List, Tuple
+from typing import Any, List, Tuple
 
 import numpy as np
 import torch
@@ -181,7 +181,7 @@ class ImageEmbedCache(WebhookMixin):
             return Image.fromarray(first_frame).convert("RGB")
         raise ValueError(f"Unsupported sample type for conditioning embed: {type(sample)}")
 
-    def _encode_batch(self, filepaths: List[str]) -> Tuple[List[str], List[torch.Tensor]]:
+    def _encode_batch(self, filepaths: List[str]) -> Tuple[List[str], List[Any]]:
         self._ensure_embedder()
         valid_paths: List[str] = []
         images: List[Image.Image] = []
@@ -199,17 +199,46 @@ class ImageEmbedCache(WebhookMixin):
             embeddings = self.embedder.encode(images)
         if embeddings is None:
             return [], []
+
+        def _detach_tensor(value):
+            return value.detach().cpu()
+
         if isinstance(embeddings, (list, tuple)):
+            if len(embeddings) == 0:
+                return [], []
             if all(torch.is_tensor(item) for item in embeddings):
-                embeddings = torch.stack(embeddings, dim=0)
-            else:
-                raise ValueError("Conditioning image embed provider returned a sequence containing non-tensors.")
-        elif isinstance(embeddings, np.ndarray):
+                stacked = torch.stack(embeddings, dim=0)
+                stacked = _detach_tensor(stacked)
+                return valid_paths, [stacked[i] for i in range(stacked.shape[0])]
+            if all(isinstance(item, dict) for item in embeddings):
+                processed: List[dict] = []
+                for entry in embeddings:
+                    processed.append(
+                        {
+                            key: (_detach_tensor(value) if torch.is_tensor(value) else value)
+                            for key, value in entry.items()
+                        }
+                    )
+                return valid_paths, processed
+            raise ValueError(
+                "Conditioning image embed provider returned a sequence with unsupported element types. "
+                "Expected tensors or dictionaries."
+            )
+
+        if isinstance(embeddings, dict):
+            processed_dict = {
+                key: (_detach_tensor(value) if torch.is_tensor(value) else value) for key, value in embeddings.items()
+            }
+            return valid_paths, [processed_dict]
+
+        if isinstance(embeddings, np.ndarray):
             embeddings = torch.from_numpy(embeddings)
-        if not torch.is_tensor(embeddings):
-            raise ValueError("Conditioning image embed provider returned non-tensor embeddings.")
-        embeds = embeddings.detach().cpu()
-        return valid_paths, [embeds[i] for i in range(embeds.shape[0])]
+
+        if torch.is_tensor(embeddings):
+            embeddings = _detach_tensor(embeddings)
+            return valid_paths, [embeddings[i] for i in range(embeddings.shape[0])]
+
+        raise ValueError("Conditioning image embed provider returned an unsupported embedding type.")
 
     def _write_embed(self, filepath: str, embedding: torch.Tensor) -> None:
         cache_path = self.image_path_to_embed_path.get(filepath)

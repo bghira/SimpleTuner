@@ -427,12 +427,22 @@ def collate_fn(batch):
         for path in filepaths:
             embed_tensor = cache.retrieve_from_cache(path)
             if isinstance(embed_tensor, dict):
-                raise ValueError("Conditioning image embed cache returned an unexpected structure.")
+                processed_entry = {}
+                for key, value in embed_tensor.items():
+                    if torch.is_tensor(value) and not torch.backends.mps.is_available():
+                        processed_entry[key] = value.to("cpu").pin_memory()
+                    else:
+                        processed_entry[key] = value
+                embed_tensors.append(processed_entry)
+                continue
             if not torch.backends.mps.is_available():
                 embed_tensor = embed_tensor.to("cpu").pin_memory()
             embed_tensors.append(embed_tensor)
         if embed_tensors:
-            conditioning_image_embeds = torch.stack(embed_tensors, dim=0)
+            if isinstance(embed_tensors[0], dict):
+                conditioning_image_embeds = embed_tensors
+            else:
+                conditioning_image_embeds = torch.stack(embed_tensors, dim=0)
 
     training_filepaths = []
     conditioning_type = None

@@ -1248,8 +1248,10 @@ class ModelFoundation(ABC):
             batch["conditioning_pixel_values"] = batch["conditioning_pixel_values"][0]
         if isinstance(batch.get("conditioning_latents"), list) and len(batch["conditioning_latents"]) > 0:
             batch["conditioning_latents"] = batch["conditioning_latents"][0]
-        if isinstance(batch.get("conditioning_image_embeds"), list) and len(batch["conditioning_image_embeds"]) > 0:
-            batch["conditioning_image_embeds"] = batch["conditioning_image_embeds"][0]
+        conditioning_embeds = batch.get("conditioning_image_embeds")
+        if isinstance(conditioning_embeds, list) and len(conditioning_embeds) > 0:
+            if not isinstance(conditioning_embeds[0], dict):
+                batch["conditioning_image_embeds"] = conditioning_embeds[0]
         return batch
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
@@ -1297,7 +1299,25 @@ class ModelFoundation(ABC):
             batch["encoder_attention_mask"] = encoder_attention_mask.to(**target_device_kwargs)
 
         conditioning_image_embeds = batch.get("conditioning_image_embeds")
-        if conditioning_image_embeds is not None and hasattr(conditioning_image_embeds, "to"):
+        if isinstance(conditioning_image_embeds, list) and conditioning_image_embeds:
+            first_entry = conditioning_image_embeds[0]
+            if isinstance(first_entry, dict):
+                stacked: dict[str, torch.Tensor | list] = {}
+                for key in first_entry.keys():
+                    values = [entry[key] for entry in conditioning_image_embeds]
+                    if values and torch.is_tensor(values[0]):
+                        stacked[key] = torch.stack(values, dim=0).to(**target_device_kwargs)
+                    else:
+                        stacked[key] = values
+                batch["conditioning_image_embeds"] = stacked
+            elif hasattr(first_entry, "to"):
+                batch["conditioning_image_embeds"] = torch.stack(conditioning_image_embeds, dim=0).to(**target_device_kwargs)
+        elif isinstance(conditioning_image_embeds, dict):
+            batch["conditioning_image_embeds"] = {
+                key: value.to(**target_device_kwargs) if hasattr(value, "to") else value
+                for key, value in conditioning_image_embeds.items()
+            }
+        elif conditioning_image_embeds is not None and hasattr(conditioning_image_embeds, "to"):
             batch["conditioning_image_embeds"] = conditioning_image_embeds.to(**target_device_kwargs)
 
         # Sample noise
