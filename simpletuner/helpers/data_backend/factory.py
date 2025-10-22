@@ -1173,6 +1173,7 @@ class FactoryRegistry:
                         virtual_backend["conditioning_type"] = "reference_strict"
                         virtual_backend["source_dataset_id"] = backend["id"]
                         virtual_backend["auto_generated"] = False
+                        virtual_backend["disable_vae_cache"] = True
                         # ensure video stanza exists for downstream size alignment
                         if isinstance(virtual_backend.get("video"), dict):
                             virtual_backend["video"] = dict(virtual_backend["video"])
@@ -2277,6 +2278,10 @@ class FactoryRegistry:
         text_embed_cache_dir_paths: List[str],
         conditioning_type: Optional[str],
     ) -> None:
+        disable_vae_cache = backend.get("disable_vae_cache") or init_backend["config"].get("disable_vae_cache")
+        if disable_vae_cache:
+            info_log(f"(id={init_backend['id']}) Skipping VAE cache configuration (disable_vae_cache=True).")
+            return
         """Configure VAE cache for the backend."""
         vae_cache_dir = backend.get("cache_dir_vae", None)
         if vae_cache_dir in vae_cache_dir_paths:

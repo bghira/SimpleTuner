@@ -68,6 +68,8 @@ class ImageBackendConfig(BaseBackendConfig):
 
     video: Optional[Dict[str, Any]] = None
 
+    disable_vae_cache: bool = False
+
     is_regularisation_data: bool = False
     is_regularization_data: bool = False
 
@@ -163,6 +165,8 @@ class ImageBackendConfig(BaseBackendConfig):
         config.parquet = backend_dict.get("parquet")
         config.video = backend_dict.get("video")
 
+        config.disable_vae_cache = bool(backend_dict.get("disable_vae_cache", False))
+
         config.is_regularisation_data = backend_dict.get(
             "is_regularisation_data", backend_dict.get("is_regularization_data", False)
         )
@@ -239,6 +243,9 @@ class ImageBackendConfig(BaseBackendConfig):
                 self.metadata_backend = "huggingface"
             if self.caption_strategy is None:
                 self.caption_strategy = "huggingface"
+
+        if self.disable_vae_cache:
+            self.config["disable_vae_cache"] = True
 
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
