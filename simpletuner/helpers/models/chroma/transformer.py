@@ -10,11 +10,11 @@ from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FluxTransformer2DLoadersMixin, FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import AttentionMixin, FeedForward
 from diffusers.models.cache_utils import CacheMixin
-from diffusers.models.embeddings import FluxPosEmbed, PixArtAlphaTextProjection, Timesteps, get_timestep_embedding
+from diffusers.models.embeddings import PixArtAlphaTextProjection, Timesteps, get_timestep_embedding
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import CombinedTimestepLabelEmbeddings, FP32LayerNorm, RMSNorm
-from diffusers.models.transformers.transformer_flux import FluxAttention, FluxAttnProcessor
+from diffusers.models.transformers.transformer_flux import FluxAttention, FluxAttnProcessor, FluxPosEmbed
 from diffusers.utils import USE_PEFT_BACKEND, deprecate, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.import_utils import is_torch_npu_available
 from diffusers.utils.torch_utils import maybe_allow_in_graph

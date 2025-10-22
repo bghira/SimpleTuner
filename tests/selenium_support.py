@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import multiprocessing
+import sys
 import os
 import tempfile
 import time
@@ -20,10 +21,11 @@ from selenium.webdriver.firefox.options import Options as FirefoxOptions
 
 from simpletuner.simpletuner_sdk.server import ServerMode, create_app
 
-# Use 'fork' on macOS to avoid multiprocessing issues
+# Prefer spawn to avoid CUDA fork issues; use fork only on macOS where spawn can break UI tests.
 if hasattr(multiprocessing, "set_start_method"):
+    target_method = "fork" if sys.platform == "darwin" else "spawn"
     try:
-        multiprocessing.set_start_method("fork", force=True)
+        multiprocessing.set_start_method(target_method, force=True)
     except RuntimeError:
         pass  # Already set
 
@@ -37,6 +39,11 @@ def _run_test_server(port: int, home_path: str, webui_config_path: str) -> None:
     os.environ["HOME"] = home_path
     os.environ["SIMPLETUNER_WEB_UI_CONFIG"] = webui_config_path
     os.environ["TQDM_DISABLE"] = "1"
+    # Prevent CUDA initialisation issues when running inside forked test workers.
+    # Tests exercise the WebUI and do not need GPU access.
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+    os.environ.setdefault("DIFFUSERS_DISABLE_CUDA", "1")
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
     app = create_app(mode=ServerMode.TRAINER)
     uvicorn.run(app, host=TEST_HOST, port=port, log_level="error")
@@ -70,7 +77,12 @@ class _TestServerManager:
         self._process = multiprocessing.Process(target=_run_test_server, args=(self.port, home_path, webui_config_path))
         self._process.daemon = True
         self._process.start()
-        self._wait_for_server(self.port)
+        timeout = os.environ.get("SELENIUM_SERVER_START_TIMEOUT")
+        try:
+            timeout_value = float(timeout) if timeout is not None else 45.0
+        except (TypeError, ValueError):
+            timeout_value = 45.0
+        self._wait_for_server(self.port, timeout=timeout_value)
         return self.base_url
 
     def stop(self) -> None:
@@ -88,7 +100,7 @@ class _TestServerManager:
             sock.bind((TEST_HOST, 0))
             return sock.getsockname()[1]
 
-    def _wait_for_server(self, port: int, timeout: float = 15.0) -> None:
+    def _wait_for_server(self, port: int, timeout: float = 45.0) -> None:
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:

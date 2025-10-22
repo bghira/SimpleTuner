@@ -34,6 +34,7 @@ from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscal
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 from simpletuner.helpers.training.tread import TREADRouter
+from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -150,8 +151,25 @@ class QwenTimestepProjEmbeddings(nn.Module):
         self.timestep_embedder.time_embed_dim = embedding_dim
 
     def forward(self, timestep, hidden_states):
-        timesteps_proj = self.time_proj(timestep)
-        timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_states.dtype))  # (N, D)
+        target_device = hidden_states.device
+        target_dtype = hidden_states.dtype
+
+        if hasattr(self.time_proj, "to"):
+            self.time_proj = self.time_proj.to(device=target_device)
+
+        embedder_params = list(self.timestep_embedder.parameters())
+        if embedder_params:
+            if embedder_params[0].device != target_device:
+                self.timestep_embedder = self.timestep_embedder.to(device=target_device)
+            if embedder_params[0].dtype != target_dtype:
+                self.timestep_embedder = self.timestep_embedder.to(dtype=target_dtype)
+
+        timesteps_proj = self.time_proj(timestep.to(device=target_device))
+        timesteps_proj = timesteps_proj.to(device=target_device, dtype=target_dtype)
+
+        timesteps_emb = self.timestep_embedder(timesteps_proj)
+        if timesteps_emb.dtype != target_dtype:
+            timesteps_emb = timesteps_emb.to(dtype=target_dtype)
 
         conditioning = timesteps_emb
 
@@ -358,7 +376,7 @@ class QwenDoubleStreamAttnProcessor2_0:
 
 
 @maybe_allow_in_graph
-class QwenImageTransformerBlock(nn.Module):
+class QwenImageTransformerBlock(PatchableModule):
     def __init__(
         self, dim: int, num_attention_heads: int, attention_head_dim: int, qk_norm: str = "rms_norm", eps: float = 1e-6
     ):
@@ -474,7 +492,7 @@ class QwenImageTransformerBlock(nn.Module):
 
 
 class QwenImageTransformer2DModel(
-    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, CacheMixin, AttentionMixin
+    PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, CacheMixin, AttentionMixin
 ):
     """
     The Transformer model introduced in Qwen.
@@ -534,7 +552,7 @@ class QwenImageTransformer2DModel(
         self.img_in = nn.Linear(self._img_in_features, self.inner_dim)
         self.txt_in = nn.Linear(joint_attention_dim, self.inner_dim)
 
-        self.transformer_blocks = nn.ModuleList(
+        self.transformer_blocks = MutableModuleList(
             [
                 QwenImageTransformerBlock(
                     dim=self.inner_dim,
@@ -601,6 +619,42 @@ class QwenImageTransformer2DModel(
         )
         return hidden_states, grid_h, grid_w
 
+    def _untokenize_hidden_states(
+        self, hidden_states: torch.Tensor, grid_h: Optional[int], grid_w: Optional[int]
+    ) -> torch.Tensor:
+        if grid_h is None or grid_w is None:
+            return hidden_states
+
+        batch_size, num_tokens, channels = hidden_states.shape
+        patch_size = self.config.patch_size
+        expected_tokens = grid_h * grid_w
+        if num_tokens != expected_tokens:
+            raise ValueError(
+                f"Unexpected token count during untokenize: got {num_tokens}, expected {expected_tokens}"
+            )
+
+        expected_channels = patch_size * patch_size * self.out_channels
+        if channels != expected_channels:
+            raise ValueError(
+                f"Unexpected channel count during untokenize: got {channels}, expected {expected_channels}"
+            )
+
+        hidden_states = hidden_states.view(
+            batch_size,
+            grid_h,
+            grid_w,
+            patch_size,
+            patch_size,
+            self.out_channels,
+        )
+        hidden_states = hidden_states.permute(0, 5, 1, 3, 2, 4).reshape(
+            batch_size,
+            self.out_channels,
+            grid_h * patch_size,
+            grid_w * patch_size,
+        )
+        return hidden_states
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -655,6 +709,12 @@ class QwenImageTransformer2DModel(
                 )
 
         hidden_states, patch_h, patch_w = self._tokenize_hidden_states(hidden_states)
+
+        if (patch_h is None or patch_w is None) and img_shapes:
+            # img_shapes entries have the form (frame, height, width) where height/width are already scaled by patch
+            _, grid_h, grid_w = img_shapes[0]
+            patch_h = patch_h or grid_h
+            patch_w = patch_w or grid_w
 
         if img_shapes is None:
             if patch_h is None or patch_w is None:
@@ -755,7 +815,9 @@ class QwenImageTransformer2DModel(
             # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, lora_scale)
 
-        if not return_dict:
-            return (output,)
+        output_image = self._untokenize_hidden_states(output, patch_h, patch_w)
 
-        return Transformer2DModelOutput(sample=output)
+        if not return_dict:
+            return (output_image,)
+
+        return Transformer2DModelOutput(sample=output_image)

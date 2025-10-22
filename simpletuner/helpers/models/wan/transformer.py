@@ -74,6 +74,27 @@ class WanAttnProcessor2_0:
         attention_mask: Optional[torch.Tensor] = None,
         rotary_emb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        target_dtype = hidden_states.dtype
+        target_device = hidden_states.device
+
+        def _ensure_linear_dtype(linear_module: Optional[nn.Module]) -> None:
+            if linear_module is None or not hasattr(linear_module, "weight"):
+                return
+            weight = linear_module.weight
+            if weight.device != target_device or weight.dtype != target_dtype:
+                linear_module.to(device=target_device, dtype=target_dtype)
+
+        _ensure_linear_dtype(getattr(attn, "to_q", None))
+        _ensure_linear_dtype(getattr(attn, "to_k", None))
+        _ensure_linear_dtype(getattr(attn, "to_v", None))
+        _ensure_linear_dtype(getattr(attn, "add_k_proj", None))
+        _ensure_linear_dtype(getattr(attn, "add_v_proj", None))
+
+        if isinstance(getattr(attn, "to_out", None), (list, tuple, nn.ModuleList)) and attn.to_out:
+            _ensure_linear_dtype(attn.to_out[0])
+        elif hasattr(attn, "to_out") and isinstance(attn.to_out, nn.Module):
+            _ensure_linear_dtype(attn.to_out)
+
         encoder_hidden_states_img = None
         if attn.add_k_proj is not None:
             encoder_hidden_states_img = encoder_hidden_states[:, :513]
@@ -85,10 +106,14 @@ class WanAttnProcessor2_0:
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
+        query = query.to(dtype=target_dtype)
+        key = key.to(dtype=target_dtype)
+        value = value.to(dtype=target_dtype)
+
         if attn.norm_q is not None:
-            query = attn.norm_q(query)
+            query = attn.norm_q(query).to(dtype=target_dtype)
         if attn.norm_k is not None:
-            key = attn.norm_k(key)
+            key = attn.norm_k(key).to(dtype=target_dtype)
 
         query = query.unflatten(2, (attn.heads, -1)).transpose(1, 2)
         key = key.unflatten(2, (attn.heads, -1)).transpose(1, 2)
@@ -105,6 +130,9 @@ class WanAttnProcessor2_0:
             key_img = attn.add_k_proj(encoder_hidden_states_img)
             key_img = attn.norm_added_k(key_img)
             value_img = attn.add_v_proj(encoder_hidden_states_img)
+
+            key_img = key_img.to(dtype=target_dtype)
+            value_img = value_img.to(dtype=target_dtype)
 
             key_img = key_img.unflatten(2, (attn.heads, -1)).transpose(1, 2)
             value_img = value_img.unflatten(2, (attn.heads, -1)).transpose(1, 2)
@@ -131,7 +159,7 @@ class WanAttnProcessor2_0:
 
         hidden_states = attn.to_out[0](hidden_states)
         hidden_states = attn.to_out[1](hidden_states)
-        return hidden_states
+        return hidden_states.to(dtype=target_dtype)
 
 
 class WanImageEmbedding(torch.nn.Module):
@@ -293,6 +321,20 @@ class WanTransformerBlock(nn.Module):
         self.norm3 = FP32LayerNorm(dim, eps, elementwise_affine=False)
 
         self.scale_shift_table = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
+        self._parameter_dtype = self.attn1.to_q.weight.dtype
+        self._parameter_device = self.attn1.to_q.weight.device
+
+    def _ensure_module_dtype(self, device: torch.device, dtype: torch.dtype) -> None:
+        if self._parameter_dtype == dtype and self._parameter_device == device:
+            return
+
+        for module in (self.attn1, self.attn2, self.ffn):
+            module.to(device=device, dtype=dtype)
+
+        self.scale_shift_table.data = self.scale_shift_table.data.to(device=device, dtype=dtype)
+
+        self._parameter_dtype = dtype
+        self._parameter_device = device
 
     def forward(
         self,
@@ -301,6 +343,8 @@ class WanTransformerBlock(nn.Module):
         temb: torch.Tensor,
         rotary_emb: torch.Tensor,
     ) -> torch.Tensor:
+        self._ensure_module_dtype(hidden_states.device, hidden_states.dtype)
+
         shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (self.scale_shift_table + temb.float()).chunk(
             6, dim=1
         )

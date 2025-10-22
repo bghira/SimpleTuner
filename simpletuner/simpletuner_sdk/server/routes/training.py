@@ -355,6 +355,13 @@ async def stream_training_events(websocket: WebSocket):
     except (ConnectionClosed, ConnectionClosedOK):
         # Underlying websocket library already closed
         pass
+    except asyncio.CancelledError:
+        # Event loop shutting down – exit quietly without logging stack traces
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        return
     except Exception as e:
         # Send error and close
         try:
