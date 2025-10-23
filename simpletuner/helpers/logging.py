@@ -258,14 +258,15 @@ class WebhookLogger(logging.Logger):
         Configure how this logger interprets log levels and whether it should
         push to webhooks.
         """
+        manual_override = self._manual_level_override
         self._level_env_var = env_var
         self._default_level_name = default_level
         self._webhook_disabled = disable_webhook
         self._level_managed = True
         if propagate is not None:
             self.propagate = propagate
-        self._manual_level_override = False
-        self._apply_managed_level()
+        if not manual_override:
+            self._apply_managed_level()
 
     def setLevel(self, level: int | str) -> None:  # noqa: N802 - keeping logging API
         """
