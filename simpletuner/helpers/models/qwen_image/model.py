@@ -211,14 +211,12 @@ class QwenImage(ImageModelFoundation):
     def requires_conditioning_dataset(self) -> bool:
         if self._is_edit_flavour():
             return True
-        return super().requires_conditioning_dataset()
+        return False
 
     def requires_conditioning_image_embeds(self) -> bool:
-        if self._is_edit_v1_flavour():
+        if self._is_edit_flavour():
             return True
-        if self._is_edit_v2_flavour():
-            return super().requires_conditioning_image_embeds()
-        return True
+        return False
 
     class _ConditioningImageEmbedder:
         def __init__(self, processor, vision_model, device, dtype):
@@ -265,9 +263,6 @@ class QwenImage(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=dtype,
             )
-
-        if self._is_edit_v2_flavour():
-            return None
 
         if self._conditioning_image_embedder is not None:
             return self._conditioning_image_embedder
