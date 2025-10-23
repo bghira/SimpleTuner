@@ -446,10 +446,11 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         embed_cache.compute_embeddings_for_prompts([args.validation_prompt], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts:
-        logger.info(f"Precomputing the negative prompt embed for validations. Prompts: {validation_prompts}")
+        negative_prompt = StateTracker.get_args().validation_negative_prompt
+        logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
         model.log_model_devices()
         validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
-            [StateTracker.get_args().validation_negative_prompt],
+            [negative_prompt],
             is_validation=True,
             load_from_cache=False,
         )
