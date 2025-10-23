@@ -376,20 +376,41 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         validation_sample_images = retrieve_validation_images()
         if len(validation_sample_images) > 0:
             StateTracker.set_validation_sample_images(validation_sample_images)
+            sample_prompts: list[str] = []
+            sample_shortnames: list[str] = []
             # Collect the prompts for the validation images.
             for _validation_sample in tqdm(
                 validation_sample_images,
                 ncols=125,
                 desc="Precomputing validation image embeds",
             ):
-                if isinstance(_validation_sample, tuple) and len(_validation_sample) == 3:
-                    _, validation_prompt, _ = _validation_sample
-                elif isinstance(_validation_sample, tuple) and len(_validation_sample) == 4:
-                    _, validation_prompt, _, _ = _validation_sample
+                validation_prompt = None
+                shortname = None
+                if isinstance(_validation_sample, tuple):
+                    if len(_validation_sample) == 3:
+                        shortname, validation_prompt, _ = _validation_sample
+                    elif len(_validation_sample) == 4:
+                        shortname, validation_prompt, *_ = _validation_sample
+                if not validation_prompt:
+                    logger.debug("Skipping validation sample without prompt while preparing embeds.")
+                    continue
                 embed_cache.compute_embeddings_for_prompts([validation_prompt], load_from_cache=False)
+                if shortname is None:
+                    shortname = f"validation_{len(sample_shortnames)}"
+                sample_prompts.append(validation_prompt)
+                sample_shortnames.append(shortname)
+            if sample_prompts:
+                validation_prompts.extend(sample_prompts)
+                validation_shortnames.extend(sample_shortnames)
             time.sleep(5)
 
-    if args.validation_prompt_library:
+    allow_prompt_library = not (
+        isinstance(model, VideoModelFoundation)
+        and getattr(model, "requires_validation_i2v_samples", lambda: False)()
+        and StateTracker.get_validation_sample_images()
+    )
+
+    if allow_prompt_library and args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
         from simpletuner.helpers.prompts import prompts as prompt_library
 
@@ -404,7 +425,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
 
-    if args.user_prompt_library is not None:
+    if allow_prompt_library and args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
         for shortname, prompt in tqdm(
             user_prompt_library.items(),
@@ -417,7 +438,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
-    if args.validation_prompt is not None and args.validation_prompt != "None":
+    if allow_prompt_library and args.validation_prompt is not None and args.validation_prompt != "None":
         # Use a single prompt for validation.
         # This will add a single prompt to the prompt library, if in use.
         validation_prompts = validation_prompts + [args.validation_prompt]
