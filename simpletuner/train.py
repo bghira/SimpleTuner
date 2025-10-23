@@ -17,6 +17,13 @@ from os import environ
 
 environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
+# New imports for ImageFolderDataset
+import torch
+from torch.utils.data import Dataset
+from torchvision import transforms
+from PIL import Image
+import os # 'os' is already imported via 'from os import environ', but kept for clarity regarding its use here
+
 from simpletuner.helpers import log_format
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.multi_process import _get_rank
@@ -24,6 +31,43 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.trainer import Trainer
 
 logger = get_logger("SimpleTuner")
+
+class ImageFolderDataset(Dataset):
+    """
+    A PyTorch Dataset for loading images from a directory.
+    It supports common image formats and applies a given transformation pipeline.
+    """
+    def __init__(self, root_dir: str, transform=None):
+        self.root_dir = root_dir
+        self.transform = transform
+        self.image_files = self._find_image_files()
+
+        if not self.image_files:
+            raise ValueError(f"No image files found in the directory: {root_dir}")
+
+    def _find_image_files(self):
+        # List of common image file extensions
+        image_extensions = ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif')
+        files = []
+        for f in os.listdir(self.root_dir):
+            if os.path.isfile(os.path.join(self.root_dir, f)) and f.lower().endswith(image_extensions):
+                files.append(os.path.join(self.root_dir, f))
+        files.sort() # Ensure consistent order for reproducibility
+        return files
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_path = self.image_files[idx]
+        # Open image, ensure it's RGB (3 channels)
+        image = Image.open(img_path).convert("RGB")
+
+        if self.transform:
+            image = self.transform(image)
+
+        return image
+
 
 if __name__ == "__main__":
     trainer = None
