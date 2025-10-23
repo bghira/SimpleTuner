@@ -212,10 +212,69 @@ class ConfigState:
         self.values[field_name] = value
         for alias in self.aliases.get(field_name, []):
             self.unknown_values.pop(alias, None)
+        if field_name in {"model_family", "model_flavour"}:
+            self._enforce_wan_i2v_dataset_requirements()
+
+    def _get_config_scalar(self, *field_names: str) -> Any:
+        for name in field_names:
+            if name in self.values:
+                value = self.values[name]
+                if isinstance(value, str):
+                    if value.strip():
+                        return value
+                    continue
+                if value is not None:
+                    return value
+            if name in self.unknown_values:
+                value = self.unknown_values[name]
+                if isinstance(value, str):
+                    if value.strip():
+                        return value
+                    continue
+                if value is not None:
+                    return value
+        return None
+
+    def _is_wan_i2v_model(self) -> bool:
+        model_family = self._get_config_scalar("model_family", "--model_family")
+        if not isinstance(model_family, str) or model_family.strip().lower() != "wan":
+            return False
+        model_flavour = self._get_config_scalar("model_flavour", "--model_flavour")
+        if not isinstance(model_flavour, str):
+            return False
+        return model_flavour.strip().lower().startswith("i2v-")
+
+    def _enforce_wan_i2v_dataset_requirements(self, payload: Optional[Any] = None) -> None:
+        if not self._is_wan_i2v_model():
+            return
+        target = payload if payload is not None else self.unknown_values
+        if isinstance(target, (dict, list)):
+            self._force_video_entries_i2v(target)
+
+    def _force_video_entries_i2v(self, node: Any) -> None:
+        if isinstance(node, dict):
+            dataset_type = node.get("dataset_type")
+            dataset_type_str = dataset_type.strip().lower() if isinstance(dataset_type, str) else ""
+            video_block = node.get("video")
+            has_video_config = isinstance(video_block, dict)
+            if dataset_type_str == "video" or has_video_config:
+                if not isinstance(video_block, dict):
+                    video_block = {}
+                if video_block.get("is_i2v") is not True:
+                    video_block["is_i2v"] = True
+                node["video"] = video_block
+            for value in node.values():
+                if isinstance(value, (dict, list)):
+                    self._force_video_entries_i2v(value)
+        elif isinstance(node, list):
+            for item in node:
+                if isinstance(item, (dict, list)):
+                    self._force_video_entries_i2v(item)
 
     def as_config_data(self) -> Dict[str, Any]:
         """Return configuration data, including aliases, for FieldService context."""
 
+        self._enforce_wan_i2v_dataset_requirements()
         data: Dict[str, Any] = dict(self.unknown_values)
         for name, field in self.field_defs.items():
             if getattr(field, "webui_only", False):
@@ -232,11 +291,13 @@ class ConfigState:
                 if cleaned:
                     data.setdefault(f"--{cleaned}", value)
 
+        self._enforce_wan_i2v_dataset_requirements(data)
         return data
 
     def to_serializable(self) -> Dict[str, Any]:
         """Return a serializable dictionary suitable for writing to disk."""
 
+        self._enforce_wan_i2v_dataset_requirements()
         data = dict(self.unknown_values)
         for name, field in self.field_defs.items():
             if getattr(field, "webui_only", False):
@@ -245,6 +306,7 @@ class ConfigState:
             if value is None:
                 continue
             data[name] = value
+        self._enforce_wan_i2v_dataset_requirements(data)
         return data
 
     def load_from_file(self, config_path: str) -> bool:
@@ -279,6 +341,7 @@ class ConfigState:
                     recognized.add(alias)
 
         self.unknown_values = {key: value for key, value in payload.items() if key not in recognized}
+        self._enforce_wan_i2v_dataset_requirements()
 
 
 class MenuNavigator:

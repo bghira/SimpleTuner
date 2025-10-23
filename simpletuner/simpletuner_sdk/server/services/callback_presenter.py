@@ -84,6 +84,8 @@ class CallbackPresenter:
         severity = html.escape(str(payload.get("severity", "info")))
 
         images_html = cls._render_images(payload.get("images") or (), headline)
+        videos_html = cls._render_videos(payload.get("videos") or (), headline)
+        media_html = images_html + videos_html
 
         headline_html = html.escape(str(headline))
         body_html = html.escape(str(body)) if body else ""
@@ -99,7 +101,7 @@ class CallbackPresenter:
             '<div class="flex-grow-1">'
             f'<div class="event-headline text-{cls._severity_to_bootstrap_class(severity)}">{headline_html}</div>'
             f"{body_block}"
-            f"{images_html}"
+            f"{media_html}"
             f"{timestamp_block}"
             "</div>"
             "</div>"
@@ -130,6 +132,29 @@ class CallbackPresenter:
             return ""
 
         return '<div class="event-images d-flex flex-wrap gap-2">' + "".join(rendered) + "</div>"
+
+    @staticmethod
+    def _render_videos(videos: Any, alt: str | None) -> str:
+        if not videos:
+            return ""
+        rendered: list[str] = []
+        alt_text = html.escape(str(alt)) if alt else "Event video"
+
+        for video in videos:
+            src = CallbackPresenter._normalise_video_src(video)
+            if not src:
+                continue
+            rendered.append(
+                (
+                    '<video src="{src}" class="event-video img-fluid rounded border mt-2" '
+                    "controls muted playsinline loop></video>"
+                ).format(src=html.escape(src, quote=True))
+            )
+
+        if not rendered:
+            return ""
+
+        return '<div class="event-videos d-flex flex-wrap gap-2">' + "".join(rendered) + "</div>"
 
     @staticmethod
     def _normalise_image_src(image: Any) -> str | None:
@@ -174,6 +199,40 @@ class CallbackPresenter:
 
             # Otherwise, treat as base64 data and wrap it
             mime = image.get("mime_type") or image.get("mime") or "image/png"
+            return f"data:{mime};base64,{data}"
+
+        return None
+
+    @staticmethod
+    def _normalise_video_src(video: Any) -> str | None:
+        if video is None:
+            return None
+
+        if isinstance(video, str):
+            value = video.strip()
+            if not value:
+                return None
+            if value.startswith("data:") or value.startswith(("http://", "https://", "//")):
+                return value
+            if re.match(r"^[A-Za-z0-9+/]+=*$", value):
+                return f"data:video/mp4;base64,{value}"
+            return value
+
+        if isinstance(video, Mapping):
+            data = (
+                video.get("src")
+                or video.get("url")
+                or video.get("data")
+                or video.get("base64")
+                or video.get("video")
+                or video.get("video_base64")
+            )
+            if not isinstance(data, str) or not data.strip():
+                return None
+            data = data.strip()
+            if data.startswith("data:") or data.startswith(("http://", "https://", "//")):
+                return data
+            mime = video.get("mime_type") or video.get("mime") or "video/mp4"
             return f"data:{mime};base64,{data}"
 
         return None

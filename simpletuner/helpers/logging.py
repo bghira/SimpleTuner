@@ -41,6 +41,8 @@ class _WebhookTask:
     severity: str
     text_message: str
     structured_payload: Optional[dict[str, Any]]
+    images: Optional[list[Any]] = None
+    videos: Optional[list[Any]] = None
 
 
 def _ensure_worker():
@@ -69,6 +71,8 @@ def _webhook_worker_loop():
                             message_type=task.structured_payload.get("type"),
                             message_level=task.severity,
                             job_id=task.structured_payload.get("job_id"),
+                            images=task.images,
+                            videos=task.videos,
                         )
                     except Exception:
                         logging.getLogger(INTERNAL_LOGGER_NAME).debug(
@@ -77,7 +81,12 @@ def _webhook_worker_loop():
 
                 if hasattr(task.handler, "send"):
                     try:
-                        task.handler.send(message=task.text_message, message_level=task.severity)
+                        task.handler.send(
+                            message=task.text_message,
+                            message_level=task.severity,
+                            images=task.images,
+                            videos=task.videos,
+                        )
                     except Exception:
                         logging.getLogger(INTERNAL_LOGGER_NAME).debug(
                             "Failed to forward text log message to webhook.", exc_info=True

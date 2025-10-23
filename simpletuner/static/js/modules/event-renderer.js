@@ -157,6 +157,9 @@
             if (data.images && data.images.length > 0) {
                 contentHTML += renderImages(data.images, message, type);
             }
+            if (data.videos && data.videos.length > 0) {
+                contentHTML += renderVideos(data.videos, message, type);
+            }
 
             contentHTML +=
                         '<small class="text-muted">' + timestamp + '</small>' +
@@ -188,6 +191,26 @@
 
             imagesHTML += '</div>';
             return imagesHTML;
+        }
+
+        function renderVideos(videos, alt, eventType) {
+            var videosHTML = '<div class="event-videos d-flex flex-wrap gap-2 mt-2">';
+            var altText = escapeHtml(alt || 'Event video');
+            var group = escapeHtml(eventType || 'event');
+
+            videos.forEach(function(video, idx) {
+                var src = normalizeVideoSrc(video);
+                if (!src) return;
+
+                videosHTML +=
+                    '<video src="' + escapeHtml(src) + '" ' +
+                    'aria-label="' + altText + '" ' +
+                    'class="event-video img-fluid rounded border" ' +
+                    'controls muted playsinline loop></video>';
+            });
+
+            videosHTML += '</div>';
+            return videosHTML;
         }
 
         function normalizeImageSrc(image) {
@@ -223,6 +246,37 @@
 
                 // Wrap as base64
                 var mime = image.mime_type || image.mime || 'image/png';
+                return 'data:' + mime + ';base64,' + data;
+            }
+
+            return null;
+        }
+
+        function normalizeVideoSrc(video) {
+            if (!video) return null;
+
+            if (typeof video === 'string') {
+                var value = video.trim();
+                if (!value) return null;
+                if (value.startsWith('data:') || value.startsWith('http://') ||
+                    value.startsWith('https://') || value.startsWith('//')) {
+                    return value;
+                }
+                if (/^[A-Za-z0-9+/]+=*$/.test(value)) {
+                    return 'data:video/mp4;base64,' + value;
+                }
+                return value;
+            }
+
+            if (typeof video === 'object') {
+                var data = video.src || video.url || video.data || video.base64 || video.video || video.video_base64;
+                if (!data || typeof data !== 'string') return null;
+                data = data.trim();
+                if (data.startsWith('data:') || data.startsWith('http://') ||
+                    data.startsWith('https://') || data.startsWith('//')) {
+                    return data;
+                }
+                var mime = video.mime_type || video.mime || 'video/mp4';
                 return 'data:' + mime + ';base64,' + data;
             }
 

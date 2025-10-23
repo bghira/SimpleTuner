@@ -210,7 +210,8 @@ class VAECache(WebhookMixin):
     def _read_from_storage(self, filename: str, hide_errors: bool = False) -> torch.Tensor:
         if os.path.splitext(filename)[1] != ".pt":
             try:
-                return self.image_data_backend.read_image(filename)
+                sample = self.image_data_backend.read_image(filename)
+                return self._normalise_loaded_sample(sample)
             except Exception as e:
                 if self.delete_problematic_images:
                     self.metadata_backend.remove_image(filename)
@@ -232,6 +233,40 @@ class VAECache(WebhookMixin):
                 )
                 return None
             raise e
+
+    def _normalise_loaded_sample(self, sample):
+        if isinstance(sample, Image.Image):
+            return sample
+        if torch.is_tensor(sample):
+            return self._first_frame_to_pil(sample.detach().cpu().numpy())
+        if isinstance(sample, np.ndarray):
+            return self._first_frame_to_pil(sample)
+        return sample
+
+    def _first_frame_to_pil(self, array: np.ndarray) -> Image.Image:
+        if array.ndim == 5:
+            array = array[0]
+        if array.ndim == 4:
+            # Prefer channel-last; if not, attempt conversion
+            if array.shape[-1] in (1, 3, 4):
+                array = array[0]
+            elif array.shape[1] in (1, 3, 4):
+                array = array[0].transpose(1, 2, 0)
+            else:
+                array = array[0]
+        if array.ndim == 3 and array.shape[0] in (1, 3, 4) and array.shape[-1] not in (1, 3, 4):
+            array = array.transpose(1, 2, 0)
+        if array.ndim == 2:
+            pass
+        elif array.ndim == 3 and array.shape[-1] == 1:
+            array = array.squeeze(-1)
+        elif array.ndim != 3:
+            raise ValueError(f"Unsupported sample shape for conditioning embed: {array.shape}")
+
+        if array.dtype.kind in {"f", "d"}:
+            array = np.clip(array, 0.0, 1.0) * 255.0
+        array = np.clip(array, 0, 255).astype(np.uint8)
+        return Image.fromarray(array)
 
     def retrieve_from_cache(self, filepath: str):
         return self.encode_images([None], [filepath])[0]
@@ -740,6 +775,23 @@ class VAECache(WebhookMixin):
 
                 filepath, _, aspect_bucket = initial_data[idx]
                 filepaths.append(filepath)
+
+                if (
+                    self.dataset_type == "conditioning"
+                    and hasattr(self.model, "_is_i2v_like_flavour")
+                    and callable(self.model._is_i2v_like_flavour)
+                    and self.model._is_i2v_like_flavour()
+                ):
+                    if isinstance(image, np.ndarray) and image.ndim >= 4:
+                        image = image[0]
+                    elif torch.is_tensor(image) and image.ndim >= 4:
+                        image = image[0]
+                    if torch.is_tensor(image) and image.ndim == 3:
+                        image = image.cpu().numpy()
+                    elif isinstance(image, list) and len(image) > 0:
+                        image = image[0]
+                    if isinstance(image, np.ndarray) and image.ndim == 3:
+                        image = Image.fromarray(image.astype(np.uint8))
 
                 pixel_values = self.transform_sample(image).to(self.accelerator.device, dtype=self.vae.dtype)
                 output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)

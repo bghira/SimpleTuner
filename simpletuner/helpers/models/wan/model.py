@@ -358,6 +358,9 @@ class Wan(VideoModelFoundation):
     def requires_conditioning_validation_inputs(self) -> bool:
         return self._flavour_in(self.I2V_FLAVOURS | self.FLF2V_FLAVOURS | self.TI2V_FLAVOURS)
 
+    def requires_validation_i2v_samples(self) -> bool:
+        return self._flavour_in(self.I2V_FLAVOURS)
+
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         original_pixels = batch.get("conditioning_pixel_values")
         if isinstance(original_pixels, list) and len(original_pixels) > 0:

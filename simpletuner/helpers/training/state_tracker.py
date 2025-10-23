@@ -223,8 +223,6 @@ class StateTracker:
             logger.debug(
                 f"(rank={os.environ.get('RANK')}) Completed load from disk: {data_backend_id}: {type(cls.all_image_files[data_backend_id])}"
             )
-        else:
-            logger.debug(f"()")
         logger.debug(
             f"(rank={os.environ.get('RANK')}) Returning {type(cls.all_image_files[data_backend_id])} for {data_backend_id}"
         )

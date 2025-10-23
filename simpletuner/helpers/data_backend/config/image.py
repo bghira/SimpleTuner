@@ -68,6 +68,8 @@ class ImageBackendConfig(BaseBackendConfig):
 
     video: Optional[Dict[str, Any]] = None
 
+    disable_vae_cache: bool = False
+
     is_regularisation_data: bool = False
     is_regularization_data: bool = False
 
@@ -163,6 +165,8 @@ class ImageBackendConfig(BaseBackendConfig):
         config.parquet = backend_dict.get("parquet")
         config.video = backend_dict.get("video")
 
+        config.disable_vae_cache = bool(backend_dict.get("disable_vae_cache", False))
+
         config.is_regularisation_data = backend_dict.get(
             "is_regularisation_data", backend_dict.get("is_regularization_data", False)
         )
@@ -240,6 +244,9 @@ class ImageBackendConfig(BaseBackendConfig):
             if self.caption_strategy is None:
                 self.caption_strategy = "huggingface"
 
+        if self.disable_vae_cache:
+            self.config["disable_vae_cache"] = True
+
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
 
@@ -312,8 +319,18 @@ class ImageBackendConfig(BaseBackendConfig):
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
             )
 
-        if "is_i2v" not in self.video:
-            model_family = args.get("model_family", "")
+        model_family = args.get("model_family", "")
+        model_flavour = str(args.get("model_flavour", "") or "")
+        force_i2v = model_family == "wan" and model_flavour.startswith("i2v-")
+
+        if force_i2v:
+            if not self.video.get("is_i2v", False):
+                logger.warning(
+                    f"(id={self.id}) Forcing video->is_i2v=True for Wan flavour '{model_flavour}'. "
+                    "Wan I2V models require image-to-video conditioning datasets."
+                )
+            self.video["is_i2v"] = True
+        elif "is_i2v" not in self.video:
             if model_family in ["ltxvideo"]:
                 logger.warning(
                     f"Setting is_i2v to True for model_family={model_family}. Set this manually to false to override."

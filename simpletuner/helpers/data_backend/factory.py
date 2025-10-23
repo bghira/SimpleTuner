@@ -6,6 +6,7 @@ import sys
 import time
 import tracemalloc
 from contextlib import nullcontext
+from copy import deepcopy
 from math import sqrt
 from pathlib import Path
 from types import SimpleNamespace
@@ -472,16 +473,27 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             warning_log(
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
             )
-        if "is_i2v" not in output["config"]["video"]:
-            model_family = _get_arg_value(args, "model_family", "")
+        video_config = output["config"]["video"]
+        model_family = _get_arg_value(args, "model_family", "")
+        model_flavour = str(_get_arg_value(args, "model_flavour", "") or "")
+        force_i2v = model_family == "wan" and model_flavour.startswith("i2v-")
+
+        if force_i2v:
+            if not video_config.get("is_i2v", False):
+                warning_log(
+                    f"(id={backend['id']}) Forcing video->is_i2v=True for Wan flavour '{model_flavour}'. "
+                    "Wan I2V models require image-to-video conditioning datasets."
+                )
+            video_config["is_i2v"] = True
+        elif "is_i2v" not in video_config:
             if model_family in ["ltxvideo"]:
                 warning_log(
                     f"Setting is_i2v to True for model_family={model_family}. Set this manually to false to override."
                 )
-                output["config"]["video"]["is_i2v"] = True
+                video_config["is_i2v"] = True
             else:
                 warning_log(f"No value for is_i2v was supplied for your dataset. Assuming it is disabled.")
-                output["config"]["video"]["is_i2v"] = False
+                video_config["is_i2v"] = False
 
         min_frames = output["config"]["video"]["min_frames"]
         num_frames = output["config"]["video"]["num_frames"]
@@ -1116,20 +1128,100 @@ class FactoryRegistry:
                 info_log(f"Skipping disabled data backend {backend['id']} in config file.")
                 continue
 
-            if backend.get("conditioning", None) is not None:
+            dataset_type = backend.get("dataset_type")
+            debug_log(
+                f"(id={backend.get('id')}) process_conditioning_datasets: dataset_type={dataset_type}, "
+                f"keys={list(backend.keys())}"
+            )
+            if dataset_type != "video":
+                continue
+
+            video_config = backend.get("video", {}) or {}
+            debug_log(
+                f"(id={backend.get('id')}) process_conditioning_datasets: video_config_type={type(video_config)}, "
+                f"video_config={video_config}"
+            )
+            is_i2v_dataset = bool(video_config.get("is_i2v", False))
+            debug_log(
+                f"(id={backend.get('id')}) process_conditioning_datasets: is_i2v_dataset={is_i2v_dataset} "
+                f"(raw={video_config.get('is_i2v', None)})"
+            )
+            if is_i2v_dataset:
+                conditioning_spec = backend.get("conditioning")
+                if isinstance(conditioning_spec, list):
+                    conditioning_spec_count = len(conditioning_spec)
+                    conditioning_types = [
+                        entry.get("type", "<unknown>") for entry in conditioning_spec if isinstance(entry, dict)
+                    ]
+                elif isinstance(conditioning_spec, dict):
+                    conditioning_spec_count = 1
+                    conditioning_types = [conditioning_spec.get("type", "<unknown>")]
+                else:
+                    conditioning_spec_count = 0 if conditioning_spec in (None, [], {}) else 1
+                    conditioning_types = []
+                linked_conditioning = backend.get("conditioning_data") or []
+                info_log(
+                    f"(id={backend['id']}) Detected I2V video dataset. "
+                    f"Configured conditioning entries: {conditioning_spec_count} ({conditioning_types if conditioning_types else 'n/a'}); "
+                    f"linked conditioning datasets: {len(linked_conditioning)}; "
+                    f"instance_data_dir={backend.get('instance_data_dir')}"
+                )
+                if conditioning_spec_count == 0 and len(linked_conditioning) == 0:
+                    virtual_id = f"{backend['id']}_conditioning_i2v"
+                    if any(cfg.get("id") == virtual_id for cfg in data_backend_config):
+                        info_log(
+                            f"(id={backend['id']}) I2V conditioning dataset {virtual_id} already present; skipping regeneration."
+                        )
+                    else:
+                        info_log(
+                            f"(id={backend['id']}) No explicit conditioning datasets provided; creating virtual I2V conditioning dataset {virtual_id}."
+                        )
+                        virtual_backend = deepcopy(backend)
+                        virtual_backend["id"] = virtual_id
+                        virtual_backend["dataset_type"] = "conditioning"
+                        virtual_backend.pop("conditioning", None)
+                        virtual_backend["conditioning_data"] = []
+                        virtual_backend["conditioning_type"] = "reference_strict"
+                        virtual_backend["source_dataset_id"] = backend["id"]
+                        virtual_backend["auto_generated"] = False
+                        # ensure video stanza exists for downstream size alignment
+                        if isinstance(virtual_backend.get("video"), dict):
+                            virtual_backend["video"] = dict(virtual_backend["video"])
+                            virtual_backend["video"].setdefault("is_i2v", True)
+                        if backend.get("cache_dir_vae"):
+                            virtual_backend["cache_dir_vae"] = os.path.join(backend["cache_dir_vae"], virtual_id)
+                        else:
+                            virtual_backend["cache_dir_vae"] = os.path.join(self.args.cache_dir, "vae", virtual_id)
+                        backend.setdefault("conditioning_data", []).append(virtual_id)
+                        conditioning_datasets.append(virtual_backend)
+
+            conditioning_block = backend.get("conditioning", None)
+            has_explicit_conditioning = conditioning_block not in (None, [], {})
+            if has_explicit_conditioning:
                 info_log(f"Found conditioning configuration for backend {backend['id']}. Generating conditioning dataset.")
-                modified_backend, conditioning_datasets = DatasetDuplicator.generate_conditioning_datasets(
+                modified_backend, generated_datasets = DatasetDuplicator.generate_conditioning_datasets(
                     global_config=self.args, source_backend_config=backend
                 )
                 backend = data_backend_config[backend_idx] = modified_backend
                 logger.debug(f"Current backend list: {data_backend_config}")
 
-                for conditioning_dataset in conditioning_datasets:
+                for conditioning_dataset in generated_datasets:
                     info_log(
                         f"Generated conditioning dataset {conditioning_dataset['id']} from backend {backend['id']}: {conditioning_dataset}"
                     )
+                if generated_datasets:
+                    conditioning_datasets.extend(generated_datasets)
+                if is_i2v_dataset and not generated_datasets:
+                    warning_log(
+                        f"(id={backend['id']}) I2V dataset provided a conditioning block but no conditioning datasets were generated."
+                    )
+            elif is_i2v_dataset:
+                warning_log(
+                    f"(id={backend['id']}) I2V dataset has no inline conditioning block defined; "
+                    "ensure virtual conditioning dataset creation handles this case."
+                )
 
-        if conditioning_datasets is not None:
+        if conditioning_datasets:
             data_backend_config.extend(conditioning_datasets)
 
         return data_backend_config
@@ -1898,6 +1990,11 @@ class FactoryRegistry:
                 for line in message.splitlines():
                     logger.warning(line)
             else:
+                if dataset_type == "conditioning":
+                    raise ValueError(
+                        f"(id={init_backend['id']}) Conditioning dataset produced no usable samples. "
+                        "Check that conditioning_data paths are correct and contain images."
+                    )
                 warning_log(
                     f"(id={init_backend['id']}) No images were discovered by the bucket manager; continuing without bucket information."
                 )
@@ -2078,12 +2175,23 @@ class FactoryRegistry:
             default_root = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
             cache_dir = os.path.join(default_root, "conditioning_image_embeds", init_backend["id"])
 
-        info_log(f"(id={init_backend['id']}) Creating conditioning image embed cache: cache_dir={cache_dir}")
-
+        debug_log(
+            f"(id={init_backend['id']}) _configure_conditioning_image_embed_cache: dataset_type="
+            f"{backend.get('dataset_type')}, video_cfg={backend.get('video')}"
+        )
         conditioning_embed_batch_size = backend.get(
             "conditioning_image_embed_batch_size",
             getattr(self.args, "conditioning_image_embed_batch_size", self.args.vae_batch_size),
         )
+
+        is_i2v_video = backend.get("dataset_type") == "video" and backend.get("video", {}).get("is_i2v", False)
+        debug_log(f"(id={init_backend['id']}) _configure_conditioning_image_embed_cache: is_i2v_video={is_i2v_video}")
+        info_log(f"(id={init_backend['id']}) Creating conditioning image embed cache: cache_dir={cache_dir}")
+        if is_i2v_video:
+            info_log(
+                f"(id={init_backend['id']}) I2V dataset conditioning embed setup."
+                f" instance_data_dir={init_backend.get('instance_data_dir')}, embed_batch_size={conditioning_embed_batch_size}"
+            )
 
         init_backend["conditioning_image_embed_cache"] = ImageEmbedCache(
             id=init_backend["id"],
@@ -2102,9 +2210,23 @@ class FactoryRegistry:
         )
         init_backend["conditioning_image_embed_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
+        def _count_entries(collection) -> int:
+            if collection is None:
+                return 0
+            try:
+                return len(collection)
+            except TypeError:
+                return 0
+
+        discovered_sources = None
         if self.accelerator.is_local_main_process:
             try:
-                init_backend["conditioning_image_embed_cache"].discover_all_files()
+                discovered_sources = init_backend["conditioning_image_embed_cache"].discover_all_files()
+                if is_i2v_video:
+                    info_log(
+                        f"(id={init_backend['id']}) Conditioning embed discovery located {_count_entries(discovered_sources)}"
+                        " potential source files before caching."
+                    )
             except FileNotFoundError:
                 warning_log(
                     f"(id={init_backend['id']}) Skipping conditioning image embed cache discovery because data directory was not found: {init_backend.get('instance_data_dir')}"
@@ -2133,13 +2255,29 @@ class FactoryRegistry:
                 return
             all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=init_backend["id"])
 
+        if is_i2v_video:
+            info_log(
+                f"(id={init_backend['id']}) Conditioning embed filename map will be built from {_count_entries(all_image_files)} files."
+            )
         init_backend["conditioning_image_embed_cache"].build_embed_filename_map(all_image_files=all_image_files)
+        if is_i2v_video:
+            info_log(
+                f"(id={init_backend['id']}) Conditioning embed filename map contains "
+                f"{len(init_backend['conditioning_image_embed_cache'].image_path_to_embed_path)} entries."
+            )
 
         if not self.args.vae_cache_ondemand:
             pending_files = init_backend["conditioning_image_embed_cache"].discover_unprocessed_files()
             logger.info(f"Conditioning image embed cache has {len(pending_files)} unprocessed files.")
+            if is_i2v_video:
+                info_log(f"(id={init_backend['id']}) I2V conditioning embed cache pending files: {len(pending_files)}.")
             if pending_files:
                 init_backend["conditioning_image_embed_cache"].process_files(pending_files)
+                if is_i2v_video:
+                    info_log(
+                        f"(id={init_backend['id']}) Processed conditioning embed files for I2V dataset "
+                        f"(batched in groups of {init_backend['conditioning_image_embed_cache'].embed_batch_size})."
+                    )
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
 
@@ -2152,6 +2290,10 @@ class FactoryRegistry:
         text_embed_cache_dir_paths: List[str],
         conditioning_type: Optional[str],
     ) -> None:
+        disable_vae_cache = backend.get("disable_vae_cache") or init_backend["config"].get("disable_vae_cache")
+        if disable_vae_cache:
+            info_log(f"(id={init_backend['id']}) Skipping VAE cache configuration (disable_vae_cache=True).")
+            return
         """Configure VAE cache for the backend."""
         vae_cache_dir = backend.get("cache_dir_vae", None)
         if vae_cache_dir in vae_cache_dir_paths:
@@ -2286,7 +2428,7 @@ class FactoryRegistry:
         }
         for backend in data_backend_config:
             dataset_type = backend.get("dataset_type", "image")
-            if dataset_type is not None and dataset_type != "image":
+            if dataset_type is not None and dataset_type not in ["image", "video"]:
                 continue
             if backend.get("disabled", False) or backend.get("disable", False):
                 info_log(f"Skipping disabled data backend {backend['id']} in config file.")
@@ -2303,7 +2445,10 @@ class FactoryRegistry:
             if backend_conditionings:
                 has_conditioning_dataset = True
                 StateTracker.set_conditioning_datasets(backend["id"], backend_conditionings)
-                info_log(f"Successfully configured conditioning image dataset for {backend['id']}")
+                linked_ids = [cfg.get("id") for cfg in backend_conditionings if isinstance(cfg, dict)]
+                info_log(
+                    f"(id={backend['id']}) Connected conditioning datasets: {linked_ids if linked_ids else '<unknown>'}"
+                )
 
         return has_conditioning_dataset
 
@@ -2444,7 +2589,7 @@ class FactoryRegistry:
 
         if (
             self.model.requires_conditioning_image_embeds()
-            and init_backend.get("dataset_type") in ["image", "video"]
+            and init_backend.get("dataset_type") in ["image", "video", "conditioning"]
             and conditioning_type not in ["mask"]
         ):
             self._configure_conditioning_image_embed_cache(

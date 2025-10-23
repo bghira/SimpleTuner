@@ -1,7 +1,9 @@
+import base64
 import inspect
 import logging
 import os
 import sys
+from io import BytesIO
 from typing import Union
 
 import diffusers
@@ -38,7 +40,7 @@ from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Validation")
 from simpletuner.helpers.training.multi_process import should_log
 
 if should_log():
@@ -70,10 +72,6 @@ from simpletuner.helpers.prompts import PromptHandler
 
 if is_wandb_available():
     import wandb
-
-
-logger = logging.getLogger("validation")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 def resize_validation_images(validation_images, edge_length):
@@ -155,6 +153,53 @@ def retrieve_eval_images(dataset_name=None):
     return output
 
 
+def _coerce_validation_image_input(image_data):
+    """
+    Convert validation conditioning inputs into formats compatible with downstream pipelines.
+    """
+    if isinstance(image_data, (list, tuple)):
+        coerced = [_coerce_validation_image_input(item) for item in image_data]
+        return coerced if isinstance(image_data, list) else tuple(coerced)
+
+    if torch.is_tensor(image_data):
+        tensor = image_data.detach().cpu()
+        if tensor.ndim >= 4:
+            tensor = tensor[0]
+        if tensor.ndim == 3 and tensor.shape[0] in (1, 3, 4):
+            tensor = tensor.permute(1, 2, 0)
+        image_data = tensor.numpy()
+
+    if isinstance(image_data, np.ndarray):
+        if image_data.ndim == 4:
+            if image_data.shape[0] == 0:
+                raise ValueError("Validation conditioning video contains no frames.")
+            frame = image_data[0]
+        elif image_data.ndim == 3:
+            frame = image_data
+        else:
+            raise ValueError(f"Unsupported validation image array shape: {image_data.shape}")
+        if np.issubdtype(frame.dtype, np.floating):
+            frame = np.clip(frame, 0.0, 1.0) * 255.0
+        frame = np.clip(frame, 0, 255).astype(np.uint8)
+        return Image.fromarray(frame)
+
+    return image_data
+
+
+def _normalise_validation_sample(sample):
+    """
+    Ensure validation samples carry Image inputs (or lists/tuples of Images) instead of raw tensors/arrays.
+    """
+    if isinstance(sample, tuple):
+        if len(sample) == 4:
+            shortname, prompt, image_path, image_data = sample
+            return shortname, prompt, image_path, _coerce_validation_image_input(image_data)
+        if len(sample) == 3:
+            shortname, prompt, image_data = sample
+            return shortname, prompt, _coerce_validation_image_input(image_data)
+    return sample
+
+
 def retrieve_validation_images():
     """
     From each data backend, collect the top 5 images for validation, such that
@@ -163,7 +208,8 @@ def retrieve_validation_images():
     Returns:
         dict: A dictionary of shortname to image paths.
     """
-    if StateTracker.get_model().requires_validation_edit_captions():
+    model = StateTracker.get_model()
+    if model.requires_validation_edit_captions() or model.requires_validation_i2v_samples():
         return retrieve_validation_edit_images()
 
     args = StateTracker.get_args()
@@ -174,8 +220,9 @@ def retrieve_validation_images():
             args.control,
         ]
     )
+    dataset_type = StateTracker.get_model().conditioning_validation_dataset_type() if requires_cond_input else "image"
     data_backends = StateTracker.get_data_backends(
-        _type=(StateTracker.get_model().conditioning_validation_dataset_type() if requires_cond_input else "image")
+        _type=dataset_type, _types=None if requires_cond_input else ["image", "video"]
     )
     validation_data_backend_id = args.eval_dataset_id
     validation_set = []
@@ -201,6 +248,9 @@ def retrieve_validation_images():
             validation_samples_from_sampler = data_backend["sampler"].retrieve_validation_set(
                 batch_size=args.num_eval_images
             )
+            validation_samples_from_sampler = [
+                _normalise_validation_sample(sample) for sample in validation_samples_from_sampler
+            ]
             validation_input_image_pixel_edge_len = StateTracker.get_model().validation_image_input_edge_length()
             if validation_input_image_pixel_edge_len is not None:
                 logger.debug(
@@ -221,7 +271,7 @@ def retrieve_validation_images():
 def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]]:
     """
     Returns [(shortname, *edited-scene caption*, reference_image), ...]
-    for models that need **edit** validation.
+    for models that need **edit** validation (including I2V variants).
 
     Logic
     -----
@@ -233,7 +283,7 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
       – add the trio to output
     """
     model = StateTracker.get_model()
-    if not model.requires_validation_edit_captions():
+    if not (model.requires_validation_edit_captions() or model.requires_validation_i2v_samples()):
         return []  # no-op for ordinary models
 
     args = StateTracker.get_args()
@@ -324,20 +374,41 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         validation_sample_images = retrieve_validation_images()
         if len(validation_sample_images) > 0:
             StateTracker.set_validation_sample_images(validation_sample_images)
+            sample_prompts: list[str] = []
+            sample_shortnames: list[str] = []
             # Collect the prompts for the validation images.
             for _validation_sample in tqdm(
                 validation_sample_images,
                 ncols=125,
                 desc="Precomputing validation image embeds",
             ):
-                if isinstance(_validation_sample, tuple) and len(_validation_sample) == 3:
-                    _, validation_prompt, _ = _validation_sample
-                elif isinstance(_validation_sample, tuple) and len(_validation_sample) == 4:
-                    _, validation_prompt, _, _ = _validation_sample
+                validation_prompt = None
+                shortname = None
+                if isinstance(_validation_sample, tuple):
+                    if len(_validation_sample) == 3:
+                        shortname, validation_prompt, _ = _validation_sample
+                    elif len(_validation_sample) == 4:
+                        shortname, validation_prompt, *_ = _validation_sample
+                if not validation_prompt:
+                    logger.debug("Skipping validation sample without prompt while preparing embeds.")
+                    continue
                 embed_cache.compute_embeddings_for_prompts([validation_prompt], load_from_cache=False)
+                if shortname is None:
+                    shortname = f"validation_{len(sample_shortnames)}"
+                sample_prompts.append(validation_prompt)
+                sample_shortnames.append(shortname)
+            if sample_prompts:
+                validation_prompts.extend(sample_prompts)
+                validation_shortnames.extend(sample_shortnames)
             time.sleep(5)
 
-    if args.validation_prompt_library:
+    allow_prompt_library = not (
+        isinstance(model, VideoModelFoundation)
+        and getattr(model, "requires_validation_i2v_samples", lambda: False)()
+        and StateTracker.get_validation_sample_images()
+    )
+
+    if allow_prompt_library and args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
         from simpletuner.helpers.prompts import prompts as prompt_library
 
@@ -352,7 +423,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
 
-    if args.user_prompt_library is not None:
+    if allow_prompt_library and args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
         for shortname, prompt in tqdm(
             user_prompt_library.items(),
@@ -365,7 +436,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
-    if args.validation_prompt is not None and args.validation_prompt != "None":
+    if allow_prompt_library and args.validation_prompt is not None and args.validation_prompt != "None":
         # Use a single prompt for validation.
         # This will add a single prompt to the prompt library, if in use.
         validation_prompts = validation_prompts + [args.validation_prompt]
@@ -373,10 +444,11 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         embed_cache.compute_embeddings_for_prompts([args.validation_prompt], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts:
-        logger.info(f"Precomputing the negative prompt embed for validations. Prompts: {validation_prompts}")
+        negative_prompt = StateTracker.get_args().validation_negative_prompt
+        logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
         model.log_model_devices()
         validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
-            [StateTracker.get_args().validation_negative_prompt],
+            [negative_prompt],
             is_validation=True,
             load_from_cache=False,
         )
@@ -655,6 +727,7 @@ class Validation:
         self.global_resume_step = None
         self.validation_prompt_metadata = validation_prompt_metadata
         self.validation_images = None
+        self.validation_video_paths: dict[str, list[str]] = {}
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
         self.ema_model = ema_model
@@ -1233,6 +1306,7 @@ class Validation:
         _content = self.validation_prompt_metadata["validation_prompts"]
         total_samples = len(_content) if _content is not None else 0
         self.eval_scores = {}
+        self.validation_video_paths.clear()
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
@@ -1321,8 +1395,93 @@ class Validation:
             separator_width: Width of separator between images
             labels: Text labels for [left, middle, right] images
         """
+
+        def _is_frame_sequence(media):
+            return isinstance(media, list) and len(media) > 0 and all(isinstance(frame, Image.Image) for frame in media)
+
+        def _ensure_sequence(media, name):
+            if _is_frame_sequence(media):
+                return list(media)
+            if isinstance(media, Image.Image):
+                return [media]
+            raise TypeError(f"Unsupported media type for {name}: {type(media)}")
+
+        def _pad_sequence(frames, target_len, name):
+            if not frames:
+                raise ValueError(f"Cannot stitch empty {name} sequence.")
+            if len(frames) == target_len:
+                return frames
+            if len(frames) > target_len:
+                return frames[:target_len]
+            padding = [frames[-1]] * (target_len - len(frames))
+            return frames + padding
+
+        def _stitch_single_triplet(single_left, single_middle, single_right):
+            left_width, left_height = single_left.size
+            middle_width, middle_height = single_middle.size
+            right_width, right_height = single_right.size
+
+            new_width = left_width + separator_width + middle_width + separator_width + right_width
+            new_height = max(left_height, middle_height, right_height)
+
+            new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+            left_y = (new_height - left_height) // 2
+            middle_y = (new_height - middle_height) // 2
+            right_y = (new_height - right_height) // 2
+
+            left_x = 0
+            middle_x = left_width + separator_width
+            right_x = middle_x + middle_width + separator_width
+
+            new_image.paste(single_left, (left_x, left_y))
+            new_image.paste(single_middle, (middle_x, middle_y))
+            new_image.paste(single_right, (right_x, right_y))
+
+            draw = ImageDraw.Draw(new_image)
+            line_color = (200, 200, 200)
+            for i in range(separator_width):
+                x = left_width + i
+                draw.line([(x, 0), (x, new_height)], fill=line_color)
+            for i in range(separator_width):
+                x = middle_x + middle_width + i
+                draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+            font = get_font_for_labels()
+            if len(labels) > 0 and labels[0] is not None:
+                draw.text(
+                    (left_x + 10, 10),
+                    labels[0],
+                    fill=(255, 255, 255),
+                    font=font,
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0),
+                )
+
+            if len(labels) > 1 and labels[1] is not None:
+                draw.text(
+                    (middle_x + 10, 10),
+                    labels[1],
+                    fill=(255, 255, 255),
+                    font=font,
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0),
+                )
+
+            if len(labels) > 2 and labels[2] is not None:
+                draw.text(
+                    (right_x + 10, 10),
+                    labels[2],
+                    fill=(255, 255, 255),
+                    font=font,
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0),
+                )
+
+            return new_image
+
         # if multi condition images ,we need concat they as left image firstly
-        if isinstance(left_image, list):
+        if isinstance(left_image, list) and not (_is_frame_sequence(middle_image) or _is_frame_sequence(right_image)):
             if all(isinstance(img, Image.Image) for img in left_image):
                 widths, heights = zip(*(img.size for img in left_image))
                 total_width = sum(widths)
@@ -1335,81 +1494,27 @@ class Validation:
                 left_image = new_image
             else:
                 logger.error(f"Condition in left_image are not all PIL image format")
-        left_width, left_height = left_image.size
-        middle_width, middle_height = middle_image.size
-        right_width, right_height = right_image.size
+        left_is_sequence = _is_frame_sequence(left_image)
+        middle_is_sequence = _is_frame_sequence(middle_image)
+        right_is_sequence = _is_frame_sequence(right_image)
 
-        # Calculate new canvas dimensions
-        new_width = left_width + separator_width + middle_width + separator_width + right_width
-        new_height = max(left_height, middle_height, right_height)
+        if left_is_sequence or middle_is_sequence or right_is_sequence:
+            left_frames = _ensure_sequence(left_image, "left")
+            middle_frames = _ensure_sequence(middle_image, "middle")
+            right_frames = _ensure_sequence(right_image, "right")
 
-        # Create new image with white background
-        new_image = Image.new("RGB", (new_width, new_height), color="white")
+            target_length = max(len(left_frames), len(middle_frames), len(right_frames))
 
-        # Calculate vertical positions for centering
-        left_y = (new_height - left_height) // 2
-        middle_y = (new_height - middle_height) // 2
-        right_y = (new_height - right_height) // 2
+            left_frames = _pad_sequence(left_frames, target_length, "left")
+            middle_frames = _pad_sequence(middle_frames, target_length, "middle")
+            right_frames = _pad_sequence(right_frames, target_length, "right")
 
-        # Calculate horizontal positions
-        left_x = 0
-        middle_x = left_width + separator_width
-        right_x = middle_x + middle_width + separator_width
+            stitched_frames = []
+            for idx in range(target_length):
+                stitched_frames.append(_stitch_single_triplet(left_frames[idx], middle_frames[idx], right_frames[idx]))
+            return stitched_frames if target_length > 1 else stitched_frames[0]
 
-        # Paste all three images
-        new_image.paste(left_image, (left_x, left_y))
-        new_image.paste(middle_image, (middle_x, middle_y))
-        new_image.paste(right_image, (right_x, right_y))
-
-        # Create drawing object
-        draw = ImageDraw.Draw(new_image)
-
-        # Draw separators
-        line_color = (200, 200, 200)  # Light gray
-        # First separator
-        for i in range(separator_width):
-            x = left_width + i
-            draw.line([(x, 0), (x, new_height)], fill=line_color)
-        # Second separator
-        for i in range(separator_width):
-            x = middle_x + middle_width + i
-            draw.line([(x, 0), (x, new_height)], fill=line_color)
-
-        # Add labels if provided
-        # Try to use a larger, more universally available font
-        font = get_font_for_labels()
-
-        if labels[0] is not None:
-            draw.text(
-                (left_x + 10, 10),
-                labels[0],
-                fill=(255, 255, 255),
-                font=font,
-                stroke_width=2,
-                stroke_fill=(0, 0, 0),
-            )
-
-        if labels[1] is not None:
-            draw.text(
-                (middle_x + 10, 10),
-                labels[1],
-                fill=(255, 255, 255),
-                font=font,
-                stroke_width=2,
-                stroke_fill=(0, 0, 0),
-            )
-
-        if labels[2] is not None:
-            draw.text(
-                (right_x + 10, 10),
-                labels[2],
-                fill=(255, 255, 255),
-                font=font,
-                stroke_width=2,
-                stroke_fill=(0, 0, 0),
-            )
-
-        return new_image
+        return _stitch_single_triplet(left_image, middle_image, right_image)
 
     def stitch_conditioning_images(self, validation_image_results, conditioning_image):
         """
@@ -1871,6 +1976,7 @@ class Validation:
         validation_img_idx = 0
         from diffusers.utils.export_utils import export_to_video
 
+        video_paths: list[str] = []
         for validation_image in validation_images[validation_shortname]:
             # Get the validation resolution for this index
             if validation_img_idx < len(self.validation_resolutions):
@@ -1906,15 +2012,19 @@ class Validation:
                 validation_img_idx += 1
                 continue
 
+            video_path = os.path.join(
+                self.save_dir,
+                f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.mp4",
+            )
             export_to_video(
                 validation_image,
-                os.path.join(
-                    self.save_dir,
-                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.mp4",
-                ),
+                video_path,
                 fps=self.config.framerate,
             )
+            video_paths.append(video_path)
             validation_img_idx += 1
+        if video_paths:
+            self.validation_video_paths[validation_shortname] = video_paths
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
@@ -1936,22 +2046,55 @@ class Validation:
             validation_img_idx += 1
 
     def _log_validations_to_webhook(self, validation_images, validation_shortname, validation_prompt):
-        if StateTracker.get_webhook_handler() is not None:
-            StateTracker.get_webhook_handler().send(
-                (
-                    f"Validation {'image' if StateTracker.get_webhook_handler().send_video is False else 'video'} for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
-                    f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
-                    f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
-                ),
-                images=validation_images[validation_shortname],
-            )
-            StateTracker.get_webhook_handler().send_raw(
-                structured_data={"message": f"Validation: {validation_shortname}"},
-                message_type="training.validation",
-                message_level="info",
-                job_id=StateTracker.get_job_id(),
-                images=validation_images[validation_shortname],
-            )
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is None:
+            return
+
+        media_word = "video" if isinstance(self.model, VideoModelFoundation) else "image"
+        message = (
+            f"Validation {media_word} for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
+            f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
+            f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
+        )
+
+        images_payload = validation_images.get(validation_shortname, [])
+        videos_for_discord = None
+        videos_for_raw = None
+
+        if isinstance(self.model, VideoModelFoundation):
+            video_paths = self.validation_video_paths.get(validation_shortname, [])
+            if video_paths:
+                videos_for_discord = []
+                videos_for_raw = []
+                for path in video_paths:
+                    try:
+                        with open(path, "rb") as handle:
+                            video_bytes = handle.read()
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        logger.warning("Failed to read validation video %s: %s", path, exc)
+                        continue
+                    video_buffer = BytesIO(video_bytes)
+                    video_buffer.name = os.path.basename(path)
+                    videos_for_discord.append(video_buffer)
+                    data_uri = f"data:video/mp4;base64,{base64.b64encode(video_bytes).decode('utf-8')}"
+                    videos_for_raw.append({"src": data_uri, "mime_type": "video/mp4"})
+                if videos_for_discord:
+                    images_payload = None
+
+        webhook_handler.send(
+            message,
+            images=images_payload,
+            videos=videos_for_discord,
+        )
+
+        webhook_handler.send_raw(
+            structured_data={"message": f"Validation: {validation_shortname}"},
+            message_type="training.validation",
+            message_level="info",
+            job_id=StateTracker.get_job_id(),
+            images=images_payload,
+            videos=videos_for_raw,
+        )
 
     def _log_validations_to_trackers(self, validation_images):
         for tracker in self.accelerator.trackers:
