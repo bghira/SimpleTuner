@@ -203,7 +203,7 @@ class WebhookHandler:
 
         # Send request
         try:
-            logging.debug("Sending webhook request to %s: %s", webhook_url, _truncate_for_log(request_args))
+            # logging.debug("Sending webhook request to %s: %s", webhook_url, _truncate_for_log(request_args))
             # Configure SSL verification
             verify = not backend.get("ssl_no_verify", False)
             post_result = requests.post(webhook_url, **request_args, timeout=5, verify=verify)
