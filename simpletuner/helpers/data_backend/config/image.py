@@ -319,8 +319,18 @@ class ImageBackendConfig(BaseBackendConfig):
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
             )
 
-        if "is_i2v" not in self.video:
-            model_family = args.get("model_family", "")
+        model_family = args.get("model_family", "")
+        model_flavour = str(args.get("model_flavour", "") or "")
+        force_i2v = model_family == "wan" and model_flavour.startswith("i2v-")
+
+        if force_i2v:
+            if not self.video.get("is_i2v", False):
+                logger.warning(
+                    f"(id={self.id}) Forcing video->is_i2v=True for Wan flavour '{model_flavour}'. "
+                    "Wan I2V models require image-to-video conditioning datasets."
+                )
+            self.video["is_i2v"] = True
+        elif "is_i2v" not in self.video:
             if model_family in ["ltxvideo"]:
                 logger.warning(
                     f"Setting is_i2v to True for model_family={model_family}. Set this manually to false to override."

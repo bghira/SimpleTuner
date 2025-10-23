@@ -473,16 +473,27 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             warning_log(
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
             )
-        if "is_i2v" not in output["config"]["video"]:
-            model_family = _get_arg_value(args, "model_family", "")
+        video_config = output["config"]["video"]
+        model_family = _get_arg_value(args, "model_family", "")
+        model_flavour = str(_get_arg_value(args, "model_flavour", "") or "")
+        force_i2v = model_family == "wan" and model_flavour.startswith("i2v-")
+
+        if force_i2v:
+            if not video_config.get("is_i2v", False):
+                warning_log(
+                    f"(id={backend['id']}) Forcing video->is_i2v=True for Wan flavour '{model_flavour}'. "
+                    "Wan I2V models require image-to-video conditioning datasets."
+                )
+            video_config["is_i2v"] = True
+        elif "is_i2v" not in video_config:
             if model_family in ["ltxvideo"]:
                 warning_log(
                     f"Setting is_i2v to True for model_family={model_family}. Set this manually to false to override."
                 )
-                output["config"]["video"]["is_i2v"] = True
+                video_config["is_i2v"] = True
             else:
                 warning_log(f"No value for is_i2v was supplied for your dataset. Assuming it is disabled.")
-                output["config"]["video"]["is_i2v"] = False
+                video_config["is_i2v"] = False
 
         min_frames = output["config"]["video"]["min_frames"]
         num_frames = output["config"]["video"]["num_frames"]
