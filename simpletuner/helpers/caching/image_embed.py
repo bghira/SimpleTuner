@@ -214,10 +214,7 @@ class ImageEmbedCache(WebhookMixin):
                 processed: List[dict] = []
                 for entry in embeddings:
                     processed.append(
-                        {
-                            key: (_detach_tensor(value) if torch.is_tensor(value) else value)
-                            for key, value in entry.items()
-                        }
+                        {key: (_detach_tensor(value) if torch.is_tensor(value) else value) for key, value in entry.items()}
                     )
                 return valid_paths, processed
             raise ValueError(

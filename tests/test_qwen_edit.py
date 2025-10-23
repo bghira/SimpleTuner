@@ -4,11 +4,7 @@ from types import SimpleNamespace
 import torch
 
 from simpletuner.helpers.models.common import PipelineTypes
-from simpletuner.helpers.models.qwen_image.model import (
-    QwenImage,
-    QwenImageEditPipeline,
-    QwenImageEditPlusPipeline,
-)
+from simpletuner.helpers.models.qwen_image.model import QwenImage, QwenImageEditPipeline, QwenImageEditPlusPipeline
 
 
 class DummyProcessor:
@@ -78,7 +74,7 @@ class DummyTransformer:
         txt_seq_lens=None,
         return_dict=False,
     ):
-        return (hidden_states, )
+        return (hidden_states,)
 
 
 class TestableQwenImage(QwenImage):

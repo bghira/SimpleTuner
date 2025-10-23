@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import html
+from contextlib import nullcontext
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import ftfy
@@ -864,7 +865,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 if current_model is None:
                     raise ValueError("No transformer available to process the current timestep.")
 
-                with current_model.cache_context("cond"):
+                with _cache_context_or_noop(current_model, "cond"):
                     noise_pred = current_model(
                         hidden_states=latent_model_input,
                         timestep=timestep,
@@ -875,7 +876,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     )[0]
 
                 if self.do_classifier_free_guidance:
-                    with current_model.cache_context("uncond"):
+                    with _cache_context_or_noop(current_model, "uncond"):
                         noise_uncond = current_model(
                             hidden_states=latent_model_input,
                             timestep=timestep,
@@ -1028,3 +1029,10 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
             callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
             max_sequence_length=max_sequence_length,
         )
+
+
+def _cache_context_or_noop(module, cache_key: str):
+    cache_fn = getattr(module, "cache_context", None)
+    if callable(cache_fn):
+        return cache_fn(cache_key)
+    return nullcontext()

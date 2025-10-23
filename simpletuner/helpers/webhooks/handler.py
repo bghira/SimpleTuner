@@ -151,6 +151,7 @@ class WebhookHandler:
         backend: dict,
         message: str | dict,
         images: list = None,
+        videos: list = None,
         store_response: bool = False,
         raw_request: bool = False,
     ):
@@ -162,12 +163,15 @@ class WebhookHandler:
         if webhook_type == "discord":
             # Prepare Discord-style payload
             data = {"content": f"{message_prefix}{message}"}
-            if self.send_video:
-                # images is actually a list of "videos" in this usage
-                files = self._prepare_videos(images)
-            else:
-                # images is a list of PIL Images
-                files = self._prepare_images(images)
+            use_video_attachments = bool(self.send_video and videos)
+            attachments = videos if use_video_attachments else images
+
+            files = {}
+            if attachments:
+                if use_video_attachments:
+                    files = self._prepare_videos(attachments)
+                else:
+                    files = self._prepare_images(attachments)
 
             request_args = {"data": data, "files": files}
 
@@ -180,6 +184,12 @@ class WebhookHandler:
                     converted = self._convert_image_to_base64(img)
                     if converted:
                         converted_images.append(converted)
+            converted_videos = []
+            if videos:
+                for vid in videos:
+                    converted = self._convert_video_to_base64(vid)
+                    if converted:
+                        converted_videos.append(converted)
 
             if raw_request:
                 # If already fully formed JSON or dict, sanitize for safe JSON encoding first
@@ -187,12 +197,16 @@ class WebhookHandler:
                 # Add images to the structured data if they exist
                 if converted_images and isinstance(data, dict):
                     data["images"] = converted_images
+                if converted_videos and isinstance(data, dict):
+                    data["videos"] = converted_videos
                 files = None
             else:
                 data = {
                     "message": message,
                     "images": converted_images,
                 }
+                if converted_videos:
+                    data["videos"] = converted_videos
                 files = None
 
             request_args = {"json": data, "files": files}
@@ -203,7 +217,7 @@ class WebhookHandler:
 
         # Send request
         try:
-            logging.debug("Sending webhook request to %s: %s", webhook_url, _truncate_for_log(request_args))
+            # logging.debug("Sending webhook request to %s: %s", webhook_url, _truncate_for_log(request_args))
             # Configure SSL verification
             verify = not backend.get("ssl_no_verify", False)
             post_result = requests.post(webhook_url, **request_args, timeout=5, verify=verify)
@@ -349,6 +363,12 @@ class WebhookHandler:
                 logging.error(f"Failed to open image from path {image}: {e}")
                 return None
 
+        if isinstance(image, list):
+            if not image:
+                logging.error("Unsupported image type: empty list")
+                return None
+            image = MultiaspectImage.numpy_list_to_pil(image[0])
+
         # Handle PIL Image objects
         if hasattr(image, "save"):
             img_byte_array = BytesIO()
@@ -359,12 +379,76 @@ class WebhookHandler:
         logging.error(f"Unsupported image type: {type(image)}")
         return None
 
+    def _convert_video_to_base64(self, video, mime_type: str = "video/mp4"):
+        """Convert video sources to data URIs for raw webhooks."""
+        if video is None:
+            return None
+
+        if isinstance(video, dict):
+            src = (
+                video.get("src")
+                or video.get("url")
+                or video.get("data")
+                or video.get("base64")
+                or video.get("video")
+                or video.get("video_base64")
+            )
+            if isinstance(src, str) and src.strip():
+                src = src.strip()
+                resolved_mime = video.get("mime_type") or video.get("mime") or mime_type
+                return {"src": src, "mime_type": resolved_mime}
+            return None
+
+        if isinstance(video, str):
+            value = video.strip()
+            if not value:
+                return None
+            if value.startswith("data:"):
+                return {"src": value, "mime_type": mime_type}
+            if value.startswith(("http://", "https://", "//")):
+                return {"src": value, "mime_type": mime_type}
+            if os.path.isfile(value):
+                try:
+                    with open(value, "rb") as handle:
+                        data = handle.read()
+                except Exception:
+                    return None
+                encoded = base64.b64encode(data).decode("utf-8")
+                return {"src": f"data:{mime_type};base64,{encoded}", "mime_type": mime_type}
+            return None
+
+        data_bytes = None
+        if isinstance(video, BytesIO):
+            position = video.tell()
+            video.seek(0)
+            data_bytes = video.read()
+            video.seek(position)
+        elif hasattr(video, "read"):
+            try:
+                data_bytes = video.read()
+            except Exception:
+                data_bytes = None
+            if hasattr(video, "seek"):
+                try:
+                    video.seek(0)
+                except Exception:
+                    pass
+        elif isinstance(video, (bytes, bytearray)):
+            data_bytes = bytes(video)
+
+        if not data_bytes:
+            return None
+
+        encoded = base64.b64encode(data_bytes).decode("utf-8")
+        return {"src": f"data:{mime_type};base64,{encoded}", "mime_type": mime_type}
+
     def send(
         self,
         message: str,
         images: list = None,
         message_level: str = "info",
         store_response: bool = False,
+        videos: list | None = None,
     ):
         """
         Send a message through Discord webhooks with optional images/videos.
@@ -377,6 +461,8 @@ class WebhookHandler:
 
         if images is not None and not isinstance(images, list):
             images = [images]
+        if videos is not None and not isinstance(videos, list):
+            videos = [videos]
 
         # Send ONLY to Discord backends - raw backends should use send_raw()
         for backend in self.backends:
@@ -393,22 +479,34 @@ class WebhookHandler:
 
             # Discord limits: max 10 attachments
             max_attachments = 10
-            if images and len(images) > max_attachments:
-                for i in range(0, len(images), max_attachments):
+            use_videos = bool(self.send_video and videos)
+            attachments = videos if use_videos else images
+
+            if attachments and len(attachments) > max_attachments:
+                for i in range(0, len(attachments), max_attachments):
+                    chunk = attachments[i : i + max_attachments]
                     try:
                         self._send_request_to_backend(
                             backend,
                             message,
-                            images[i : i + max_attachments],
+                            images=None if use_videos else chunk,
+                            videos=chunk if use_videos else None,
                             store_response=store_response,
                         )
                     except Exception as e:
                         logging.error(f"Error sending webhook to {backend['webhook_url']}: {e}")
-            else:
-                try:
-                    self._send_request_to_backend(backend, message, images, store_response=store_response)
-                except Exception as e:
-                    logging.error(f"Error sending webhook to {backend['webhook_url']}: {e}")
+                continue
+
+            try:
+                self._send_request_to_backend(
+                    backend,
+                    message,
+                    images=None if use_videos else attachments,
+                    videos=attachments if use_videos else None,
+                    store_response=store_response,
+                )
+            except Exception as e:
+                logging.error(f"Error sending webhook to {backend['webhook_url']}: {e}")
 
     def send_raw(
         self,
@@ -417,6 +515,7 @@ class WebhookHandler:
         message_level: str = "info",
         job_id: str | None = None,
         images: list | None = None,
+        videos: list | None = None,
     ):
         """
         Send structured data to all "raw" webhooks (JSON payload).
@@ -452,7 +551,12 @@ class WebhookHandler:
 
             try:
                 self._send_request_to_backend(
-                    backend, message=payload, images=images, store_response=False, raw_request=True
+                    backend,
+                    message=payload,
+                    images=images,
+                    videos=videos,
+                    store_response=False,
+                    raw_request=True,
                 )
             except Exception as e:
                 logging.error(f"Error sending raw webhook to {backend['webhook_url']}: {e}")

@@ -2,8 +2,10 @@ import logging
 import os
 import random
 
+import numpy as np
 import torch
 from accelerate.logging import get_logger
+from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
@@ -429,12 +431,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
 
     def log_state(self, show_rank: bool = True, alt_stats: bool = False):
-        self.debug_log(
-            f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
-        )
-        self.debug_log(
-            f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
-        )
+        # self.debug_log(
+        #     f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
+        # )
+        # self.debug_log(
+        #     f'Exhausted Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices.get(b, "N/A"), self.resolution) for b in self.exhausted_buckets)}'
+        # )
         if alt_stats:
             # Return an overview instead of a snapshot.
             # Eg. return totals, and not "as it is now"
@@ -529,7 +531,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         except Exception as e:
             self.logger.error(f"Could not fetch conditioning sample: {e}")
             return None
-        if not conditioning_sample_data:
+        if conditioning_sample_data is None:
             self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
             return None
 
@@ -542,6 +544,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             conditioning_type=self.conditioning_type,
             model=self.model,
         )
+
+        sample_image = conditioning_sample.image
+        if isinstance(sample_image, np.ndarray) and sample_image.ndim >= 4:
+            conditioning_sample.image = sample_image[0]
+        elif isinstance(sample_image, list) and len(sample_image) > 0:
+            conditioning_sample.image = sample_image[0]
+        if isinstance(conditioning_sample.image, np.ndarray) and conditioning_sample.image.ndim == 3:
+            conditioning_sample.image = Image.fromarray(conditioning_sample.image.astype(np.uint8))
         # Use the magic prompt handler to retrieve the captions.
         prompt_kwargs = {
             "caption_strategy": self.caption_strategy,

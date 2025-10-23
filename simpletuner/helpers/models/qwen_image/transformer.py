@@ -629,15 +629,11 @@ class QwenImageTransformer2DModel(
         patch_size = self.config.patch_size
         expected_tokens = grid_h * grid_w
         if num_tokens != expected_tokens:
-            raise ValueError(
-                f"Unexpected token count during untokenize: got {num_tokens}, expected {expected_tokens}"
-            )
+            raise ValueError(f"Unexpected token count during untokenize: got {num_tokens}, expected {expected_tokens}")
 
         expected_channels = patch_size * patch_size * self.out_channels
         if channels != expected_channels:
-            raise ValueError(
-                f"Unexpected channel count during untokenize: got {channels}, expected {expected_channels}"
-            )
+            raise ValueError(f"Unexpected channel count during untokenize: got {channels}, expected {expected_channels}")
 
         hidden_states = hidden_states.view(
             batch_size,

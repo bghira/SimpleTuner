@@ -783,6 +783,11 @@ function trainerComponent() {
                             requirementOverrides.requires_validation_edit_captions,
                         );
                     }
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_validation_i2v_samples')) {
+                        context.requiresValidationI2VSamples = Boolean(
+                            requirementOverrides.requires_validation_i2v_samples,
+                        );
+                    }
                     if (requirementOverrides.conditioning_dataset_type) {
                         context.conditioningDatasetType = requirementOverrides.conditioning_dataset_type;
                     }
@@ -805,6 +810,7 @@ function trainerComponent() {
                 requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: false,
                 requiresValidationEditCaptions: false,
+                requiresValidationI2VSamples: false,
                 conditioningDatasetType: 'conditioning',
                 supportsConditioningGenerators: false,
                 hasControlnetPipeline: false,

@@ -18,17 +18,15 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
-
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import QwenImageLoraLoaderMixin
 from diffusers.models import AutoencoderKLQwenImage, QwenImageTransformer2DModel
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.qwenimage.pipeline_output import QwenImagePipelineOutput
-
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -142,9 +140,7 @@ def retrieve_timesteps(
 
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.retrieve_latents
-def retrieve_latents(
-    encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"
-):
+def retrieve_latents(encoder_output: torch.Tensor, generator: Optional[torch.Generator] = None, sample_mode: str = "sample"):
     if hasattr(encoder_output, "latent_dist") and sample_mode == "sample":
         return encoder_output.latent_dist.sample(generator)
     elif hasattr(encoder_output, "latent_dist") and sample_mode == "argmax":
@@ -275,9 +271,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         prompt_embeds = torch.stack(
             [torch.cat([u, u.new_zeros(max_seq_len - u.size(0), u.size(1))]) for u in split_hidden_states]
         )
-        encoder_attention_mask = torch.stack(
-            [torch.cat([u, u.new_zeros(max_seq_len - u.size(0))]) for u in attn_mask_list]
-        )
+        encoder_attention_mask = torch.stack([torch.cat([u, u.new_zeros(max_seq_len - u.size(0))]) for u in attn_mask_list])
 
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
 
@@ -674,9 +668,7 @@ class QwenImageEditPlusPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             vae_images = []
             for img in image:
                 image_width, image_height = img.size
-                condition_width, condition_height = calculate_dimensions(
-                    CONDITION_IMAGE_SIZE, image_width / image_height
-                )
+                condition_width, condition_height = calculate_dimensions(CONDITION_IMAGE_SIZE, image_width / image_height)
                 vae_width, vae_height = calculate_dimensions(VAE_IMAGE_SIZE, image_width / image_height)
                 condition_image_sizes.append((condition_width, condition_height))
                 vae_image_sizes.append((vae_width, vae_height))

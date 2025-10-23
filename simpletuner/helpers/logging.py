@@ -41,6 +41,8 @@ class _WebhookTask:
     severity: str
     text_message: str
     structured_payload: Optional[dict[str, Any]]
+    images: Optional[list[Any]] = None
+    videos: Optional[list[Any]] = None
 
 
 def _ensure_worker():
@@ -69,6 +71,8 @@ def _webhook_worker_loop():
                             message_type=task.structured_payload.get("type"),
                             message_level=task.severity,
                             job_id=task.structured_payload.get("job_id"),
+                            images=task.images,
+                            videos=task.videos,
                         )
                     except Exception:
                         logging.getLogger(INTERNAL_LOGGER_NAME).debug(
@@ -77,7 +81,12 @@ def _webhook_worker_loop():
 
                 if hasattr(task.handler, "send"):
                     try:
-                        task.handler.send(message=task.text_message, message_level=task.severity)
+                        task.handler.send(
+                            message=task.text_message,
+                            message_level=task.severity,
+                            images=task.images,
+                            videos=task.videos,
+                        )
                     except Exception:
                         logging.getLogger(INTERNAL_LOGGER_NAME).debug(
                             "Failed to forward text log message to webhook.", exc_info=True
@@ -258,14 +267,15 @@ class WebhookLogger(logging.Logger):
         Configure how this logger interprets log levels and whether it should
         push to webhooks.
         """
+        manual_override = self._manual_level_override
         self._level_env_var = env_var
         self._default_level_name = default_level
         self._webhook_disabled = disable_webhook
         self._level_managed = True
         if propagate is not None:
             self.propagate = propagate
-        self._manual_level_override = False
-        self._apply_managed_level()
+        if not manual_override:
+            self._apply_managed_level()
 
     def setLevel(self, level: int | str) -> None:  # noqa: N802 - keeping logging API
         """
