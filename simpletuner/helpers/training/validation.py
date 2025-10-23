@@ -210,7 +210,8 @@ def retrieve_validation_images():
     Returns:
         dict: A dictionary of shortname to image paths.
     """
-    if StateTracker.get_model().requires_validation_edit_captions():
+    model = StateTracker.get_model()
+    if model.requires_validation_edit_captions() or model.requires_validation_i2v_samples():
         return retrieve_validation_edit_images()
 
     args = StateTracker.get_args()
@@ -272,7 +273,7 @@ def retrieve_validation_images():
 def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]]:
     """
     Returns [(shortname, *edited-scene caption*, reference_image), ...]
-    for models that need **edit** validation.
+    for models that need **edit** validation (including I2V variants).
 
     Logic
     -----
@@ -284,7 +285,7 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
       – add the trio to output
     """
     model = StateTracker.get_model()
-    if not model.requires_validation_edit_captions():
+    if not (model.requires_validation_edit_captions() or model.requires_validation_i2v_samples()):
         return []  # no-op for ordinary models
 
     args = StateTracker.get_args()

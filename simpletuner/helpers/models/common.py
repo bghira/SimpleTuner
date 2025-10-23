@@ -1689,6 +1689,12 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
 
+    def requires_validation_i2v_samples(self) -> bool:
+        """
+        Override for models that need to pair validation videos with their conditioning images.
+        """
+        return False
+
     @classmethod
     def _iter_pipeline_classes(cls):
         pipelines = getattr(cls, "PIPELINE_CLASSES", {})

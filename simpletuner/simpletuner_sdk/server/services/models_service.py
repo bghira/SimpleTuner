@@ -143,6 +143,9 @@ class ModelsService:
             "overrides_requires_validation_edit_captions": self._is_method_overridden(
                 model_cls, "requires_validation_edit_captions"
             ),
+            "overrides_requires_validation_i2v_samples": self._is_method_overridden(
+                model_cls, "requires_validation_i2v_samples"
+            ),
             "overrides_conditioning_validation_dataset_type": self._is_method_overridden(
                 model_cls, "conditioning_validation_dataset_type"
             ),
@@ -226,6 +229,7 @@ class ModelsService:
         requires_image_embeds = bool(_safe_call("requires_conditioning_image_embeds", False))
         requires_validation_inputs = bool(_safe_call("requires_conditioning_validation_inputs", False))
         requires_edit_captions = bool(_safe_call("requires_validation_edit_captions", False))
+        requires_i2v_validation_samples = bool(_safe_call("requires_validation_i2v_samples", False))
         dataset_type = _safe_call("conditioning_validation_dataset_type", "conditioning")
         if not isinstance(dataset_type, str) or not dataset_type:
             dataset_type = "conditioning"
@@ -236,6 +240,7 @@ class ModelsService:
             "requires_conditioning_image_embeds": requires_image_embeds,
             "requires_conditioning_validation_inputs": requires_validation_inputs,
             "requires_validation_edit_captions": requires_edit_captions,
+            "requires_validation_i2v_samples": requires_i2v_validation_samples,
             "conditioning_dataset_type": dataset_type,
         }
 
