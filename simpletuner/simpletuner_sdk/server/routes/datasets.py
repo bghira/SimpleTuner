@@ -233,22 +233,22 @@ def _resolve_datasets_dir_and_validate_path(
     """
     # Load resolved defaults from WebUIStateStore (includes fallbacks)
     webui_state = WebUIStateStore()
-    defaults_raw = webui_state.load_defaults()
-    defaults_bundle = webui_state.resolve_defaults(defaults_raw)
+    defaults_bundle = webui_state.get_defaults_bundle()
     resolved = defaults_bundle["resolved"]
 
-    # Also check onboarding values as they might have been set but not yet applied to defaults
+    # Onboarding values take precedence when present. The onboarding step is named
+    # "default_datasets_dir" in the flow; fall back to defaults otherwise.
     onboarding = webui_state.load_onboarding()
-    datasets_dir = resolved.get("datasets_dir")
+    datasets_dir = None
+    onboarding_step = onboarding.steps.get("default_datasets_dir")
+    if onboarding_step and onboarding_step.value:
+        datasets_dir = onboarding_step.value
+    else:
+        datasets_dir = resolved.get("datasets_dir")
+        if not datasets_dir:
+            datasets_dir = defaults_bundle["fallbacks"].get("datasets_dir")
 
-    # If datasets_dir is still the fallback, check if there's an onboarding value
-    # Use correct step ID: "default_datasets_dir" (not "datasets_dir")
-    if datasets_dir == defaults_bundle["fallbacks"].get("datasets_dir"):
-        datasets_step = onboarding.steps.get("default_datasets_dir")
-        if datasets_step and datasets_step.value:
-            datasets_dir = datasets_step.value
-
-    allow_outside = resolved.get("allow_dataset_paths_outside_dir", False)
+    allow_outside = bool(resolved.get("allow_dataset_paths_outside_dir", False))
 
     # Use provided path or fall back to resolved datasets_dir (which includes fallback)
     if path is None:

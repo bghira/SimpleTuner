@@ -230,20 +230,17 @@ class TestTransformerTestSuiteIntegration(unittest.TestCase):
         """Test that typo prevention utilities work correctly."""
         typo_utils = TypoTestUtils()
 
-        # Create a mock model for testing
-        mock_model = Mock()
-        mock_model.forward = Mock(return_value="success")
+        class _SampleModel:
+            @staticmethod
+            def forward(*, input):
+                return f"processed-{input}"
 
-        # Test parameter name typo detection
+        model = _SampleModel()
+
         valid_params = {"input": "test"}
         typo_params = {"inpt": "input"}  # typo
 
-        try:
-            typo_utils.test_parameter_name_typos(mock_model, "forward", valid_params, typo_params)
-            # Should pass - the utility should detect the typo
-        except Exception as e:
-            # This is expected if the mock doesn't handle the test properly
-            self.skipTest(f"Typo test requires specific mock setup: {e}")
+        typo_utils.test_parameter_name_typos(model, "forward", valid_params, typo_params)
 
     def test_performance_utilities(self):
         """Test that performance utilities work correctly."""

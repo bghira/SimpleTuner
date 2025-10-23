@@ -284,7 +284,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise
     if args.webhook_config is not None:
-        print(f"DEBUG: webhook_config at start = {args.webhook_config} (type: {type(args.webhook_config)})")
+        logger.debug("webhook_config at start = %s (type: %s)", args.webhook_config, type(args.webhook_config))
         # Handle different types of webhook_config
         # First, check if it's an AST object using isinstance (the proper way)
         if isinstance(args.webhook_config, (ast.AST, ast.Name, ast.Call, ast.Dict, ast.List, ast.Constant)):
