@@ -349,6 +349,12 @@ class WebhookHandler:
                 logging.error(f"Failed to open image from path {image}: {e}")
                 return None
 
+        if isinstance(image, list):
+            if not image:
+                logging.error("Unsupported image type: empty list")
+                return None
+            image = MultiaspectImage.numpy_list_to_pil(image[0])
+
         # Handle PIL Image objects
         if hasattr(image, "save"):
             img_byte_array = BytesIO()
