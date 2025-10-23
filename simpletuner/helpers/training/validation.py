@@ -40,7 +40,7 @@ from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Validation")
 from simpletuner.helpers.training.multi_process import should_log
 
 if should_log():
@@ -72,10 +72,6 @@ from simpletuner.helpers.prompts import PromptHandler
 
 if is_wandb_available():
     import wandb
-
-
-logger = logging.getLogger("validation")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL") or "INFO")
 
 
 def resize_validation_images(validation_images, edge_length):
