@@ -211,6 +211,11 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
+.event-video {
+    max-width: 320px;
+    max-height: 240px;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     .event-lightbox-content {

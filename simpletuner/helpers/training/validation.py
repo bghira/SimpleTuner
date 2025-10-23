@@ -1,7 +1,9 @@
+import base64
 import inspect
 import logging
 import os
 import sys
+from io import BytesIO
 from typing import Union
 
 import diffusers
@@ -729,6 +731,7 @@ class Validation:
         self.global_resume_step = None
         self.validation_prompt_metadata = validation_prompt_metadata
         self.validation_images = None
+        self.validation_video_paths: dict[str, list[str]] = {}
         self.weight_dtype = weight_dtype
         self.embed_cache = embed_cache
         self.ema_model = ema_model
@@ -1307,6 +1310,7 @@ class Validation:
         _content = self.validation_prompt_metadata["validation_prompts"]
         total_samples = len(_content) if _content is not None else 0
         self.eval_scores = {}
+        self.validation_video_paths.clear()
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
@@ -1945,6 +1949,7 @@ class Validation:
         validation_img_idx = 0
         from diffusers.utils.export_utils import export_to_video
 
+        video_paths: list[str] = []
         for validation_image in validation_images[validation_shortname]:
             # Get the validation resolution for this index
             if validation_img_idx < len(self.validation_resolutions):
@@ -1980,15 +1985,19 @@ class Validation:
                 validation_img_idx += 1
                 continue
 
+            video_path = os.path.join(
+                self.save_dir,
+                f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.mp4",
+            )
             export_to_video(
                 validation_image,
-                os.path.join(
-                    self.save_dir,
-                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.mp4",
-                ),
+                video_path,
                 fps=self.config.framerate,
             )
+            video_paths.append(video_path)
             validation_img_idx += 1
+        if video_paths:
+            self.validation_video_paths[validation_shortname] = video_paths
 
     def _save_images(self, validation_images, validation_shortname, validation_prompt):
         validation_img_idx = 0
@@ -2010,22 +2019,55 @@ class Validation:
             validation_img_idx += 1
 
     def _log_validations_to_webhook(self, validation_images, validation_shortname, validation_prompt):
-        if StateTracker.get_webhook_handler() is not None:
-            StateTracker.get_webhook_handler().send(
-                (
-                    f"Validation {'image' if StateTracker.get_webhook_handler().send_video is False else 'video'} for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
-                    f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
-                    f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
-                ),
-                images=validation_images[validation_shortname],
-            )
-            StateTracker.get_webhook_handler().send_raw(
-                structured_data={"message": f"Validation: {validation_shortname}"},
-                message_type="training.validation",
-                message_level="info",
-                job_id=StateTracker.get_job_id(),
-                images=validation_images[validation_shortname],
-            )
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is None:
+            return
+
+        media_word = "video" if isinstance(self.model, VideoModelFoundation) else "image"
+        message = (
+            f"Validation {media_word} for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
+            f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
+            f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
+        )
+
+        images_payload = validation_images.get(validation_shortname, [])
+        videos_for_discord = None
+        videos_for_raw = None
+
+        if isinstance(self.model, VideoModelFoundation):
+            video_paths = self.validation_video_paths.get(validation_shortname, [])
+            if video_paths:
+                videos_for_discord = []
+                videos_for_raw = []
+                for path in video_paths:
+                    try:
+                        with open(path, "rb") as handle:
+                            video_bytes = handle.read()
+                    except Exception as exc:  # pragma: no cover - defensive logging
+                        logger.warning("Failed to read validation video %s: %s", path, exc)
+                        continue
+                    video_buffer = BytesIO(video_bytes)
+                    video_buffer.name = os.path.basename(path)
+                    videos_for_discord.append(video_buffer)
+                    data_uri = f"data:video/mp4;base64,{base64.b64encode(video_bytes).decode('utf-8')}"
+                    videos_for_raw.append({"src": data_uri, "mime_type": "video/mp4"})
+                if videos_for_discord:
+                    images_payload = None
+
+        webhook_handler.send(
+            message,
+            images=images_payload,
+            videos=videos_for_discord,
+        )
+
+        webhook_handler.send_raw(
+            structured_data={"message": f"Validation: {validation_shortname}"},
+            message_type="training.validation",
+            message_level="info",
+            job_id=StateTracker.get_job_id(),
+            images=images_payload,
+            videos=videos_for_raw,
+        )
 
     def _log_validations_to_trackers(self, validation_images):
         for tracker in self.accelerator.trackers:
