@@ -287,6 +287,7 @@ class CallbackEvent:
     checkpoint: CheckpointData | None = None
     validation: ValidationData | None = None
     images: Sequence[str] = field(default_factory=tuple)
+    videos: Sequence[Any] = field(default_factory=tuple)
     data: Mapping[str, Any] = field(default_factory=dict)
     raw: Mapping[str, Any] = field(default_factory=dict)
     index: int | None = None
@@ -309,6 +310,7 @@ class CallbackEvent:
             "job_id": self.job_id,
             "timestamp": self.timestamp.isoformat(),
             "images": list(self.images),
+            "videos": list(self.videos),
         }
         if self.progress:
             payload["progress"] = self.progress.to_dict()
@@ -370,6 +372,29 @@ class CallbackEvent:
         if isinstance(raw_images, Sequence) and not isinstance(raw_images, (str, bytes, bytearray)):
             images = [_safe_str(image) for image in raw_images if _safe_str(image)]
 
+        videos = []
+        raw_videos = raw.get("videos")
+        if isinstance(raw_videos, Sequence) and not isinstance(raw_videos, (str, bytes, bytearray)):
+            for video in raw_videos:
+                if isinstance(video, Mapping):
+                    candidate_src = None
+                    for key in ("src", "url", "data", "base64", "video", "video_base64"):
+                        value = video.get(key)
+                        if isinstance(value, str) and value.strip():
+                            candidate_src = value.strip()
+                            break
+                    if not candidate_src:
+                        continue
+                    candidate_mime = video.get("mime_type") or video.get("mime")
+                    payload = {"src": candidate_src}
+                    if isinstance(candidate_mime, str) and candidate_mime.strip():
+                        payload["mime_type"] = candidate_mime.strip()
+                    videos.append(payload)
+                else:
+                    value = _safe_str(video)
+                    if value:
+                        videos.append(value)
+
         data = raw.get("data") or raw.get("extras") or {}
         data = dict(data) if isinstance(data, Mapping) else {}
 
@@ -390,6 +415,7 @@ class CallbackEvent:
             checkpoint=checkpoint,
             validation=validation,
             images=tuple(images),
+            videos=tuple(videos),
             data=data,
             raw=dict(raw),
             reset_history=reset_history,
