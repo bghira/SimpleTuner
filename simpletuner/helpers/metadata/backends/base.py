@@ -392,6 +392,16 @@ class MetadataBackend:
         if total_images != post_total:
             self.read_only = True
 
+        # Check if this backend has no images after splitting (can happen with multi-GPU setups)
+        if post_total == 0 and total_images > 0:
+            if should_log():
+                logger.warning(
+                    f"Backend {self.id} has no images after splitting between processes. "
+                    f"This can happen when using multiple GPUs with small datasets. "
+                    f"Consider using a larger dataset or fewer GPUs. "
+                    f"Original image count: {total_images}"
+                )
+
         logger.debug(f"Count of items after split: {post_total}")
 
     def mark_as_seen(self, image_path):
