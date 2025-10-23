@@ -1900,10 +1900,25 @@ class FactoryRegistry:
                 source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
             )
-            init_backend["metadata_backend"].split_buckets_between_processes(
-                gradient_accumulation_steps=self.args.gradient_accumulation_steps,
-                apply_padding=apply_padding,
-            )
+            if not getattr(init_backend["metadata_backend"], "read_only", False):
+                init_backend["metadata_backend"].split_buckets_between_processes(
+                    gradient_accumulation_steps=self.args.gradient_accumulation_steps,
+                    apply_padding=apply_padding,
+                )
+            else:
+                info_log(f"(id={init_backend['id']}) Skipping bucket split; metadata already aligned from source dataset.")
+
+            # Check if this is a conditioning backend and if it has no images after splitting
+            if (
+                init_backend.get("dataset_type") == "conditioning"
+                and sum(len(bucket) for bucket in init_backend["metadata_backend"].aspect_ratio_bucket_indices.values()) == 0
+            ):
+                if self.accelerator.is_main_process:
+                    logger.warning(
+                        f"Conditioning backend {target_dataset_id} has no images after splitting between processes. "
+                        f"This can happen when using multiple GPUs with small datasets. "
+                        f"Consider using a larger dataset or fewer GPUs."
+                    )
         else:
             if self.args.eval_dataset_id is None or init_backend["id"] in self.args.eval_dataset_id:
                 init_backend["metadata_backend"].split_buckets_between_processes(
