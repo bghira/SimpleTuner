@@ -213,6 +213,97 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_configure_and_start_training", scenario)
 
+    def test_training_failure_updates_ui_state(self) -> None:
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            basic_tab = BasicConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            basic_tab.set_model_name("failure-job")
+            basic_tab.set_output_dir("/tmp/failure-output")
+
+            trainer_page.start_training()
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && runBtn.disabled);"
+                )
+            )
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"
+                )
+            )
+
+            WebDriverWait(driver, 5).until(
+                lambda d: bool(d.execute_script("return !!window.__simpletunerTestCallbackHook;"))
+            )
+
+            dispatch_script = (
+                "window.dispatchEvent(new CustomEvent('simpletuner:test:callback',"
+                " { detail: { category: 'status', payload: arguments[0] } }));"
+            )
+
+            driver.execute_script(
+                dispatch_script,
+                {
+                    "type": "training.status",
+                    "status": "starting",
+                    "severity": "info",
+                    "message": "Training is starting",
+                    "job_id": "harness-job",
+                    "data": {"status": "starting", "job_id": "harness-job"},
+                },
+            )
+
+            driver.execute_script(
+                dispatch_script,
+                {
+                    "type": "training.status",
+                    "status": "failed",
+                    "severity": "error",
+                    "message": "Caption file not found",
+                    "job_id": "harness-job",
+                    "data": {"status": "failed", "job_id": "harness-job"},
+                },
+            )
+
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "const runBtn=document.getElementById('runBtn');"
+                    "const cancelBtn=document.getElementById('cancelBtn');"
+                    "return !!(runBtn && cancelBtn && !runBtn.disabled && cancelBtn.disabled);"
+                )
+            )
+
+            trainer_state = driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "return store ? { isTraining: !!store.isTraining, showTrainingProgress: !!store.showTrainingProgress } : null;"
+            )
+            self.assertIsNotNone(trainer_state)
+            self.assertFalse(trainer_state.get("isTraining"))
+            self.assertFalse(trainer_state.get("showTrainingProgress"))
+
+            self.assertEqual(
+                driver.execute_script(
+                    "return document.body && document.body.dataset.trainingActive ? document.body.dataset.trainingActive : 'false';"
+                ),
+                "false",
+            )
+
+            status_text = driver.execute_script(
+                "const el = document.getElementById('training-status');"
+                "return el ? (el.textContent || '').toLowerCase() : '';"
+            )
+            self.assertNotIn("running", status_text)
+
+        self.for_each_browser("test_training_failure_updates_ui_state", scenario)
+
 
 class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
     """Test dataset management functionality."""
