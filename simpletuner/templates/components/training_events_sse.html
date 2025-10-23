@@ -896,8 +896,8 @@
 
     function handleCallbackEvent(category, payload) {
         const jobId = payload.job_id || payload.raw?.job_id || activeJobId;
-        const messageType = (payload.message_type || '').toLowerCase();
-        const normalizedMessageType = messageType.replace(/\./g, '_');
+        const rawMessageType = String(payload.type || payload.message_type || '').toLowerCase();
+        const normalizedMessageType = rawMessageType.replace(/\./g, '_');
         const store = getTrainerStore();
 
         if (payload && payload.reset) {
@@ -943,7 +943,11 @@
                 if (normalizedMessageType === 'configure_webhook') {
                     setStatus('Starting', payload.severity);
                     setTrainingState('starting', { job_id: jobId });
-                } else if (normalizedMessageType === 'training.status' || normalizedMessageType === '_train_initial_msg' || normalizedMessageType === 'train_status') {
+                } else if (
+                    normalizedMessageType === 'training_status' ||
+                    normalizedMessageType === '_train_initial_msg' ||
+                    normalizedMessageType === 'train_status'
+                ) {
                     const derivedStatus = (payload.status || payload.data?.status || (normalizedMessageType === '_train_initial_msg' ? 'starting' : '')).toLowerCase();
                     const normalizedProgress = normalizeProgressPayload(payload);
 
@@ -1026,6 +1030,23 @@
                 // No-op for generic callbacks
             }
         }
+    }
+
+    if (!window.__simpletunerTestCallbackHook) {
+        window.__simpletunerTestCallbackHook = true;
+        window.addEventListener('simpletuner:test:callback', function(event) {
+            if (!event || !event.detail) {
+                return;
+            }
+            const detail = event.detail || {};
+            const category = detail.category || 'status';
+            const payload = detail.payload || {};
+            try {
+                handleCallbackEvent(category, payload);
+            } catch (err) {
+                console.error('[SSE-DEBUG] test callback dispatch failed:', err);
+            }
+        });
     }
 
     function trackListener(eventType, callback) {
