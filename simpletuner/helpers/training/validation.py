@@ -1399,8 +1399,93 @@ class Validation:
             separator_width: Width of separator between images
             labels: Text labels for [left, middle, right] images
         """
+
+        def _is_frame_sequence(media):
+            return isinstance(media, list) and len(media) > 0 and all(isinstance(frame, Image.Image) for frame in media)
+
+        def _ensure_sequence(media, name):
+            if _is_frame_sequence(media):
+                return list(media)
+            if isinstance(media, Image.Image):
+                return [media]
+            raise TypeError(f"Unsupported media type for {name}: {type(media)}")
+
+        def _pad_sequence(frames, target_len, name):
+            if not frames:
+                raise ValueError(f"Cannot stitch empty {name} sequence.")
+            if len(frames) == target_len:
+                return frames
+            if len(frames) > target_len:
+                return frames[:target_len]
+            padding = [frames[-1]] * (target_len - len(frames))
+            return frames + padding
+
+        def _stitch_single_triplet(single_left, single_middle, single_right):
+            left_width, left_height = single_left.size
+            middle_width, middle_height = single_middle.size
+            right_width, right_height = single_right.size
+
+            new_width = left_width + separator_width + middle_width + separator_width + right_width
+            new_height = max(left_height, middle_height, right_height)
+
+            new_image = Image.new("RGB", (new_width, new_height), color="white")
+
+            left_y = (new_height - left_height) // 2
+            middle_y = (new_height - middle_height) // 2
+            right_y = (new_height - right_height) // 2
+
+            left_x = 0
+            middle_x = left_width + separator_width
+            right_x = middle_x + middle_width + separator_width
+
+            new_image.paste(single_left, (left_x, left_y))
+            new_image.paste(single_middle, (middle_x, middle_y))
+            new_image.paste(single_right, (right_x, right_y))
+
+            draw = ImageDraw.Draw(new_image)
+            line_color = (200, 200, 200)
+            for i in range(separator_width):
+                x = left_width + i
+                draw.line([(x, 0), (x, new_height)], fill=line_color)
+            for i in range(separator_width):
+                x = middle_x + middle_width + i
+                draw.line([(x, 0), (x, new_height)], fill=line_color)
+
+            font = get_font_for_labels()
+            if len(labels) > 0 and labels[0] is not None:
+                draw.text(
+                    (left_x + 10, 10),
+                    labels[0],
+                    fill=(255, 255, 255),
+                    font=font,
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0),
+                )
+
+            if len(labels) > 1 and labels[1] is not None:
+                draw.text(
+                    (middle_x + 10, 10),
+                    labels[1],
+                    fill=(255, 255, 255),
+                    font=font,
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0),
+                )
+
+            if len(labels) > 2 and labels[2] is not None:
+                draw.text(
+                    (right_x + 10, 10),
+                    labels[2],
+                    fill=(255, 255, 255),
+                    font=font,
+                    stroke_width=2,
+                    stroke_fill=(0, 0, 0),
+                )
+
+            return new_image
+
         # if multi condition images ,we need concat they as left image firstly
-        if isinstance(left_image, list):
+        if isinstance(left_image, list) and not (_is_frame_sequence(middle_image) or _is_frame_sequence(right_image)):
             if all(isinstance(img, Image.Image) for img in left_image):
                 widths, heights = zip(*(img.size for img in left_image))
                 total_width = sum(widths)
@@ -1413,81 +1498,27 @@ class Validation:
                 left_image = new_image
             else:
                 logger.error(f"Condition in left_image are not all PIL image format")
-        left_width, left_height = left_image.size
-        middle_width, middle_height = middle_image.size
-        right_width, right_height = right_image.size
+        left_is_sequence = _is_frame_sequence(left_image)
+        middle_is_sequence = _is_frame_sequence(middle_image)
+        right_is_sequence = _is_frame_sequence(right_image)
 
-        # Calculate new canvas dimensions
-        new_width = left_width + separator_width + middle_width + separator_width + right_width
-        new_height = max(left_height, middle_height, right_height)
+        if left_is_sequence or middle_is_sequence or right_is_sequence:
+            left_frames = _ensure_sequence(left_image, "left")
+            middle_frames = _ensure_sequence(middle_image, "middle")
+            right_frames = _ensure_sequence(right_image, "right")
 
-        # Create new image with white background
-        new_image = Image.new("RGB", (new_width, new_height), color="white")
+            target_length = max(len(left_frames), len(middle_frames), len(right_frames))
 
-        # Calculate vertical positions for centering
-        left_y = (new_height - left_height) // 2
-        middle_y = (new_height - middle_height) // 2
-        right_y = (new_height - right_height) // 2
+            left_frames = _pad_sequence(left_frames, target_length, "left")
+            middle_frames = _pad_sequence(middle_frames, target_length, "middle")
+            right_frames = _pad_sequence(right_frames, target_length, "right")
 
-        # Calculate horizontal positions
-        left_x = 0
-        middle_x = left_width + separator_width
-        right_x = middle_x + middle_width + separator_width
+            stitched_frames = []
+            for idx in range(target_length):
+                stitched_frames.append(_stitch_single_triplet(left_frames[idx], middle_frames[idx], right_frames[idx]))
+            return stitched_frames if target_length > 1 else stitched_frames[0]
 
-        # Paste all three images
-        new_image.paste(left_image, (left_x, left_y))
-        new_image.paste(middle_image, (middle_x, middle_y))
-        new_image.paste(right_image, (right_x, right_y))
-
-        # Create drawing object
-        draw = ImageDraw.Draw(new_image)
-
-        # Draw separators
-        line_color = (200, 200, 200)  # Light gray
-        # First separator
-        for i in range(separator_width):
-            x = left_width + i
-            draw.line([(x, 0), (x, new_height)], fill=line_color)
-        # Second separator
-        for i in range(separator_width):
-            x = middle_x + middle_width + i
-            draw.line([(x, 0), (x, new_height)], fill=line_color)
-
-        # Add labels if provided
-        # Try to use a larger, more universally available font
-        font = get_font_for_labels()
-
-        if labels[0] is not None:
-            draw.text(
-                (left_x + 10, 10),
-                labels[0],
-                fill=(255, 255, 255),
-                font=font,
-                stroke_width=2,
-                stroke_fill=(0, 0, 0),
-            )
-
-        if labels[1] is not None:
-            draw.text(
-                (middle_x + 10, 10),
-                labels[1],
-                fill=(255, 255, 255),
-                font=font,
-                stroke_width=2,
-                stroke_fill=(0, 0, 0),
-            )
-
-        if labels[2] is not None:
-            draw.text(
-                (right_x + 10, 10),
-                labels[2],
-                fill=(255, 255, 255),
-                font=font,
-                stroke_width=2,
-                stroke_fill=(0, 0, 0),
-            )
-
-        return new_image
+        return _stitch_single_triplet(left_image, middle_image, right_image)
 
     def stitch_conditioning_images(self, validation_image_results, conditioning_image):
         """
