@@ -1,8 +1,8 @@
 import unittest
+
 from PIL import Image
-from helpers.multiaspect.image import (
-    MultiaspectImage,
-)  # Adjust import according to your project structure
+
+from simpletuner.helpers.multiaspect.image import MultiaspectImage  # Adjust import according to your project structure
 
 
 class TestCropping(unittest.TestCase):
@@ -12,12 +12,12 @@ class TestCropping(unittest.TestCase):
 
     def test_crop_corner(self):
         target_width, target_height = 300, 200
-        from helpers.image_manipulation.cropping import CornerCropping
+        from simpletuner.helpers.image_manipulation.cropping import CornerCropping
 
         cropper = CornerCropping(self.sample_image)
-        cropped_image, (top, left) = cropper.set_intermediary_size(
-            target_width + 10, target_height + 10
-        ).crop(target_width, target_height)
+        cropped_image, (top, left) = cropper.set_intermediary_size(target_width + 10, target_height + 10).crop(
+            target_width, target_height
+        )
 
         # Check if cropped coordinates are within original image bounds
         self.assertTrue(0 <= left < self.sample_image.width)
@@ -27,7 +27,7 @@ class TestCropping(unittest.TestCase):
         self.assertEqual(cropped_image.size, (target_width, target_height))
 
     def test_crop_center(self):
-        from helpers.image_manipulation.cropping import CenterCropping
+        from simpletuner.helpers.image_manipulation.cropping import CenterCropping
 
         cropper = CenterCropping(self.sample_image)
         target_width, target_height = 300, 200
@@ -42,7 +42,7 @@ class TestCropping(unittest.TestCase):
         self.assertEqual(cropped_image.size, (target_width, target_height))
 
     def test_crop_random(self):
-        from helpers.image_manipulation.cropping import RandomCropping
+        from simpletuner.helpers.image_manipulation.cropping import RandomCropping
 
         target_width, target_height = 300, 200
         cropped_image, (top, left) = (

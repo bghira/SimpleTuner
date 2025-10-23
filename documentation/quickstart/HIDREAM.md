@@ -28,42 +28,21 @@ apt -y install python3.12 python3.12-venv
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image to enable compiling of CUDA extensions:
 
 ```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+apt -y install nvidia-cuda-toolkit
 ```
-
-If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-# if python --version shows 3.12 you can just also use the 'python' command here.
-python3.12 -m venv .venv
-
-source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
+pip install simpletuner[cuda]
 ```
 
-**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
-
-Depending on your system, you will run one of 3 commands:
-
-```bash
-# Linux
-poetry install
-```
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 ### Setting up the environment
 
@@ -78,7 +57,7 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
@@ -123,7 +102,7 @@ Your config.json will look something like mine by the end:
 ```json
 {
     "validation_torch_compile": "false",
-    "validation_steps": 200,
+    "validation_step_interval": 200,
     "validation_seed": 42,
     "validation_resolution": "1024x1024",
     "validation_prompt": "A photo-realistic image of a cat",
@@ -160,7 +139,7 @@ Your config.json will look something like mine by the end:
     "disable_benchmark": false,
     "data_backend_config": "config/hidream/multidatabackend.json",
     "checkpoints_total_limit": 5,
-    "checkpointing_steps": 500,
+    "checkpoint_step_interval": 500,
     "caption_dropout_probability": 0.0,
     "base_model_precision": "int8-quanto",
     "text_encoder_3_precision": "int8-quanto",
@@ -169,7 +148,7 @@ Your config.json will look something like mine by the end:
 }
 ```
 
-> ℹ️ Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+> ℹ️ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 > ℹ️ This configuration sets the T5 (#3) and Llama (#4) text encoder precision levels to int8 to save memory for 24G cards. You can remove these options or set them to `no_change` if you have more memory available.
 
@@ -314,7 +293,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 > ℹ️ With few enough images, you might see a message **no images detected in dataset** - increasing the `repeats` value will overcome this limitation.
 
-Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) as the dataset.
+Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
 
@@ -407,15 +386,27 @@ Follow the instructions to log in to both services.
 
 ### Executing the training run
 
-From the SimpleTuner directory, one simply has to run:
+From the SimpleTuner directory, you have several options to start training:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner[cuda]
+simpletuner train
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ./train.sh
 ```
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ### Running inference on the LoKr afterward
 
@@ -457,7 +448,7 @@ def download_adapter(repo_id: str):
     )
 
     return path_to_adapter_file
-    
+
 adapter_file_path = download_adapter(repo_id=adapter_repo_id)
 transformer = HiDreamImageTransformer2DModel.from_pretrained(model_id, torch_dtype=torch.bfloat16, subfolder="transformer")
 pipeline = HiDreamImagePipeline.from_pretrained(

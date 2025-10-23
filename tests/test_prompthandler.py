@@ -1,9 +1,9 @@
 import unittest
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
-from unittest.mock import patch, MagicMock
-from helpers.prompts import (
-    PromptHandler,
-)
+
+from simpletuner.helpers.prompts import PromptHandler
 
 
 class TestPromptHandler(unittest.TestCase):
@@ -15,11 +15,9 @@ class TestPromptHandler(unittest.TestCase):
         self.model_type = "sdxl"
         self.data_backend = MagicMock()
 
-    @patch("helpers.training.state_tracker.StateTracker.get_parquet_database")
-    @patch("helpers.training.state_tracker.StateTracker.get_data_backend")
-    def test_prepare_instance_prompt_from_parquet(
-        self, mock_get_data_backend, mock_get_parquet_database
-    ):
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.get_parquet_database")
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend")
+    def test_prepare_instance_prompt_from_parquet(self, mock_get_data_backend, mock_get_parquet_database):
         # Setup
         image_path = "image_3.jpg"
         use_captions = True
@@ -31,9 +29,7 @@ class TestPromptHandler(unittest.TestCase):
         caption_column = "caption"
         mock_metadata_backend = MagicMock()
         mock_metadata_backend.caption_cache_entry = MagicMock()
-        mock_metadata_backend.caption_cache_entry.return_value = (
-            "a giant arcade game type claw..."
-        )
+        mock_metadata_backend.caption_cache_entry.return_value = "a giant arcade game type claw..."
         mock_get_data_backend.return_value = {
             "metadata_backend": mock_metadata_backend,
         }
@@ -86,12 +82,10 @@ class TestPromptHandler(unittest.TestCase):
             )
 
     @patch("builtins.open")
-    @patch("helpers.prompts.BaseDataBackend")
+    @patch("simpletuner.helpers.prompts.BaseDataBackend")
     def test_instance_prompt_prepended_textfile(self, mock_backend, open_mock):
         # Setup
-        open_mock.return_value.__enter__.return_value.read.return_value = (
-            "Caption from filename"
-        )
+        open_mock.return_value.__enter__.return_value.read.return_value = "Caption from filename"
         instance_prompt = "Test Instance Prompt"
         caption_from_file = "Caption from file"
         mock_backend.exists.return_value = True
@@ -144,7 +138,7 @@ class TestPromptHandler(unittest.TestCase):
         expected_caption = f"{instance_prompt} {image_filename}"
         self.assertEqual(result_caption, expected_caption)
 
-    @patch("helpers.prompts.PromptHandler.prepare_instance_prompt_from_filename")
+    @patch("simpletuner.helpers.prompts.PromptHandler.prepare_instance_prompt_from_filename")
     def test_prepare_instance_prompt_from_filename_called(self, mock_prepare):
         """Ensure that prepare_instance_prompt_from_filename is called with correct arguments."""
         # Setup
@@ -178,7 +172,7 @@ class TestPromptHandler(unittest.TestCase):
             instance_prompt=instance_prompt,
         )
 
-    @patch("helpers.prompts.PromptHandler.prepare_instance_prompt_from_textfile")
+    @patch("simpletuner.helpers.prompts.PromptHandler.prepare_instance_prompt_from_textfile")
     def test_prepare_instance_prompt_from_textfile_called(self, mock_prepare):
         """Ensure that prepare_instance_prompt_from_textfile is called when the caption_strategy is 'textfile'."""
         # Setup
@@ -239,7 +233,7 @@ class TestPromptHandler(unittest.TestCase):
                 self.data_backend,
             )
 
-    @patch("helpers.prompts.PromptHandler.filter_captions")
+    @patch("simpletuner.helpers.prompts.PromptHandler.filter_captions")
     def test_filter_captions_called(self, mock_filter):
         """Ensure that filter_captions is called with the correct arguments."""
         captions = ["caption 1", "caption 2"]

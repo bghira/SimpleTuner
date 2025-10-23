@@ -1,8 +1,10 @@
-import unittest
-import torch
-import tempfile
 import os
-from helpers.training.ema import EMAModel
+import tempfile
+import unittest
+
+import torch
+
+from simpletuner.helpers.training.ema import EMAModel
 
 
 class TestEMAModel(unittest.TestCase):
@@ -28,12 +30,8 @@ class TestEMAModel(unittest.TestCase):
 
     def test_ema_initialization(self):
         """Test that the EMA model initializes correctly."""
-        self.assertEqual(
-            len(self.ema_model.shadow_params), len(list(self.model.parameters()))
-        )
-        for shadow_param, model_param in zip(
-            self.ema_model.shadow_params, self.model.parameters()
-        ):
+        self.assertEqual(len(self.ema_model.shadow_params), len(list(self.model.parameters())))
+        for shadow_param, model_param in zip(self.ema_model.shadow_params, self.model.parameters()):
             self.assertTrue(torch.equal(shadow_param, model_param))
 
     def test_ema_step(self):
@@ -56,14 +54,10 @@ class TestEMAModel(unittest.TestCase):
         decay = self.ema_model.cur_decay_value  # This should be 0.999
 
         # Verify that the decay used is as expected
-        self.assertAlmostEqual(
-            decay, 0.999, places=6, msg="Decay value is not as expected."
-        )
+        self.assertAlmostEqual(decay, 0.999, places=6, msg="Decay value is not as expected.")
 
         # Verify shadow parameters have changed
-        for shadow_param, shadow_param_before in zip(
-            self.ema_model.shadow_params, shadow_params_before
-        ):
+        for shadow_param, shadow_param_before in zip(self.ema_model.shadow_params, shadow_params_before):
             self.assertFalse(
                 torch.equal(shadow_param, shadow_param_before),
                 "Shadow parameters did not update correctly.",
@@ -96,9 +90,7 @@ class TestEMAModel(unittest.TestCase):
             new_ema_model.load_state_dict(temp_path)
 
             # Check that the new EMA model's shadow parameters match the saved state
-            for shadow_param, new_shadow_param in zip(
-                self.ema_model.shadow_params, new_ema_model.shadow_params
-            ):
+            for shadow_param, new_shadow_param in zip(self.ema_model.shadow_params, new_ema_model.shadow_params):
                 self.assertTrue(torch.equal(shadow_param, new_shadow_param))
 
 

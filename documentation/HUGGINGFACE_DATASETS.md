@@ -35,7 +35,7 @@ To use a Hugging Face dataset, configure your dataloader with `"type": "huggingf
 
 - `type`: Must be `"huggingface"`
 - `dataset_name`: The Hugging Face dataset identifier (e.g., "laion/laion-aesthetic")
-- `caption_strategy`: Must be `"huggingface"` 
+- `caption_strategy`: Must be `"huggingface"`
 - `metadata_backend`: Must be `"huggingface"`
 
 ### Optional Fields

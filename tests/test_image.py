@@ -1,18 +1,27 @@
-import unittest, random, logging, os
+import logging
+import random
+import unittest
+from unittest.mock import MagicMock, Mock, patch
+
+# Import test configuration to suppress logging/warnings
+try:
+    from . import test_config
+except ImportError:
+    # Fallback for when running tests individually
+    import test_config
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", logging.INFO))
-from unittest.mock import patch
-from unittest.mock import Mock, MagicMock
 
 try:
     import pillow_jxl
 except ModuleNotFoundError:
     pass
-from PIL import Image
 from io import BytesIO
-from helpers.multiaspect.image import MultiaspectImage
-from helpers.training.state_tracker import StateTracker
+
+from PIL import Image
+
+from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
 
 
@@ -42,19 +51,15 @@ class TestMultiaspectImage(unittest.TestCase):
         Test that the aspect ratio calculation returns expected results.
         """
         StateTracker.set_args(MagicMock(aspect_bucket_rounding=2))
-        self.assertEqual(
-            MultiaspectImage.calculate_image_aspect_ratio((1920, 1080)), 1.78
-        )
-        self.assertEqual(
-            MultiaspectImage.calculate_image_aspect_ratio((1080, 1920)), 0.56
-        )
+        self.assertEqual(MultiaspectImage.calculate_image_aspect_ratio((1920, 1080)), 1.78)
+        self.assertEqual(MultiaspectImage.calculate_image_aspect_ratio((1080, 1920)), 0.56)
 
     def test_calculate_new_size_by_pixel_edge(self):
         # Define test cases for 1.0 and 0.5 megapixels
         test_edge_lengths = [1024, 512, 256, 64]
         # Number of random tests to perform
         num_random_tests = 1000
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args") as mock_args:
             for edge_length in test_edge_lengths:
                 mock_args.return_value = Mock(
                     resolution_type="pixel",
@@ -70,12 +75,10 @@ class TestMultiaspectImage(unittest.TestCase):
                     original_aspect_ratio = original_width / original_height
 
                     # Calculate new size
-                    reformed_size, intermediary_size, new_aspect_ratio = (
-                        MultiaspectImage.calculate_new_size_by_pixel_edge(
-                            original_aspect_ratio,
-                            edge_length,
-                            (original_width, original_height),
-                        )
+                    reformed_size, intermediary_size, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_edge(
+                        original_aspect_ratio,
+                        edge_length,
+                        (original_width, original_height),
                     )
 
                     # Calculate the resulting megapixels
@@ -111,7 +114,7 @@ class TestMultiaspectImage(unittest.TestCase):
             1.78,
         ]  # Example fixed aspect ratio for all test cases
 
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args") as mock_args:
             for edge_length in test_edge_lengths:
                 for fixed_aspect_ratio in aspect_ratios:
                     aspect_bucket_alignment = 64 if edge_length > 64 else 8
@@ -131,9 +134,7 @@ class TestMultiaspectImage(unittest.TestCase):
                     original_sizes = []
                     for _ in range(num_images_per_batch):
                         # Generate a random height and calculate the corresponding width
-                        height = max(
-                            edge_length, random.randint(edge_length, edge_length * 50)
-                        )
+                        height = max(edge_length, random.randint(edge_length, edge_length * 50))
                         if fixed_aspect_ratio >= 1:
                             height = random.randint(edge_length, edge_length * 10)
                             width = int(height * fixed_aspect_ratio)
@@ -149,11 +150,7 @@ class TestMultiaspectImage(unittest.TestCase):
 
                     # Ensure aspect ratios are correctly calculated
                     for width, height in original_sizes:
-                        calculated_aspect_ratio = (
-                            MultiaspectImage.calculate_image_aspect_ratio(
-                                width / height
-                            )
-                        )
+                        calculated_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(width / height)
                         self.assertEqual(
                             calculated_aspect_ratio,
                             fixed_aspect_ratio,
@@ -174,19 +171,12 @@ class TestMultiaspectImage(unittest.TestCase):
                         if first_reformed_size is None:
                             first_reformed_size = reformed_size
                         if first_aspect_ratio is None:
-                            first_aspect_ratio = (
-                                MultiaspectImage.calculate_image_aspect_ratio(
-                                    intermediary_size
-                                )
-                            )
+                            first_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(intermediary_size)
                         if first_transformed_aspect_ratio is None:
                             first_transformed_aspect_ratio = new_aspect_ratio
                         if (
                             new_aspect_ratio != first_transformed_aspect_ratio
-                            or MultiaspectImage.calculate_image_aspect_ratio(
-                                intermediary_size
-                            )
-                            != fixed_aspect_ratio
+                            or MultiaspectImage.calculate_image_aspect_ratio(intermediary_size) != fixed_aspect_ratio
                         ):
                             logger.debug("####")
                             logger.debug(
@@ -206,16 +196,12 @@ class TestMultiaspectImage(unittest.TestCase):
                             )
                             logger.debug("####")
                         self.assertEqual(
-                            MultiaspectImage.calculate_image_aspect_ratio(
-                                intermediary_size
-                            ),
+                            MultiaspectImage.calculate_image_aspect_ratio(intermediary_size),
                             fixed_aspect_ratio,
                         )
                         self.assertEqual(first_reformed_size, reformed_size)
                         self.assertEqual(
-                            MultiaspectImage.calculate_image_aspect_ratio(
-                                reformed_size
-                            ),
+                            MultiaspectImage.calculate_image_aspect_ratio(reformed_size),
                             first_transformed_aspect_ratio,
                         )
 
@@ -224,13 +210,11 @@ class TestMultiaspectImage(unittest.TestCase):
         test_megapixels = [1.0, 0.5]
         # Number of random tests to perform
         num_random_tests = 100
-        with patch(
-            "helpers.training.state_tracker.StateTracker.get_args"
-        ) as mock_args, patch(
-            "helpers.training.state_tracker.StateTracker._load_from_disk"
-        ) as load_from_disk_mock, patch(
-            "helpers.training.state_tracker.StateTracker._save_to_disk"
-        ) as save_to_disk_mock:
+        with (
+            patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args") as mock_args,
+            patch("simpletuner.helpers.training.state_tracker.StateTracker._load_from_disk") as load_from_disk_mock,
+            patch("simpletuner.helpers.training.state_tracker.StateTracker._save_to_disk") as save_to_disk_mock,
+        ):
             load_from_disk_mock.return_value = {}
             save_to_disk_mock.return_value = True
             mock_args.return_value = Mock(
@@ -249,10 +233,8 @@ class TestMultiaspectImage(unittest.TestCase):
                     original_aspect_ratio = original_width / original_height
 
                     # Calculate new size
-                    target_size, intermediary_size, new_aspect_ratio = (
-                        MultiaspectImage.calculate_new_size_by_pixel_area(
-                            original_aspect_ratio, mp, (original_width, original_height)
-                        )
+                    target_size, intermediary_size, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_area(
+                        original_aspect_ratio, mp, (original_width, original_height)
                     )
 
                     # Calculate the resulting megapixels
@@ -273,12 +255,8 @@ class TestMultiaspectImage(unittest.TestCase):
                         f"Final height {target_height} is greater than the intermediary {intermediary_size}",
                     )
                     self.assertAlmostEqual(
-                        MultiaspectImage.calculate_image_aspect_ratio(
-                            (original_width, original_height)
-                        ),
-                        MultiaspectImage.calculate_image_aspect_ratio(
-                            intermediary_size
-                        ),
+                        MultiaspectImage.calculate_image_aspect_ratio((original_width, original_height)),
+                        MultiaspectImage.calculate_image_aspect_ratio(intermediary_size),
                         delta=0.02,
                     )
 
@@ -306,13 +284,11 @@ class TestMultiaspectImage(unittest.TestCase):
             1216,
         )  # Expected final size for all test cases based on a fixed aspect ratio
 
-        with patch(
-            "helpers.training.state_tracker.StateTracker.get_args"
-        ) as mock_args, patch(
-            "helpers.training.state_tracker.StateTracker._load_from_disk"
-        ) as load_from_disk_mock, patch(
-            "helpers.training.state_tracker.StateTracker._save_to_disk"
-        ) as save_to_disk_mock:
+        with (
+            patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args") as mock_args,
+            patch("simpletuner.helpers.training.state_tracker.StateTracker._load_from_disk") as load_from_disk_mock,
+            patch("simpletuner.helpers.training.state_tracker.StateTracker._save_to_disk") as save_to_disk_mock,
+        ):
             load_from_disk_mock.return_value = {}
             save_to_disk_mock.return_value = True
             mock_args.return_value = Mock(
@@ -323,12 +299,10 @@ class TestMultiaspectImage(unittest.TestCase):
                 aspect_bucket_alignment=64,
             )
             for W, H, megapixels in test_cases:
-                final_size, intermediary_size, new_aspect_ratio = (
-                    MultiaspectImage.calculate_new_size_by_pixel_area(
-                        MultiaspectImage.calculate_image_aspect_ratio(W / H),
-                        megapixels,
-                        (W, H),
-                    )
+                final_size, intermediary_size, new_aspect_ratio = MultiaspectImage.calculate_new_size_by_pixel_area(
+                    MultiaspectImage.calculate_image_aspect_ratio(W / H),
+                    megapixels,
+                    (W, H),
                 )
                 W_final, H_final = final_size
                 self.assertEqual(
@@ -360,7 +334,7 @@ class TestMultiaspectImage(unittest.TestCase):
             1024,
             1024,
         )  # Expected final size for all test cases based on a fixed aspect ratio
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args") as mock_args:
             mock_args.return_value = Mock(
                 resolution_type="pixel",
                 resolution=self.resolution,
@@ -370,12 +344,10 @@ class TestMultiaspectImage(unittest.TestCase):
             )
 
             for W, H, megapixels in test_cases:
-                final_size, intermediary_size, _ = (
-                    MultiaspectImage.calculate_new_size_by_pixel_area(
-                        MultiaspectImage.calculate_image_aspect_ratio((W, H)),
-                        megapixels,
-                        (W, H),
-                    )
+                final_size, intermediary_size, _ = MultiaspectImage.calculate_new_size_by_pixel_area(
+                    MultiaspectImage.calculate_image_aspect_ratio((W, H)),
+                    megapixels,
+                    (W, H),
                 )
                 W_final, H_final = final_size
                 self.assertEqual(
@@ -389,11 +361,9 @@ class TestMultiaspectImage(unittest.TestCase):
         Test the limit_canvas_size method to ensure it properly reduces canvas dimensions
         when they exceed the maximum allowed size.
         """
-        with patch("helpers.training.state_tracker.StateTracker.get_args") as mock_args:
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args") as mock_args:
             aspect_bucket_alignment = 64
-            mock_args.return_value = Mock(
-                aspect_bucket_alignment=aspect_bucket_alignment
-            )
+            mock_args.return_value = Mock(aspect_bucket_alignment=aspect_bucket_alignment)
 
             # Test case 1: Canvas size already within limit - no adjustment needed
             result = MultiaspectImage.limit_canvas_size(1024, 1024, 1024 * 1024)
@@ -432,9 +402,7 @@ class TestMultiaspectImage(unittest.TestCase):
 
             # Test case 5: Different alignment value
             aspect_bucket_alignment = 32
-            mock_args.return_value = Mock(
-                aspect_bucket_alignment=aspect_bucket_alignment
-            )
+            mock_args.return_value = Mock(aspect_bucket_alignment=aspect_bucket_alignment)
             # 1536 * 1536 = 2,359,296 > 2,000,000
             # First reduce: (1536-aspect_bucket_alignment) * 1536 = 2,310,144 > 2,000,000
             # Second reduce: (1536-aspect_bucket_alignment) * (1536-aspect_bucket_alignment) = 2,262,016 > 2,000,000

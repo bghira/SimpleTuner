@@ -1,0 +1,246 @@
+{
+  "summary": {},
+  "detailed_results": [
+    {
+      "factory_type": "original",
+      "config_size": 321,
+      "backend_count": 2,
+      "execution_time": 1.6130318641662598,
+      "peak_memory_mb": 41.212982177734375,
+      "initialization_time": 0.00018787384033203125,
+      "configuration_time": 5.2928924560546875e-05,
+      "build_time": 5.245208740234375e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 321,
+      "backend_count": 2,
+      "execution_time": 0.0019941329956054688,
+      "peak_memory_mb": 0.16225242614746094,
+      "initialization_time": 0.0002639293670654297,
+      "configuration_time": 3.933906555175781e-05,
+      "build_time": 1.9073486328125e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 321,
+      "backend_count": 2,
+      "execution_time": 0.0033588409423828125,
+      "peak_memory_mb": 0.15877342224121094,
+      "initialization_time": 0.0001461505889892578,
+      "configuration_time": 3.886222839355469e-05,
+      "build_time": 9.5367431640625e-07,
+      "error": null
+    },
+    {
+      "factory_type": "new",
+      "config_size": 321,
+      "backend_count": 2,
+      "execution_time": 0.04396486282348633,
+      "peak_memory_mb": 0.544774055480957,
+      "initialization_time": 0.00011301040649414062,
+      "configuration_time": 0.0004780292510986328,
+      "build_time": 1.0013580322265625e-05,
+      "error": null
+    },
+    {
+      "factory_type": "new",
+      "config_size": 321,
+      "backend_count": 2,
+      "execution_time": 0.002543210983276367,
+      "peak_memory_mb": 0.1508045196533203,
+      "initialization_time": 0.00012803077697753906,
+      "configuration_time": 0.00044417381286621094,
+      "build_time": 7.152557373046875e-06,
+      "error": null
+    },
+    {
+      "factory_type": "new",
+      "config_size": 321,
+      "backend_count": 2,
+      "execution_time": 0.0022881031036376953,
+      "peak_memory_mb": 0.1498737335205078,
+      "initialization_time": 8.702278137207031e-05,
+      "configuration_time": 0.0003998279571533203,
+      "build_time": 6.198883056640625e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 1337,
+      "backend_count": 5,
+      "execution_time": 0.004786968231201172,
+      "peak_memory_mb": 0.16266441345214844,
+      "initialization_time": 0.0004150867462158203,
+      "configuration_time": 0.00012493133544921875,
+      "build_time": 4.0531158447265625e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 1337,
+      "backend_count": 5,
+      "execution_time": 0.003962993621826172,
+      "peak_memory_mb": 0.15955162048339844,
+      "initialization_time": 0.0002467632293701172,
+      "configuration_time": 8.392333984375e-05,
+      "build_time": 1.9073486328125e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 1337,
+      "backend_count": 5,
+      "execution_time": 0.0030269622802734375,
+      "peak_memory_mb": 0.15735435485839844,
+      "initialization_time": 0.00018525123596191406,
+      "configuration_time": 5.4836273193359375e-05,
+      "build_time": 1.9073486328125e-06,
+      "error": null
+    },
+    {
+      "factory_type": "new",
+      "config_size": 1337,
+      "backend_count": 5,
+      "execution_time": 0.0022661685943603516,
+      "peak_memory_mb": 0.15077590942382812,
+      "initialization_time": 8.606910705566406e-05,
+      "configuration_time": 0.0004901885986328125,
+      "build_time": 5.245208740234375e-06,
+      "error": null
+    },
+    {
+      "factory_type": "new",
+      "config_size": 1337,
+      "backend_count": 5,
+      "execution_time": 0.002525806427001953,
+      "peak_memory_mb": 0.15296554565429688,
+      "initialization_time": 0.00017499923706054688,
+      "configuration_time": 0.0006618499755859375,
+      "build_time": 5.245208740234375e-06,
+      "error": null
+    },
+    {
+      "factory_type": "new",
+      "config_size": 1337,
+      "backend_count": 5,
+      "execution_time": 0.0029299259185791016,
+      "peak_memory_mb": 0.15337753295898438,
+      "initialization_time": 0.00011706352233886719,
+      "configuration_time": 0.0005152225494384766,
+      "build_time": 5.9604644775390625e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 6477,
+      "backend_count": 11,
+      "execution_time": 0.004639148712158203,
+      "peak_memory_mb": 0.17035675048828125,
+      "initialization_time": 0.0004119873046875,
+      "configuration_time": 0.00012874603271484375,
+      "build_time": 3.0994415283203125e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 6477,
+      "backend_count": 11,
+      "execution_time": 0.0023288726806640625,
+      "peak_memory_mb": 0.1782379150390625,
+      "initialization_time": 0.0003409385681152344,
+      "configuration_time": 0.0001251697540283203,
+      "build_time": 2.1457672119140625e-06,
+      "error": null
+    },
+    {
+      "factory_type": "original",
+      "config_size": 6477,
+      "backend_count": 11,
+      "execution_time": 0.0025322437286376953,
+      "peak_memory_mb": 0.1707763671875,
+      "initialization_time": 0.0004520416259765625,
+      "configuration_time": 0.00012183189392089844,
+      "build_time": 2.1457672119140625e-06,
+      "error": null
+    },
+    {
+      "factory_type": "new",
+      "config_size": 6477,
+      "backend_count": 11,
+      "execution_time": 0.0,
+      "peak_memory_mb": 0.0,
+      "initialization_time": 0.0001480579376220703,
+      "configuration_time": 0.0008571147918701172,
+      "build_time": 0.0,
+      "error": "'MockArgs' object has no attribute 'conditioning_multidataset_sampling'"
+    },
+    {
+      "factory_type": "new",
+      "config_size": 6477,
+      "backend_count": 11,
+      "execution_time": 0.0,
+      "peak_memory_mb": 0.0,
+      "initialization_time": 0.0001220703125,
+      "configuration_time": 0.0007989406585693359,
+      "build_time": 0.0,
+      "error": "'MockArgs' object has no attribute 'conditioning_multidataset_sampling'"
+    },
+    {
+      "factory_type": "new",
+      "config_size": 6477,
+      "backend_count": 11,
+      "execution_time": 0.0,
+      "peak_memory_mb": 0.0,
+      "initialization_time": 0.0001342296600341797,
+      "configuration_time": 0.0009667873382568359,
+      "build_time": 0.0,
+      "error": "'MockArgs' object has no attribute 'conditioning_multidataset_sampling'"
+    }
+  ],
+  "performance_comparison": {
+    "2_backends": {
+      "config": "2_backends",
+      "original": {
+        "avg_time": 0.539461612701416,
+        "avg_memory": 13.844669342041016,
+        "std_time": 0.9297393609123262
+      },
+      "new": {
+        "avg_time": 0.016265392303466797,
+        "avg_memory": 0.2818174362182617,
+        "std_time": 0.02398878426107994
+      },
+      "improvement": {
+        "time_percent": 96.98488420297119,
+        "memory_percent": -97.96443360794115,
+        "faster": true
+      }
+    },
+    "5_backends": {
+      "config": "5_backends",
+      "original": {
+        "avg_time": 0.003925641377766927,
+        "avg_memory": 0.15985679626464844,
+        "std_time": 0.0008805973140019539
+      },
+      "new": {
+        "avg_time": 0.0025739669799804688,
+        "avg_memory": 0.15237299601236978,
+        "std_time": 0.00033448920088831866
+      },
+      "improvement": {
+        "time_percent": 34.431937808729444,
+        "memory_percent": -4.6815652678844915,
+        "faster": true
+      }
+    }
+  },
+  "recommendations": [
+    "No significant performance regressions detected",
+    "Memory usage is within acceptable bounds",
+    "Found 3 errors during benchmarking - review required"
+  ]
+}

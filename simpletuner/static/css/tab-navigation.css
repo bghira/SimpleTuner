@@ -1,0 +1,136 @@
+/* Tab navigation styling */
+.tab-navigation {
+    margin-bottom: 2rem;
+}
+
+.nav-tabs {
+    border-bottom: 2px solid var(--glass-border);
+}
+
+.nav-tabs .nav-link {
+    color: var(--text-secondary);
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    padding: 0.75rem 1.5rem;
+    font-weight: 500;
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--text-primary);
+    background-color: var(--card-bg-hover);
+    border-color: var(--glass-border);
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--text-primary);
+    background-color: var(--tab-basic-bg);
+    border-color: var(--glass-border) var(--glass-border) transparent;
+}
+
+.nav-tabs .nav-link i {
+    margin-right: 0.5rem;
+}
+
+/* Tab-specific colors */
+#basic-tab-button.active {
+    background-color: var(--tab-basic-bg);
+    color: var(--tab-basic-indicator);
+}
+
+#model-tab-button.active {
+    background-color: var(--tab-model-bg);
+    color: var(--tab-model-indicator);
+}
+
+#training-tab-button.active {
+    background-color: var(--tab-training-bg);
+    color: var(--tab-training-indicator);
+}
+
+#advanced-tab-button.active {
+    background-color: var(--tab-advanced-bg);
+    color: var(--tab-advanced-indicator);
+}
+
+#validation-tab-button.active {
+    background-color: var(--tab-validation-bg);
+    color: var(--tab-validation-indicator);
+}
+
+/* Loading indicators */
+.tab-loading-indicator {
+    position: fixed;
+    top: 70px;
+    right: 30px;
+    z-index: 1100;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.htmx-request .tab-loading-indicator {
+    opacity: 1;
+}
+
+/* Validation badge */
+.validation-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+
+/* Tab content */
+.tab-content-wrapper {
+    min-height: 500px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .nav-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .nav-tabs .nav-link {
+        white-space: nowrap;
+        padding: 0.5rem 1rem;
+    }
+
+    .nav-tabs .nav-link i {
+        display: none;
+    }
+}
+
+/* Active tab indicator animation */
+.nav-tabs .nav-link::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background-color: transparent;
+    transition: background-color 0.3s ease;
+}
+
+.nav-tabs .nav-link.active::after {
+    background-color: var(--tab-basic-indicator);
+}
+
+#model-tab-button.active::after {
+    background-color: var(--tab-model-indicator);
+}
+
+#training-tab-button.active::after {
+    background-color: var(--tab-training-indicator);
+}
+
+#advanced-tab-button.active::after {
+    background-color: var(--tab-advanced-indicator);
+}
+
+#validation-tab-button.active::after {
+    background-color: var(--tab-validation-indicator);
+}

@@ -102,7 +102,7 @@ The dataloader configuration remains pretty close to a typical text-to-image dat
 
 As new as ControlNet support is in SimpleTuner, we've currently just got one option available for generating your training set:
 
-- [create_canny_edge.py](/toolkit/datasets/controlnet/create_canny_edge.py)
+- [create_canny_edge.py](/scripts/toolkit/datasets/controlnet/create_canny_edge.py)
   - An extremely basic example on generating a training set for Canny model training.
   - You will have to modify the `input_dir` and `output_dir` values in the script
 
@@ -128,7 +128,7 @@ Your configuration will look something like this in the end:
 {
     "aspect_bucket_rounding": 2,
     "caption_dropout_probability": 0.1,
-    "checkpointing_steps": 100,
+    "checkpoint_step_interval": 100,
     "checkpoints_total_limit": 5,
     "controlnet": true,
     "data_backend_config": "config/controlnet-sdxl/multidatabackend.json",
@@ -160,7 +160,7 @@ Your configuration will look something like this in the end:
     "validation_num_inference_steps": 20,
     "validation_resolution": "1024x1024",
     "validation_seed": 42,
-    "validation_steps": 10,
+    "validation_step_interval": 10,
     "validation_torch_compile": false
 }
 ```
@@ -270,7 +270,7 @@ Here's a complete example that generates multiple conditioning types from a sing
         "captions": ["enhance image quality", "increase resolution", "sharpen"]
       },
       {
-        "type": "jpeg_artifacts", 
+        "type": "jpeg_artifacts",
         "quality_range": [20, 40],
         "captions": ["remove compression", "fix jpeg artifacts"]
       },

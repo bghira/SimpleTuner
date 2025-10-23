@@ -99,7 +99,7 @@ The images should be purely high-quality - remove any datasets you find question
 
 Other than that, the same exact dataloader configuration can be used between the two training jobs.
 
-If you'd like a demonstration dataset, [pseudo-camera-10k](https://huggingface.co/datasets/ptx0/pseudo-camera-10k) is a solid choice with permissive licensing.
+If you'd like a demonstration dataset, [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) is a solid choice with permissive licensing.
 
 ### Validation
 
@@ -129,8 +129,8 @@ base_model_power = 1 - training_refiner_strength
 # Reduce this for lower quality but speed-up.
 num_inference_steps = 40
 # Update these to your local or hugging face hub paths.
-stage_1_model_id = 'ptx0/terminus-xl-velocity-v2'
-stage_2_model_id = 'ptx0/terminus-xl-refiner'
+stage_1_model_id = 'bghira/terminus-xl-velocity-v2'
+stage_2_model_id = 'bghira/terminus-xl-refiner'
 torch_device = 'cuda' if cuda.is_available() else 'mps' if mps.is_available() else 'cpu'
 
 pipe = StableDiffusionXLPipeline.from_pretrained(stage_1_model_id, add_watermarker=False, torch_dtype=float16).to(torch_device)

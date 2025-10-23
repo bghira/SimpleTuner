@@ -1,0 +1,9 @@
+[
+    {
+        "id": "invalid_crop",
+        "type": "local",
+        "dataset_type": "image",
+        "instance_data_dir": "/tmp/images",
+        "crop_aspect": "invalid_aspect"
+    }
+]

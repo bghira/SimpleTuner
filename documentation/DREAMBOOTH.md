@@ -34,7 +34,7 @@ The model contains something called a "prior" which could, in theory, be preserv
 
 Image masks may be defined in pairs with image data. The dark portions of the mask will cause the loss calculations to ignore these parts of the image.
 
-An example [script](/toolkit/datasets/masked_loss/generate_dataset_masks.py) exists to generate these masks, given an input_dir and output_dir:
+An example [script](/scripts/toolkit/datasets/masked_loss/generate_dataset_masks.py) exists to generate these masks, given an input_dir and output_dir:
 
 ```bash
 python generate_dataset_masks.py --input_dir /images/input \
@@ -99,7 +99,7 @@ When defining your image mask dataset:
 
 ## Setup
 
-Following the [tutorial](/TUTORIAL.md) is required before you can continue into Dreambooth-specific configuration.
+Following the [tutorial](/documentation/TUTORIAL.md) is required before you can continue into Dreambooth-specific configuration.
 
 For DeepFloyd tuning, it's recommended to visit [this page](/documentation/DEEPFLOYD.md) for specific tips related to that model's setup.
 

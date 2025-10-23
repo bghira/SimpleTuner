@@ -8,18 +8,18 @@ import argparse
 import curses
 import json
 import os
+import queue
+import re
+import signal
 import subprocess
 import sys
-import time
 import threading
-import queue
-from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-import signal
-import re
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 
 class TestStatus(Enum):
@@ -98,16 +98,8 @@ class SimpleTunerTestRunner:
                             self.tests[name] = TestResult(
                                 name=name,
                                 status=TestStatus(data["status"]),
-                                start_time=(
-                                    datetime.fromisoformat(data["start_time"])
-                                    if data.get("start_time")
-                                    else None
-                                ),
-                                end_time=(
-                                    datetime.fromisoformat(data["end_time"])
-                                    if data.get("end_time")
-                                    else None
-                                ),
+                                start_time=(datetime.fromisoformat(data["start_time"]) if data.get("start_time") else None),
+                                end_time=(datetime.fromisoformat(data["end_time"]) if data.get("end_time") else None),
                                 error=data.get("error"),
                                 log_file=data.get("log_file"),
                             )
@@ -121,12 +113,8 @@ class SimpleTunerTestRunner:
             for name, result in self.tests.items():
                 state[name] = {
                     "status": result.status.value,
-                    "start_time": (
-                        result.start_time.isoformat() if result.start_time else None
-                    ),
-                    "end_time": (
-                        result.end_time.isoformat() if result.end_time else None
-                    ),
+                    "start_time": (result.start_time.isoformat() if result.start_time else None),
+                    "end_time": (result.end_time.isoformat() if result.end_time else None),
                     "error": result.error,
                     "log_file": result.log_file,
                 }
@@ -152,17 +140,11 @@ class SimpleTunerTestRunner:
         """Run a single test"""
         with self.tests_lock:
             if example_name not in self.tests:
-                self.tests[example_name] = TestResult(
-                    name=example_name, status=TestStatus.PENDING
-                )
+                self.tests[example_name] = TestResult(name=example_name, status=TestStatus.PENDING)
             result = self.tests[example_name]
 
         # Skip if resumable and already completed (unless force_rerun)
-        if (
-            not force_rerun
-            and self.resumable
-            and result.status in [TestStatus.SUCCESS, TestStatus.SKIPPED]
-        ):
+        if not force_rerun and self.resumable and result.status in [TestStatus.SUCCESS, TestStatus.SKIPPED]:
             self.log_queue.put(f"Skipping {example_name} (already completed)")
             return result
 
@@ -182,17 +164,13 @@ class SimpleTunerTestRunner:
             cmd = ["./train.sh"]
 
             # Log the command being run
-            self.log_queue.put(
-                f"Running command: {' '.join(cmd)} with ENV={example_name}"
-            )
+            self.log_queue.put(f"Running command: {' '.join(cmd)} with ENV={example_name}")
 
             # Create log file
             Path(result.log_file).parent.mkdir(parents=True, exist_ok=True)
 
             with open(result.log_file, "w") as log_file:
-                log_file.write(
-                    f"=== Test started at {datetime.now().isoformat()} ===\n"
-                )
+                log_file.write(f"=== Test started at {datetime.now().isoformat()} ===\n")
                 log_file.flush()
 
                 process = subprocess.Popen(
@@ -203,9 +181,7 @@ class SimpleTunerTestRunner:
                     text=True,
                     bufsize=0,  # Unbuffered for immediate output
                     universal_newlines=True,
-                    preexec_fn=(
-                        os.setsid if sys.platform != "win32" else None
-                    ),  # Create new process group
+                    preexec_fn=(os.setsid if sys.platform != "win32" else None),  # Create new process group
                 )
 
                 # Track this process
@@ -259,9 +235,7 @@ class SimpleTunerTestRunner:
                     else:
                         with self.tests_lock:
                             result.status = TestStatus.FAILED
-                            result.error = (
-                                f"Process exited with code {process.returncode}"
-                            )
+                            result.error = f"Process exited with code {process.returncode}"
 
         except Exception as e:
             with self.tests_lock:
@@ -281,9 +255,7 @@ class SimpleTunerTestRunner:
         with self.tests_lock:
             for example in examples:
                 if example not in self.tests:
-                    self.tests[example] = TestResult(
-                        name=example, status=TestStatus.PENDING
-                    )
+                    self.tests[example] = TestResult(name=example, status=TestStatus.PENDING)
 
         for example in examples:
             if self.should_exit:
@@ -319,18 +291,10 @@ class SimpleTunerTestRunner:
                 viewing = "None"
 
             status = f"Current: {current} | Viewing: {viewing} | "
-            status += (
-                f"✓:{len([t for t in tests_list if t.status == TestStatus.SUCCESS])} "
-            )
-            status += (
-                f"✗:{len([t for t in tests_list if t.status == TestStatus.FAILED])} "
-            )
-            status += (
-                f"●:{sum(1 for t in tests_list if t.status == TestStatus.RUNNING)} "
-            )
-            status += (
-                f"○:{sum(1 for t in tests_list if t.status == TestStatus.PENDING)}"
-            )
+            status += f"✓:{len([t for t in tests_list if t.status == TestStatus.SUCCESS])} "
+            status += f"✗:{len([t for t in tests_list if t.status == TestStatus.FAILED])} "
+            status += f"●:{sum(1 for t in tests_list if t.status == TestStatus.RUNNING)} "
+            status += f"○:{sum(1 for t in tests_list if t.status == TestStatus.PENDING)}"
 
         try:
             stdscr.addstr(1, 2, status[: width - 4])
@@ -458,9 +422,7 @@ class SimpleTunerTestRunner:
         # Log content
         if selected and selected.log_file and Path(selected.log_file).exists():
             try:
-                with open(
-                    selected.log_file, "r", encoding="utf-8", errors="ignore"
-                ) as f:
+                with open(selected.log_file, "r", encoding="utf-8", errors="ignore") as f:
                     # Seek to end first to get total size
                     f.seek(0, 2)
                     file_size = f.tell()
@@ -539,9 +501,7 @@ class SimpleTunerTestRunner:
         # Debug log content
         if self.debug_log_path.exists():
             try:
-                with open(
-                    self.debug_log_path, "r", encoding="utf-8", errors="ignore"
-                ) as f:
+                with open(self.debug_log_path, "r", encoding="utf-8", errors="ignore") as f:
                     lines = f.readlines()
 
                 # Show last N lines
@@ -601,9 +561,7 @@ class SimpleTunerTestRunner:
 
     def draw_footer(self, stdscr, y: int, width: int):
         """Draw the footer with help"""
-        help_text = (
-            "q:Quit | t:Tests | d:Debug | ↑↓:Navigate | r:Rerun | s:Skip | h:Help"
-        )
+        help_text = "q:Quit | t:Tests | d:Debug | ↑↓:Navigate | r:Rerun | s:Skip | h:Help"
         try:
             stdscr.hline(y, 0, curses.ACS_HLINE, width)
             stdscr.addstr(y + 1, 2, help_text[: width - 4])
@@ -691,9 +649,7 @@ class SimpleTunerTestRunner:
         with self.tests_lock:
             for example in examples:
                 if example not in self.tests:
-                    self.tests[example] = TestResult(
-                        name=example, status=TestStatus.PENDING
-                    )
+                    self.tests[example] = TestResult(name=example, status=TestStatus.PENDING)
 
         # Load state if resumable (this might override some test statuses)
         if self.resumable:
@@ -704,9 +660,7 @@ class SimpleTunerTestRunner:
 
         # Start debug log
         with open(self.debug_log_path, "a") as f:
-            f.write(
-                f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] === Test Runner Started ===\n"
-            )
+            f.write(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] === Test Runner Started ===\n")
             f.write(
                 f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Found {len(examples)} examples: {', '.join(examples)}\n"
             )
@@ -762,9 +716,7 @@ class SimpleTunerTestRunner:
                     debug_height = height - header_height - footer_height - main_height
 
                     main_win = curses.newwin(main_height, width, header_height, 0)
-                    debug_win = curses.newwin(
-                        debug_height, width, header_height + main_height, 0
-                    )
+                    debug_win = curses.newwin(debug_height, width, header_height + main_height, 0)
                 else:
                     # Full screen for main log
                     main_height = height - header_height - footer_height
@@ -816,9 +768,7 @@ class SimpleTunerTestRunner:
                     self.log_scroll = 0  # Reset scroll when changing tests
                 elif key == curses.KEY_DOWN:
                     with self.tests_lock:
-                        self.selected_test = min(
-                            len(self.tests) - 1, self.selected_test + 1
-                        )
+                        self.selected_test = min(len(self.tests) - 1, self.selected_test + 1)
                     self.log_scroll = 0  # Reset scroll when changing tests
                 elif key == curses.KEY_PPAGE:  # Page Up
                     if self.show_debug_log and not self.show_test_list:
@@ -839,9 +789,7 @@ class SimpleTunerTestRunner:
 
                             # Check if this test is already running
                             if selected.status == TestStatus.RUNNING:
-                                self.log_queue.put(
-                                    f"Test {test_name} is already running"
-                                )
+                                self.log_queue.put(f"Test {test_name} is already running")
                             else:
                                 # Reset status and start new thread for rerun
                                 selected.status = TestStatus.PENDING
@@ -863,9 +811,7 @@ class SimpleTunerTestRunner:
                 while True:
                     msg = self.log_queue.get_nowait()
                     with open(self.debug_log_path, "a") as f:
-                        f.write(
-                            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n"
-                        )
+                        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
                         f.flush()
             except queue.Empty:
                 pass
@@ -879,18 +825,14 @@ class SimpleTunerTestRunner:
 
 def main():
     parser = argparse.ArgumentParser(description="SimpleTuner End-to-End Test Runner")
-    parser.add_argument(
-        "--resumable", action="store_true", help="Resume from previous run"
-    )
+    parser.add_argument("--resumable", action="store_true", help="Resume from previous run")
     parser.add_argument(
         "--parallel",
         type=int,
         default=1,
         help="Number of parallel tests (not implemented yet)",
     )
-    parser.add_argument(
-        "--clean", action="store_true", help="Clean all test outputs before starting"
-    )
+    parser.add_argument("--clean", action="store_true", help="Clean all test outputs before starting")
 
     args = parser.parse_args()
 
@@ -913,8 +855,7 @@ def main():
     if not Path(".venv").exists():
         print("Setting up virtual environment...")
         subprocess.run([sys.executable, "-m", "venv", ".venv"], check=True)
-        subprocess.run([".venv/bin/pip", "install", "poetry"], check=True)
-        subprocess.run([".venv/bin/poetry", "install"], check=True)
+        subprocess.run([".venv/bin/pip", "install", "."], check=True)
         print("Virtual environment ready.")
 
     # Run the test runner

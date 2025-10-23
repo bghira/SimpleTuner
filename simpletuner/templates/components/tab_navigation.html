@@ -1,0 +1,18 @@
+<div class="tab-nav">
+    {% set tabs = [
+        {'id': 'basic', 'icon': 'fa-cog', 'label': 'Basic Config'},
+        {'id': 'model', 'icon': 'fa-brain', 'label': 'Model Settings'},
+        {'id': 'training', 'icon': 'fa-graduation-cap', 'label': 'Training'},
+        {'id': 'advanced', 'icon': 'fa-sliders-h', 'label': 'Advanced'},
+        {'id': 'data', 'icon': 'fa-database', 'label': 'Dataloader Config'},
+        {'id': 'validation', 'icon': 'fa-check-circle', 'label': 'Validation'}
+    ] %}
+
+    {% for tab in tabs %}
+    <button type="button"
+            class="tab-btn {% if loop.first %}active{% endif %}"
+            data-tab="{{ tab.id }}">
+        <i class="fas {{ tab.icon }}"></i> {{ tab.label }}
+    </button>
+    {% endfor %}
+</div>

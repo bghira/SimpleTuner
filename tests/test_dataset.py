@@ -1,17 +1,20 @@
 import unittest
+from unittest.mock import MagicMock, Mock, patch
+
 import pandas as pd
-from unittest.mock import patch, Mock, MagicMock
 
 try:
     import pillow_jxl
 except ModuleNotFoundError:
     pass
-from PIL import Image
 from pathlib import Path
-from helpers.multiaspect.dataset import MultiAspectDataset
-from helpers.metadata.backends.discovery import DiscoveryMetadataBackend
-from helpers.data_backend.base import BaseDataBackend
-from helpers.data_backend.factory import check_column_values
+
+from PIL import Image
+
+from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.factory import _coerce_bucket_keys, check_column_values
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
 
 
 class TestMultiAspectDataset(unittest.TestCase):
@@ -28,9 +31,7 @@ class TestMultiAspectDataset(unittest.TestCase):
             "aspect_ratio": 1.0,
             "luminance": 0.5,
         }
-        self.metadata_backend.get_metadata_by_filepath = Mock(
-            return_value=self.image_metadata
-        )
+        self.metadata_backend.get_metadata_by_filepath = Mock(return_value=self.image_metadata)
         self.data_backend = Mock(spec=BaseDataBackend)
         self.image_path = "fake_image_path"
         # Mock the Path.exists method to return True
@@ -118,9 +119,7 @@ class TestDataBackendFactory(unittest.TestCase):
         column_data = pd.Series([["", ""], ["", ""], ["", ""]])
         with self.assertRaises(ValueError) as context:
             check_column_values(column_data, "test_column", "test_file.parquet")
-        self.assertIn(
-            "contains only empty strings within arrays", str(context.exception)
-        )
+        self.assertIn("contains only empty strings within arrays", str(context.exception))
 
     def test_scalar_strings_with_nulls(self):
         column_data = pd.Series(["a", None, "b"])
@@ -144,15 +143,25 @@ class TestDataBackendFactory(unittest.TestCase):
                 fallback_caption_column=True,
             )
         except ValueError:
-            self.fail(
-                "check_column_values() raised ValueError unexpectedly with fallback_caption_column=True"
-            )
+            self.fail("check_column_values() raised ValueError unexpectedly with fallback_caption_column=True")
 
     def test_invalid_data_type(self):
         column_data = pd.Series([1, 2, 3])
         with self.assertRaises(TypeError) as context:
             check_column_values(column_data, "test_column", "test_file.parquet")
         self.assertIn("Unsupported data type in column", str(context.exception))
+
+    def test_coerce_bucket_keys(self):
+        indices = {"1.0": ["foo"], 1.5: ["bar"], "invalid": ["baz"], "single": "path"}
+        coerced = _coerce_bucket_keys(indices)
+        self.assertIn(1.0, coerced)
+        self.assertEqual(coerced[1.0], ["foo"])
+        self.assertIn(1.5, coerced)
+        self.assertEqual(coerced[1.5], ["bar"])
+        self.assertIn("invalid", coerced)
+        self.assertEqual(coerced["invalid"], ["baz"])
+        self.assertIn("single", coerced)
+        self.assertEqual(coerced["single"], ["path"])
 
 
 if __name__ == "__main__":

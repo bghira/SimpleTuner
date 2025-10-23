@@ -49,8 +49,8 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `dataset_type`
 
-- **Values:** `image` | `video` | `text_embeds` | `image_embeds` | `conditioning`
-- **Description:** `image` and `video` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, and `image_embeds` contain the VAE outputs, if the model uses one. When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
+- **Values:** `image` | `video` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **Description:** `image` and `video` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, `image_embeds` contain the VAE latents (when a model uses one), and `conditioning_image_embeds` store cached conditioning image embeddings (such as CLIP vision features). When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
 - **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 - **Note:** Don't combine images and video in a **single** dataset. Split them out.
 
@@ -69,9 +69,25 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 - **Only applies to `dataset_type=image`**
 - If unset, the VAE outputs will be stored on the image backend. Otherwise, you may set this to the `id` of an `image_embeds` dataset, and the VAE outputs will be stored there instead. Allows associating the image_embed dataset to the image data.
 
+### `conditioning_image_embeds`
+
+- **Applies to `dataset_type=image` and `dataset_type=video`**
+- When a model reports `requires_conditioning_image_embeds`, set this to the `id` of a `conditioning_image_embeds` dataset to store cached conditioning image embeddings (for example, CLIP vision features for Wan 2.2 I2V). If unset, SimpleTuner writes the cache to `cache/conditioning_image_embeds/<dataset_id>` by default, guaranteeing it no longer collides with the VAE cache.
+- Models that need these embeds must expose an image encoder through their primary pipeline. If the model cannot supply the encoder, preprocessing will fail early instead of silently generating empty files.
+
+#### `cache_dir_conditioning_image_embeds`
+
+- **Optional override for the conditioning image embed cache destination.**
+- Set this when you want to pin the cache to a specific filesystem location or have a dedicated remote backend (`dataset_type=conditioning_image_embeds`). When omitted, the cache path described above is used automatically.
+
+#### `conditioning_image_embed_batch_size`
+
+- **Optional override for the batch size used while generating conditioning image embeds.**
+- Defaults to the `conditioning_image_embed_batch_size` trainer argument or the VAE batch size when not explicitly provided.
+
 ### `type`
 
-- **Values:** `aws` | `local` | `csv`
+- **Values:** `aws` | `local` | `csv` | `huggingface`
 - **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
 
 ### `conditioning_type`
@@ -388,7 +404,7 @@ A complete example list can be found [here](/config/caption_filter_list.txt.exam
 This is a shortened example, which will be explained below:
 
 ```
-arafed 
+arafed
 this .* has a
 ^this is the beginning of the string
 s/this/will be found and replaced/
@@ -430,7 +446,8 @@ In order, the lines behave as follows:
     "probability": 1.0,
     "repeats": 0,
     "text_embeds": "alt-embed-cache",
-    "image_embeds": "vae-embeds-example"
+    "image_embeds": "vae-embeds-example",
+    "conditioning_image_embeds": "conditioning-embeds-example"
   },
   {
     "id": "another-special-name-for-another-backend",
@@ -450,6 +467,12 @@ In order, the lines behave as follows:
       "type": "local",
       "dataset_type": "image_embeds",
       "disabled": false,
+  },
+  {
+      "id": "conditioning-embeds-example",
+      "type": "local",
+      "dataset_type": "conditioning_image_embeds",
+      "disabled": false
   },
   {
     "id": "an example backend for text embeds.",
@@ -556,7 +579,7 @@ When training a model with a very-large dataset numbering in the hundreds of tho
 
 Using the parquet caption strategy allows you to name all of your files by their `id` value, and change their caption column via a config value rather than updating many text files, or having to rename the files to update their captions.
 
-Here is an example dataloader configuration that makes use of the captions and data in the [photo-concept-bucket](https://huggingface.co/datasets/ptx0/photo-concept-bucket) dataset:
+Here is an example dataloader configuration that makes use of the captions and data in the [photo-concept-bucket](https://huggingface.co/datasets/bghira/photo-concept-bucket) dataset:
 
 ```json
 {
@@ -608,7 +631,7 @@ In this configuration:
   - `fallback_caption_column` is an optional name of a column in the table that contains fallback captions. These are used if the primary caption field is empty. For this case, we are using the `tags` column.
   - `identifier_includes_extension` should be set to `true` when your filename column contains the image extension. Otherwise, the extension will be assumed as `.png`. It is recommended to include filename extensions in your table filename column.
 
-> ⚠️ Parquet support capability is limited to reading captions. You must separately populate a data source with your image samples using "{id}.png" as their filename. See scripts in the [toolkit/datasets](toolkit/datasets) directory for ideas.
+> ⚠️ Parquet support capability is limited to reading captions. You must separately populate a data source with your image samples using "{id}.png" as their filename. See scripts in the [scripts/toolkit/datasets](scripts/toolkit/datasets) directory for ideas.
 
 As with other dataloader configurations:
 

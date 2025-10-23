@@ -1,0 +1,363 @@
+/* Publishing Tab Styles - Dark Theme Compatible */
+/* Publishing-specific styles only - shared form-section styles moved to form-sections.css */
+
+/* Token status display area */
+.token-status {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg) var(--spacing-xl);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-xl);
+    transition: all 0.3s ease;
+}
+
+.token-status i {
+    font-size: 1.25rem;
+}
+
+.token-status-content {
+    flex: 1;
+}
+
+.token-status-title {
+    font-weight: 600;
+    font-size: var(--typography-font-size-base);
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-xs);
+}
+
+.token-status-message {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+}
+
+/* Connected state - success */
+.token-status.connected {
+    background: var(--success-bg);
+    border-color: rgba(34, 197, 94, 0.3);
+}
+
+.token-status.connected i {
+    color: var(--success);
+}
+
+.token-status.connected .token-status-title {
+    color: var(--success-text);
+}
+
+.token-status.connected .token-status-message {
+    color: rgba(134, 239, 172, 0.8);
+}
+
+/* Disconnected state - warning */
+.token-status.disconnected {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+.token-status.disconnected i {
+    color: var(--warning);
+}
+
+.token-status.disconnected .token-status-title {
+    color: var(--warning-text);
+}
+
+.token-status.disconnected .token-status-message {
+    color: rgba(253, 224, 71, 0.8);
+}
+
+/* Repository check status feedback */
+.repo-check-status {
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-sm);
+    margin-top: var(--spacing-md);
+    font-size: var(--typography-font-size-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    transition: all 0.3s ease;
+}
+
+.repo-check-status i {
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+
+.repo-check-status.checking {
+    border-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.repo-check-status.checking i {
+    color: var(--accent-blue);
+    animation: spin 1s linear infinite;
+}
+
+.repo-check-status.success {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: var(--success-bg);
+    color: var(--success-text);
+}
+
+.repo-check-status.success i {
+    color: var(--success);
+}
+
+.repo-check-status.error {
+    border-color: rgba(239, 68, 68, 0.3);
+    background: var(--error-bg);
+    color: var(--error-text);
+}
+
+.repo-check-status.error i {
+    color: var(--error);
+}
+
+/* License info section */
+.license-info {
+    padding: var(--spacing-lg);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--spacing-xl);
+}
+
+.license-info h6 {
+    font-size: var(--typography-font-size-sm);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-md);
+}
+
+.license-info p {
+    font-size: var(--typography-font-size-sm);
+    color: var(--text-secondary);
+    line-height: var(--typography-line-height-relaxed);
+    margin-bottom: var(--spacing-sm);
+}
+
+.license-info p:last-child {
+    margin-bottom: 0;
+}
+
+/* Inline code styling */
+.license-info code {
+    padding: var(--spacing-2xs) var(--spacing-xs);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-xs);
+    font-family: var(--typography-font-family-mono);
+    font-size: 0.85em;
+    color: var(--accent-cyan);
+}
+
+/* Publishing-specific form controls removed - using global styles instead */
+
+/* Spin animation for loading indicators */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Publishing-specific card styles - inherit from unified theme */
+.publishing-toggle-card {
+    padding: 1.25rem;
+    /* Background, border, border-radius now inherited from trainer-core.css */
+}
+
+.preference-card {
+    padding: 1.25rem;
+    /* Background, border, border-radius now inherited from trainer-core.css */
+}
+
+.repository-preview {
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.5rem;
+    background-color: rgba(0, 0, 0, 0.3);
+    font-family: 'Courier New', monospace;
+    display: flex;
+    align-items: center;
+}
+
+.repository-preview code {
+    color: #60a5fa;
+    font-size: 0.95rem;
+}
+
+/* Repository selector now uses standard form-section styling */
+/* Old custom styles removed for consistency */
+
+/* Enhanced alert styling for repository section */
+.alert-sm {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+/* Repository preview styling improvements */
+.form-section .bg-dark {
+    background-color: rgba(0, 0, 0, 0.25) !important;
+}
+
+.form-section .border-secondary {
+    border-color: rgba(108, 117, 125, 0.25) !important;
+}
+
+.form-section .text-info {
+    color: #93c5fd !important;
+}
+
+/* Override the green background for repository section */
+#publishing-tab-content .form-section {
+    background-color: rgba(255, 255, 255, 0.02) !important;
+    border-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Keep the green accent only for the first publishing controls section */
+#publishing-tab-content .form-section:first-of-type {
+    background-color: rgba(34, 197, 94, 0.05) !important;
+    border-color: rgba(34, 197, 94, 0.2) !important;
+}
+
+.license-display {
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.5rem;
+    background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* Form switch sizing */
+.form-switch.form-switch-lg .form-check-input {
+    height: 1.5rem;
+    width: 3rem;
+}
+
+/* Publishing tab specific form control styles */
+#publishing-tab-content input.form-control,
+#publishing-tab-content select.form-select {
+    background-color: rgba(15, 23, 42, 0.6);
+    border-color: rgba(148, 163, 184, 0.25);
+    color: #e2e8f0;
+}
+
+#publishing-tab-content input.form-control:focus,
+#publishing-tab-content select.form-select:focus {
+    border-color: rgba(129, 140, 248, 0.7);
+    box-shadow: 0 0 0 0.25rem rgba(129, 140, 248, 0.15);
+}
+
+#publishing-tab-content input.form-control:disabled,
+#publishing-tab-content select.form-select:disabled {
+    background-color: rgba(15, 23, 42, 0.3);
+    opacity: 0.6;
+}
+
+/* Button group styling */
+.btn-group .btn-check:checked + .btn-outline-secondary {
+    background-color: rgba(129, 140, 248, 0.2);
+    border-color: rgba(129, 140, 248, 0.7);
+    color: #e2e8f0;
+}
+
+/* Alpine.js x-cloak directive */
+[x-cloak] {
+    display: none !important;
+}
+
+/* Repository status badge - toned down styling */
+.repo-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    opacity: 0.8;
+}
+
+.repo-status-badge i {
+    font-size: 0.875rem;
+}
+
+.repo-status-badge.exists {
+    color: rgba(251, 191, 36, 0.9);
+}
+
+.repo-status-badge.exists i {
+    color: rgba(251, 191, 36, 0.7);
+}
+
+.repo-status-badge.available {
+    color: rgba(34, 197, 94, 0.9);
+}
+
+.repo-status-badge.available i {
+    color: rgba(34, 197, 94, 0.7);
+}
+
+.repo-status-badge.error {
+    color: rgba(239, 68, 68, 0.9);
+}
+
+.repo-status-badge.error i {
+    color: rgba(239, 68, 68, 0.7);
+}
+
+/* Visibility options - simple radio buttons */
+.visibility-options {
+    display: flex;
+    gap: 1.5rem;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.5rem;
+}
+
+.visibility-options .form-check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0;
+    padding: 0;
+    background: none;
+    border: none;
+}
+
+.visibility-options .form-check:hover {
+    background: none;
+}
+
+.visibility-options .form-check-input[type="radio"] {
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    cursor: pointer;
+}
+
+.visibility-options .form-check-label {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    margin: 0;
+    display: flex;
+    align-items: center;
+}
+
+.visibility-options .form-check-label i {
+    opacity: 0.7;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .token-status {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

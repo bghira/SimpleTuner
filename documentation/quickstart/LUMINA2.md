@@ -11,7 +11,7 @@ When training a rank-16 LoRA, it uses:
 - Approximately 16-20GB VRAM for full model fine-tuning
 - About 20-30GB of system RAM during startup
 
-You'll need: 
+You'll need:
 - **Minimum**: A single RTX 3060 12GB or RTX 4060 Ti 16GB
 - **Recommended**: RTX 3090, RTX 4090, or A100 for faster training
 - **System RAM**: At least 32GB recommended
@@ -37,43 +37,18 @@ apt -y install python3.12 python3.12-venv
 For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
 
 ```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+apt -y install nvidia-cuda-toolkit
 ```
-
-If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead.
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-# if python --version shows 3.11 you can just also use the 'python' command here.
-python3.11 -m venv .venv
-
-source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
+pip install simpletuner[cuda]
 ```
 
-Depending on your system, you will run one of 3 commands:
-
-```bash
-# Linux with NVIDIA
-poetry install
-
-# MacOS
-poetry install -C install/apple
-
-# Linux with ROCM
-poetry install -C install/rocm
-```
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
 ### Setting up the environment
 
@@ -109,7 +84,7 @@ This goes into `config.json`
 ```json
 {
     "base_model_precision": "int8-torchao",
-    "checkpointing_steps": 50,
+    "checkpoint_step_interval": 50,
     "data_backend_config": "config/lumina2/multidatabackend.json",
     "disable_bucket_pruning": true,
     "eval_steps_interval": 50,
@@ -147,7 +122,7 @@ This goes into `config.json`
     "validation_prompt_library": false,
     "validation_resolution": "1024x1024",
     "validation_seed": 42,
-    "validation_steps": 50
+    "validation_step_interval": 50
 }
 ```
 
@@ -229,15 +204,27 @@ wandb login
 
 #### Login to Huggingface Hub
 
-To push checkpoints to Huggingface Hub, ensure 
+To push checkpoints to Huggingface Hub, ensure
 ```bash
 huggingface-cli login
 ```
 
 ### Executing the training run
 
-From the SimpleTuner directory, run:
+From the SimpleTuner directory, you have several options to start training:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner[cuda]
+simpletuner train
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train
+```
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ./train.sh
 ```

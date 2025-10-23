@@ -29,12 +29,12 @@ Same steps as the Wan guide:
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -U poetry pip
-poetry config virtualenvs.create false
-poetry install
+
+# Install with automatic platform detection
+pip install -e .
 ```
 
-> If you're on ROCm or Apple: you must instead use `poetry install -C install/variant` where `variant` is `rocm` or `apple`.
+**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
 
 ---
 
@@ -48,7 +48,7 @@ Edit your `config/config.json`:
     "attention_mechanism": "diffusers",
     "base_model_precision": "int8-quanto",
     "caption_dropout_probability": 0.1,
-    "checkpointing_steps": 100,
+    "checkpoint_step_interval": 100,
     "checkpoints_total_limit": 5,
     "compress_disk_cache": true,
     "data_backend_config": "config/wan/multidatabackend.json",
@@ -109,7 +109,7 @@ Edit your `config/config.json`:
     "validation_prompt_library": false,
     "validation_resolution": "832x480",
     "validation_seed": 42,
-    "validation_steps": 4,
+    "validation_step_interval": 4,
     "webhook_config": "config/wan/webhook.json"
 }
 ```

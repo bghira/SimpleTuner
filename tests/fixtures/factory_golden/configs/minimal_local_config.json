@@ -1,0 +1,17 @@
+[
+    {
+        "id": "text_embeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/tmp/text_cache"
+    },
+    {
+        "id": "main_dataset",
+        "type": "local",
+        "dataset_type": "image",
+        "instance_data_dir": "/tmp/images",
+        "text_embeds": "text_embeds",
+        "caption_strategy": "filename"
+    }
+]

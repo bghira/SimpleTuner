@@ -1,0 +1,492 @@
+<!-- Generic Form Tab Template for HTMX -->
+<!-- Used by Basic, Model, Training, and Advanced tabs -->
+<link rel="stylesheet" href="/static/css/form-sections.css">
+
+<div class="tab-fragment"
+     id="{{ tab_name }}-tab-content"
+     data-tab-name="{{ tab_name }}"
+     data-danger-mode="{{ 'true' if danger_mode_enabled | default(false) else 'false' }}">
+
+    <!-- Tab Header -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-start">
+            <div>
+                <h5 class="mb-0">
+                    <i class="{{ tab_config.icon if tab_config else 'fas fa-cog' }}"></i>
+                    {{ tab_config.title if tab_config else tab_name|title }} Configuration
+                </h5>
+                {% if tab_config and tab_config.description %}
+                <p class="text-muted mb-0">{{ tab_config.description }}</p>
+                {% endif %}
+            </div>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary" id="collapse-all-{{ tab_name }}" title="Collapse all sections">
+                    <i class="fas fa-compress-alt"></i> Collapse All
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="expand-all-{{ tab_name }}" title="Expand all sections">
+                    <i class="fas fa-expand-alt"></i> Expand All
+                </button>
+            </div>
+        </div>
+
+        <div class="card-body">
+            <!-- Validation Results Area -->
+            <div id="validation-results-{{ tab_name }}" class="mb-3"></div>
+
+            <!-- Form Fields Container -->
+            <div class="tab-fields" data-tab-form="{{ tab_name }}">
+                <input type="hidden" name="__active_tab__" value="{{ tab_name }}">
+                {% set disabled_args = fields
+                    | selectattr('disabled')
+                    | map(attribute='arg_name')
+                    | reject('equalto', None)
+                    | list %}
+                {% if disabled_args %}
+                <input type="hidden" name="__disabled_fields__" value="{{ disabled_args|unique|join(',') }}">
+                {% endif %}
+
+                <!-- Render sections if available -->
+                {% if sections %}
+                    {% for section in sections %}
+                    {% set section_fields = fields | selectattr('section_id', 'equalto', section.id) | list %}
+                    {% set has_parent = section_fields[0].get('parent_section') if section_fields else false %}
+
+                    {% if not has_parent %}
+                        <!-- Main section -->
+                        <div class="form-section mb-4" id="section-{{ section.id }}" data-section-type="{% if section.get('advanced') %}advanced{% else %}main{% endif %}">
+                            <h6 class="section-title {% if section.get('advanced') %}advanced-section{% endif %}">
+                                <!-- Collapse toggle for main sections (not advanced subsections) -->
+                                <button type="button" class="btn btn-sm btn-outline-secondary section-toggle me-2"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#content-{{ section.id }}"
+                                        aria-expanded="true">
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                                {% if section.icon %}<i class="{{ section.icon }}"></i>{% endif %}
+                                {{ section.title }}
+                                {% if section.get('advanced') %}
+                                <span class="badge bg-secondary ms-2">Advanced</span>
+                                {% endif %}
+                            </h6>
+                            {% if section.description %}
+                            <p class="text-muted small">{{ section.description }}</p>
+                            {% endif %}
+
+                            {% if section.get('template') %}
+                                <!-- Custom template for this section -->
+                                <div class="row collapse show" id="content-{{ section.id }}">
+                                    {% include section.template %}
+                                </div>
+                            {% elif section_fields %}
+                                <!-- Group fields by subsection -->
+                                {% set subsections = {} %}
+                                {% for field in section_fields %}
+                                    {% set subsection_name = field.get('subsection', 'general') %}
+                                    {% if subsection_name not in subsections %}
+                                        {% set _ = subsections.update({subsection_name: []}) %}
+                                    {% endif %}
+                                    {% set _ = subsections[subsection_name].append(field) %}
+                                {% endfor %}
+
+                                <div class="row collapse show" id="content-{{ section.id }}">
+                                    {% for subsection_name, subsection_fields in subsections.items() %}
+                                        {% if subsections|length > 1 and subsection_name != 'general' %}
+                                            <!-- Subsection header -->
+                                            <div class="col-12">
+                                                <h6 class="subsection-title">
+                                                    {{ subsection_name | title | replace('_', ' ') }}
+                                                </h6>
+                                            </div>
+                                        {% endif %}
+
+                                        <!-- Render fields in this subsection -->
+                                        {% for field in subsection_fields %}
+                                            {% include 'partials/form_field_htmx.html' %}
+                                        {% endfor %}
+
+                                        {% if not loop.last and subsections|length > 1 %}
+                                            <div class="col-12 mb-3">
+                                                <hr class="subsection-divider">
+                                            </div>
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                            {% elif section.empty_message %}
+                                <div class="empty-section-message mt-3 mb-0" role="status">
+                                    <i class="fas fa-info-circle me-2"></i>{{ section.empty_message }}
+                                </div>
+                            {% endif %}
+
+                            <!-- Render nested advanced subsections at the bottom of this parent section -->
+                            {% for subsection in sections %}
+                            {% set subsection_fields = fields | selectattr('section_id', 'equalto', subsection.id) | list %}
+                            {% set subsection_parent = subsection_fields[0].get('parent_section') if subsection_fields else false %}
+
+                            {% if subsection_parent == section.id %}
+                                <!-- Nested advanced subsection -->
+                                <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                                    <h6 class="subsection-title advanced-section">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
+                                                data-bs-toggle="collapse"
+                                                data-bs-target="#advanced-content-{{ subsection.id }}"
+                                                aria-expanded="false">
+                                            <i class="fas fa-chevron-right"></i>
+                                        </button>
+                                        {% if subsection.icon %}<i class="{{ subsection.icon }}"></i>{% endif %}
+                                        {{ subsection.title }}
+                                        <span class="badge bg-secondary ms-2">Advanced</span>
+                                    </h6>
+                                    {% if subsection.description %}
+                                    <p class="text-muted small">{{ subsection.description }}</p>
+                                    {% endif %}
+
+                                    {% if subsection.get('template') %}
+                                        <!-- Custom template for this subsection -->
+                                        <div class="row collapse" id="advanced-content-{{ subsection.id }}">
+                                            {% include subsection.template %}
+                                        </div>
+                                    {% elif subsection_fields %}
+                                        <div class="row collapse" id="advanced-content-{{ subsection.id }}">
+                                            {% for field in subsection_fields %}
+                                                {% include 'partials/form_field_htmx.html' %}
+                                            {% endfor %}
+                                        </div>
+                                    {% elif subsection.empty_message %}
+                                        <div class="empty-section-message mt-3 mb-0" role="status">
+                                            <i class="fas fa-info-circle me-2"></i>{{ subsection.empty_message }}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                    {% endfor %}
+
+                    <!-- Fields without sections -->
+                    {% set unsectioned_fields = fields | selectattr('section_id', 'undefined') | list %}
+                    {% if unsectioned_fields %}
+                    <div class="row">
+                        {% for field in unsectioned_fields %}
+                            {% include 'partials/form_field_htmx.html' %}
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <!-- No sections, render all fields -->
+                    <div class="row">
+                        {% for field in fields %}
+                            {% include 'partials/form_field_htmx.html' %}
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            </div>
+
+            <div class="alert alert-info d-flex mt-4" role="alert">
+                <i class="fas fa-save me-2"></i>
+                <span>Changes are not applied until you click 💾 Save in the header.</span>
+            </div>
+        </div>
+
+        <!-- Tab Footer with Actions -->
+        <div class="card-footer">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="text-muted small">
+                    <i class="fas fa-info-circle"></i>
+                    Use Reset to restore the defaults for this tab.
+                </div>
+                <div>
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            hx-get="/api/config/reset/{{ tab_name }}"
+                            hx-confirm="Are you sure you want to reset {{ tab_name }} configuration to defaults?"
+                            hx-target="#{{ tab_name }}-tab-content"
+                            hx-swap="outerHTML">
+                        <i class="fas fa-undo"></i> Reset to Defaults
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    'use strict';
+
+    const tabName = '{{ tab_name }}';
+
+    function setupSectionCollapse() {
+        const collapseAllBtn = document.getElementById('collapse-all-' + tabName);
+        const expandAllBtn = document.getElementById('expand-all-' + tabName);
+        const tabContent = document.getElementById(tabName + '-tab-content');
+
+        if (!collapseAllBtn || !expandAllBtn || !tabContent) return;
+
+        // Get all main section collapses (not advanced subsections)
+        const getSectionCollapses = () => {
+            return Array.from(tabContent.querySelectorAll('[id^="content-"]')).filter(el => {
+                // Exclude advanced subsections
+                return !el.id.startsWith('advanced-content-');
+            });
+        };
+
+        // Save collapsed state to server (debounced)
+        let saveTimeout = null;
+        const saveCollapsedState = () => {
+            if (saveTimeout) clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(async () => {
+                try {
+                    const sections = getSectionCollapses();
+                    const collapsedState = {};
+
+                    sections.forEach(section => {
+                        const sectionId = section.id.replace('content-', '');
+                        collapsedState[sectionId] = !section.classList.contains('show');
+                    });
+
+                    console.log('[FormTab] Saving collapsed state:', collapsedState);
+
+                    await fetch('/api/webui/ui-state/collapsed-sections/' + tabName, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ sections: collapsedState })
+                    });
+                } catch (error) {
+                    console.error('[FormTab] Failed to save collapsed state:', error);
+                }
+            }, 50);
+        };
+
+        // Load saved collapsed state from server
+        const loadCollapsedState = async () => {
+            try {
+                const response = await fetch('/api/webui/ui-state/collapsed-sections/' + tabName);
+                if (response.ok) {
+                    const collapsedState = await response.json();
+                    console.log('[FormTab] Loaded collapsed state:', collapsedState);
+
+                    // Temporarily disable form dirty tracking while we manipulate sections
+                    if (window.Alpine && Alpine.store('trainer')) {
+                        Alpine.store('trainer')._skipNextClean = true;
+                    }
+
+                    // Apply saved state to sections without animation
+                    const sections = getSectionCollapses();
+                    sections.forEach(section => {
+                        const sectionId = section.id.replace('content-', '');
+                        const isCollapsed = collapsedState[sectionId];
+
+                        if (isCollapsed !== undefined) {
+                            if (isCollapsed) {
+                                // Remove 'show' class immediately (no animation)
+                                section.classList.remove('show');
+                                section.classList.remove('collapsing');
+
+                                // Update the toggle button icon
+                                const toggle = tabContent.querySelector(`[data-bs-target="#${section.id}"]`);
+                                if (toggle) {
+                                    const icon = toggle.querySelector('i');
+                                    if (icon) {
+                                        icon.classList.remove('fa-chevron-down');
+                                        icon.classList.add('fa-chevron-right');
+                                    }
+                                    toggle.setAttribute('aria-expanded', 'false');
+                                }
+                            } else {
+                                // Ensure 'show' class is present (already expanded by default)
+                                section.classList.add('show');
+                            }
+                        }
+                    });
+
+                    // Re-enable form dirty tracking
+                    if (window.Alpine && Alpine.store('trainer')) {
+                        Alpine.store('trainer')._skipNextClean = false;
+                    }
+                }
+            } catch (error) {
+                console.error('[FormTab] Failed to load collapsed state:', error);
+            }
+        };
+
+        // Collapse all sections
+        collapseAllBtn.addEventListener('click', function() {
+            const sections = getSectionCollapses();
+            let completedCount = 0;
+            const totalSections = sections.length;
+
+            if (totalSections === 0) {
+                saveCollapsedState();
+                return;
+            }
+
+            sections.forEach(section => {
+                const bsCollapse = bootstrap.Collapse.getInstance(section) || new bootstrap.Collapse(section, { toggle: false });
+
+                // Listen for the collapse animation to complete
+                const onHidden = () => {
+                    completedCount++;
+                    if (completedCount === totalSections) {
+                        // All sections have finished collapsing
+                        saveCollapsedState();
+                    }
+                    section.removeEventListener('hidden.bs.collapse', onHidden);
+                };
+
+                section.addEventListener('hidden.bs.collapse', onHidden);
+                bsCollapse.hide();
+            });
+        });
+
+        // Expand all sections
+        expandAllBtn.addEventListener('click', function() {
+            const sections = getSectionCollapses();
+            let completedCount = 0;
+            const totalSections = sections.length;
+
+            if (totalSections === 0) {
+                saveCollapsedState();
+                return;
+            }
+
+            sections.forEach(section => {
+                const bsCollapse = bootstrap.Collapse.getInstance(section) || new bootstrap.Collapse(section, { toggle: false });
+
+                // Listen for the expand animation to complete
+                const onShown = () => {
+                    completedCount++;
+                    if (completedCount === totalSections) {
+                        // All sections have finished expanding
+                        saveCollapsedState();
+                    }
+                    section.removeEventListener('shown.bs.collapse', onShown);
+                };
+
+                section.addEventListener('shown.bs.collapse', onShown);
+                bsCollapse.show();
+            });
+        });
+
+        // Update chevron icons and save state when sections collapse/expand
+        const sectionToggles = tabContent.querySelectorAll('.section-toggle');
+        sectionToggles.forEach(toggle => {
+            const targetId = toggle.getAttribute('data-bs-target');
+            const targetEl = document.querySelector(targetId);
+
+            if (targetEl) {
+                // Update icon at the START of animation (for immediate visual feedback)
+                targetEl.addEventListener('show.bs.collapse', function() {
+                    const icon = toggle.querySelector('i');
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-right');
+                        icon.classList.add('fa-chevron-down');
+                    }
+                    toggle.setAttribute('aria-expanded', 'true');
+                });
+
+                targetEl.addEventListener('hide.bs.collapse', function() {
+                    const icon = toggle.querySelector('i');
+                    if (icon) {
+                        icon.classList.remove('fa-chevron-down');
+                        icon.classList.add('fa-chevron-right');
+                    }
+                    toggle.setAttribute('aria-expanded', 'false');
+                });
+
+                // Save state at the END of animation (when DOM is updated)
+                targetEl.addEventListener('shown.bs.collapse', function() {
+                    saveCollapsedState();
+                });
+
+                targetEl.addEventListener('hidden.bs.collapse', function() {
+                    saveCollapsedState();
+                });
+            }
+        });
+
+        // Load saved state on initialization
+        loadCollapsedState();
+    }
+
+    function initializeConditionalFields() {
+        const tabContent = document.getElementById(tabName + '-tab-content');
+        if (!tabContent) return;
+        const conditionalFields = tabContent.querySelectorAll('.conditional-field');
+        conditionalFields.forEach(field => {
+            const condition = field.dataset.conditionalOn;
+            if (condition) {
+                updateFieldVisibility(field, condition);
+
+                // Listen for changes on the controlling field
+                const controlField = tabContent.querySelector(`[name="${condition}"]`);
+                if (controlField) {
+                    controlField.addEventListener('change', () => {
+                        updateFieldVisibility(field, condition);
+                    });
+                }
+            }
+        });
+    }
+
+    function updateFieldVisibility(field, condition) {
+        const tabContent = document.getElementById(tabName + '-tab-content');
+        if (!tabContent) return;
+        const controlField = tabContent.querySelector(`[name="${condition}"]`);
+        if (controlField) {
+            const isActive = controlField.type === 'checkbox'
+                ? controlField.checked
+                : Boolean(controlField.value);
+
+            field.classList.toggle('active', isActive);
+            field.querySelectorAll('input, select, textarea').forEach(input => {
+                input.disabled = !isActive;
+            });
+        }
+    }
+
+    function initializeTooltips() {
+        if (typeof bootstrap !== 'undefined') {
+            const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+            [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+        }
+    }
+
+    function initTab() {
+        console.log('[FormTab] Initializing tab:', tabName);
+        setupSectionCollapse();
+        initializeConditionalFields();
+        initializeTooltips();
+    }
+
+    // Initialize immediately (for direct page loads)
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initTab);
+    } else {
+        // DOM already loaded, run immediately
+        initTab();
+    }
+
+    // Re-initialize after HTMX swaps (for tab switching)
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+        if (evt.detail.target.id === tabName + '-tab-content') {
+            console.log('[FormTab] Re-initializing after HTMX swap:', tabName);
+            // Small delay to ensure DOM is ready
+            setTimeout(initTab, 50);
+        }
+    });
+})();
+
+// Handle validation results
+document.body.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail.xhr.status === 200) {
+        const changedField = evt.detail.triggeringEvent?.target;
+        if (changedField && changedField.classList.contains('form-control')) {
+            changedField.classList.add('field-valid');
+            setTimeout(() => {
+                changedField.classList.remove('field-valid');
+            }, 2000);
+        }
+    }
+});
+</script>

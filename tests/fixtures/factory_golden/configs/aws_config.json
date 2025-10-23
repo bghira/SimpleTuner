@@ -1,0 +1,25 @@
+[
+    {
+        "id": "text_embeds",
+        "type": "local",
+        "dataset_type": "text_embeds",
+        "default": true,
+        "cache_dir": "/tmp/text_cache"
+    },
+    {
+        "id": "aws_dataset",
+        "type": "aws",
+        "dataset_type": "image",
+        "aws_bucket_name": "test-bucket",
+        "aws_region_name": "us-east-1",
+        "aws_endpoint_url": "http://localhost:9000",
+        "aws_access_key_id": "test_key",
+        "aws_secret_access_key": "test_secret",
+        "aws_data_prefix": "training_data/",
+        "text_embeds": "text_embeds",
+        "caption_strategy": "filename",
+        "resolution": 1024,
+        "crop": true,
+        "crop_aspect": "preserve"
+    }
+]

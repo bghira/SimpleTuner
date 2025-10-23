@@ -1,0 +1,83 @@
+<!-- Tab List Fragment for HTMX -->
+<div id="tab-list-container" class="tab-navigation">
+    <!-- Bootstrap Nav Tabs -->
+    <ul class="nav nav-tabs" role="tablist">
+        {% for tab in tabs %}
+        <li class="nav-item" role="presentation">
+            <button class="nav-link {% if loop.first %}active{% endif %}"
+                    id="{{ tab.id }}-tab-button"
+                    data-bs-toggle="tab"
+                    data-bs-target="#{{ tab.id }}-tab"
+                    data-tab="{{ tab.name }}"
+                    type="button"
+                    role="tab"
+                    aria-controls="{{ tab.id }}-tab"
+                    aria-selected="{% if loop.first %}true{% else %}false{% endif %}"
+                    @click="switchTab('{{ tab.name }}')">
+                <i class="{{ tab.icon }}"></i>
+                {{ tab.title }}
+            </button>
+        </li>
+        {% endfor %}
+
+        <!-- Validation Tab (Special) -->
+        <li class="nav-item" role="presentation">
+            <button class="nav-link"
+                    id="validation-tab-button"
+                    data-bs-toggle="tab"
+                    data-bs-target="#validation-tab"
+                    data-tab="validation"
+                    type="button"
+                    role="tab"
+                    aria-controls="validation-tab"
+                    aria-selected="false"
+                    @click="switchTab('validation')">
+                <i class="fas fa-check-circle"></i>
+                Validation
+                <span id="validation-badge" class="badge bg-danger ms-1 d-none">0</span>
+            </button>
+        </li>
+    </ul>
+
+    <!-- Tab Content Container -->
+    <div class="tab-content mt-3" id="main-tab-content">
+        {% for tab in tabs %}
+        <div class="tab-pane fade {% if loop.first %}show active{% endif %}"
+             id="{{ tab.id }}-tab"
+             role="tabpanel"
+             aria-labelledby="{{ tab.id }}-tab-button">
+            <div id="{{ tab.id }}-tab-content"
+                 class="htmx-fragment-target"
+                 hx-get="/web/trainer/tabs/{{ tab.name }}"
+                 hx-trigger="tab-refresh"
+                 hx-target="this"
+                 hx-swap="innerHTML"
+                 hx-indicator="#tab-loading-indicator">
+                <!-- Tab content loaded via HTMX -->
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Validation Tab Pane -->
+        <div class="tab-pane fade"
+             id="validation-tab"
+             role="tabpanel"
+             aria-labelledby="validation-tab-button">
+            <div id="validation-tab-content"
+                 class="htmx-fragment-target"
+                 hx-get="/web/trainer/tabs/validation"
+                 hx-trigger="tab-refresh"
+                 hx-target="this"
+                 hx-swap="innerHTML"
+                 hx-indicator="#tab-loading-indicator">
+                <!-- Validation content loaded via HTMX -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="tab-loading-indicator" class="tab-loading-indicator htmx-indicator">
+    <div class="spinner-border spinner-border-sm text-primary" role="status">
+        <span class="visually-hidden">Loading tab...</span>
+    </div>
+</div>

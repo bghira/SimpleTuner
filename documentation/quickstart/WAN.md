@@ -29,9 +29,29 @@ Currently, image-to-video training is not supported for Wan, but T2V LoRA and Ly
 - Resolution: 1280x720
 -->
 
-You'll need: 
+#### Image to Video (Wan 2.2)
+
+Recent Wan 2.2 I2V checkpoints work with the same training flow:
+
+- High stage: https://huggingface.co/Wan-AI/Wan2.2-I2V-14B-Diffusers/tree/main/high_noise_model
+- Low stage: https://huggingface.co/Wan-AI/Wan2.2-I2V-14B-Diffusers/tree/main/low_noise_model
+
+You can target the stage you want with the `model_flavour` and `wan_validation_load_other_stage` settings outlined later in this guide.
+
+You'll need:
 - **a realistic minimum** is 16GB or, a single 3090 or V100 GPU
 - **ideally** multiple 4090, A6000, L40S, or better
+
+If you encounter shape mismatches in the time embedding layers when running Wan 2.2 checkpoints, enable the new
+`wan_force_2_1_time_embedding` flag. This forces the transformer to fall back to Wan 2.1 style time embeddings and
+resolves the compatibility issue.
+
+#### Stage presets & validation
+
+- `model_flavour=i2v-14b-2.2-high` targets the Wan 2.2 high-noise stage.
+- `model_flavour=i2v-14b-2.2-low` targets the low-noise stage (same checkpoints, different subfolder).
+- Toggle `wan_validation_load_other_stage=true` to load the opposite stage alongside the one you train for validation renders.
+- Leave the flavour unset (or use `t2v-480p-1.3b-2.1`) for the standard Wan 2.1 text-to-video run.
 
 Apple silicon systems do not work super well with Wan 2.1 so far, something like 10 minutes for a single training step can be expected..
 
@@ -53,48 +73,21 @@ apt -y install python3.12 python3.12-venv
 
 #### Container image dependencies
 
-For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image:
+For Vast, RunPod, and TensorDock (among others), the following will work on a CUDA 12.2-12.8 image to enable compiling of CUDA extensions:
 
 ```bash
-apt -y install nvidia-cuda-toolkit libgl1-mesa-glx
+apt -y install nvidia-cuda-toolkit
 ```
-
-If `libgl1-mesa-glx` is not found, you might need to use `libgl1-mesa-dri` instead. Your mileage may vary.
 
 ### Installation
 
-Clone the SimpleTuner repository and set up the python venv:
+Install SimpleTuner via pip:
 
 ```bash
-git clone --branch=release https://github.com/bghira/SimpleTuner.git
-
-cd SimpleTuner
-
-# if python --version shows 3.11 you can just also use the 'python' command here.
-python3.11 -m venv .venv
-
-source .venv/bin/activate
-
-pip install -U poetry pip
-
-# Necessary on some systems to prevent it from deciding it knows better than us.
-poetry config virtualenvs.create false
+pip install simpletuner[cuda]
 ```
 
-**Note:** We're currently installing the `release` branch here; the `main` branch may contain experimental features that might have better results or lower memory use.
-
-Depending on your system, you will run one of 3 commands:
-
-```bash
-# Linux with NVIDIA
-poetry install
-
-# MacOS
-poetry install -C install/apple
-
-# Linux with ROCM
-poetry install -C install/rocm
-```
+For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 #### SageAttention 2
 
 If you wish to use SageAttention 2, some steps should be followed.
@@ -134,10 +127,27 @@ An experimental script, `configure.py`, may allow you to entirely skip this sect
 To run it:
 
 ```bash
-python configure.py
+simpletuner configure
 ```
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
+
+### Memory offloading (optional)
+
+Wan is one of the heaviest models SimpleTuner supports. Enable grouped offloading if you are close to the VRAM ceiling:
+
+```bash
+--enable_group_offload \
+--group_offload_type block_level \
+--group_offload_blocks_per_group 1 \
+--group_offload_use_stream \
+# optional: spill offloaded weights to disk instead of RAM
+# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
+```
+
+- Only CUDA devices honour `--group_offload_use_stream`; ROCm/MPS fall back automatically.
+- Leave disk staging commented out unless CPU memory is the bottleneck.
+- `--enable_model_cpu_offload` is mutually exclusive with group offload.
 
 
 If you prefer to manually configure:
@@ -148,7 +158,7 @@ Copy `config/config.json.example` to `config/config.json`:
 cp config/config.json.example config/config.json
 ```
 
-Multi-GPU users can reference [this document](/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
+Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 Your config at the end will look like mine:
 
@@ -168,7 +178,7 @@ Your config at the end will look like mine:
   "lycoris_config": "config/wan/lycoris_config.json",
   "max_train_steps": 400000,
   "num_train_epochs": 0,
-  "checkpointing_steps": 1000,
+  "checkpoint_step_interval": 1000,
   "checkpoints_total_limit": 5,
   "hub_model_id": "wan-disney",
   "push_to_hub": "true",
@@ -187,7 +197,7 @@ Your config at the end will look like mine:
   "resolution_type": "pixel_area",
   "resolution": 480,
   "validation_seed": 42,
-  "validation_steps": 100,
+  "validation_step_interval": 100,
   "validation_resolution": "832x480",
   "validation_prompt": "两只拟人化的猫咪身穿舒适的拳击装备，戴着鲜艳的手套，在聚光灯照射的舞台上激烈对战",
   "validation_negative_prompt": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
@@ -459,6 +469,30 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ]
 ```
 
+- Wan 2.2 image-to-video runs create CLIP conditioning caches. In the **video** dataset entry, point at a dedicated backend and (optionally) override the cache path:
+
+```json
+  {
+    "id": "disney-black-and-white",
+    "type": "local",
+    "dataset_type": "video",
+    "conditioning_image_embeds": "disney-conditioning",
+    "cache_dir_conditioning_image_embeds": "cache/conditioning_image_embeds/disney-black-and-white"
+  }
+```
+
+- Define the conditioning backend once and reuse it across datasets if needed (full object shown here for clarity):
+
+```json
+  {
+    "id": "disney-conditioning",
+    "type": "local",
+    "dataset_type": "conditioning_image_embeds",
+    "cache_dir": "cache/conditioning_image_embeds/disney-conditioning",
+    "disabled": false
+  }
+```
+
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many seconds of data we'll train on.
     - At 15 fps, 75 frames is 5 seconds of video, standard output. This should be your target.
@@ -502,15 +536,29 @@ Follow the instructions to log in to both services.
 
 ### Executing the training run
 
-From the SimpleTuner directory, one simply has to run:
+From the SimpleTuner directory, you have several options to start training:
 
+**Option 1 (Recommended - pip install):**
+```bash
+pip install simpletuner[cuda]
+simpletuner train
+```
+
+**Option 2 (Git clone method):**
+```bash
+simpletuner train
+```
+
+> ℹ️ Append `--model_flavour i2v-14b-2.2-high` (or `low`) and, if desired, `--wan_validation_load_other_stage` inside `TRAINER_EXTRA_ARGS` or your CLI invocation when you train Wan 2.2. Add `--wan_force_2_1_time_embedding` only when the checkpoint reports a time-embedding shape mismatch.
+
+**Option 3 (Legacy method - still works):**
 ```bash
 ./train.sh
 ```
 
 This will begin the text embed and VAE output caching to disk.
 
-For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/TUTORIAL.md) documents.
+For more information, see the [dataloader](/documentation/DATALOADER.md) and [tutorial](/documentation/TUTORIAL.md) documents.
 
 ## Notes & troubleshooting tips
 

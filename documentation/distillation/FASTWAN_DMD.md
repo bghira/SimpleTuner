@@ -29,12 +29,12 @@ Using LoRA student training can reduce the requirements substantially, but still
 git clone --branch=release https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.12 -m venv .venv && source .venv/bin/activate
-pip install -U poetry pip
-poetry config virtualenvs.create false
-poetry install
+
+# Install with automatic platform detection
+pip install -e .
 ```
 
-> If you're on ROCm or Apple: you must instead use `poetry install -C install/variant` where `variant` is `rocm` or `apple`.
+**Note:** The setup.py automatically detects your platform (CUDA/ROCm/Apple) and installs the appropriate dependencies.
 
 ---
 
@@ -48,7 +48,7 @@ Edit your `config/config.json`:
     "attention_mechanism": "diffusers",
     "base_model_precision": "int8-quanto",
     "caption_dropout_probability": 0.1,
-    "checkpointing_steps": 200,
+    "checkpoint_step_interval": 200,
     "checkpoints_total_limit": 3,
     "compress_disk_cache": true,
     "data_backend_config": "config/wan/multidatabackend.json",
@@ -114,7 +114,7 @@ Edit your `config/config.json`:
     "validation_prompt_library": "config/wan/validation_prompts_dmd.json",
     "validation_resolution": "1280x704",
     "validation_seed": 42,
-    "validation_steps": 200,
+    "validation_step_interval": 200,
     "webhook_config": "config/wan/webhook.json"
 }
 ```
@@ -162,7 +162,7 @@ These may be generated from the parent model.
 1. **Start without simulation**: Set `"simulate_generator_forward": false` initially
 2. **Monitor both losses**: Watch `dmd_loss` and `fake_score_loss` in wandb
 3. **Validation frequency**: DMD converges quickly, validate often
-4. **Memory management**: 
+4. **Memory management**:
    - Use `gradient_checkpointing`
    - Lower `train_batch_size` to 1
    - Consider `base_model_precision: "int8-quanto"`

@@ -2,7 +2,6 @@
 
 > 📝  Kontext shares 90 % of its training workflow with Flux, so this file only lists what *differs*.  When a step is **not** mentioned here, follow the original [instructions](/documentation/quickstart/FLUX.md)
 
-**Note**: All LoRAs trained for Kontext will run perfectly on [Runware](https://runware.ai), the world's **fastest** (~5s-15s depending on settings) and **most affordable inference platform** for Flux dev, schnell, and kontext.
 
 ---
 
@@ -304,7 +303,6 @@ For more conditioning types and advanced configurations, see the [ControlNet doc
 
 - Match your training and inference precision levels; int8 training will do best with int8 inference and so on.
 - It's going to be very slow due to the fact that two images are running through the system at a time.  Expect 80 s per 1024 px edit on a 4090.
-  - For fast remote inference, use Runware's [modelUpload feature](https://runware.ai/docs/en/image-inference/model-upload) via the UI or API to upload your LoRA and run it on their servers, often reaching 15 seconds per 50 step generation (vs 80 seconds on a 4090).
 
 ---
 
@@ -318,10 +316,6 @@ For more conditioning types and advanced configurations, see the [ControlNet doc
 
 ---
 
-## 7. Credits & further reading
-
-*Original research & checkpoints:* **@Black‑Forest‑Labs**
-*Implementation wrappers & docs:* **@bghira** / **@Beinsezii**, and others at **@Runware**
-*Work sponsored by*: **[Runware](https://runware.ai)** & **Terminus Research Group**
+## 7. Further reading
 
 For advanced tuning options (LoKr, NF4 quant, DeepSpeed, etc.) consult [the original quickstart for Flux](/documentation/quickstart/FLUX.md) – every flag works the same unless stated otherwise above.
