@@ -200,6 +200,8 @@ class Trainer:
             self.model = model_families[self.config.model_family](self.config, self.accelerator)
             self.model.check_user_config()
             StateTracker.set_model(self.model)
+        if self.webhook_handler and isinstance(self.model, VideoModelFoundation) and not self.webhook_handler.send_video:
+            self.configure_webhook(send_startup_message=False)
         self._misc_init()
         self.validation = None
         # this updates self.config further, so we will run it here.
@@ -1069,6 +1071,20 @@ class Trainer:
             return
         from simpletuner.helpers.webhooks.handler import WebhookHandler
 
+        send_video_flag = self._infer_send_video_flag(raw_config)
+        video_framerate = self._infer_video_framerate(raw_config)
+        if send_video_flag and video_framerate is None:
+            candidate = getattr(self, "config", None)
+            if candidate is not None:
+                fallback = getattr(candidate, "framerate", None)
+                if fallback not in (None, "", "None"):
+                    try:
+                        video_framerate = int(float(fallback))
+                    except (ValueError, TypeError):
+                        video_framerate = None
+        if send_video_flag and video_framerate is None:
+            video_framerate = 30
+
         self.webhook_handler = WebhookHandler(
             self.accelerator,
             (
@@ -1076,8 +1092,8 @@ class Trainer:
                 if hasattr(self, "config")
                 else "unknown"
             ),
-            send_video=(True if isinstance(self.model, VideoModelFoundation) else False),
-            video_framerate=getattr(self.config, "framerate", None) if hasattr(self, "config") else None,
+            send_video=send_video_flag,
+            video_framerate=video_framerate,
             webhook_config=webhook_config,
         )
         StateTracker.set_webhook_handler(self.webhook_handler)
@@ -1091,6 +1107,52 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
+
+    def _extract_config_value(self, source, *keys):
+        if source is None:
+            return None
+        if hasattr(source, "get"):
+            for key in keys:
+                if key in source and source[key] not in (None, "", "None"):
+                    return source[key]
+        for key in keys:
+            if hasattr(source, key):
+                value = getattr(source, key)
+                if value not in (None, "", "None"):
+                    return value
+            if hasattr(source, "__dict__"):
+                raw_dict = getattr(source, "__dict__", {})
+                if key in raw_dict and raw_dict[key] not in (None, "", "None"):
+                    return raw_dict[key]
+        return None
+
+    def _infer_send_video_flag(self, raw_config):
+        if isinstance(self.model, VideoModelFoundation):
+            return True
+        candidate_family = None
+        if getattr(self, "config", None) is not None:
+            candidate_family = getattr(self.config, "model_family", None)
+        if not candidate_family and raw_config is not None:
+            candidate_family = self._extract_config_value(raw_config, "model_family", "--model_family")
+        if candidate_family:
+            candidate_family = str(candidate_family).strip()
+            model_cls = model_families.get(candidate_family)
+            if model_cls and issubclass(model_cls, VideoModelFoundation):
+                return True
+        return False
+
+    def _infer_video_framerate(self, raw_config):
+        framerate = None
+        if getattr(self, "config", None) is not None:
+            framerate = getattr(self.config, "framerate", None)
+        if framerate in (None, "", "None") and raw_config is not None:
+            framerate = self._extract_config_value(raw_config, "framerate", "--framerate")
+        if framerate in (None, "", "None"):
+            return None
+        try:
+            return int(float(framerate))
+        except (ValueError, TypeError):
+            return None
 
     def _misc_init(self):
         """things that do not really need an order."""
