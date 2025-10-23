@@ -176,7 +176,6 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         )
 
         DatasetDuplicator.copy_metadata(source_backend=source_entry, target_backend=conditioning_entry)
-        conditioning_metadata.split_buckets_between_processes()
         return training_metadata, conditioning_metadata
 
     def test_conditioning_split_matches_training_split(self):
@@ -202,6 +201,10 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                     bucket: list(paths) for bucket, paths in cond_meta.aspect_ratio_bucket_indices.items()
                 }
 
+                self.assertTrue(
+                    getattr(cond_meta, "read_only", False),
+                    msg="Conditioning metadata should be marked read-only after duplication.",
+                )
                 self.assertEqual(set(training_buckets), set(conditioning_buckets))
 
                 for bucket in training_buckets:
@@ -213,6 +216,27 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                         expected_paths,
                         msg=f"Bucket {bucket} mismatch on process {process_index}",
                     )
+
+                cond_meta_clone = DiscoveryMetadataBackend(
+                    id=f"{cond_meta.id}_clone",
+                    instance_data_dir=cond_meta.instance_data_dir,
+                    cache_file=f"{cond_meta.instance_data_dir}/aspect_ratio_bucket_indices_clone",
+                    metadata_file=f"{cond_meta.instance_data_dir}/aspect_ratio_bucket_metadata_clone",
+                    data_backend=InMemoryDataBackend(f"{cond_meta.id}_clone"),
+                    accelerator=accelerator,
+                    batch_size=1,
+                    resolution=1.0,
+                    resolution_type="area",
+                    repeats=0,
+                )
+                cond_meta_clone.aspect_ratio_bucket_indices = deepcopy(cond_meta.aspect_ratio_bucket_indices)
+                cond_meta_clone.split_buckets_between_processes()
+                mutated = {bucket: list(paths) for bucket, paths in cond_meta_clone.aspect_ratio_bucket_indices.items()}
+                self.assertNotEqual(
+                    conditioning_buckets,
+                    mutated,
+                    msg="Double splitting should alter conditioning buckets — guard against this.",
+                )
 
 
 if __name__ == "__main__":  # pragma: no cover - convenience for local debugging
