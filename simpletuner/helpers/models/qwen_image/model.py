@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import logging
 import math
@@ -83,6 +84,23 @@ class QwenImage(ImageModelFoundation):
         self._conditioning_image_embedder = None
         self._conditioning_processor = None
 
+    @contextlib.contextmanager
+    def _force_packed_transformer_output(self, transformer):
+        original_untokenize = getattr(transformer, "_untokenize_hidden_states", None)
+        patched = False
+        if callable(original_untokenize):
+            def passthrough(hidden_states, *unused_args, **unused_kwargs):
+                return hidden_states
+
+            transformer._untokenize_hidden_states = passthrough
+            patched = True
+
+        try:
+            yield
+        finally:
+            if patched:
+                transformer._untokenize_hidden_states = original_untokenize
+
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         pipeline = super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
         if pipeline is None:
@@ -109,19 +127,11 @@ class QwenImage(ImageModelFoundation):
                     hidden_states = args[0]
 
                 input_was_tokenized = torch.is_tensor(hidden_states) and hidden_states.ndim == 3
-                original_untokenize = getattr(transformer, "_untokenize_hidden_states", None)
-
-                if input_was_tokenized and original_untokenize is not None:
-                    def _no_untokenize(hidden_states, grid_h, grid_w):
-                        return hidden_states
-
-                    transformer._untokenize_hidden_states = _no_untokenize
-
-                try:
+                if input_was_tokenized:
+                    with self._force_packed_transformer_output(transformer):
+                        return original_forward(*args, img_shapes=img_shapes, **kwargs)
+                else:
                     return original_forward(*args, img_shapes=img_shapes, **kwargs)
-                finally:
-                    if input_was_tokenized and original_untokenize is not None:
-                        transformer._untokenize_hidden_states = original_untokenize
 
             transformer.forward = forward_with_sanitized_shapes
             transformer._simpletuner_shape_patch = True
@@ -594,16 +604,17 @@ class QwenImage(ImageModelFoundation):
         )
 
         # Forward pass through transformer
-        noise_pred = self.model(
-            hidden_states=latent_model_input.to(self.accelerator.device, self.config.weight_dtype),
-            timestep=timesteps,
-            guidance=None,  # Qwen Image doesn't use guidance during training
-            encoder_hidden_states=prompt_embeds,
-            encoder_hidden_states_mask=prompt_embeds_mask,
-            img_shapes=img_shapes,
-            txt_seq_lens=txt_seq_lens,
-            return_dict=False,
-        )[0]
+        with self._force_packed_transformer_output(self.model):
+            noise_pred = self.model(
+                hidden_states=latent_model_input.to(self.accelerator.device, self.config.weight_dtype),
+                timestep=timesteps,
+                guidance=None,  # Qwen Image doesn't use guidance during training
+                encoder_hidden_states=prompt_embeds,
+                encoder_hidden_states_mask=prompt_embeds_mask,
+                img_shapes=img_shapes,
+                txt_seq_lens=txt_seq_lens,
+                return_dict=False,
+            )[0]
 
         target_ndim = target_latents.dim()
 
@@ -718,16 +729,17 @@ class QwenImage(ImageModelFoundation):
             raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         timesteps = raw_timesteps.expand(batch_size) / 1000.0
 
-        noise_pred = self.model(
-            hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
-            timestep=timesteps,
-            guidance=None,
-            encoder_hidden_states=prompt_embeds,
-            encoder_hidden_states_mask=prompt_embeds_mask,
-            img_shapes=img_shapes,
-            txt_seq_lens=txt_seq_lens,
-            return_dict=False,
-        )[0]
+        with self._force_packed_transformer_output(self.model):
+            noise_pred = self.model(
+                hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
+                timestep=timesteps,
+                guidance=None,
+                encoder_hidden_states=prompt_embeds,
+                encoder_hidden_states_mask=prompt_embeds_mask,
+                img_shapes=img_shapes,
+                txt_seq_lens=txt_seq_lens,
+                return_dict=False,
+            )[0]
 
         noise_pred = noise_pred[:, : packed_latents.size(1)]
         noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
@@ -844,16 +856,17 @@ class QwenImage(ImageModelFoundation):
             raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         timesteps = raw_timesteps.expand(batch_size) / 1000.0
 
-        noise_pred = self.model(
-            hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
-            timestep=timesteps,
-            guidance=None,
-            encoder_hidden_states=prompt_embeds,
-            encoder_hidden_states_mask=prompt_embeds_mask,
-            img_shapes=img_shapes,
-            txt_seq_lens=txt_seq_lens,
-            return_dict=False,
-        )[0]
+        with self._force_packed_transformer_output(self.model):
+            noise_pred = self.model(
+                hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
+                timestep=timesteps,
+                guidance=None,
+                encoder_hidden_states=prompt_embeds,
+                encoder_hidden_states_mask=prompt_embeds_mask,
+                img_shapes=img_shapes,
+                txt_seq_lens=txt_seq_lens,
+                return_dict=False,
+            )[0]
 
         noise_pred = noise_pred[:, : base_packed_tokens.size(1)]
 
