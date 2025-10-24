@@ -104,7 +104,24 @@ class QwenImage(ImageModelFoundation):
                         else:
                             sanitized.append(entry)
                     img_shapes = sanitized
-                return original_forward(*args, img_shapes=img_shapes, **kwargs)
+                hidden_states = kwargs.get("hidden_states")
+                if hidden_states is None and args:
+                    hidden_states = args[0]
+
+                input_was_tokenized = torch.is_tensor(hidden_states) and hidden_states.ndim == 3
+                original_untokenize = getattr(transformer, "_untokenize_hidden_states", None)
+
+                if input_was_tokenized and original_untokenize is not None:
+                    def _no_untokenize(hidden_states, grid_h, grid_w):
+                        return hidden_states
+
+                    transformer._untokenize_hidden_states = _no_untokenize
+
+                try:
+                    return original_forward(*args, img_shapes=img_shapes, **kwargs)
+                finally:
+                    if input_was_tokenized and original_untokenize is not None:
+                        transformer._untokenize_hidden_states = original_untokenize
 
             transformer.forward = forward_with_sanitized_shapes
             transformer._simpletuner_shape_patch = True
