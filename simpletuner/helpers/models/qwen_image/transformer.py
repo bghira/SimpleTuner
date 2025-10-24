@@ -707,8 +707,14 @@ class QwenImageTransformer2DModel(
         hidden_states, patch_h, patch_w = self._tokenize_hidden_states(hidden_states)
 
         if (patch_h is None or patch_w is None) and img_shapes:
-            # img_shapes entries have the form (frame, height, width) where height/width are already scaled by patch
-            _, grid_h, grid_w = img_shapes[0]
+            # img_shapes entries have the form (frame, height, width) but some pipelines wrap them in extra lists.
+            shape_entry = img_shapes[0]
+            if isinstance(shape_entry, (list, tuple)) and shape_entry:
+                if isinstance(shape_entry[0], (list, tuple)):
+                    shape_entry = shape_entry[0]
+            if not isinstance(shape_entry, (list, tuple)) or len(shape_entry) < 3:
+                raise ValueError(f"Unexpected img_shapes entry structure: {shape_entry!r}")
+            _, grid_h, grid_w = shape_entry[:3]
             patch_h = patch_h or grid_h
             patch_w = patch_w or grid_w
 

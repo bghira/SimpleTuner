@@ -482,6 +482,7 @@ class QwenImage(ImageModelFoundation):
     def _model_predict_standard(self, prepared_batch):
         latent_model_input = prepared_batch["noisy_latents"]
         timesteps = prepared_batch["timesteps"]
+        target_latents = prepared_batch["latents"]
 
         # Handle both 4D and 5D inputs
         if latent_model_input.dim() == 5:
@@ -522,7 +523,14 @@ class QwenImage(ImageModelFoundation):
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
 
         # Prepare image shapes - using the LATENT dimensions divided by 2 (for patchification)
-        img_shapes = [(1, latent_height // 2, latent_width // 2)] * batch_size
+        latent_height_for_shape = latent_height // 2
+        latent_width_for_shape = latent_width // 2
+        if latent_height_for_shape < 1 or latent_width_for_shape < 1:
+            raise ValueError(
+                f"Packed latent grid is degenerate. Latent tensor shape: {(batch_size, num_channels, latent_height, latent_width)} "
+                f"-> computed patch grid ({latent_height_for_shape}, {latent_width_for_shape})."
+            )
+        img_shapes = [(1, latent_height_for_shape, latent_width_for_shape)] * batch_size
 
         # Prepare timesteps (normalize to 0-1 range)
         raw_timesteps = prepared_batch["timesteps"]
@@ -551,12 +559,29 @@ class QwenImage(ImageModelFoundation):
             return_dict=False,
         )[0]
 
-        # Unpack the noise prediction back to original shape
-        noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
+        target_ndim = target_latents.dim()
 
-        # Remove the extra dimension that _unpack_latents adds
-        if noise_pred.dim() == 5:
-            noise_pred = noise_pred.squeeze(2)  # Remove the frame dimension
+        if noise_pred.dim() == 3:
+            # Older diffusers versions return packed latents; unpack them to spatial maps.
+            noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
+        elif noise_pred.dim() not in (4, 5):
+            raise ValueError(f"Unexpected noise prediction rank {noise_pred.dim()} with shape {tuple(noise_pred.shape)}")
+
+        # Align optional frame dimension with the training targets.
+        if target_ndim == 5 and noise_pred.dim() == 4:
+            noise_pred = noise_pred.unsqueeze(2)
+        elif target_ndim == 4 and noise_pred.dim() == 5:
+            if noise_pred.size(2) == 1:
+                noise_pred = noise_pred.squeeze(2)
+            else:
+                raise ValueError(
+                    f"Cannot squeeze transformer output with non-singular frame dimension: shape {tuple(noise_pred.shape)}"
+                )
+
+        if noise_pred.shape != target_latents.shape:
+            raise ValueError(
+                f"Noise prediction shape {tuple(noise_pred.shape)} does not match target latents shape {tuple(target_latents.shape)}"
+            )
 
         return {"model_prediction": noise_pred}
 
