@@ -368,11 +368,15 @@ except SystemExit as exc:
     send_event("state", state_event)
     raise
 except Exception as e:
-    logger.error(f"Function error: {{e}}")
-    import traceback
-    traceback_str = traceback.format_exc()
-    logger.error(traceback_str)
     error_message = str(e)
+    log_level = logging.ERROR
+    if "Training configuration could not be parsed" in error_message:
+        log_level = logging.INFO
+    logger.log(log_level, f"Function error: {{error_message}}")
+    import traceback
+    traceback_str = traceback.format_exc() if log_level == logging.ERROR else ""
+    if log_level == logging.ERROR:
+        logger.error(traceback_str)
     send_event("error", {{"message": error_message, "traceback": traceback_str}})
     send_event("state", {{"status": "failed", "message": error_message}})
 

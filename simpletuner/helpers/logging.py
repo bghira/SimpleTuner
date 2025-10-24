@@ -436,13 +436,19 @@ def get_logger(
     Retrieve a WebhookLogger with consistent configuration across the project.
     """
     logger = logging.getLogger(name)
+    propagate_value = propagate if propagate is not None else False
     if isinstance(logger, WebhookLogger):
         logger.configure(
             env_var=env_var,
             default_level=default_level,
             disable_webhook=disable_webhook,
-            propagate=propagate,
+            propagate=propagate_value,
         )
+    else:
+        if propagate_value is not None:
+            logger.propagate = propagate_value
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
     return logger  # type: ignore[return-value]
 
 
