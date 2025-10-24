@@ -1,3 +1,4 @@
+import functools
 import logging
 import math
 import os
@@ -81,6 +82,34 @@ class QwenImage(ImageModelFoundation):
         self.PIPELINE_CLASSES = pipeline_classes
         self._conditioning_image_embedder = None
         self._conditioning_processor = None
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        pipeline = super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
+        if pipeline is None:
+            return None
+
+        transformer = getattr(pipeline, "transformer", None)
+        if transformer is not None and not getattr(transformer, "_simpletuner_shape_patch", False):
+            original_forward = transformer.forward
+
+            @functools.wraps(original_forward)
+            def forward_with_sanitized_shapes(*args, img_shapes=None, **kwargs):
+                if isinstance(img_shapes, list) and img_shapes and isinstance(img_shapes[0], list):
+                    # diffusers >=0.35.2 wraps per-sample shapes in a nested list; the trainer only needs
+                    # the primary latent grid for rotary embeddings, so strip the extra nesting.
+                    sanitized = []
+                    for entry in img_shapes:
+                        if isinstance(entry, list) and entry:
+                            sanitized.append(entry[0])
+                        else:
+                            sanitized.append(entry)
+                    img_shapes = sanitized
+                return original_forward(*args, img_shapes=img_shapes, **kwargs)
+
+            transformer.forward = forward_with_sanitized_shapes
+            transformer._simpletuner_shape_patch = True
+
+        return pipeline
 
     def setup_training_noise_schedule(self):
         """
