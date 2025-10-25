@@ -39,6 +39,8 @@ class EventHandler {
 
         // Dynamic row limit tracking
         this.currentMaxEvents = 500;
+        this.historyLimit = 500;
+        this.eventBacklog = [];
         this.resizeObserver = null;
         this.severityFilter = 'all';
         this.includeLowerLevels = false;
@@ -131,20 +133,18 @@ class EventHandler {
     setupResizeObserver() {
         if (!this.eventList) return;
 
+        const eventDockBody = this.eventList.closest('.event-dock-body');
         // Create resize observer to monitor container size changes
         this.resizeObserver = new ResizeObserver((entries) => {
+            let shouldUpdate = false;
             for (const entry of entries) {
-                if (entry.target === this.eventList) {
-                    // Recalculate max events when container is resized
-                    const newMaxEvents = this.calculateDynamicMaxEvents();
-                    if (newMaxEvents !== this.currentMaxEvents) {
-                        this.currentMaxEvents = newMaxEvents;
-                        // If we have more events than the new limit, remove excess events
-                        while (this.eventList.children.length > newMaxEvents) {
-                            this.eventList.removeChild(this.eventList.lastChild);
-                        }
-                    }
+                if (entry.target === this.eventList || entry.target === eventDockBody) {
+                    shouldUpdate = true;
+                    break;
                 }
+            }
+            if (shouldUpdate) {
+                this.setDisplayLimit(this.calculateDynamicMaxEvents());
             }
         });
 
@@ -152,10 +152,12 @@ class EventHandler {
         this.resizeObserver.observe(this.eventList);
 
         // Also observe the event dock body to catch resize changes
-        const eventDockBody = this.eventList.closest('.event-dock-body');
         if (eventDockBody) {
             this.resizeObserver.observe(eventDockBody);
         }
+
+        // Initialize display limit based on current size
+        this.setDisplayLimit(this.calculateDynamicMaxEvents());
     }
 
     async checkServerHealth() {
@@ -321,8 +323,7 @@ class EventHandler {
     updateEventList(events) {
         if (!this.eventList) return;
 
-        // Calculate dynamic max events based on container height
-        const maxEvents = this.calculateDynamicMaxEvents();
+        this.getDisplayLimit();
 
         events.forEach(event => {
             // Parse structured data for specific event types
@@ -330,11 +331,6 @@ class EventHandler {
 
             // Skip events without messages (pure data events)
             if (!event.message && !this.shouldDisplayEvent(event)) return;
-
-            // Remove oldest event if we've reached the limit (rotation system)
-            if (this.eventList.children.length >= maxEvents) {
-                this.eventList.removeChild(this.eventList.lastChild);
-            }
 
             const eventItem = document.createElement('div');
             eventItem.className = 'event-item';
@@ -391,6 +387,7 @@ class EventHandler {
             // Handle special events
             this.handleSpecialEvents(event);
         });
+        this.reconcileEventDisplay();
         this.applyEventFilters();
 
         // Auto-scroll to latest only if user is near the top already
@@ -405,11 +402,11 @@ class EventHandler {
     }
 
     calculateDynamicMaxEvents() {
-        if (!this.eventList) return 500; // Fallback to original limit
+        if (!this.eventList) return this.historyLimit; // Fallback to history limit
 
         // Get the available height of the event list container
         const containerHeight = this.eventList.clientHeight;
-        if (containerHeight <= 0) return 500; // Fallback if container not visible
+        if (containerHeight <= 0) return this.historyLimit; // Fallback if container not visible
 
         // Calculate approximate event item height (including padding and margins)
         const eventItemHeight = 30; // Approximate height in pixels for each event item
@@ -423,6 +420,76 @@ class EventHandler {
         const dynamicMaxEvents = Math.max(3, Math.min(1000, calculatedMaxEvents));
 
         return dynamicMaxEvents;
+    }
+
+    getDisplayLimit() {
+        if (!Number.isFinite(this.currentMaxEvents) || this.currentMaxEvents <= 0) {
+            this.currentMaxEvents = Math.min(this.historyLimit, this.calculateDynamicMaxEvents());
+        }
+        return this.currentMaxEvents;
+    }
+
+    setDisplayLimit(limit) {
+        if (!Number.isFinite(limit)) {
+            limit = this.calculateDynamicMaxEvents();
+        }
+        const clamped = Math.max(3, Math.min(this.historyLimit, Math.round(limit)));
+        if (clamped === this.currentMaxEvents) {
+            return;
+        }
+        this.currentMaxEvents = clamped;
+        this.reconcileEventDisplay(true);
+    }
+
+    reconcileEventDisplay(applyFilters = false) {
+        if (!this.eventList) {
+            return;
+        }
+
+        while (this.eventList.children.length > this.currentMaxEvents) {
+            const node = this.eventList.lastChild;
+            if (!node) {
+                break;
+            }
+            this.eventBacklog.unshift(node);
+            this.eventList.removeChild(node);
+        }
+
+        this.trimEventHistory();
+
+        while (
+            this.eventList.children.length < this.currentMaxEvents &&
+            this.eventBacklog.length
+        ) {
+            const node = this.eventBacklog.shift();
+            if (!node) {
+                break;
+            }
+            this.eventList.appendChild(node);
+        }
+
+        if (applyFilters) {
+            this.applyEventFilters();
+        }
+    }
+
+    trimEventHistory() {
+        const visibleCount = this.eventList ? this.eventList.children.length : 0;
+        let total = visibleCount + this.eventBacklog.length;
+        if (total <= this.historyLimit) {
+            return;
+        }
+
+        let overflow = total - this.historyLimit;
+        while (overflow > 0 && this.eventBacklog.length) {
+            this.eventBacklog.pop();
+            overflow -= 1;
+        }
+
+        while (overflow > 0 && this.eventList && this.eventList.children.length) {
+            this.eventList.removeChild(this.eventList.lastChild);
+            overflow -= 1;
+        }
     }
 
     setupEventFilters() {
@@ -1264,6 +1331,7 @@ class EventHandler {
             clearTimeout(this.copyResetTimeout);
             this.copyResetTimeout = null;
         }
+        this.eventBacklog = [];
     }
 
     startHealthCheckPolling() {
