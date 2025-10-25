@@ -1,0 +1,24 @@
+[
+  {
+    "id": "dreambooth-512",
+    "type": "huggingface",
+    "dataset_name": "keras-dreambooth/minercraft",
+    "crop": false, "crop_style": "random", "crop_aspect": "square",
+    "minimum_image_size": 128,
+    "maximum_image_size": 512,
+    "target_downsample_size": 512,
+    "resolution": 512,
+    "resolution_type": "pixel",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "instanceprompt",
+    "instance_prompt": "The image represents the world of minecraft. In the image is a landscape from the game minecraft. The landscape is made of blocks called voxels, and the game is fun for all ages.",
+    "cache_dir_vae": "cache/vae/{model_family}/dreambooth-512"
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]
