@@ -3,8 +3,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Dict, List
 from types import ModuleType, SimpleNamespace
+from typing import Dict, List
 from unittest.mock import patch
 
 import tests.test_stubs  # noqa: F401
@@ -25,9 +25,7 @@ if "torch" not in sys.modules:
         device_count=lambda: 0,
         current_device=lambda: 0,
     )
-    torch_stub.backends = SimpleNamespace(  # type: ignore[attr-defined]
-        mps=SimpleNamespace(is_available=lambda: False)
-    )
+    torch_stub.backends = SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False))  # type: ignore[attr-defined]
     sys.modules["torch"] = torch_stub
     sys.modules["torch.distributed"] = dist_stub
     sys.modules["torch.nn"] = ModuleType("torch.nn")
@@ -62,6 +60,7 @@ if "fastapi" not in sys.modules:
     status_stub.HTTP_422_UNPROCESSABLE_CONTENT = 422  # type: ignore[attr-defined]
     status_stub.HTTP_500_INTERNAL_SERVER_ERROR = 500  # type: ignore[attr-defined]
     fastapi_stub.status = status_stub  # type: ignore[attr-defined]
+
     class _HTTPException(Exception):
         def __init__(self, status_code=400, detail=None):
             super().__init__(detail)
@@ -76,6 +75,7 @@ if "fastapi" not in sys.modules:
     sys.modules["fastapi"] = fastapi_stub
     sys.modules["fastapi.status"] = status_stub
     requests_stub = ModuleType("fastapi.requests")
+
     class _Request:
         def __init__(self, *args, **kwargs):
             self.state = SimpleNamespace()

@@ -52,3 +52,147 @@
     border-radius: var(--radius-sm);
     font-size: var(--typography-font-size-sm);
 }
+
+/* Dataloader configs list */
+.dataloader-configs {
+    border: 1px solid var(--panel-border, var(--border-subtle));
+    border-radius: var(--radius-md, var(--border-radius-md));
+    background: var(--panel-bg, #0d1018);
+    padding: var(--spacing-md, 0.75rem);
+    box-shadow: var(--shadow-panel, 0 16px 40px rgba(2, 6, 23, 0.35));
+}
+
+.dataloader-configs__toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm, 0.5rem);
+    border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.12));
+    border-radius: var(--radius-sm, var(--border-radius-sm));
+    background: var(--field-bg, rgba(15, 18, 26, 0.85));
+    color: var(--text-primary, #fff);
+    font-weight: var(--typography-font-weight-medium, 500);
+    box-shadow: var(--shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.2));
+}
+
+.dataloader-configs__toggle:hover,
+.dataloader-configs__toggle:focus {
+    border-color: var(--glass-border, rgba(255, 255, 255, 0.08));
+    background: var(--hover-bg, rgba(102, 126, 234, 0.15));
+    color: var(--text-primary, #fff);
+}
+
+.dataloader-configs__badge {
+    background: var(--info-bg, rgba(59, 130, 246, 0.15)) !important;
+    color: var(--info-text, #93bbfc);
+}
+
+.dataloader-configs__list {
+    margin-top: var(--spacing-sm, 0.5rem);
+    border: none;
+    background: transparent;
+}
+
+.dataloader-configs__list .list-group-item {
+    background: transparent !important;
+}
+
+.dataloader-configs__item {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md, 0.75rem);
+    background: var(--field-bg, #111624);
+    background-color: var(--field-bg, #111624) !important;
+    border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06)) !important;
+    border-radius: var(--radius-sm, var(--border-radius-sm));
+    padding: var(--spacing-md, 0.75rem) var(--spacing-lg, 1rem);
+    color: var(--text-primary, #fff);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    margin-bottom: var(--spacing-xs, 0.25rem);
+}
+
+.dataloader-configs__item:last-child {
+    margin-bottom: 0;
+}
+
+.dataloader-configs__item:hover {
+    border-color: var(--accent-purple, #a855f7) !important;
+    background: var(--card-bg-hover, rgba(255, 255, 255, 0.08));
+    box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.3));
+}
+
+.dataloader-configs__header {
+    width: 100%;
+    justify-content: space-between;
+    gap: var(--spacing-sm, 0.5rem);
+    flex-wrap: nowrap;
+}
+
+.dataloader-configs__title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs, 0.25rem);
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.dataloader-configs__icon {
+    color: var(--info, #3b82f6);
+    flex-shrink: 0;
+}
+
+.dataloader-configs__dataset-count {
+    background: var(--tab-model-bg, rgba(139, 92, 246, 0.1));
+    color: var(--tab-model-indicator, #8b5cf6);
+    font-size: var(--typography-font-size-xs, 0.75rem);
+    flex-shrink: 0;
+    align-self: flex-start;
+    margin-left: auto;
+    text-align: right;
+}
+
+.dataloader-configs__path {
+    color: var(--text-secondary, #94a3b8);
+    font-family: var(--typography-font-family-mono, ui-monospace);
+    font-size: var(--typography-font-size-xs, 0.75rem);
+    word-break: normal;
+    white-space: normal;
+    overflow-wrap: normal;
+}
+
+.dataloader-configs__name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.dataloader-configs__actions {
+    gap: var(--spacing-xs, 0.25rem);
+    align-self: flex-end;
+}
+
+.dataloader-configs__action-btn {
+    border-color: var(--border-soft, rgba(255, 255, 255, 0.12));
+    color: var(--text-secondary, #94a3b8);
+    border-radius: var(--radius-xs, var(--border-radius-sm));
+    background: transparent;
+    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.dataloader-configs__action-btn:hover,
+.dataloader-configs__action-btn:focus {
+    color: var(--text-primary, #fff);
+    background: var(--hover-bg, rgba(102, 126, 234, 0.1));
+    border-color: var(--glass-border, rgba(255, 255, 255, 0.08));
+}
+
+.dataloader-configs__action-btn.btn-outline-danger {
+    border-color: var(--error, #ef4444);
+    color: var(--error, #ef4444);
+}
+
+.dataloader-configs__action-btn.btn-outline-danger:hover,
+.dataloader-configs__action-btn.btn-outline-danger:focus {
+    background: var(--error-bg, rgba(239, 68, 68, 0.15));
+    color: var(--text-primary, #fff);
+}
