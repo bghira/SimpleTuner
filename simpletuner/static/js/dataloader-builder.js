@@ -269,6 +269,61 @@
                     dataset.crop_aspect_buckets = dataset.crop_aspect_buckets.split(',').map(v => parseFloat(v.trim()));
                 }
             }
+
+            // Normalise conditioning blocks
+            if (dataset.conditioning) {
+                let conditioningEntries = dataset.conditioning;
+                if (!Array.isArray(conditioningEntries)) {
+                    conditioningEntries = [conditioningEntries];
+                }
+
+                dataset.conditioning = conditioningEntries
+                    .map(entry => {
+                        if (!entry || typeof entry !== 'object') {
+                            return null;
+                        }
+
+                        const normalized = { ...entry };
+                        const entryType = normalized.type || normalized.conditioning_type || 'superresolution';
+
+                        if (!dataset.conditioning_type && typeof normalized.conditioning_type === 'string') {
+                            dataset.conditioning_type = normalized.conditioning_type;
+                        }
+
+                        let params = {};
+                        if (normalized.params && typeof normalized.params === 'object') {
+                            params = { ...normalized.params };
+                        }
+
+                        // Promote remaining keys into params so they are retained/editable
+                        Object.entries(normalized).forEach(([key, value]) => {
+                            if (['type', 'params', 'conditioning_type'].includes(key)) {
+                                return;
+                            }
+                            if (params[key] === undefined) {
+                                params[key] = value;
+                            }
+                        });
+
+                        // Ensure captions lists are preserved as multi-line strings for editing
+                        return {
+                            type: entryType,
+                            params
+                        };
+                    })
+                    .filter(Boolean);
+            }
+
+            if (Array.isArray(dataset.conditioning) && dataset.conditioning.length > 0) {
+                if (Array.isArray(dataset.conditioning_data) && dataset.conditioning_data.length > 0) {
+                    dataset.conditioning_data = [];
+                }
+            }
+
+            // Disable Hugging Face streaming option until backend support improves
+            if (dataset.streaming !== false) {
+                dataset.streaming = false;
+            }
         });
     }
 
@@ -440,6 +495,13 @@
             obj[parts[parts.length - 1]] = value;
         } else {
             this.datasets[index][field] = value;
+        }
+
+        if (field === 'conditioning_data' && value && value.length) {
+            if (Array.isArray(this.datasets[index].conditioning) && this.datasets[index].conditioning.length) {
+                this.datasets[index].conditioning = [];
+                this.showToast('Removed conditioning generators because linked datasets were selected.', 'info');
+            }
         }
 
         // Update dependencies
@@ -655,6 +717,11 @@
             this.datasets[datasetIndex].conditioning = [];
         }
 
+        if (this.datasets[datasetIndex].conditioning_data && this.datasets[datasetIndex].conditioning_data.length) {
+            this.datasets[datasetIndex].conditioning_data = [];
+            this.showToast('Cleared linked conditioning datasets; generators take precedence.', 'info');
+        }
+
         const newCond = {
             type: 'superresolution',
             params: this.getDefaultConditioningParams('superresolution')
@@ -727,7 +794,9 @@
         const generator = this.conditioningGenerators[type];
         if (!generator) return;
 
-        Object.entries(generator.params).forEach(([key, config]) => {
+        const definedParams = generator.params || {};
+
+        Object.entries(definedParams).forEach(([key, config]) => {
             const group = document.createElement('div');
             group.className = 'form-group';
 
@@ -767,6 +836,45 @@
                 else if (input.type === 'number') value = parseFloat(value);
 
                 this.datasets[datasetIndex].conditioning[condIndex].params[key] = value;
+                this.syncToJSON();
+            });
+
+            group.appendChild(input);
+            container.appendChild(group);
+        });
+
+        // Surface any additional parameters that weren't in the generator schema
+        Object.entries(params || {}).forEach(([key, value]) => {
+            if (definedParams[key] !== undefined) {
+                return;
+            }
+
+            const group = document.createElement('div');
+            group.className = 'form-group';
+
+            const label = document.createElement('label');
+            label.textContent = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            group.appendChild(label);
+
+            const input = document.createElement('textarea');
+            input.className = 'form-control';
+            const isArrayValue = Array.isArray(value);
+            input.rows = isArrayValue ? Math.min(6, value.length + 1) : 3;
+            input.value = isArrayValue ? value.join('\n') : value ?? '';
+
+            input.addEventListener('change', (e) => {
+                const text = e.target.value;
+                const lines = text.split('\n').map(line => line.trim()).filter(Boolean);
+                let nextValue;
+                if (isArrayValue) {
+                    nextValue = lines;
+                } else if (!Number.isNaN(Number(text)) && text.trim() !== '') {
+                    nextValue = Number(text);
+                } else {
+                    nextValue = text;
+                }
+
+                this.datasets[datasetIndex].conditioning[condIndex].params[key] = nextValue;
                 this.syncToJSON();
             });
 
