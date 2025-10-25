@@ -531,13 +531,40 @@ class ConfigsService:
         # Handle dataloader file
         if create_dataloader:
             payload_written = False
-            if example_info and example_info.dataloader_payload is not None:
+            if example_info:
+                source_path = getattr(example_info, "dataloader_path", None)
+                if source_path:
+                    try:
+                        source_path = Path(source_path)
+                    except Exception:
+                        source_path = None
+                if source_path and source_path.exists():
+                    dataloader_abs.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        if source_path.resolve(strict=False) != dataloader_abs.resolve(strict=False):
+                            shutil.copyfile(source_path, dataloader_abs)
+                        else:
+                            # If source and destination resolve the same, read/write to normalise perms
+                            with source_path.open("r", encoding="utf-8") as handle:
+                                data = handle.read()
+                            with dataloader_abs.open("w", encoding="utf-8") as handle:
+                                handle.write(data)
+                    except Exception as exc:
+                        raise ConfigServiceError(
+                            f"Failed to copy dataloader config from example: {exc}",
+                            status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        ) from exc
+                    else:
+                        payload_written = True
+
+            if not payload_written and example_info and example_info.dataloader_payload is not None:
                 dataloader_abs.parent.mkdir(parents=True, exist_ok=True)
                 with dataloader_abs.open("w", encoding="utf-8") as handle:
                     json.dump(example_info.dataloader_payload, handle, indent=2, sort_keys=True)
                     handle.write("\n")
                 payload_written = True
-            else:
+
+            if not payload_written:
                 example_dataloader_candidates = list(env_dir.glob("multidatabackend*.json"))
                 if example_dataloader_candidates:
                     selected = example_dataloader_candidates[0]
