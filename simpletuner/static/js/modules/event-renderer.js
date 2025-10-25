@@ -167,6 +167,12 @@
                 '</div>';
 
             eventItem.innerHTML = contentHTML;
+            if (typeof severity === 'string') {
+                eventItem.dataset.severity = severity.toLowerCase();
+            }
+            if (type) {
+                eventItem.dataset.messageType = String(type);
+            }
             return eventItem;
         }
 
