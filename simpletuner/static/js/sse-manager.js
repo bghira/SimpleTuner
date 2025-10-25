@@ -60,11 +60,11 @@
         /**
          * Notify all listeners for an event type
          */
-        function notifyListeners(eventType, data) {
+        function notifyListeners(eventType, data, rawEvent) {
             if (listeners[eventType]) {
                 listeners[eventType].forEach(function(callback) {
                     try {
-                        callback(data);
+                        callback(data, rawEvent);
                     } catch (error) {
                         console.error('Error in SSE listener:', error);
                     }
@@ -229,8 +229,16 @@
         }
 
         function handleCallbackEvent(category, payload) {
-            notifyListeners('callback:' + category, payload);
-            notifyListeners('callback', { category: category, payload: payload });
+            var data = payload;
+            var rawEvent = null;
+
+            if (payload && typeof payload === 'object' && Object.prototype.hasOwnProperty.call(payload, 'event')) {
+                rawEvent = payload.event;
+                data = Object.prototype.hasOwnProperty.call(payload, 'payload') ? payload.payload : payload.data;
+            }
+
+            notifyListeners('callback:' + category, data, rawEvent);
+            notifyListeners('callback', { category: category, payload: data, event: rawEvent });
 
             switch (category) {
                 case 'progress': {
@@ -300,6 +308,16 @@
                             payload: payload
                         });
                     }
+                    break;
+                }
+                case 'error': {
+                    var errorMessage = payload.message || payload.body || payload.headline || 'Training error occurred';
+                    handleMessage({
+                        type: 'error',
+                        message: errorMessage,
+                        level: 'danger',
+                        payload: payload
+                    });
                     break;
                 }
                 case 'debug':
@@ -425,8 +443,20 @@
                     }
                 };
 
-                eventSource.onerror = function(error) {
-                    console.error('SSE connection error:', error);
+                eventSource.onerror = function(errorEvent) {
+                    // Some backends emit custom "error" events with a JSON payload.
+                    if (errorEvent && errorEvent.data) {
+                        try {
+                            var parsed = JSON.parse(errorEvent.data);
+                            handleCallbackEvent('error', parsed);
+                        } catch (parseErr) {
+                            console.error('Failed to parse SSE error payload:', parseErr);
+                            handleCallbackEvent('error', { message: String(errorEvent.data || 'Unknown error') });
+                        }
+                        return;
+                    }
+
+                    console.error('SSE connection error:', errorEvent);
                     updateConnectionStatus('disconnected', 'Connection lost');
 
                     // EventSource will auto-reconnect, but we want custom retry logic
@@ -501,23 +531,29 @@
                 CALLBACK_EVENT_TYPES.forEach(function(category) {
                     var listener = function(event) {
                         lastHeartbeat = Date.now();
+                        var parsedData = null;
                         try {
-                            var data = JSON.parse(event.data);
-                            handleCallbackEvent(category, data);
+                            parsedData = JSON.parse(event.data);
                         } catch (error) {
                             console.error('Error parsing callback event:', error);
+                            parsedData = event.data;
+                        }
+                        try {
+                            handleCallbackEvent(category, { payload: parsedData, event: event });
+                        } catch (error) {
+                            console.error('Error handling callback event:', error);
                         }
                     };
                     callbackEventListeners[category] = listener;
                     eventSource.addEventListener('callback:' + category, listener);
                 });
 
-            } catch (error) {
-                console.error('Failed to create EventSource:', error);
-                updateConnectionStatus('disconnected', 'Failed to connect');
-                reconnect();
-            }
+        } catch (error) {
+            console.error('Failed to create EventSource:', error);
+            updateConnectionStatus('disconnected', 'Failed to connect');
+            reconnect();
         }
+    }
 
         /**
          * Handle incoming messages
