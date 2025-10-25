@@ -21,6 +21,8 @@ from simpletuner.simpletuner_sdk.server.routes.web import router as web_router
 from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_static_directory, get_template_directory
 from simpletuner.simpletuner_sdk.training_host import TrainingHost
 
+os.environ.setdefault("SIMPLETUNER_SERVER_ROOT_PID", str(os.getpid()))
+
 
 # Pydantic models for request/response
 class TrainerConfig(BaseModel):
