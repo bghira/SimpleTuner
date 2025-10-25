@@ -5355,6 +5355,22 @@ function trainerComponent() {
                  x-transition.opacity.duration.150ms>
                 {% set events_enabled = webui_defaults.event_stream_enabled if webui_defaults is defined and webui_defaults.event_stream_enabled is not none else True %}
                 {% set polling_interval = webui_defaults.event_polling_interval if webui_defaults is defined and webui_defaults.event_polling_interval else 5 %}
+                <div class="event-filter-controls" id="eventFilterControls">
+                    <div class="event-filter-field">
+                        <label for="eventSeverityFilter" class="event-filter-label">Severity</label>
+                        <select id="eventSeverityFilter" class="form-select form-select-sm">
+                            <option value="all" selected>All levels</option>
+                            <option value="error">Error</option>
+                            <option value="warning">Warning</option>
+                            <option value="info">Info</option>
+                            <option value="debug">Debug</option>
+                        </select>
+                    </div>
+                    <div class="event-filter-checkbox form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="eventIncludeLowerLevels">
+                        <label class="form-check-label" for="eventIncludeLowerLevels">Include lower log levels</label>
+                    </div>
+                </div>
                 <div id="eventList"
                      class="event-list">
                     <div class="text-muted">Loading events...</div>

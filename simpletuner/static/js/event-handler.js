@@ -40,6 +40,18 @@ class EventHandler {
         // Dynamic row limit tracking
         this.currentMaxEvents = 500;
         this.resizeObserver = null;
+        this.severityFilter = 'all';
+        this.includeLowerLevels = false;
+        this.severityRanks = {
+            debug: 0,
+            info: 1,
+            warning: 2,
+            error: 3
+        };
+        this.filterControls = {
+            select: null,
+            includeLower: null
+        };
 
         this.init();
     }
@@ -54,6 +66,7 @@ class EventHandler {
 
         // Set up resize observer for dynamic row calculation
         this.setupResizeObserver();
+        this.setupEventFilters();
 
         // Subscribe to SSE notifications once available
         this.subscribeToSSE();
@@ -354,6 +367,7 @@ class EventHandler {
 
             // Create structured content with enhanced data display
             const messageContent = this.formatEnhancedMessage(event);
+            const severity = this.getEventSeverity(event);
 
             eventItem.innerHTML = `
                 <div class="event-header">
@@ -362,6 +376,8 @@ class EventHandler {
                 </div>
                 <div class="event-message">${messageContent}</div>
             `;
+            eventItem.dataset.severity = severity;
+            eventItem.dataset.messageType = event.message_type || '';
 
             if (this.eventList.firstChild) {
                 this.eventList.insertBefore(eventItem, this.eventList.firstChild);
@@ -372,6 +388,7 @@ class EventHandler {
             // Handle special events
             this.handleSpecialEvents(event);
         });
+        this.applyEventFilters();
 
         // Auto-scroll to latest only if user is near the top already
         const nearTop = this.eventList.scrollTop <= 5;
@@ -403,6 +420,100 @@ class EventHandler {
         const dynamicMaxEvents = Math.max(3, Math.min(1000, calculatedMaxEvents));
 
         return dynamicMaxEvents;
+    }
+
+    setupEventFilters() {
+        this.filterControls.select = document.getElementById('eventSeverityFilter');
+        this.filterControls.includeLower = document.getElementById('eventIncludeLowerLevels');
+
+        if (this.filterControls.select) {
+            this.severityFilter = this.filterControls.select.value || 'all';
+            this.filterControls.select.addEventListener('change', () => {
+                this.severityFilter = this.filterControls.select.value || 'all';
+                this.applyEventFilters();
+            });
+        }
+
+        if (this.filterControls.includeLower) {
+            this.includeLowerLevels = this.filterControls.includeLower.checked;
+            this.filterControls.includeLower.addEventListener('change', () => {
+                this.includeLowerLevels = this.filterControls.includeLower.checked;
+                this.applyEventFilters();
+            });
+        }
+    }
+
+    getEventSeverity(event) {
+        const typeCandidates = [
+            event?.severity,
+            event?.level,
+            event?.log_level,
+            event?.message_type,
+            event?.type
+        ];
+
+        for (const candidate of typeCandidates) {
+            if (!candidate) continue;
+            const normalized = String(candidate).toLowerCase();
+            if (['fatal_error', 'fatal', 'critical', 'error', 'exception', 'exit'].includes(normalized)) {
+                return 'error';
+            }
+            if (['warn', 'warning'].includes(normalized)) {
+                return 'warning';
+            }
+            if (['debug', 'trace', 'verbose'].includes(normalized)) {
+                return 'debug';
+            }
+        }
+
+        return 'info';
+    }
+
+    matchesSeverityFilter(severity) {
+        if (!severity) {
+            severity = 'info';
+        }
+        if (!this.severityFilter || this.severityFilter === 'all') {
+            return true;
+        }
+
+        const filterRank = this.severityRanks[this.severityFilter];
+        if (filterRank == null) {
+            return true;
+        }
+
+        const severityRank = this.severityRanks[severity] ?? this.severityRanks.info;
+        if (this.includeLowerLevels) {
+            return severityRank <= filterRank;
+        }
+        return severityRank === filterRank;
+    }
+
+    applyEventFilters() {
+        if (!this.eventList) {
+            return;
+        }
+
+        const hasFilter = this.severityFilter && this.severityFilter !== 'all';
+        const items = Array.from(this.eventList.querySelectorAll('.event-item'));
+        if (!items.length) {
+            this.eventList.dataset.filtering = hasFilter ? 'true' : 'false';
+            this.eventList.dataset.filterEmpty = 'false';
+            return;
+        }
+
+        let visibleCount = 0;
+        for (const item of items) {
+            const severity = item.dataset.severity || 'info';
+            const shouldShow = !hasFilter || this.matchesSeverityFilter(severity);
+            item.hidden = !shouldShow;
+            if (shouldShow) {
+                visibleCount += 1;
+            }
+        }
+
+        this.eventList.dataset.filtering = hasFilter ? 'true' : 'false';
+        this.eventList.dataset.filterEmpty = hasFilter && visibleCount === 0 ? 'true' : 'false';
     }
 
     formatEventType(type) {
