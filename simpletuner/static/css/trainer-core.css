@@ -271,6 +271,52 @@
     backdrop-filter: blur(6px);
 }
 
+.event-filter-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-md, 0.75rem);
+    padding: 0.5rem var(--spacing-lg, 1rem) 0.35rem;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--event-list-bg);
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.event-filter-field {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.event-filter-label {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.event-filter-controls .form-select {
+    width: auto;
+    min-width: 7.5rem;
+    padding: 0.15rem 2rem 0.15rem 0.65rem;
+    background-color: var(--field-bg, rgba(255, 255, 255, 0.05));
+    border-color: var(--border-soft);
+    color: var(--text-primary);
+}
+
+.event-filter-checkbox .form-check-input {
+    cursor: pointer;
+}
+
+.event-filter-checkbox .form-check-label {
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
 .event-dock .event-list {
     flex: 1;
     overflow-y: auto;
@@ -278,6 +324,15 @@
     height: 100%;
     padding: var(--spacing-lg);
     background: var(--event-list-bg);
+}
+
+.event-dock .event-list[data-filter-empty="true"]::before {
+    content: 'No events match the selected filters.';
+    display: block;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    padding: 0.5rem 0 0.75rem;
 }
 
 /* Event dock responsive styles */
