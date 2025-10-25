@@ -1,5 +1,7 @@
 ## Qwen Image Quickstart
 
+> 🆕 Looking for the edit checkpoints? See the [Qwen Image Edit quickstart](./QWEN_EDIT.md) for paired-reference training instructions.
+
 In this example, we'll be training a LoRA for Qwen Image, a 20B parameter vision-language model. Due to its size, we'll need aggressive memory optimization techniques.
 
 A 24GB GPU is the absolute minimum, and even then you'll need extensive quantization and careful configuration. 40GB+ is strongly recommended for a smoother experience.

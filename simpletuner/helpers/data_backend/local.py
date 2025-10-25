@@ -204,6 +204,10 @@ class LocalDataBackend(BaseDataBackend):
         try:
             image = file_loader(filepath)
             return image
+        except FileNotFoundError:
+            log_level = logging.WARNING if should_log() else logging.DEBUG
+            logger.log(log_level, f"Image not found: {filepath}")
+            return None
         except Exception as e:
             logger.error(f"Encountered error opening image {filepath}: {e}", exc_info=True)
             if delete_problematic_images:
@@ -225,7 +229,8 @@ class LocalDataBackend(BaseDataBackend):
             try:
                 image_data = self.read_image(filepath, delete_problematic_images)
                 if image_data is None:
-                    logger.warning(f"Unable to load image '{filepath}', skipping.")
+                    log_level = logging.WARNING if should_log() else logging.DEBUG
+                    logger.log(log_level, f"Unable to load image '{filepath}', skipping.")
                     continue
                 output_images.append(image_data)
                 available_keys.append(filepath)
@@ -237,9 +242,13 @@ class LocalDataBackend(BaseDataBackend):
                     except Exception as del_e:
                         logger.error(f"Failed to delete problematic image {filepath}: {del_e}")
                 else:
-                    logger.warning(
-                        f"A problematic image {filepath} is detected, but we are not allowed to remove it, because --delete_problematic_images is not provided."
-                        f" Please correct this manually. Error: {e}"
+                    log_level = logging.WARNING if should_log() else logging.DEBUG
+                    logger.log(
+                        log_level,
+                        (
+                            f"A problematic image {filepath} is detected, but we are not allowed to remove it, because "
+                            f"--delete_problematic_images is not provided. Please correct this manually. Error: {e}"
+                        ),
                     )
         return available_keys, output_images
 

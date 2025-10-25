@@ -85,6 +85,26 @@ def _call_service(func, *args, **kwargs):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
+def _normalize_dataset(dataset: Any) -> Any:
+    if not isinstance(dataset, dict):
+        return dataset
+    clone = dict(dataset)
+    conditioning = clone.get("conditioning")
+    if isinstance(conditioning, dict):
+        clone["conditioning"] = [conditioning]
+    elif conditioning is None:
+        clone["conditioning"] = []
+    return clone
+
+
+def _normalize_conditioning_payload(payload: Any) -> Any:
+    if isinstance(payload, list):
+        return [_normalize_dataset(entry) for entry in payload]
+    if isinstance(payload, dict):
+        return _normalize_dataset(payload)
+    return payload
+
+
 @router.get("/")
 async def list_configs(config_type: str = "model") -> Dict[str, Any]:
     """List all available configurations."""
@@ -94,7 +114,8 @@ async def list_configs(config_type: str = "model") -> Dict[str, Any]:
 @router.get("/data-backend-file")
 async def get_data_backend_file(path: str) -> Any:
     """Get the contents of a data backend configuration file."""
-    return _call_service(CONFIGS_SERVICE.read_data_backend_file, path)
+    data = _call_service(CONFIGS_SERVICE.read_data_backend_file, path)
+    return _normalize_conditioning_payload(data)
 
 
 @router.get("/templates")
@@ -186,7 +207,8 @@ async def create_environment_dataloader(name: str, request: EnvironmentDataloade
 @router.get("/dataloader/content")
 async def get_dataloader_content(path: str) -> Any:
     """Get the JSON contents of a dataloader configuration file."""
-    return _call_service(CONFIGS_SERVICE.read_data_backend_file, path)
+    data = _call_service(CONFIGS_SERVICE.read_data_backend_file, path)
+    return _normalize_conditioning_payload(data)
 
 
 @router.delete("/dataloader")

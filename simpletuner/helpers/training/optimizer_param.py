@@ -1,11 +1,11 @@
+import logging
 import os
 from functools import lru_cache
 
 import accelerate
 import torch
-from accelerate.logging import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
 
 if should_log():
@@ -52,7 +52,12 @@ try:
     is_bitsandbytes_available = True
 except:
     if torch.cuda.is_available():
-        print("Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable.")
+        # Avoid requiring Accelerate logging state during import
+        level = logging.WARNING if should_log() else logging.DEBUG
+        logging.getLogger(__name__).log(
+            level,
+            "Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable.",
+        )
 
 # Some optimizers are not available in multibackend bitsandbytes as of January 2025.
 is_ademamix_available = False
@@ -67,7 +72,11 @@ try:
     is_prodigy_available = True
 except:
     if torch.cuda.is_available():
-        print("Could not load prodigyplus library. Prodigy will not be available.")
+        log_level = logging.WARNING if should_log() else logging.DEBUG
+        logger.log(
+            log_level,
+            "Could not load prodigyplus library. Prodigy will not be available.",
+        )
 
 
 optimizer_choices = {

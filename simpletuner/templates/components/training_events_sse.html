@@ -144,7 +144,8 @@
             activeJobId = null;
         }
 
-        if (!['starting', 'running', 'initializing'].includes(normalized)) {
+        const shouldPreserveStartup = normalized === 'disconnected';
+        if (!['starting', 'running', 'initializing'].includes(normalized) && !shouldPreserveStartup) {
             clearStartupProgress();
         }
 
@@ -716,6 +717,127 @@
         }
     }
 
+    function normalizeAlertString(value) {
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            return trimmed && trimmed !== '[object Object]' ? trimmed : '';
+        }
+        if (value && typeof value === 'object') {
+            if (typeof value.message === 'string') {
+                const msg = value.message.trim();
+                if (msg) return msg;
+            }
+            if (typeof value.detail === 'string') {
+                const detail = value.detail.trim();
+                if (detail) return detail;
+            }
+        }
+        return '';
+    }
+
+    function extractMessageList(payload) {
+        const collections = [
+            payload?.errors,
+            payload?.messages,
+            payload?.details,
+            payload?.issues,
+            payload?.data?.errors,
+            payload?.data?.messages
+        ];
+        const results = [];
+        collections.forEach((collection) => {
+            if (Array.isArray(collection)) {
+                collection.forEach((item) => {
+                    const text = normalizeAlertString(item);
+                    if (text) {
+                        results.push(text);
+                    }
+                });
+            }
+        });
+        return Array.from(new Set(results));
+    }
+
+    function extractPrimaryMessage(payload) {
+        const candidates = [
+            payload?.message,
+            payload?.detail,
+            payload?.error,
+            payload?.reason,
+            payload?.title,
+            payload?.body,
+            payload?.data?.message,
+            payload?.data?.detail,
+            payload?.data?.error
+        ];
+        for (const candidate of candidates) {
+            const text = normalizeAlertString(candidate);
+            if (text) {
+                return text;
+            }
+        }
+        const list = extractMessageList(payload);
+        return list.length ? list[0] : '';
+    }
+
+    function showTrainingStatusAlert(options = {}) {
+        const container = document.getElementById('training-status');
+        if (!container) {
+            return;
+        }
+
+        const level = mapSeverityToBootstrap(options.severity || 'danger');
+        const iconMap = {
+            success: 'fas fa-check-circle',
+            danger: 'fas fa-exclamation-triangle',
+            warning: 'fas fa-exclamation-circle',
+            info: 'fas fa-info-circle',
+            secondary: 'fas fa-info-circle'
+        };
+        const icon = iconMap[level] || 'fas fa-info-circle';
+        const title = options.title || (level === 'danger' ? 'Training Error' : 'Training Update');
+        const message = normalizeAlertString(options.message);
+        const items = Array.isArray(options.items)
+            ? options.items.map(normalizeAlertString).filter(Boolean)
+            : [];
+
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${level}`;
+        alert.dataset.sseTrainingAlert = 'true';
+
+        const heading = document.createElement('h6');
+        heading.innerHTML = `<i class="${icon}"></i> ${title}`;
+        alert.appendChild(heading);
+
+        if (message) {
+            const paragraph = document.createElement('p');
+            paragraph.className = items.length ? 'mb-2' : 'mb-0';
+            paragraph.textContent = message;
+            alert.appendChild(paragraph);
+        }
+
+        if (items.length) {
+            const list = document.createElement('ul');
+            list.className = options.jobId ? 'mb-2' : 'mb-0';
+            items.forEach((item) => {
+                const li = document.createElement('li');
+                li.textContent = item;
+                list.appendChild(li);
+            });
+            alert.appendChild(list);
+        }
+
+        if (options.jobId) {
+            const meta = document.createElement('p');
+            meta.className = `text-muted small mb-0${message || items.length ? ' mt-1' : ''}`;
+            meta.textContent = `Job ID: ${options.jobId}`;
+            alert.appendChild(meta);
+        }
+
+        container.innerHTML = '';
+        container.appendChild(alert);
+    }
+
     function syncTrainerProgress(progress, jobId, options) {
         const opts = options || {};
         const revealCard = opts.revealCard !== false;
@@ -896,8 +1018,8 @@
 
     function handleCallbackEvent(category, payload) {
         const jobId = payload.job_id || payload.raw?.job_id || activeJobId;
-        const messageType = (payload.message_type || '').toLowerCase();
-        const normalizedMessageType = messageType.replace(/\./g, '_');
+        const rawMessageType = String(payload.type || payload.message_type || '').toLowerCase();
+        const normalizedMessageType = rawMessageType.replace(/\./g, '_');
         const store = getTrainerStore();
 
         if (payload && payload.reset) {
@@ -935,6 +1057,13 @@
                 if (toastLevel === 'danger') {
                     setStatus('Error', payload.severity);
                     setTrainingState('error', { job_id: jobId });
+                    showTrainingStatusAlert({
+                        severity: 'danger',
+                        title: payload.title || 'Training Error',
+                        message: extractPrimaryMessage(payload) || 'Training service reported an error.',
+                        items: extractMessageList(payload),
+                        jobId
+                    });
                 }
                 break;
             }
@@ -943,7 +1072,11 @@
                 if (normalizedMessageType === 'configure_webhook') {
                     setStatus('Starting', payload.severity);
                     setTrainingState('starting', { job_id: jobId });
-                } else if (normalizedMessageType === 'training.status' || normalizedMessageType === '_train_initial_msg' || normalizedMessageType === 'train_status') {
+                } else if (
+                    normalizedMessageType === 'training_status' ||
+                    normalizedMessageType === '_train_initial_msg' ||
+                    normalizedMessageType === 'train_status'
+                ) {
                     const derivedStatus = (payload.status || payload.data?.status || (normalizedMessageType === '_train_initial_msg' ? 'starting' : '')).toLowerCase();
                     const normalizedProgress = normalizeProgressPayload(payload);
 
@@ -972,12 +1105,17 @@
                     } else if (['training_failed', 'failed', 'error'].includes(derivedStatus)) {
                         setStatus('Failed', 'danger');
                         resetTrainingProgressUI('failed', jobId);
-                        const trainingStatusEl = document.getElementById('training-status');
-                        if (trainingStatusEl) {
-                            trainingStatusEl.innerHTML = '';
-                        }
-                        if (payload.message && window.showToast) {
-                            window.showToast(`Training failed: ${payload.message}`, 'error');
+                        const errorMessage = extractPrimaryMessage(payload) || 'Training failed. Check the event log for more details.';
+                        const errorDetails = extractMessageList(payload);
+                        showTrainingStatusAlert({
+                            severity: 'danger',
+                            title: payload.title || 'Training Error',
+                            message: errorMessage,
+                            items: errorDetails,
+                            jobId
+                        });
+                        if (errorMessage && window.showToast) {
+                            window.showToast(`Training failed: ${errorMessage}`, 'error');
                         }
                     } else if (['cancelled', 'stopped', 'completed', 'complete'].includes(derivedStatus)) {
                         const displayStatus = derivedStatus === 'completed' || derivedStatus === 'complete' ? 'Completed' : 'Stopped';
@@ -1028,6 +1166,23 @@
         }
     }
 
+    if (!window.__simpletunerTestCallbackHook) {
+        window.__simpletunerTestCallbackHook = true;
+        window.addEventListener('simpletuner:test:callback', function(event) {
+            if (!event || !event.detail) {
+                return;
+            }
+            const detail = event.detail || {};
+            const category = detail.category || 'status';
+            const payload = detail.payload || {};
+            try {
+                handleCallbackEvent(category, payload);
+            } catch (err) {
+                console.error('[SSE-DEBUG] test callback dispatch failed:', err);
+            }
+        });
+    }
+
     function trackListener(eventType, callback) {
         registeredListeners.push({ eventType: eventType, callback: callback });
         window.sseManager.addEventListener(eventType, callback);
@@ -1061,10 +1216,15 @@
                 setStatus('Reconnecting', 'warning');
             } else if (info.status === 'disconnected') {
                 setStatus('Disconnected', 'secondary');
+                setTrainingState('disconnected', {
+                    job_id: activeJobId,
+                    message: info.message || 'Event stream disconnected',
+                    source: 'sse-manager'
+                });
                 // Only clear lifecycle stages if this is a permanent disconnect (max retries reached)
                 // Don't clear on temporary network issues that will auto-reconnect
                 if (info.message && info.message.includes('Maximum retries')) {
-                    clearStartupProgress();
+                    resetTrainingProgressUI('disconnected', activeJobId);
                 }
             }
         };
@@ -1127,18 +1287,41 @@
         var errorHandler = function(data) {
             setStatus('Error', 'danger');
             setTrainingState('error', { job_id: activeJobId });
+            const errorMessage = extractPrimaryMessage(data) || 'Training service reported an error.';
+            const errorDetails = extractMessageList(data);
+            showTrainingStatusAlert({
+                severity: 'danger',
+                title: data?.title || 'Training Error',
+                message: errorMessage,
+                items: errorDetails,
+                jobId: data?.job_id || activeJobId
+            });
         };
         trackListener('error', errorHandler);
 
         CALLBACK_EVENT_TYPES.forEach(function(category) {
-            var callbackHandler = function(payload) {
-                handleCallbackEvent(category, payload);
+            var callbackHandler = function(payload, rawEvent) {
+                if (!payload && rawEvent && rawEvent.data) {
+                    try {
+                        payload = JSON.parse(rawEvent.data);
+                    } catch (error) {
+                        console.error('[SSE] Failed to parse callback payload', error);
+                        payload = { message: rawEvent.data };
+                    }
+                } else if (typeof payload === 'string') {
+                    try {
+                        payload = JSON.parse(payload);
+                    } catch (error) {
+                        payload = { message: payload };
+                    }
+                }
+                handleCallbackEvent(category, payload || {});
             };
             trackListener('callback:' + category, callbackHandler);
         });
 
-        managerRegistered = true;
-        return true;
+    managerRegistered = true;
+    return true;
     }
 
     function connectFallbackSSE() {

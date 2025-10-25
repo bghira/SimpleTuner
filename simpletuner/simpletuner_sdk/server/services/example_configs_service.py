@@ -6,7 +6,7 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root, resolve_config_path
 
@@ -174,14 +174,10 @@ class ExampleConfigsService:
         dataloader_path: Optional[Path] = None
         dataloader_payload: Optional[Any] = None
         if dataloader_value:
-            try:
-                resolved = resolve_config_path(dataloader_value, check_cwd_first=False)
-            except Exception:
-                resolved = None
-            if resolved and resolved.exists():
-                dataloader_path = resolved
+            dataloader_path = self._resolve_dataloader_path(dataloader_value, config_path)
+            if dataloader_path and dataloader_path.exists():
                 try:
-                    with resolved.open("r", encoding="utf-8") as handle:
+                    with dataloader_path.open("r", encoding="utf-8") as handle:
                         dataloader_payload = json.load(handle)
                 except Exception:
                     dataloader_payload = None
@@ -194,6 +190,68 @@ class ExampleConfigsService:
             dataloader_path=dataloader_path,
             dataloader_payload=dataloader_payload,
         )
+
+    def _resolve_dataloader_path(self, dataloader_value: Any, config_path: Path) -> Optional[Path]:
+        if not isinstance(dataloader_value, str) or not dataloader_value.strip():
+            return None
+
+        try:
+            resolved = resolve_config_path(dataloader_value, check_cwd_first=False)
+        except Exception:
+            resolved = None
+
+        candidates: List[Path] = []
+        if resolved:
+            candidates.append(resolved)
+
+        value_path = Path(dataloader_value.strip())
+
+        if not value_path.is_absolute():
+            candidates.append(config_path.parent / value_path)
+
+        if value_path.name:
+            candidates.append(config_path.parent / value_path.name)
+
+        examples_root = self._examples_root()
+        parts = [part for part in value_path.parts if part not in (".", "")]
+        if parts:
+            candidates.append(examples_root / Path(*parts))
+
+            trimmed_parts = parts[:]
+            while trimmed_parts and trimmed_parts[0].lower() in {"config", "configs"}:
+                trimmed_parts = trimmed_parts[1:]
+                if trimmed_parts:
+                    candidates.append(examples_root / Path(*trimmed_parts))
+
+            if trimmed_parts and trimmed_parts[0].lower() == "examples":
+                trimmed_parts = trimmed_parts[1:]
+                if trimmed_parts:
+                    candidates.append(examples_root / Path(*trimmed_parts))
+
+        if value_path.name:
+            candidates.append(examples_root / value_path.name)
+
+        seen: Set[str] = set()
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                resolved_candidate = candidate.resolve(strict=False)
+            except Exception:
+                resolved_candidate = candidate
+
+            key = resolved_candidate.as_posix().lower()
+            if key in seen:
+                continue
+            seen.add(key)
+
+            try:
+                if resolved_candidate.exists():
+                    return resolved_candidate
+            except Exception:
+                continue
+
+        return None
 
     @staticmethod
     def _extract_defaults(config: Dict[str, Any]) -> Dict[str, Any]:

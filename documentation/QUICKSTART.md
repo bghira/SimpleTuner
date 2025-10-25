@@ -25,6 +25,7 @@ For the complete and most accurate feature matrix, please see the [main README.m
 | [LTX Video](/documentation/quickstart/LTXVIDEO.md)| ~2.5 B      |  ✓   |  ✓   |     ✓     | optional (int8,  fp8)       | bf16            | ✓                    | ✓               |           |
 | [Wan 2.x](/documentation/quickstart/WAN.md)      | 1.3B-14B   |  ✓   |  ✓   |     ✓*    | optional (int8)           | bf16            | ✓                    | ✓               |           |
 | [Qwen Image](/documentation/quickstart/QWEN_IMAGE.md) | 20B |  ✓   |  ✓   |     ✓*    | required (int8, nf4)      | bf16            | ✓ (required)         | ✓               |           |
+| [Qwen Image Edit](/documentation/quickstart/QWEN_EDIT.md) | 20B |  ✓   |  ✓   |     ✓*    | required (int8, nf4)      | bf16            | ✓ (required)         | ✓               |           |
 
 **Note:** The above table provides a simplified overview. For the complete and most accurate feature matrix with detailed specifications, please see the [main README.md](../README.md#model-architecture-support).
 

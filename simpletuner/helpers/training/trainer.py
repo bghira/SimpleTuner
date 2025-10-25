@@ -125,6 +125,7 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 from diffusers.utils import check_min_version, convert_state_dict_to_diffusers
+from diffusers.utils import logging as diffusers_logging
 from diffusers.utils.import_utils import is_xformers_available
 from peft.utils import get_peft_model_state_dict
 from tqdm.auto import tqdm
@@ -157,8 +158,8 @@ logging.basicConfig(
 )
 if hasattr(transformers.utils, "logging"):
     transformers.utils.logging.set_verbosity_warning()
-if hasattr(diffusers.utils, "logging"):
-    diffusers.utils.logging.set_verbosity_warning()
+if hasattr(diffusers_logging, "set_verbosity_warning"):
+    diffusers_logging.set_verbosity_warning()
 
 
 class Trainer:

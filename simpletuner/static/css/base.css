@@ -116,6 +116,29 @@ button {
     margin-top: 1.5rem !important;
 }
 
+/* Modal layout adjustments */
+.modal-backdrop {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+}
+
+.modal-dialog {
+    flex: 0 1 auto;
+    width: min(720px, 95vw);
+    max-height: calc(100vh - 3rem);
+    overflow-y: auto;
+    margin: 0;
+}
+
+@media (max-width: 768px) {
+    .modal-dialog {
+        width: 100%;
+        max-height: calc(100vh - 2rem);
+    }
+}
+
 /* Responsive utilities */
 @media (max-width: 768px) {
     .container {

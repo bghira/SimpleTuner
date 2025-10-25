@@ -10,6 +10,7 @@
 <link href="/static/css/trainer.css" rel="stylesheet">
 <link href="/static/css/dataloader-builder.css" rel="stylesheet">
 <link href="/static/css/trainer-core.css" rel="stylesheet">
+<link href="/static/css/environments.css" rel="stylesheet">
 <link href="/static/css/tab-navigation.css" rel="stylesheet">
 <!-- HTMX loading states -->
 <link href="/static/css/htmx-loading-states.css" rel="stylesheet">
@@ -1079,15 +1080,8 @@ function trainerComponent() {
                 dataset.dataset_type = 'image';
             }
 
-            if (dataset.dataset_type === 'image' || dataset.dataset_type === 'video') {
-                dataset.conditioning_data = this.normalizeConditioningData(dataset.conditioning_data);
-                dataset.conditioning = this.normalizeConditioningGenerators(dataset.conditioning, dataset.id);
-            } else {
-                dataset.conditioning_data = this.normalizeConditioningData(dataset.conditioning_data);
-                dataset.conditioning = Array.isArray(dataset.conditioning)
-                    ? dataset.conditioning.map((entry, entryIndex) => this.normalizeConditioningEntry(entry, dataset.id, entryIndex))
-                    : [];
-            }
+            dataset.conditioning_data = this.normalizeConditioningData(dataset.conditioning_data);
+            dataset.conditioning = this.normalizeConditioningGenerators(dataset.conditioning, dataset.id);
 
             if (dataset.dataset_type === 'video') {
                 dataset.video = this.normalizeVideoOptions(dataset.video);
@@ -1236,7 +1230,7 @@ function trainerComponent() {
             dataset.revision = this._coerceString(dataset.revision);
             dataset.image_column = this._coerceString(dataset.image_column);
             dataset.caption_column = this._coerceString(dataset.caption_column);
-            dataset.streaming = this.normalizeBoolean(dataset.streaming);
+            dataset.streaming = false;
             dataset.auth_token = this._coerceString(dataset.auth_token);
 
             if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {
@@ -1399,6 +1393,8 @@ function trainerComponent() {
             let generators = [];
             if (Array.isArray(value)) {
                 generators = value;
+            } else if (value && typeof value === 'object') {
+                generators = [value];
             } else if (typeof value === 'string') {
                 try {
                     const parsed = JSON.parse(value);
@@ -1962,11 +1958,7 @@ function trainerComponent() {
                     assignHf('image_column');
                     assignHf('caption_column');
 
-                    if (this.normalizeBoolean(dataset.streaming)) {
-                        cleaned.streaming = true;
-                    } else {
-                        delete cleaned.streaming;
-                    }
+                    delete cleaned.streaming;
 
                     const authToken = this._coerceString(dataset.auth_token);
                     if (authToken) {
@@ -2092,6 +2084,10 @@ function trainerComponent() {
         addConditioningGenerator(dataset) {
             if (!dataset) {
                 return;
+            }
+            if (Array.isArray(dataset.conditioning_data) && dataset.conditioning_data.length > 0) {
+                dataset.conditioning_data = [];
+                window.showToast('Cleared linked conditioning datasets; generators take precedence.', 'info');
             }
             if (!Array.isArray(dataset.conditioning)) {
                 dataset.conditioning = [];
@@ -2489,6 +2485,16 @@ function trainerComponent() {
                     this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
                     this.hasUnsavedChanges = false;
                     this.datasetValidationErrors = {};
+                    if (Alpine.store('trainer')) {
+                        Alpine.store('trainer').datasets = this.datasets;
+                        Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
+                    }
+                    if (window.dataloaderSectionComponentInstance &&
+                        typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
+                        window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll();
+                    } else {
+                        window.__pendingGeneratorSync = true;
+                    }
                 }
 
                  // Load blueprints for presets
@@ -2539,8 +2545,14 @@ function trainerComponent() {
 
                         this.hasUnsavedChanges = false;
                         this.datasetValidationErrors = {};
+                        if (window.dataloaderSectionComponentInstance &&
+                            typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
+                            window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll();
+                        } else {
+                            window.__pendingGeneratorSync = true;
+                        }
                         window.showToast('Dataset configuration loaded from environment', 'success');
-                     } else {
+                    } else {
                          throw new Error('Invalid dataset configuration format - expected an array');
                      }
                  } else {
@@ -5343,6 +5355,31 @@ function trainerComponent() {
                  x-transition.opacity.duration.150ms>
                 {% set events_enabled = webui_defaults.event_stream_enabled if webui_defaults is defined and webui_defaults.event_stream_enabled is not none else True %}
                 {% set polling_interval = webui_defaults.event_polling_interval if webui_defaults is defined and webui_defaults.event_polling_interval else 5 %}
+                <div class="event-filter-controls" id="eventFilterControls">
+                    <div class="event-filter-field">
+                        <label for="eventSeverityFilter" class="event-filter-label">Severity</label>
+                        <select id="eventSeverityFilter" class="form-select form-select-sm">
+                            <option value="all" selected>All levels</option>
+                            <option value="error">Error</option>
+                            <option value="warning">Warning</option>
+                            <option value="info">Info</option>
+                            <option value="debug">Debug</option>
+                        </select>
+                    </div>
+                    <div class="event-filter-actions">
+                        <button type="button"
+                                id="copyEventLogsBtn"
+                                class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                                title="Copy filtered events to clipboard">
+                            <i class="fas fa-copy"></i>
+                            <span class="copy-button-label">Copy</span>
+                        </button>
+                    </div>
+                    <div class="event-filter-checkbox form-check mb-0">
+                        <input class="form-check-input" type="checkbox" id="eventIncludeLowerLevels">
+                        <label class="form-check-label" for="eventIncludeLowerLevels">Include lower log levels</label>
+                    </div>
+                </div>
                 <div id="eventList"
                      class="event-list">
                     <div class="text-muted">Loading events...</div>

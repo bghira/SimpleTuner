@@ -1,6 +1,7 @@
 """Lightweight compatibility stubs used across unit tests."""
 
 import importlib.machinery
+import logging
 import sys
 import types
 
@@ -56,6 +57,20 @@ def install_diffusers_stub():
     config_utils.register_to_config = _register_to_config
 
     utils_module = _ensure_module("diffusers.utils")
+    utils_module.logging = logging  # type: ignore[attr-defined]
+
+    def _replace_example_docstring(*args, **kwargs):  # type: ignore[unused-argument]
+        def decorator(fn):
+            return fn
+
+        return decorator
+
+    utils_module.replace_example_docstring = _replace_example_docstring  # type: ignore[attr-defined]
+    utils_module.scale_lora_layers = lambda *args, **kwargs: None  # type: ignore[attr-defined]
+    utils_module.unscale_lora_layers = lambda *args, **kwargs: None  # type: ignore[attr-defined]
+
+    torch_utils_module = _ensure_module("diffusers.utils.torch_utils")
+    torch_utils_module.randn_tensor = lambda *args, **kwargs: None  # type: ignore[attr-defined]
     utils_module.export_to_gif = lambda *args, **kwargs: None
     utils_module.USE_PEFT_BACKEND = False
     utils_module.BaseOutput = dict

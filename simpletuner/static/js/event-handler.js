@@ -22,6 +22,7 @@ class EventHandler {
         this.websocketReconnectTimeout = null;
         this.isActive = false;
         this.sseRegistered = false;
+        this.stateSyncInFlight = null;
 
         // WebSocket support
         this.websocket = null;
@@ -39,7 +40,23 @@ class EventHandler {
 
         // Dynamic row limit tracking
         this.currentMaxEvents = 500;
+        this.historyLimit = 500;
+        this.eventBacklog = [];
         this.resizeObserver = null;
+        this.severityFilter = 'all';
+        this.includeLowerLevels = false;
+        this.severityRanks = {
+            debug: 0,
+            info: 1,
+            warning: 2,
+            error: 3
+        };
+        this.filterControls = {
+            select: null,
+            includeLower: null
+        };
+        this.copyButton = null;
+        this.copyResetTimeout = null;
 
         this.init();
     }
@@ -54,6 +71,8 @@ class EventHandler {
 
         // Set up resize observer for dynamic row calculation
         this.setupResizeObserver();
+        this.setupEventFilters();
+        this.setupCopyButton();
 
         // Subscribe to SSE notifications once available
         this.subscribeToSSE();
@@ -115,20 +134,18 @@ class EventHandler {
     setupResizeObserver() {
         if (!this.eventList) return;
 
+        const eventDockBody = this.eventList.closest('.event-dock-body');
         // Create resize observer to monitor container size changes
         this.resizeObserver = new ResizeObserver((entries) => {
+            let shouldUpdate = false;
             for (const entry of entries) {
-                if (entry.target === this.eventList) {
-                    // Recalculate max events when container is resized
-                    const newMaxEvents = this.calculateDynamicMaxEvents();
-                    if (newMaxEvents !== this.currentMaxEvents) {
-                        this.currentMaxEvents = newMaxEvents;
-                        // If we have more events than the new limit, remove excess events
-                        while (this.eventList.children.length > newMaxEvents) {
-                            this.eventList.removeChild(this.eventList.lastChild);
-                        }
-                    }
+                if (entry.target === this.eventList || entry.target === eventDockBody) {
+                    shouldUpdate = true;
+                    break;
                 }
+            }
+            if (shouldUpdate) {
+                this.setDisplayLimit(this.calculateDynamicMaxEvents());
             }
         });
 
@@ -136,10 +153,12 @@ class EventHandler {
         this.resizeObserver.observe(this.eventList);
 
         // Also observe the event dock body to catch resize changes
-        const eventDockBody = this.eventList.closest('.event-dock-body');
         if (eventDockBody) {
             this.resizeObserver.observe(eventDockBody);
         }
+
+        // Initialize display limit based on current size
+        this.setDisplayLimit(this.calculateDynamicMaxEvents());
     }
 
     async checkServerHealth() {
@@ -253,7 +272,6 @@ class EventHandler {
                 'Reconnecting...' :
                 `Reconnecting (attempt ${this.reconnectAttempts})...`;
             this.setConnectionStatus(false, reconnectMsg, false);
-
             // Implement smart reconnection strategy
             this.reconnectAttempts++;
             if (this.reconnectAttempts <= this.maxReconnectAttempts) {
@@ -293,6 +311,7 @@ class EventHandler {
                         this.fetchBroadcastEvents();
                     }
                 }, 10000); // Try again after 10 seconds
+                this.notifyTrainingState('disconnected', { job_id: this.lastKnownJobId, reason: 'callback-max-retries' }, { force: true });
             }
         } finally {
             this.isFetching = false;
@@ -305,8 +324,7 @@ class EventHandler {
     updateEventList(events) {
         if (!this.eventList) return;
 
-        // Calculate dynamic max events based on container height
-        const maxEvents = this.calculateDynamicMaxEvents();
+        this.getDisplayLimit();
 
         events.forEach(event => {
             // Parse structured data for specific event types
@@ -314,11 +332,6 @@ class EventHandler {
 
             // Skip events without messages (pure data events)
             if (!event.message && !this.shouldDisplayEvent(event)) return;
-
-            // Remove oldest event if we've reached the limit (rotation system)
-            if (this.eventList.children.length >= maxEvents) {
-                this.eventList.removeChild(this.eventList.lastChild);
-            }
 
             const eventItem = document.createElement('div');
             eventItem.className = 'event-item';
@@ -354,6 +367,7 @@ class EventHandler {
 
             // Create structured content with enhanced data display
             const messageContent = this.formatEnhancedMessage(event);
+            const severity = this.getEventSeverity(event);
 
             eventItem.innerHTML = `
                 <div class="event-header">
@@ -362,6 +376,8 @@ class EventHandler {
                 </div>
                 <div class="event-message">${messageContent}</div>
             `;
+            eventItem.dataset.severity = severity;
+            eventItem.dataset.messageType = event.message_type || '';
 
             if (this.eventList.firstChild) {
                 this.eventList.insertBefore(eventItem, this.eventList.firstChild);
@@ -372,6 +388,8 @@ class EventHandler {
             // Handle special events
             this.handleSpecialEvents(event);
         });
+        this.reconcileEventDisplay();
+        this.applyEventFilters();
 
         // Auto-scroll to latest only if user is near the top already
         const nearTop = this.eventList.scrollTop <= 5;
@@ -385,11 +403,11 @@ class EventHandler {
     }
 
     calculateDynamicMaxEvents() {
-        if (!this.eventList) return 500; // Fallback to original limit
+        if (!this.eventList) return this.historyLimit; // Fallback to history limit
 
         // Get the available height of the event list container
         const containerHeight = this.eventList.clientHeight;
-        if (containerHeight <= 0) return 500; // Fallback if container not visible
+        if (containerHeight <= 0) return this.historyLimit; // Fallback if container not visible
 
         // Calculate approximate event item height (including padding and margins)
         const eventItemHeight = 30; // Approximate height in pixels for each event item
@@ -403,6 +421,397 @@ class EventHandler {
         const dynamicMaxEvents = Math.max(3, Math.min(1000, calculatedMaxEvents));
 
         return dynamicMaxEvents;
+    }
+
+    getDisplayLimit() {
+        if (!Number.isFinite(this.currentMaxEvents) || this.currentMaxEvents <= 0) {
+            this.currentMaxEvents = Math.min(this.historyLimit, this.calculateDynamicMaxEvents());
+        }
+        return this.currentMaxEvents;
+    }
+
+    setDisplayLimit(limit) {
+        if (!Number.isFinite(limit)) {
+            limit = this.calculateDynamicMaxEvents();
+        }
+        const clamped = Math.max(3, Math.min(this.historyLimit, Math.round(limit)));
+        if (clamped === this.currentMaxEvents) {
+            return;
+        }
+        this.currentMaxEvents = clamped;
+        this.reconcileEventDisplay(true);
+    }
+
+    reconcileEventDisplay(applyFilters = false) {
+        if (!this.eventList) {
+            return;
+        }
+
+        while (this.eventList.children.length > this.currentMaxEvents) {
+            const node = this.eventList.lastChild;
+            if (!node) {
+                break;
+            }
+            this.eventBacklog.unshift(node);
+            this.eventList.removeChild(node);
+        }
+
+        this.trimEventHistory();
+
+        while (
+            this.eventList.children.length < this.currentMaxEvents &&
+            this.eventBacklog.length
+        ) {
+            const node = this.eventBacklog.shift();
+            if (!node) {
+                break;
+            }
+            this.eventList.appendChild(node);
+        }
+
+        if (applyFilters) {
+            this.applyEventFilters();
+        }
+    }
+
+    trimEventHistory() {
+        const visibleCount = this.eventList ? this.eventList.children.length : 0;
+        let total = visibleCount + this.eventBacklog.length;
+        if (total <= this.historyLimit) {
+            return;
+        }
+
+        let overflow = total - this.historyLimit;
+        while (overflow > 0 && this.eventBacklog.length) {
+            this.eventBacklog.pop();
+            overflow -= 1;
+        }
+
+        while (overflow > 0 && this.eventList && this.eventList.children.length) {
+            this.eventList.removeChild(this.eventList.lastChild);
+            overflow -= 1;
+        }
+    }
+
+    setupEventFilters() {
+        this.filterControls.select = document.getElementById('eventSeverityFilter');
+        this.filterControls.includeLower = document.getElementById('eventIncludeLowerLevels');
+
+        if (this.filterControls.select) {
+            this.severityFilter = this.filterControls.select.value || 'all';
+            this.filterControls.select.addEventListener('change', () => {
+                this.severityFilter = this.filterControls.select.value || 'all';
+                this.applyEventFilters();
+            });
+        }
+
+        if (this.filterControls.includeLower) {
+            this.includeLowerLevels = this.filterControls.includeLower.checked;
+            this.filterControls.includeLower.addEventListener('change', () => {
+                this.includeLowerLevels = this.filterControls.includeLower.checked;
+                this.applyEventFilters();
+            });
+        }
+    }
+
+    setupCopyButton() {
+        this.copyButton = document.getElementById('copyEventLogsBtn');
+        if (!this.copyButton || !this.eventList) {
+            return;
+        }
+
+        const label = this.copyButton.querySelector('.copy-button-label');
+        if (label && !label.dataset.originalText) {
+            label.dataset.originalText = label.textContent.trim() || 'Copy';
+        }
+
+        this.copyButton.addEventListener('click', async () => {
+            if (!this.eventList) {
+                return;
+            }
+
+            const payload = this.buildClipboardPayload();
+            if (!payload) {
+                this.showCopyFeedback('No events');
+                this.scheduleCopyReset();
+                return;
+            }
+
+            this.copyButton.disabled = true;
+            this.copyButton.dataset.copyState = 'copying';
+
+            try {
+                await this.writeToClipboard(payload);
+                this.showCopyFeedback('Copied!');
+            } catch (error) {
+                console.error('[EventHandler] Failed to copy event logs', error);
+                this.showCopyFeedback('Copy failed');
+            } finally {
+                this.copyButton.disabled = false;
+                this.scheduleCopyReset();
+            }
+        });
+    }
+
+    showCopyFeedback(message) {
+        if (!this.copyButton) {
+            return;
+        }
+
+        const label = this.copyButton.querySelector('.copy-button-label');
+        if (label) {
+            if (!label.dataset.originalText) {
+                label.dataset.originalText = label.textContent.trim() || 'Copy';
+            }
+            label.textContent = message;
+        }
+    }
+
+    scheduleCopyReset() {
+        if (!this.copyButton) {
+            return;
+        }
+
+        if (this.copyResetTimeout) {
+            clearTimeout(this.copyResetTimeout);
+            this.copyResetTimeout = null;
+        }
+
+        this.copyResetTimeout = setTimeout(() => {
+            const label = this.copyButton.querySelector('.copy-button-label');
+            if (label && label.dataset.originalText) {
+                label.textContent = label.dataset.originalText;
+            }
+            this.copyButton.disabled = false;
+            this.copyButton.dataset.copyState = '';
+            this.copyResetTimeout = null;
+        }, 1600);
+    }
+
+    buildClipboardPayload() {
+        if (!this.eventList) {
+            return '';
+        }
+
+        const allItems = Array.from(this.eventList.querySelectorAll('.event-item'));
+        if (!allItems.length) {
+            return '';
+        }
+
+        const visibleItems = allItems.filter((item) => !item.hidden);
+        const sourceItems = visibleItems.length ? visibleItems : allItems;
+
+        const lines = sourceItems
+            .map((item) => this.serializeEventItem(item))
+            .filter((line) => line && line.length);
+
+        if (!lines.length) {
+            return '';
+        }
+
+        if (this.severityFilter && this.severityFilter !== 'all') {
+            let filterLabel = this.severityFilter;
+            const select = this.filterControls.select;
+            if (select && typeof select.selectedIndex === 'number' && select.options && select.options.length) {
+                const option = select.options[select.selectedIndex];
+                if (option && option.textContent) {
+                    filterLabel = option.textContent.trim() || filterLabel;
+                }
+            }
+
+            const details = [`Filter: ${filterLabel}`];
+            if (this.includeLowerLevels) {
+                details.push('including lower levels');
+            }
+            lines.unshift(`# ${details.join(', ')}`);
+        }
+
+        return lines.join('\n');
+    }
+
+    serializeEventItem(item) {
+        if (!item) {
+            return '';
+        }
+
+        const timestamp = this.normalizeWhitespace(item.querySelector('.timestamp')?.textContent || '');
+        const eventType = this.normalizeWhitespace(
+            item.querySelector('.event-type')?.textContent || item.dataset.messageType || ''
+        );
+        const message = this.normalizeWhitespace(
+            item.querySelector('.event-message')?.textContent || item.textContent || ''
+        );
+        const severity = this.extractSeverityFromItem(item);
+
+        const headerParts = [];
+        if (timestamp) {
+            headerParts.push(timestamp);
+        }
+        if (eventType) {
+            headerParts.push(eventType);
+        }
+        if (severity) {
+            headerParts.push(`[${severity.toUpperCase()}]`);
+        }
+
+        if (!message) {
+            return headerParts.join(' ').trim();
+        }
+
+        if (!headerParts.length) {
+            return message;
+        }
+
+        return `${headerParts.join(' ').trim()} ${message}`;
+    }
+
+    extractSeverityFromItem(item) {
+        if (!item) {
+            return '';
+        }
+
+        if (item.dataset && item.dataset.severity) {
+            return item.dataset.severity;
+        }
+
+        const severityClassMap = {
+            'event-item-error': 'error',
+            'event-item-warning': 'warning',
+            'event-item-info': 'info',
+            'event-item-train': 'info',
+            'event-item-success': 'success',
+            'event-item-default': 'info'
+        };
+
+        for (const className in severityClassMap) {
+            if (
+                Object.prototype.hasOwnProperty.call(severityClassMap, className) &&
+                item.classList.contains(className)
+            ) {
+                return severityClassMap[className];
+            }
+        }
+
+        return '';
+    }
+
+    normalizeWhitespace(value) {
+        if (typeof value !== 'string') {
+            return '';
+        }
+        return value.replace(/\s+/g, ' ').trim();
+    }
+
+    async writeToClipboard(text) {
+        if (!text) {
+            throw new Error('No content to copy');
+        }
+
+        if (typeof navigator !== 'undefined' &&
+            navigator.clipboard &&
+            typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        textarea.style.pointerEvents = 'none';
+        textarea.style.top = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+
+        let success = false;
+        try {
+            success = typeof document.execCommand === 'function'
+                ? document.execCommand('copy')
+                : false;
+        } catch (error) {
+            success = false;
+        } finally {
+            document.body.removeChild(textarea);
+        }
+
+        if (!success) {
+            throw new Error('Clipboard API unavailable');
+        }
+    }
+
+    getEventSeverity(event) {
+        const typeCandidates = [
+            event?.severity,
+            event?.level,
+            event?.log_level,
+            event?.message_type,
+            event?.type
+        ];
+
+        for (const candidate of typeCandidates) {
+            if (!candidate) continue;
+            const normalized = String(candidate).toLowerCase();
+            if (['fatal_error', 'fatal', 'critical', 'error', 'exception', 'exit'].includes(normalized)) {
+                return 'error';
+            }
+            if (['warn', 'warning'].includes(normalized)) {
+                return 'warning';
+            }
+            if (['debug', 'trace', 'verbose'].includes(normalized)) {
+                return 'debug';
+            }
+        }
+
+        return 'info';
+    }
+
+    matchesSeverityFilter(severity) {
+        if (!severity) {
+            severity = 'info';
+        }
+        if (!this.severityFilter || this.severityFilter === 'all') {
+            return true;
+        }
+
+        const filterRank = this.severityRanks[this.severityFilter];
+        if (filterRank == null) {
+            return true;
+        }
+
+        const severityRank = this.severityRanks[severity] ?? this.severityRanks.info;
+        if (this.includeLowerLevels) {
+            return severityRank <= filterRank;
+        }
+        return severityRank === filterRank;
+    }
+
+    applyEventFilters() {
+        if (!this.eventList) {
+            return;
+        }
+
+        const hasFilter = this.severityFilter && this.severityFilter !== 'all';
+        const items = Array.from(this.eventList.querySelectorAll('.event-item'));
+        if (!items.length) {
+            this.eventList.dataset.filtering = hasFilter ? 'true' : 'false';
+            this.eventList.dataset.filterEmpty = 'false';
+            return;
+        }
+
+        let visibleCount = 0;
+        for (const item of items) {
+            const severity = item.dataset.severity || 'info';
+            const shouldShow = !hasFilter || this.matchesSeverityFilter(severity);
+            item.hidden = !shouldShow;
+            if (shouldShow) {
+                visibleCount += 1;
+            }
+        }
+
+        this.eventList.dataset.filtering = hasFilter ? 'true' : 'false';
+        this.eventList.dataset.filterEmpty = hasFilter && visibleCount === 0 ? 'true' : 'false';
     }
 
     formatEventType(type) {
@@ -619,6 +1028,90 @@ class EventHandler {
             window.dispatchEvent(new CustomEvent('training-progress', { detail: { reset: true, job_id: jobId } }));
             this.resetTrainingState();
         }
+    }
+
+    transformApiProgressPayload(progress, jobId) {
+        if (!progress || typeof progress !== 'object') {
+            return null;
+        }
+
+        const toNumber = (value) => {
+            if (value === null || value === undefined || value === '') {
+                return null;
+            }
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+
+        const detail = {
+            percentage: toNumber(progress.percent ?? progress.percentage) ?? 0,
+            percent: toNumber(progress.percent ?? progress.percentage) ?? 0,
+            current_step: toNumber(progress.current_step ?? progress.step ?? progress.current) ?? 0,
+            total_steps: toNumber(progress.total_steps ?? progress.total ?? progress.max_steps) ?? 0,
+            epoch: toNumber(progress.epoch ?? progress.current_epoch) ?? 0,
+            total_epochs: toNumber(progress.total_epochs ?? progress.final_epoch ?? progress.total_epoch) ?? 0,
+            loss: toNumber(progress.loss),
+            learning_rate: toNumber(progress.learning_rate ?? progress.lr),
+            job_id: jobId || this.lastKnownJobId || null,
+        };
+
+        return detail;
+    }
+
+    async syncTrainingStatusFromApi(options = {}) {
+        if (this.stateSyncInFlight) {
+            return this.stateSyncInFlight;
+        }
+
+        const source = options.source || 'callback-sync';
+
+        this.stateSyncInFlight = (async () => {
+            try {
+                const response = await ApiClient.fetch(
+                    '/api/training/status',
+                    {
+                        method: 'GET',
+                        cache: 'no-store',
+                        credentials: 'include',
+                        headers: {
+                            'Accept': 'application/json',
+                        },
+                    },
+                    { forceApi: true }
+                );
+
+                if (!response.ok) {
+                    return null;
+                }
+
+                const data = await response.json();
+                const normalizedStatus = String(data.status || 'idle').toLowerCase();
+                const activeStatuses = new Set(['running', 'starting', 'initializing', 'initialising', 'configuring']);
+                const shouldReset = !activeStatuses.has(normalizedStatus);
+
+                this.notifyTrainingState(
+                    normalizedStatus || 'idle',
+                    { ...data, source },
+                    { resetProgress: shouldReset, force: true }
+                );
+
+                if (!shouldReset && data.progress && typeof data.progress === 'object') {
+                    const detail = this.transformApiProgressPayload(data.progress, data.job_id);
+                    if (detail) {
+                        window.dispatchEvent(new CustomEvent('training-progress', { detail }));
+                    }
+                }
+
+                return data;
+            } catch (error) {
+                console.debug('[EventHandler] Failed to sync training status from API', error);
+                return null;
+            } finally {
+                this.stateSyncInFlight = null;
+            }
+        })();
+
+        return this.stateSyncInFlight;
     }
 
     formatEnhancedMessage(event) {
@@ -919,6 +1412,11 @@ class EventHandler {
             this.resizeObserver.disconnect();
             this.resizeObserver = null;
         }
+        if (this.copyResetTimeout) {
+            clearTimeout(this.copyResetTimeout);
+            this.copyResetTimeout = null;
+        }
+        this.eventBacklog = [];
     }
 
     startHealthCheckPolling() {
@@ -962,6 +1460,7 @@ class EventHandler {
 
                 // Mark as connected immediately since health check passed
                 this.handleConnectionStateChange(true);
+                this.syncTrainingStatusFromApi({ source: 'callback-healthcheck' });
                 // Resuming broadcast polling
 
                 // Resume broadcast polling
@@ -1177,6 +1676,8 @@ class EventHandler {
                 }]);
             }
             this.setConnectionStatus(true, null, true);
+            const syncSource = this.hasConnectedBefore ? 'callback-reconnected' : 'callback-connected';
+            this.syncTrainingStatusFromApi({ source: syncSource });
         } else if (!newState && wasConnected) {
             // We just disconnected
             this.updateEventList([{
@@ -1185,6 +1686,8 @@ class EventHandler {
                 timestamp: new Date().toISOString()
             }]);
             this.setConnectionStatus(false, null, true);
+            this.notifyTrainingState('disconnected', { job_id: this.lastKnownJobId, reason: 'callback-disconnected' }, { force: true });
+            this.syncTrainingStatusFromApi({ source: 'callback-disconnected' });
         }
     }
 

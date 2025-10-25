@@ -52,6 +52,7 @@ class Auraflow(ImageModelFoundation):
     # The default model flavor to use when none is specified.
     DEFAULT_MODEL_FLAVOUR = "v0.3"
     HUGGINGFACE_PATHS = {
+        "pony": "purplesmartai/pony-v7-base",
         "v0.3": "terminusresearch/auraflow-v0.3",
         "v0.2": "fal/AuraFlow-v0.2",
         "v0.1": "fal/AuraFlow",
@@ -145,6 +146,8 @@ class Auraflow(ImageModelFoundation):
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
         t5_max_length = 120
+        if self.config.model_flavour == "pony":
+            t5_max_length = 768
         if self.config.tokenizer_max_length is None or self.config.tokenizer_max_length == 0:
             logger.warning(f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}.")
             self.config.tokenizer_max_length = t5_max_length

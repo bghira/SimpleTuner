@@ -13,16 +13,21 @@ apt -y install python3.12-venv python3.12-dev
 apt -y install libopenmpi-dev openmpi-bin cuda-toolkit-12-8 libaio-dev # if you're using DeepSpeed
 ```
 
-## Installing SimpleTuner
+## Creating a workspace directory
 
-> **NOTE:** Currently, we're installing from the webui-phase-one branch. This will be merged into main soon, at which time you can simply `pip install simpletuner[cuda]` for a streamlined experience.
+A workspace contains your configurations, output models, validation images, and potentially your datasets.
 
 ```bash
-git clone --branch=feature/webui-phase-one https://github.com/bghira/SimpleTuner
+mkdir ~/simpletuner-workspace
+export SIMPLETUNER_WORKSPACE=~/simpletuner-workspace
+cd $SIMPLETUNER_WORKSPACE
 ```
 
+## Installing SimpleTuner into your workspace
+
+Create a virtual environment to install dependencies to:
+
 ```bash
-cd SimpleTuner/
 python3.12 -m venv .venv
 . .venv/bin/activate
 ```
