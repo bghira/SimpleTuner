@@ -52,6 +52,8 @@ class EventHandler {
             select: null,
             includeLower: null
         };
+        this.copyButton = null;
+        this.copyResetTimeout = null;
 
         this.init();
     }
@@ -67,6 +69,7 @@ class EventHandler {
         // Set up resize observer for dynamic row calculation
         this.setupResizeObserver();
         this.setupEventFilters();
+        this.setupCopyButton();
 
         // Subscribe to SSE notifications once available
         this.subscribeToSSE();
@@ -440,6 +443,233 @@ class EventHandler {
                 this.includeLowerLevels = this.filterControls.includeLower.checked;
                 this.applyEventFilters();
             });
+        }
+    }
+
+    setupCopyButton() {
+        this.copyButton = document.getElementById('copyEventLogsBtn');
+        if (!this.copyButton || !this.eventList) {
+            return;
+        }
+
+        const label = this.copyButton.querySelector('.copy-button-label');
+        if (label && !label.dataset.originalText) {
+            label.dataset.originalText = label.textContent.trim() || 'Copy';
+        }
+
+        this.copyButton.addEventListener('click', async () => {
+            if (!this.eventList) {
+                return;
+            }
+
+            const payload = this.buildClipboardPayload();
+            if (!payload) {
+                this.showCopyFeedback('No events');
+                this.scheduleCopyReset();
+                return;
+            }
+
+            this.copyButton.disabled = true;
+            this.copyButton.dataset.copyState = 'copying';
+
+            try {
+                await this.writeToClipboard(payload);
+                this.showCopyFeedback('Copied!');
+            } catch (error) {
+                console.error('[EventHandler] Failed to copy event logs', error);
+                this.showCopyFeedback('Copy failed');
+            } finally {
+                this.copyButton.disabled = false;
+                this.scheduleCopyReset();
+            }
+        });
+    }
+
+    showCopyFeedback(message) {
+        if (!this.copyButton) {
+            return;
+        }
+
+        const label = this.copyButton.querySelector('.copy-button-label');
+        if (label) {
+            if (!label.dataset.originalText) {
+                label.dataset.originalText = label.textContent.trim() || 'Copy';
+            }
+            label.textContent = message;
+        }
+    }
+
+    scheduleCopyReset() {
+        if (!this.copyButton) {
+            return;
+        }
+
+        if (this.copyResetTimeout) {
+            clearTimeout(this.copyResetTimeout);
+            this.copyResetTimeout = null;
+        }
+
+        this.copyResetTimeout = setTimeout(() => {
+            const label = this.copyButton.querySelector('.copy-button-label');
+            if (label && label.dataset.originalText) {
+                label.textContent = label.dataset.originalText;
+            }
+            this.copyButton.disabled = false;
+            this.copyButton.dataset.copyState = '';
+            this.copyResetTimeout = null;
+        }, 1600);
+    }
+
+    buildClipboardPayload() {
+        if (!this.eventList) {
+            return '';
+        }
+
+        const allItems = Array.from(this.eventList.querySelectorAll('.event-item'));
+        if (!allItems.length) {
+            return '';
+        }
+
+        const visibleItems = allItems.filter((item) => !item.hidden);
+        const sourceItems = visibleItems.length ? visibleItems : allItems;
+
+        const lines = sourceItems
+            .map((item) => this.serializeEventItem(item))
+            .filter((line) => line && line.length);
+
+        if (!lines.length) {
+            return '';
+        }
+
+        if (this.severityFilter && this.severityFilter !== 'all') {
+            let filterLabel = this.severityFilter;
+            const select = this.filterControls.select;
+            if (select && typeof select.selectedIndex === 'number' && select.options && select.options.length) {
+                const option = select.options[select.selectedIndex];
+                if (option && option.textContent) {
+                    filterLabel = option.textContent.trim() || filterLabel;
+                }
+            }
+
+            const details = [`Filter: ${filterLabel}`];
+            if (this.includeLowerLevels) {
+                details.push('including lower levels');
+            }
+            lines.unshift(`# ${details.join(', ')}`);
+        }
+
+        return lines.join('\n');
+    }
+
+    serializeEventItem(item) {
+        if (!item) {
+            return '';
+        }
+
+        const timestamp = this.normalizeWhitespace(item.querySelector('.timestamp')?.textContent || '');
+        const eventType = this.normalizeWhitespace(
+            item.querySelector('.event-type')?.textContent || item.dataset.messageType || ''
+        );
+        const message = this.normalizeWhitespace(
+            item.querySelector('.event-message')?.textContent || item.textContent || ''
+        );
+        const severity = this.extractSeverityFromItem(item);
+
+        const headerParts = [];
+        if (timestamp) {
+            headerParts.push(timestamp);
+        }
+        if (eventType) {
+            headerParts.push(eventType);
+        }
+        if (severity) {
+            headerParts.push(`[${severity.toUpperCase()}]`);
+        }
+
+        if (!message) {
+            return headerParts.join(' ').trim();
+        }
+
+        if (!headerParts.length) {
+            return message;
+        }
+
+        return `${headerParts.join(' ').trim()} ${message}`;
+    }
+
+    extractSeverityFromItem(item) {
+        if (!item) {
+            return '';
+        }
+
+        if (item.dataset && item.dataset.severity) {
+            return item.dataset.severity;
+        }
+
+        const severityClassMap = {
+            'event-item-error': 'error',
+            'event-item-warning': 'warning',
+            'event-item-info': 'info',
+            'event-item-train': 'info',
+            'event-item-success': 'success',
+            'event-item-default': 'info'
+        };
+
+        for (const className in severityClassMap) {
+            if (
+                Object.prototype.hasOwnProperty.call(severityClassMap, className) &&
+                item.classList.contains(className)
+            ) {
+                return severityClassMap[className];
+            }
+        }
+
+        return '';
+    }
+
+    normalizeWhitespace(value) {
+        if (typeof value !== 'string') {
+            return '';
+        }
+        return value.replace(/\s+/g, ' ').trim();
+    }
+
+    async writeToClipboard(text) {
+        if (!text) {
+            throw new Error('No content to copy');
+        }
+
+        if (typeof navigator !== 'undefined' &&
+            navigator.clipboard &&
+            typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(text);
+            return;
+        }
+
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        textarea.style.pointerEvents = 'none';
+        textarea.style.top = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+
+        let success = false;
+        try {
+            success = typeof document.execCommand === 'function'
+                ? document.execCommand('copy')
+                : false;
+        } catch (error) {
+            success = false;
+        } finally {
+            document.body.removeChild(textarea);
+        }
+
+        if (!success) {
+            throw new Error('Clipboard API unavailable');
         }
     }
 
@@ -1029,6 +1259,10 @@ class EventHandler {
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
             this.resizeObserver = null;
+        }
+        if (this.copyResetTimeout) {
+            clearTimeout(this.copyResetTimeout);
+            this.copyResetTimeout = null;
         }
     }
 

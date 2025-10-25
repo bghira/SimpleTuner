@@ -5366,6 +5366,15 @@ function trainerComponent() {
                             <option value="debug">Debug</option>
                         </select>
                     </div>
+                    <div class="event-filter-actions">
+                        <button type="button"
+                                id="copyEventLogsBtn"
+                                class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                                title="Copy filtered events to clipboard">
+                            <i class="fas fa-copy"></i>
+                            <span class="copy-button-label">Copy</span>
+                        </button>
+                    </div>
                     <div class="event-filter-checkbox form-check mb-0">
                         <input class="form-check-input" type="checkbox" id="eventIncludeLowerLevels">
                         <label class="form-check-label" for="eventIncludeLowerLevels">Include lower log levels</label>
