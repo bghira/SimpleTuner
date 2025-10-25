@@ -89,6 +89,7 @@ class QwenImage(ImageModelFoundation):
         original_untokenize = getattr(transformer, "_untokenize_hidden_states", None)
         patched = False
         if callable(original_untokenize):
+
             def passthrough(hidden_states, *unused_args, **unused_kwargs):
                 return hidden_states
 

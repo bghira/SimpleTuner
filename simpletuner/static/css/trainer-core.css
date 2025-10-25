@@ -71,6 +71,31 @@
     color: var(--text-tertiary) !important;
 }
 
+.tab-fragment .form-text {
+    display: block;
+    margin-top: 0.35rem;
+    line-height: 1.35;
+}
+
+.tab-fragment .form-control + .form-text,
+.tab-fragment .form-select + .form-text,
+.tab-fragment .input-group + .form-text {
+    margin-top: 0.35rem;
+}
+
+.dataset-section .form-group {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.dataset-section .form-text {
+    display: block;
+    width: 100%;
+    margin-top: 0.35rem;
+    line-height: 1.35;
+}
+
 .tab-fragment .form-control,
 .tab-fragment .form-select,
 .tab-fragment .form-control:focus,

@@ -51,6 +51,8 @@
             createNewDataloader: true,
             selectedDataloaderPath: "",
             exampleLocked: false,
+            exampleHasDataloader: false,
+            keepExampleDataloader: false,
 
             async init() {
                 console.info("[EnvForm] init called", { autoLoad: this.options.autoLoad });
@@ -84,6 +86,8 @@
                 this.createNewDataloader = true;
                 this.selectedDataloaderPath = "";
                 this.exampleLocked = false;
+                this.exampleHasDataloader = false;
+                this.keepExampleDataloader = false;
                 this.error = "";
             },
 
@@ -113,15 +117,20 @@
                         await this.loadModelFlavours(defaultFamily);
                     }
 
-                    if (this.dataloaderConfigs.length > 0) {
-                        this.createNewDataloader = false;
-                        this.selectedDataloaderPath = this.dataloaderConfigs[0].path || "";
-                        this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
-                    } else {
-                        this.createNewDataloader = true;
-                        this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                    if (this.newEnvironment.example) {
+                        await this.handleExampleSelection(this.newEnvironment.example);
                     }
-                    this.exampleLocked = false;
+
+                    if (!this.exampleLocked) {
+                        if (this.dataloaderConfigs.length > 0) {
+                            this.createNewDataloader = false;
+                            this.selectedDataloaderPath = this.dataloaderConfigs[0].path || "";
+                            this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
+                        } else {
+                            this.createNewDataloader = true;
+                            this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                        }
+                    }
                     this.error = "";
                     this.$dispatch("environment-form-ready");
                 } finally {
@@ -153,6 +162,12 @@
                 if (preset.description) {
                     this.newEnvironment.description = preset.description;
                 }
+                if (preset.example) {
+                    const exampleName = String(preset.example).trim();
+                    if (exampleName) {
+                        this.newEnvironment.example = exampleName;
+                    }
+                }
             },
 
             updateNewEnvironmentName(value) {
@@ -175,6 +190,11 @@
             },
 
             toggleCreateNewDataloader(checked) {
+                if (this.exampleHasDataloader && this.keepExampleDataloader) {
+                    global.showToast?.("Copying the example dataset plan requires creating a new config.", "info");
+                    this.createNewDataloader = true;
+                    return;
+                }
                 this.createNewDataloader = checked;
                 if (checked) {
                     if (!this.newEnvironmentPathTouched) {
@@ -205,6 +225,8 @@
                 if (!value) {
                     this.exampleLocked = false;
                     this.newEnvironment.description = "";
+                    this.exampleHasDataloader = false;
+                    this.keepExampleDataloader = false;
                     if (this.dataloaderConfigs.length > 0) {
                         this.createNewDataloader = false;
                         this.selectedDataloaderPath = this.dataloaderConfigs[0]?.path || "";
@@ -222,6 +244,8 @@
                 const example = this.examplesMap[value];
                 if (!example || !example.defaults) {
                     this.exampleLocked = false;
+                    this.exampleHasDataloader = false;
+                    this.keepExampleDataloader = false;
                     return;
                 }
 
@@ -241,10 +265,24 @@
 
                 this.newEnvironment.description = example.description || "";
                 this.exampleLocked = true;
-                this.createNewDataloader = true;
-                this.newEnvironmentPathTouched = false;
-                this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
-                this.selectedDataloaderPath = "";
+                const hasExampleDataloader = example.has_dataloader !== false;
+                this.exampleHasDataloader = hasExampleDataloader;
+                this.keepExampleDataloader = hasExampleDataloader;
+                if (hasExampleDataloader) {
+                    this.applyExampleDataloaderSelection();
+                } else {
+                    this.keepExampleDataloader = false;
+                    if (this.dataloaderConfigs.length > 0) {
+                        this.createNewDataloader = false;
+                        this.selectedDataloaderPath = this.dataloaderConfigs[0]?.path || "";
+                        this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
+                    } else {
+                        this.createNewDataloader = true;
+                        this.newEnvironmentPathTouched = false;
+                        this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                        this.selectedDataloaderPath = "";
+                    }
+                }
             },
 
             computeDefaultDataloaderPath() {
@@ -252,6 +290,39 @@
                     return "";
                 }
                 return `${this.newEnvironment.name}/multidatabackend.json`;
+            },
+
+            applyExampleDataloaderSelection() {
+                if (!this.exampleHasDataloader) {
+                    return;
+                }
+                if (this.keepExampleDataloader) {
+                    this.createNewDataloader = true;
+                    this.newEnvironmentPathTouched = false;
+                    this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                    this.selectedDataloaderPath = "";
+                } else if (this.dataloaderConfigs.length > 0) {
+                    this.createNewDataloader = false;
+                    this.selectedDataloaderPath = this.dataloaderConfigs[0]?.path || "";
+                    this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
+                } else {
+                    this.createNewDataloader = true;
+                    this.newEnvironmentPathTouched = false;
+                    this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                    this.selectedDataloaderPath = "";
+                }
+            },
+
+            toggleKeepExampleDataloader(checked) {
+                if (checked && (!this.newEnvironment.example || !this.exampleHasDataloader)) {
+                    global.showToast?.("Select an example that includes a dataset plan before copying it.", "warning");
+                    this.keepExampleDataloader = false;
+                    return;
+                }
+                this.keepExampleDataloader = checked;
+                if (this.exampleHasDataloader) {
+                    this.applyExampleDataloaderSelection();
+                }
             },
 
             resolveEndpoint(path, options = {}) {
@@ -401,6 +472,12 @@
                 }
                 if (!payload.dataloader_path && !this.createNewDataloader && this.dataloaderConfigs.length > 0) {
                     payload.dataloader_path = this.dataloaderConfigs[0].path;
+                }
+                if (this.keepExampleDataloader && !payload.example) {
+                    const message = "Choose an example before copying its dataset plan.";
+                    global.showToast?.(message, "warning");
+                    this.error = message;
+                    return null;
                 }
                 return payload;
             },

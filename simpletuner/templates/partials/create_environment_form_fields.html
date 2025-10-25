@@ -70,16 +70,31 @@
 </div>
 <div class="mb-3">
     <label class="form-label">Dataset Configuration</label>
+    <div class="form-check form-switch mb-2" x-show="exampleHasDataloader">
+        <input class="form-check-input"
+               type="checkbox"
+               id="keepExampleDataloader"
+               :checked="keepExampleDataloader"
+               @change="toggleKeepExampleDataloader($event.target.checked)">
+        <label class="form-check-label" for="keepExampleDataloader">
+            Copy example dataset plan into this environment
+        </label>
+    </div>
+    <div class="text-muted small mb-2" x-show="exampleHasDataloader && keepExampleDataloader">
+        The example's dataset plan will be copied to
+        <span class="fw-semibold" x-text="computeDefaultDataloaderPath() || 'multidatabackend.json'"></span>.
+    </div>
     <div class="form-check mb-2" x-show="dataloaderConfigs.length > 0">
         <input class="form-check-input" type="checkbox" id="createNewDataloader"
                :checked="createNewDataloader"
+               :disabled="exampleHasDataloader && keepExampleDataloader"
                @change="toggleCreateNewDataloader($event.target.checked)">
         <label class="form-check-label" for="createNewDataloader">
             Create new dataloader config for this environment
         </label>
     </div>
     <select class="form-select mb-2"
-            :disabled="createNewDataloader || dataloaderConfigs.length === 0"
+            :disabled="createNewDataloader || dataloaderConfigs.length === 0 || (exampleHasDataloader && keepExampleDataloader)"
             x-model="selectedDataloaderPath"
             @change="selectExistingDataloader($event.target.value)">
         <template x-if="dataloaderConfigs.length === 0">
@@ -93,7 +108,7 @@
     <input type="text"
            class="form-control"
            placeholder="my-environment/multidatabackend.json"
-           :disabled="!createNewDataloader"
+           :disabled="!createNewDataloader || (exampleHasDataloader && keepExampleDataloader)"
            :value="newEnvironment.dataloader_path"
            @input="markEnvironmentPathTouched(); newEnvironment.dataloader_path = $event.target.value">
     <small class="text-muted" x-show="createNewDataloader">

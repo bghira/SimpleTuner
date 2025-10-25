@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Dict, List
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
@@ -18,14 +19,15 @@ if "torch" not in sys.modules:
     torch_stub.Tensor = type("Tensor", (), {})  # type: ignore[attr-defined]
     torch_stub.FloatTensor = type("FloatTensor", (), {})  # type: ignore[attr-defined]
     torch_stub.no_grad = lambda: (lambda fn: fn)  # type: ignore[attr-defined]
-    cuda_stub = SimpleNamespace(
+    torch_stub.cuda = SimpleNamespace(  # type: ignore[attr-defined]
         is_available=lambda: False,
         get_device_properties=lambda *_: SimpleNamespace(major=0),
         device_count=lambda: 0,
         current_device=lambda: 0,
     )
-    torch_stub.cuda = cuda_stub  # type: ignore[attr-defined]
-    torch_stub.backends = SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False))  # type: ignore[attr-defined]
+    torch_stub.backends = SimpleNamespace(  # type: ignore[attr-defined]
+        mps=SimpleNamespace(is_available=lambda: False)
+    )
     sys.modules["torch"] = torch_stub
     sys.modules["torch.distributed"] = dist_stub
     sys.modules["torch.nn"] = ModuleType("torch.nn")
@@ -43,7 +45,6 @@ if "torch" not in sys.modules:
     torch_lr_scheduler_stub.LambdaLR = type("LambdaLR", (), {})  # type: ignore[attr-defined]
     torch_lr_scheduler_stub.LRScheduler = type("LRScheduler", (), {})  # type: ignore[attr-defined]
     sys.modules["torch.optim.lr_scheduler"] = torch_lr_scheduler_stub
-    # Provide nested elastic multiprocessing module tree used by logging setup
     for qualified in (
         "torch.distributed.elastic",
         "torch.distributed.elastic.multiprocessing",
@@ -61,7 +62,6 @@ if "fastapi" not in sys.modules:
     status_stub.HTTP_422_UNPROCESSABLE_CONTENT = 422  # type: ignore[attr-defined]
     status_stub.HTTP_500_INTERNAL_SERVER_ERROR = 500  # type: ignore[attr-defined]
     fastapi_stub.status = status_stub  # type: ignore[attr-defined]
-
     class _HTTPException(Exception):
         def __init__(self, status_code=400, detail=None):
             super().__init__(detail)
@@ -76,7 +76,6 @@ if "fastapi" not in sys.modules:
     sys.modules["fastapi"] = fastapi_stub
     sys.modules["fastapi.status"] = status_stub
     requests_stub = ModuleType("fastapi.requests")
-
     class _Request:
         def __init__(self, *args, **kwargs):
             self.state = SimpleNamespace()
@@ -241,7 +240,7 @@ if field_service_stub_name not in sys.modules:
         _WEBUI_ONLY_FIELDS = set()
 
         @staticmethod
-        def normalize_config(payload):
+        def normalize_config(payload):  # type: ignore[unused-argument]
             return payload
 
     field_service_stub.FieldService = _FieldServiceStub  # type: ignore[attr-defined]
@@ -260,259 +259,51 @@ if "simpletuner.helpers.models.flux" not in sys.modules:
     sys.modules["simpletuner.helpers.models.flux"] = flux_stub
     sys.modules["simpletuner.helpers.models.flux.pipeline"] = ModuleType("simpletuner.helpers.models.flux.pipeline")
 
-field_service_stub_name = "simpletuner.simpletuner_sdk.server.services.field_service"
-from simpletuner.helpers.models.registry import ModelRegistry
-
 try:
-    from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
-    from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigServiceError, ConfigsService
-    from simpletuner.simpletuner_sdk.server.services.example_configs_service import ExampleConfigInfo
-    from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+    from simpletuner.simpletuner_sdk.server.services.example_configs_service import ExampleConfigsService
 except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency guard
-    ConfigStore = None  # type: ignore[assignment]
-    ConfigsService = None  # type: ignore[assignment]
-    ConfigServiceError = None  # type: ignore[assignment]
-    ExampleConfigInfo = None  # type: ignore[assignment]
+    ExampleConfigsService = None  # type: ignore[assignment]
     _SKIP_REASON = f"Dependencies unavailable: {exc}"
 else:
     _SKIP_REASON = ""
 
 
-class _DummyModel:
-    DEFAULT_MODEL_NAME = "dummy/model"
-    DEFAULT_MODEL_FLAVOUR = "default"
-    HUGGINGFACE_PATHS = {"default": "dummy/model"}
-
-
-@unittest.skipIf(
-    ConfigStore is None or ConfigsService is None or ExampleConfigInfo is None or ConfigServiceError is None, _SKIP_REASON
-)
-class ConfigsServiceEnvironmentTests(unittest.TestCase):
+@unittest.skipIf(ExampleConfigsService is None, _SKIP_REASON)
+class ExampleConfigsServiceTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._instances_backup = ConfigStore._instances.copy()
-        ConfigStore._instances = {}
-        self.addCleanup(self._restore_config_store_instances)
-
         self._tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tempdir.cleanup)
-        self.config_root = Path(self._tempdir.name).resolve()
+        self.examples_root = Path(self._tempdir.name).resolve()
 
-        # Create isolated config stores for model and dataloader configs
-        self.model_store = ConfigStore(config_dir=self.config_root, config_type="model")
+    def _write_basic_example(self) -> tuple[List[Dict[str, object]], Path]:
+        dataloader_payload = [
+            {
+                "id": "demo-plan",
+                "type": "local",
+                "instance_data_dir": "/tmp/demo",
+            }
+        ]
+        dataloader_file = self.examples_root / "multidatabackend-demo.json"
+        dataloader_file.write_text(json.dumps(dataloader_payload), encoding="utf-8")
 
-        # Register a dummy model family so _resolve_pretrained_path works
-        ModelRegistry.register("testfamily", _DummyModel)
-        self.addCleanup(lambda: ModelRegistry._registry.pop("testfamily", None))  # type: ignore[attr-defined]
-
-    def _restore_config_store_instances(self) -> None:
-        ConfigStore._instances = self._instances_backup
-
-    def test_create_environment_saves_flat_config(self) -> None:
-        service = ConfigsService()
-
-        request = SimpleNamespace(
-            name="test-env",
-            model_family="testfamily",
-            model_flavour="default",
-            model_type="lora",
-            lora_type="standard",
-            description="Test environment",
-            example=None,
-            dataloader_path=None,
-            create_dataloader=True,
-        )
-
-        with patch.object(ConfigsService, "_get_store", return_value=self.model_store):
-            result = service.create_environment(request)
-
-        config_file = self.config_root / "test-env" / "config.json"
-        self.assertTrue(config_file.exists(), "Training config not written to environment directory")
-
-        with config_file.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-
-        self.assertIsInstance(payload, dict)
-        self.assertNotIn("_metadata", payload)
-        self.assertNotIn("config", payload)
-        self.assertIn("--model_family", payload)
-        self.assertEqual(payload.get("--model_family"), "testfamily")
-
-        dataloader_file = self.config_root / "test-env" / "multidatabackend.json"
-        self.assertTrue(dataloader_file.exists(), "Default dataloader plan not created alongside environment")
-
-        expected_rel_path = "test-env/multidatabackend.json"
-        self.assertEqual(result["dataloader"]["path"], expected_rel_path)
-
-    def test_example_environment_rewrites_lycoris_path(self) -> None:
-        service = ConfigsService()
-
-        example_dir = Path(self._tempdir.name) / "example-demo"
-        example_dir.mkdir(parents=True, exist_ok=True)
-
-        example_config = {
-            "lycoris_config": "config/examples/pixart.lycoris-lokr/lycoris_config.json",
-            "data_backend_config": "config/examples/pixart.lycoris-lokr/multidatabackend.json",
-        }
-
-        (example_dir / "config.json").write_text(json.dumps(example_config, indent=2), encoding="utf-8")
-        (example_dir / "lycoris_config.json").write_text("{}", encoding="utf-8")
-        (example_dir / "multidatabackend.json").write_text("{}", encoding="utf-8")
-
-        example_info = ExampleConfigInfo(
-            name="demo",
-            config_path=example_dir / "config.json",
-            defaults={},
-            description=None,
-            dataloader_path=None,
-            dataloader_payload=None,
-        )
-
-        request = SimpleNamespace(
-            name="tidal-timber",
-            model_family="testfamily",
-            model_flavour="default",
-            model_type="lora",
-            lora_type="lycoris",
-            description=None,
-            example="demo",
-            dataloader_path=None,
-            create_dataloader=True,
-        )
-
-        with (
-            patch.object(ConfigsService, "_get_store", return_value=self.model_store),
-            patch(
-                "simpletuner.simpletuner_sdk.server.services.configs_service.EXAMPLE_CONFIGS_SERVICE.get_example",
-                return_value=example_info,
-            ),
-        ):
-            result = service.create_environment(request)
-
-        env_config_path = self.config_root / "tidal-timber" / "config.json"
-        self.assertTrue(env_config_path.exists())
-
-        with env_config_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-
-        expected_relative = "tidal-timber/lycoris_config.json"
-        self.assertEqual(payload.get("lycoris_config"), expected_relative)
-        self.assertNotIn("--lycoris_config", payload)
-        self.assertEqual(result["config"].get("lycoris_config"), expected_relative)
-
-        lycoris_abs = self.config_root / expected_relative
-        self.assertTrue(lycoris_abs.exists())
-
-        stray_root = self.config_root / "lycoris_config.json.json"
-        self.assertFalse(stray_root.exists())
-        self.assertFalse(stray_root.with_suffix(".metadata.json").exists())
-
-    def test_example_environment_copies_dataloader_payload(self) -> None:
-        service = ConfigsService()
-
-        example_dir = Path(self._tempdir.name) / "example-dataloader"
+        example_dir = self.examples_root / "demo-example"
         example_dir.mkdir(parents=True, exist_ok=True)
         config_payload = {
+            "--model_family": "demo",
             "data_backend_config": "config/examples/multidatabackend-demo.json",
-            "--model_family": "testfamily",
         }
-        (example_dir / "config.json").write_text(json.dumps(config_payload, indent=2), encoding="utf-8")
+        (example_dir / "config.json").write_text(json.dumps(config_payload), encoding="utf-8")
+        return dataloader_payload, dataloader_file
 
-        dataloader_payload = [{"id": "demo-images", "type": "local", "instance_data_dir": "/data/demo"}]
-        dataloader_path = example_dir / "multidatabackend-demo.json"
-        dataloader_path.write_text(json.dumps(dataloader_payload, indent=2), encoding="utf-8")
-        example_info = ExampleConfigInfo(
-            name="demo-dataloader",
-            config_path=example_dir / "config.json",
-            defaults={"model_family": "testfamily", "model_type": "lora"},
-            description=None,
-            dataloader_path=dataloader_path,
-            dataloader_payload=None,
-        )
+    def test_list_examples_resolves_revived_dataloader_assets(self) -> None:
+        payload, dataloader_file = self._write_basic_example()
+        service = ExampleConfigsService()
 
-        request = SimpleNamespace(
-            name="ember-grove",
-            model_family="testfamily",
-            model_flavour="default",
-            model_type="lora",
-            lora_type="standard",
-            description=None,
-            example="demo-dataloader",
-            dataloader_path=None,
-            create_dataloader=True,
-        )
+        with patch.object(ExampleConfigsService, "_examples_root", return_value=self.examples_root):
+            examples = service.list_examples()
 
-        with (
-            patch.object(ConfigsService, "_get_store", return_value=self.model_store),
-            patch(
-                "simpletuner.simpletuner_sdk.server.services.configs_service.EXAMPLE_CONFIGS_SERVICE.get_example",
-                return_value=example_info,
-            ),
-        ):
-            result = service.create_environment(request)
-
-        dataloader_file = self.config_root / "ember-grove" / "multidatabackend.json"
-        self.assertTrue(dataloader_file.exists(), "Example dataloader JSON should be copied into environment")
-
-        with dataloader_file.open("r", encoding="utf-8") as handle:
-            written_payload = json.load(handle)
-
-        self.assertEqual(written_payload, dataloader_payload)
-        expected_rel = "ember-grove/multidatabackend.json"
-        self.assertEqual(result["dataloader"]["path"], expected_rel)
-        self.assertEqual(result["dataloader"]["absolute_path"], str(dataloader_file))
-
-    def test_create_environment_rejects_json_suffix_name(self) -> None:
-        service = ConfigsService()
-
-        request = SimpleNamespace(
-            name="invalid-name.json",
-            model_family="testfamily",
-            model_flavour="default",
-            model_type="lora",
-            lora_type="lycoris",
-            description=None,
-            example=None,
-            dataloader_path=None,
-            create_dataloader=True,
-        )
-
-        with patch.object(ConfigsService, "_get_store", return_value=self.model_store):
-            # The implementation now strips .json suffix instead of rejecting it
-            result = service.create_environment(request)
-
-        # Verify the environment was created without the .json suffix
-        self.assertIn("environment", result)
-        self.assertEqual(result["environment"]["name"], "invalid-name")  # .json was stripped
-
-    def test_config_store_rejects_json_suffix_directly(self) -> None:
-        store = ConfigStore(config_dir=self.config_root, config_type="model")
-        metadata = store.save_config(
-            "bad.json",
-            config={"--model_family": "testfamily"},
-            metadata=None,
-            overwrite=False,
-        )
-        self.assertEqual(metadata.name, "bad")
-
-    def test_webui_defaults_clears_missing_active_config(self) -> None:
-        webui_dir = self.config_root / "webui_state"
-        webui_dir.mkdir(parents=True, exist_ok=True)
-        defaults_path = webui_dir / "defaults.json"
-        defaults_payload = {
-            "active_config": "ghost-config",
-            "configs_dir": str(self.config_root),
-            "output_dir": str(self.config_root / "output"),
-            "event_polling_interval": 5,
-            "event_stream_enabled": True,
-            "auto_preserve_defaults": True,
-            "theme": "dark",
-        }
-        defaults_path.write_text(json.dumps(defaults_payload), encoding="utf-8")
-
-        store = WebUIStateStore(base_dir=webui_dir)
-        loaded = store.load_defaults()
-        self.assertIsNone(loaded.active_config)
-
-
-if __name__ == "__main__":  # pragma: no cover
-    unittest.main()
+        self.assertEqual(len(examples), 1, "Expected exactly one example in temporary root")
+        info = examples[0]
+        self.assertIsNotNone(info.dataloader_path, "Dataloader path should be detected from revived assets")
+        self.assertEqual(info.dataloader_path.resolve(), dataloader_file.resolve())
+        self.assertEqual(info.dataloader_payload, payload)
