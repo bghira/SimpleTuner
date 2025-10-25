@@ -368,6 +368,14 @@
                 statusEl._x_dataStack[0].status = status;
                 statusEl._x_dataStack[0].message = message;
             }
+            // Broadcast status updates so other components can react (e.g., re-enable buttons on reconnect)
+            try {
+                window.dispatchEvent(new CustomEvent('trainer-connection-status', {
+                    detail: { status, message }
+                }));
+            } catch (error) {
+                console.warn('Failed to dispatch trainer-connection-status event', error);
+            }
         }
 
         // Server-Sent Events for real-time updates using SSE Manager
