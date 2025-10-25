@@ -144,7 +144,8 @@
             activeJobId = null;
         }
 
-        if (!['starting', 'running', 'initializing'].includes(normalized)) {
+        const shouldPreserveStartup = normalized === 'disconnected';
+        if (!['starting', 'running', 'initializing'].includes(normalized) && !shouldPreserveStartup) {
             clearStartupProgress();
         }
 
@@ -1082,10 +1083,15 @@
                 setStatus('Reconnecting', 'warning');
             } else if (info.status === 'disconnected') {
                 setStatus('Disconnected', 'secondary');
+                setTrainingState('disconnected', {
+                    job_id: activeJobId,
+                    message: info.message || 'Event stream disconnected',
+                    source: 'sse-manager'
+                });
                 // Only clear lifecycle stages if this is a permanent disconnect (max retries reached)
                 // Don't clear on temporary network issues that will auto-reconnect
                 if (info.message && info.message.includes('Maximum retries')) {
-                    clearStartupProgress();
+                    resetTrainingProgressUI('disconnected', activeJobId);
                 }
             }
         };

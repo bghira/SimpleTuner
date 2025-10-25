@@ -49,7 +49,7 @@
                 hx-swap="innerHTML"
                 hx-indicator="#run-spinner"
                 hx-on::before-request="this.disabled = true; document.getElementById('cancelBtn').disabled = false; const validationEl = document.getElementById('validation-results'); if(validationEl) validationEl.innerHTML = '';"
-                hx-on::after-request="if(event.detail.successful) { this.disabled = true; window.initSSE?.(); }">
+                hx-on::after-request="window.__handleTrainerRunAfterRequest?.(this, event)">
             <i class="fas fa-play"></i>
             {% if is_header %}
                 <span class="btn-text">Run</span>
@@ -75,7 +75,7 @@
                 hx-indicator="#cancel-spinner"
                 hx-confirm="Are you sure you want to cancel the training?"
                 hx-on::before-request='this.disabled = true; var params = event.detail.parameters || (event.detail.parameters = {}); var field = document.getElementById("job_id") || document.querySelector("[name=\"job_id\"]"); if (field && field.value) { params.job_id = field.value.trim(); } else { delete params.job_id; }'
-                hx-on::after-request="if(event.detail.successful) { this.disabled = true; document.getElementById('runBtn').disabled = false; window.closeSSE?.(); }">
+                hx-on::after-request="window.__handleTrainerCancelAfterRequest?.(this, event)">
             <i class="fas fa-stop"></i>
             {% if is_header %}
                 <span class="btn-text">Stop</span>
@@ -149,28 +149,72 @@
 if (!window.__trainerActionHTMXBound) {
     window.__trainerActionHTMXBound = true;
 
+    const TRAINER_BUTTON_IDS = new Set(['validateBtn', 'runBtn', 'cancelBtn']);
+
+    window.__handleTrainerRunAfterRequest = function(button, evt) {
+        const detail = evt?.detail || {};
+        const cancelBtn = document.getElementById('cancelBtn');
+        const responseText = detail.xhr && typeof detail.xhr.responseText === 'string'
+            ? detail.xhr.responseText
+            : '';
+        const hasErrorAlert = responseText.includes('alert-danger');
+        const hasSuccessAlert = /alert-(info|success)/.test(responseText);
+        const requestSucceeded = detail.successful && !hasErrorAlert && (hasSuccessAlert || !responseText.trim());
+
+        if (requestSucceeded) {
+            button.disabled = true;
+            if (cancelBtn) cancelBtn.disabled = false;
+            window.initSSE?.();
+        } else {
+            button.disabled = false;
+            if (cancelBtn) cancelBtn.disabled = true;
+        }
+    };
+
+    window.__handleTrainerCancelAfterRequest = function(button, evt) {
+        const detail = evt?.detail || {};
+        const runBtn = document.getElementById('runBtn');
+        const responseText = detail.xhr && typeof detail.xhr.responseText === 'string'
+            ? detail.xhr.responseText
+            : '';
+        const hasErrorAlert = responseText.includes('alert-danger');
+
+        if (detail.successful && !hasErrorAlert) {
+            button.disabled = true;
+            if (runBtn) runBtn.disabled = false;
+            window.closeSSE?.();
+        } else {
+            button.disabled = false;
+        }
+    };
+
     // Enhanced HTMX event handlers
     document.body.addEventListener('htmx:afterRequest', function(evt) {
         const button = evt.detail.elt;
+        if (!button || !button.id) {
+            return;
+        }
+
+        if (!TRAINER_BUTTON_IDS.has(button.id)) {
+            return;
+        }
+
+        const xhr = evt.detail.xhr;
+        const responseText = xhr && typeof xhr.responseText === 'string' ? xhr.responseText : '';
+        const hasErrorAlert = responseText.includes('alert-danger');
 
         // Special handling for validation button
         if (button.id === 'validateBtn' && evt.detail.successful) {
-            const xhr = evt.detail.xhr;
-            const responseText = xhr.responseText || '';
-
             // Check if response contains validation errors or warnings
             if (responseText.includes('alert-danger')) {
-                // Validation failed - don't show success toast
                 button.classList.add('error-pulse');
                 setTimeout(() => button.classList.remove('error-pulse'), 1000);
                 return;
             } else if (responseText.includes('alert-warning')) {
-                // Validation has warnings - show warning feedback
                 button.classList.add('success-pulse');
                 setTimeout(() => button.classList.remove('success-pulse'), 1000);
                 return; // Don't show toast, warnings are displayed inline
             } else if (responseText.includes('alert-success')) {
-                // Validation passed
                 button.classList.add('success-pulse');
                 setTimeout(() => button.classList.remove('success-pulse'), 1000);
                 if (!window.trainerMain && window.showToast) {
@@ -181,12 +225,13 @@ if (!window.__trainerActionHTMXBound) {
             }
         }
 
+        const requestSucceeded = evt.detail.successful && !hasErrorAlert;
+
         // Add visual feedback based on response
-        if (evt.detail.successful) {
+        if (requestSucceeded) {
             button.classList.add('success-pulse');
             setTimeout(() => button.classList.remove('success-pulse'), 1000);
 
-            // Show success toast if available (but not for validateBtn, handled above)
             if (!window.trainerMain && window.showToast && button.id !== 'validateBtn') {
                 const actionMap = {
                     'runBtn': 'Training started successfully!',
@@ -202,7 +247,6 @@ if (!window.__trainerActionHTMXBound) {
             button.classList.add('error-pulse');
             setTimeout(() => button.classList.remove('error-pulse'), 1000);
 
-            // Show error toast
             if (!window.trainerMain && window.showToast) {
                 window.showToast('Operation failed. Please check the details.', 'error');
                 window.__trainerActionToastFallback = true;

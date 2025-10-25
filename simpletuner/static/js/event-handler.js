@@ -22,6 +22,7 @@ class EventHandler {
         this.websocketReconnectTimeout = null;
         this.isActive = false;
         this.sseRegistered = false;
+        this.stateSyncInFlight = null;
 
         // WebSocket support
         this.websocket = null;
@@ -271,7 +272,6 @@ class EventHandler {
                 'Reconnecting...' :
                 `Reconnecting (attempt ${this.reconnectAttempts})...`;
             this.setConnectionStatus(false, reconnectMsg, false);
-
             // Implement smart reconnection strategy
             this.reconnectAttempts++;
             if (this.reconnectAttempts <= this.maxReconnectAttempts) {
@@ -311,6 +311,7 @@ class EventHandler {
                         this.fetchBroadcastEvents();
                     }
                 }, 10000); // Try again after 10 seconds
+                this.notifyTrainingState('disconnected', { job_id: this.lastKnownJobId, reason: 'callback-max-retries' }, { force: true });
             }
         } finally {
             this.isFetching = false;
@@ -1029,6 +1030,90 @@ class EventHandler {
         }
     }
 
+    transformApiProgressPayload(progress, jobId) {
+        if (!progress || typeof progress !== 'object') {
+            return null;
+        }
+
+        const toNumber = (value) => {
+            if (value === null || value === undefined || value === '') {
+                return null;
+            }
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+
+        const detail = {
+            percentage: toNumber(progress.percent ?? progress.percentage) ?? 0,
+            percent: toNumber(progress.percent ?? progress.percentage) ?? 0,
+            current_step: toNumber(progress.current_step ?? progress.step ?? progress.current) ?? 0,
+            total_steps: toNumber(progress.total_steps ?? progress.total ?? progress.max_steps) ?? 0,
+            epoch: toNumber(progress.epoch ?? progress.current_epoch) ?? 0,
+            total_epochs: toNumber(progress.total_epochs ?? progress.final_epoch ?? progress.total_epoch) ?? 0,
+            loss: toNumber(progress.loss),
+            learning_rate: toNumber(progress.learning_rate ?? progress.lr),
+            job_id: jobId || this.lastKnownJobId || null,
+        };
+
+        return detail;
+    }
+
+    async syncTrainingStatusFromApi(options = {}) {
+        if (this.stateSyncInFlight) {
+            return this.stateSyncInFlight;
+        }
+
+        const source = options.source || 'callback-sync';
+
+        this.stateSyncInFlight = (async () => {
+            try {
+                const response = await ApiClient.fetch(
+                    '/api/training/status',
+                    {
+                        method: 'GET',
+                        cache: 'no-store',
+                        credentials: 'include',
+                        headers: {
+                            'Accept': 'application/json',
+                        },
+                    },
+                    { forceApi: true }
+                );
+
+                if (!response.ok) {
+                    return null;
+                }
+
+                const data = await response.json();
+                const normalizedStatus = String(data.status || 'idle').toLowerCase();
+                const activeStatuses = new Set(['running', 'starting', 'initializing', 'initialising', 'configuring']);
+                const shouldReset = !activeStatuses.has(normalizedStatus);
+
+                this.notifyTrainingState(
+                    normalizedStatus || 'idle',
+                    { ...data, source },
+                    { resetProgress: shouldReset, force: true }
+                );
+
+                if (!shouldReset && data.progress && typeof data.progress === 'object') {
+                    const detail = this.transformApiProgressPayload(data.progress, data.job_id);
+                    if (detail) {
+                        window.dispatchEvent(new CustomEvent('training-progress', { detail }));
+                    }
+                }
+
+                return data;
+            } catch (error) {
+                console.debug('[EventHandler] Failed to sync training status from API', error);
+                return null;
+            } finally {
+                this.stateSyncInFlight = null;
+            }
+        })();
+
+        return this.stateSyncInFlight;
+    }
+
     formatEnhancedMessage(event) {
         let message = event.message || '';
 
@@ -1375,6 +1460,7 @@ class EventHandler {
 
                 // Mark as connected immediately since health check passed
                 this.handleConnectionStateChange(true);
+                this.syncTrainingStatusFromApi({ source: 'callback-healthcheck' });
                 // Resuming broadcast polling
 
                 // Resume broadcast polling
@@ -1590,6 +1676,8 @@ class EventHandler {
                 }]);
             }
             this.setConnectionStatus(true, null, true);
+            const syncSource = this.hasConnectedBefore ? 'callback-reconnected' : 'callback-connected';
+            this.syncTrainingStatusFromApi({ source: syncSource });
         } else if (!newState && wasConnected) {
             // We just disconnected
             this.updateEventList([{
@@ -1598,6 +1686,8 @@ class EventHandler {
                 timestamp: new Date().toISOString()
             }]);
             this.setConnectionStatus(false, null, true);
+            this.notifyTrainingState('disconnected', { job_id: this.lastKnownJobId, reason: 'callback-disconnected' }, { force: true });
+            this.syncTrainingStatusFromApi({ source: 'callback-disconnected' });
         }
     }
 
