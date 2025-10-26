@@ -40,7 +40,11 @@ from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.validation_adapters import ValidationAdapterRun, build_validation_adapter_runs
+from simpletuner.helpers.training.validation_adapters import (
+    ValidationAdapterRun,
+    ValidationAdapterSpec,
+    build_validation_adapter_runs,
+)
 
 logger = logging.getLogger("Validation")
 from simpletuner.helpers.training.multi_process import should_log
@@ -757,12 +761,13 @@ class Validation:
             logger.debug(f"Using model evaluator: {self.model_evaluator}")
         self._update_state()
         self.eval_scores = {}
-        adapter_runs = build_validation_adapter_runs(
+        self.validation_adapter_runs = build_validation_adapter_runs(
             getattr(args, "validation_adapter_path", None),
             getattr(args, "validation_adapter_config", None),
+            adapter_name=getattr(args, "validation_adapter_name", None),
+            adapter_strength=float(getattr(args, "validation_adapter_strength", 1.0) or 1.0),
+            adapter_mode=getattr(args, "validation_adapter_mode", None),
         )
-        self.validation_adapter_runs: list[ValidationAdapterRun] = [ValidationAdapterRun.base()]
-        self.validation_adapter_runs.extend(adapter_runs)
         self._active_adapter_run: ValidationAdapterRun | None = None
 
     def _validation_seed_source(self):
@@ -1320,7 +1325,7 @@ class Validation:
             self.model.pipeline = None
 
     def _has_adapter_variants(self) -> bool:
-        return any(not run.is_base for run in self.validation_adapter_runs)
+        return any(run.adapters for run in self.validation_adapter_runs if not run.is_base)
 
     def _decorate_shortname(self, shortname: str, adapter_run: ValidationAdapterRun | None) -> str:
         if adapter_run is None or adapter_run.is_base:
@@ -1342,6 +1347,17 @@ class Validation:
             len(adapter_run.adapters),
         )
 
+    def _next_adapter_name(
+        self, adapter_run: ValidationAdapterRun, adapter_spec: ValidationAdapterSpec, idx: int, existing: list[str]
+    ) -> str:
+        base_name = adapter_spec.adapter_name or (adapter_run.slug or f"validation_adapter_{idx}")
+        candidate = base_name.strip() or f"validation_adapter_{idx}"
+        suffix = 2
+        while candidate in existing:
+            candidate = f"{base_name}_{suffix}"
+            suffix += 1
+        return candidate
+
     @contextmanager
     def _temporary_validation_adapters(self, adapter_run: ValidationAdapterRun):
         if adapter_run is None or not adapter_run.adapters:
@@ -1359,7 +1375,7 @@ class Validation:
         adapter_names: list[str] = []
         adapter_scales: list[float] = []
         for idx, adapter in enumerate(adapter_run.adapters):
-            adapter_name = f"validation_{adapter_run.slug}_{idx}"
+            adapter_name = self._next_adapter_name(adapter_run, adapter, idx, adapter_names)
             load_kwargs = {"adapter_name": adapter_name}
             if adapter.weight_name:
                 load_kwargs["weight_name"] = adapter.weight_name
@@ -1372,7 +1388,7 @@ class Validation:
                 logger.error("Failed to load validation adapter '%s': %s", adapter.location, exc)
                 raise
             adapter_names.append(adapter_name)
-            adapter_scales.append(adapter.scale)
+            adapter_scales.append(adapter.strength)
         self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales)
         try:
             yield
@@ -1399,6 +1415,39 @@ class Validation:
             pipeline.delete_adapters(names)
         else:
             logger.warning("Could not delete temporary validation adapters: %s", adapter_names)
+        self._assert_adapters_detached(pipeline, adapter_names)
+
+    def _assert_adapters_detached(self, pipeline, adapter_names: list[str]):
+        if pipeline is None or not adapter_names:
+            return
+        lingering: set[str] = set()
+        components = []
+        if hasattr(pipeline, "components") and isinstance(pipeline.components, dict):
+            components.extend(pipeline.components.values())
+        for attr in (
+            "transformer",
+            "text_encoder",
+            "text_encoder_2",
+            "text_encoder_3",
+            "text_encoder_4",
+            "controlnet",
+            "unet",
+        ):
+            component = getattr(pipeline, attr, None)
+            if component is not None:
+                components.append(component)
+        for module in components:
+            config = getattr(module, "peft_config", None)
+            if not isinstance(config, dict):
+                continue
+            for name in adapter_names:
+                if name in config:
+                    lingering.add(name)
+        if lingering:
+            raise RuntimeError(
+                f"Failed to detach temporary validation adapters: {', '.join(sorted(lingering))}. "
+                "Please ensure your pipeline supports adapter removal."
+            )
 
     def process_prompts(
         self,

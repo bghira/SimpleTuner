@@ -13,6 +13,7 @@
 <div class="{{ col_class }} mb-3 {{ field.extra_classes|default('') }}"
      x-on:input="$store.trainer.markFormDirty()"
      x-on:change="$store.trainer.markFormDirty()"
+     data-field-name="{{ field.name }}"
      {% if field.conditional_on %}
      data-conditional-on="{{ field.conditional_on }}"
      {% endif %}>

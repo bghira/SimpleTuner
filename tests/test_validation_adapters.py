@@ -6,9 +6,10 @@ from simpletuner.helpers.training.validation_adapters import ValidationAdapterRu
 
 
 class ValidationAdapterBuilderTests(unittest.TestCase):
-    def test_no_inputs_returns_empty(self):
+    def test_no_inputs_returns_base_run(self):
         runs = build_validation_adapter_runs(None, None)
-        self.assertEqual([], runs)
+        self.assertEqual(1, len(runs))
+        self.assertTrue(runs[0].is_base)
 
     def test_remote_path_uses_default_weight(self):
         runs = build_validation_adapter_runs("foo/bar:baz.safetensors", None)
@@ -21,7 +22,7 @@ class ValidationAdapterBuilderTests(unittest.TestCase):
         self.assertFalse(adapter.is_local)
         self.assertEqual("foo/bar", adapter.repo_id)
         self.assertEqual("baz.safetensors", adapter.weight_name)
-        self.assertEqual(1.0, adapter.scale)
+        self.assertEqual(1.0, adapter.strength)
 
     def test_local_path_detection(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -46,19 +47,55 @@ class ValidationAdapterBuilderTests(unittest.TestCase):
             },
         ]
         runs = build_validation_adapter_runs(None, config)
-        self.assertEqual(2, len(runs))
+        self.assertEqual(3, len(runs))
 
         first = runs[0]
-        self.assertEqual("base_adapter", first.slug)
-        self.assertEqual("org/base_adapter", first.adapters[0].repo_id)
+        self.assertTrue(first.is_base)
 
         second = runs[1]
-        self.assertEqual("combo", second.label)
-        self.assertEqual(2, len(second.adapters))
-        scales = [adapter.scale for adapter in second.adapters]
-        self.assertEqual([0.5, 1.0], scales)
-        self.assertEqual("repo/style", second.adapters[1].repo_id)
-        self.assertEqual("style.safetensors", second.adapters[1].weight_name)
+        self.assertEqual("base_adapter", second.slug)
+        self.assertEqual("org/base_adapter", second.adapters[0].repo_id)
+
+        third = runs[2]
+        self.assertEqual("combo", third.label)
+        self.assertEqual(2, len(third.adapters))
+        strengths = [adapter.strength for adapter in third.adapters]
+        self.assertEqual([0.5, 1.0], strengths)
+        self.assertEqual("repo/style", third.adapters[1].repo_id)
+        self.assertEqual("style.safetensors", third.adapters[1].weight_name)
+
+    def test_adapter_mode_comparison_includes_base(self):
+        runs = build_validation_adapter_runs(
+            "foo/bar", None, adapter_mode="comparison", adapter_strength=0.8, adapter_name="sample"
+        )
+        self.assertEqual(2, len(runs))
+        self.assertTrue(runs[0].is_base)
+        second = runs[1]
+        self.assertEqual("sample", second.slug)
+        self.assertEqual("sample", second.adapters[0].adapter_name)
+        self.assertEqual(0.8, second.adapters[0].strength)
+
+    def test_adapter_mode_none_skips_loading(self):
+        runs = build_validation_adapter_runs("foo/bar", None, adapter_mode="none")
+        self.assertEqual(1, len(runs))
+        self.assertTrue(runs[0].is_base)
+
+    def test_config_entry_with_strength_and_name(self):
+        config = [
+            {
+                "label": "custom",
+                "path": "repo/hero",
+                "adapter_name": "hero_adapter",
+                "strength": 1.25,
+            }
+        ]
+        runs = build_validation_adapter_runs(None, config)
+        self.assertEqual(2, len(runs))
+        run = runs[1]
+        self.assertEqual("custom", run.label)
+        adapter = run.adapters[0]
+        self.assertEqual("hero_adapter", adapter.adapter_name)
+        self.assertAlmostEqual(1.25, adapter.strength)
 
 
 if __name__ == "__main__":

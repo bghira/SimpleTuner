@@ -771,6 +771,63 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="validation_adapter_name",
+            arg_name="--validation_adapter_name",
+            ui_label="Validation Adapter Name",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="validation_adapters",
+            default_value=None,
+            placeholder="my_adapter_name",
+            help_text="Optional adapter identifier to use when loading LoRA weights for validation.",
+            tooltip="If left blank, SimpleTuner generates a unique adapter name automatically.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_adapter_strength",
+            arg_name="--validation_adapter_strength",
+            ui_label="Validation Adapter Strength",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_adapters",
+            default_value=1.0,
+            help_text="Strength multiplier applied when activating the validation adapter.",
+            tooltip="Values greater than 1 increase the LoRA influence; values between 0 and 1 reduce it.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Strength must be greater than 0"),
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_adapter_mode",
+            arg_name="--validation_adapter_mode",
+            ui_label="Validation Adapter Comparison",
+            field_type=FieldType.SELECT,
+            tab="validation",
+            section="validation_adapters",
+            default_value="adapter_only",
+            choices=[
+                {"value": "adapter_only", "label": "Adapter Only"},
+                {"value": "comparison", "label": "Comparison"},
+                {"value": "none", "label": "Disabled"},
+            ],
+            help_text="Select whether to sample only the adapter, compare against the base model, or skip loading it.",
+            tooltip="Comparison renders both with and without the adapter so you can review differences.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="validation_adapter_config",
             arg_name="--validation_adapter_config",
             ui_label="Validation Adapter Config",
@@ -782,6 +839,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="JSON file or inline JSON describing multiple adapter combinations to evaluate during validation.",
             tooltip="Each entry can define 'label' and a list of adapter paths so multiple validation runs are automated.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=2,
+            order=5,
         )
     )
