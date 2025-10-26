@@ -316,6 +316,7 @@ class Wan(VideoModelFoundation):
             "ti2v-5b-2.2",
         }
     )
+    STRICT_I2V_FLAVOURS = tuple(sorted((I2V_FLAVOURS | FLF2V_FLAVOURS)))
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)

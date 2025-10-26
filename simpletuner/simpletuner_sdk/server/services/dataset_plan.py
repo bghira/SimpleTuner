@@ -89,6 +89,7 @@ def compute_validations(
     datasets: List[Dict[str, Any]],
     blueprints: Optional[List[BackendBlueprint]] = None,
     model_family: Optional[str] = None,
+    model_flavour: Optional[str] = None,
 ) -> List[ValidationMessage]:
     """Perform lightweight validation mirroring the UI logic."""
     validations: List[ValidationMessage] = []
@@ -149,6 +150,7 @@ def compute_validations(
 
     # Check if this is a video-only model
     is_video_model = False
+    requires_strict_video_inputs = False
     if model_family:
         try:
             from simpletuner.helpers.models.common import VideoModelFoundation
@@ -157,6 +159,8 @@ def compute_validations(
             model_cls = ModelRegistry.get(model_family)
             if model_cls:
                 is_video_model = issubclass(model_cls, VideoModelFoundation)
+                if hasattr(model_cls, "is_strict_i2v_flavour") and callable(model_cls.is_strict_i2v_flavour):
+                    requires_strict_video_inputs = bool(model_cls.is_strict_i2v_flavour(model_flavour))
         except Exception:
             pass
 
@@ -167,13 +171,22 @@ def compute_validations(
 
     if is_video_model:
         if video_count == 0:
-            validations.append(
-                ValidationMessage(
-                    field="datasets",
-                    message="at least one video dataset is required for video models",
-                    level="error",
+            if requires_strict_video_inputs:
+                validations.append(
+                    ValidationMessage(
+                        field="datasets",
+                        message="strict image-to-video flavours require at least one video dataset",
+                        level="error",
+                    )
                 )
-            )
+            elif image_count == 0:
+                validations.append(
+                    ValidationMessage(
+                        field="datasets",
+                        message="add at least one image or video dataset for this model",
+                        level="error",
+                    )
+                )
     else:
         if image_count == 0:
             validations.append(

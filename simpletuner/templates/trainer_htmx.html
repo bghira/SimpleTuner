@@ -314,6 +314,9 @@ function trainerComponent() {
             requiresConditioningImageEmbeds: false,
             requiresConditioningValidationInputs: false,
             requiresValidationEditCaptions: false,
+            requiresValidationI2VSamples: false,
+            requiresStrictI2VDatasets: false,
+            strictI2VFlavours: [],
             supportsConditioningGenerators: false,
             hasControlnetPipeline: false,
             modelFlavour: null,
@@ -758,6 +761,9 @@ function trainerComponent() {
             const videoCapabilities = this.detectVideoCapabilities(info, config, metadata, this.modelDetails);
             context.isVideoModel = videoCapabilities.isVideoModel;
             context.supportsVideo = videoCapabilities.supportsVideo;
+            const strictI2VInfo = this.evaluateStrictI2VModel(this.modelDetails?.capabilities, info.modelFlavour);
+            context.requiresStrictI2VDatasets = strictI2VInfo.requiresStrictI2V;
+            context.strictI2VFlavours = strictI2VInfo.strictFlavours;
 
             const requirementPayload = this.buildModelRequirementPayload(info, config, metadata);
             if (requirementPayload) {
@@ -794,7 +800,6 @@ function trainerComponent() {
                     }
                 }
             }
-
             context.supportsConditioningGenerators = Boolean(
                 context.supportsConditioningGenerators
                 || context.controlnetEnabled
@@ -803,6 +808,13 @@ function trainerComponent() {
             );
 
             this.modelContext = { ...this.defaultModelContext(), ...context };
+            try {
+                window.dispatchEvent(new CustomEvent('trainer-model-context-updated', {
+                    detail: this.modelContext,
+                }));
+            } catch (error) {
+                console.debug('Failed to dispatch model context event', error);
+            }
         },
         defaultModelContext() {
             return {
@@ -812,6 +824,8 @@ function trainerComponent() {
                 requiresConditioningValidationInputs: false,
                 requiresValidationEditCaptions: false,
                 requiresValidationI2VSamples: false,
+                requiresStrictI2VDatasets: false,
+                strictI2VFlavours: [],
                 conditioningDatasetType: 'conditioning',
                 supportsConditioningGenerators: false,
                 hasControlnetPipeline: false,
@@ -951,6 +965,29 @@ function trainerComponent() {
             const isVideoModel = Boolean(hasVideoFlag || isVideoType || isVideoFamily);
             const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) || isVideoModel);
             return { isVideoModel, supportsVideo };
+        },
+        evaluateStrictI2VModel(capabilities, modelFlavour) {
+            const result = {
+                requiresStrictI2V: false,
+                strictFlavours: [],
+            };
+            if (!capabilities || typeof capabilities !== 'object') {
+                return result;
+            }
+            const strictFlavoursRaw = Array.isArray(capabilities.strict_i2v_flavours)
+                ? capabilities.strict_i2v_flavours
+                : [];
+            const strictFlavours = strictFlavoursRaw
+                .map((value) => (typeof value === 'string' ? value.trim() : ''))
+                .filter((value, index, arr) => value && arr.indexOf(value) === index);
+            const strictForAll = this.normalizeBoolean(capabilities.strict_i2v_all_flavours);
+            const flavourKey = typeof modelFlavour === 'string' ? modelFlavour.trim().toLowerCase() : '';
+            const matchesFlavour = flavourKey
+                ? strictFlavours.some((entry) => entry.toLowerCase() === flavourKey)
+                : false;
+            result.strictFlavours = strictFlavours;
+            result.requiresStrictI2V = Boolean(strictForAll || matchesFlavour);
+            return result;
         },
         cloneConfigForPayload(source) {
             if (!source || typeof source !== 'object') {
