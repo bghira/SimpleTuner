@@ -145,6 +145,40 @@ function dataloaderSectionComponent() {
         const context = this.modelContext || {};
         return Boolean(context.isVideoModel || context.supportsVideo);
     },
+    get requiresStrictI2VDatasets() {
+        const context = this.modelContext || {};
+        return Boolean(context.requiresStrictI2VDatasets);
+    },
+    get imageDatasetCount() {
+        if (!Array.isArray(this.datasets)) {
+            return 0;
+        }
+        return this.datasets.filter((dataset) => {
+            if (!dataset || typeof dataset !== 'object') {
+                return false;
+            }
+            const type = typeof dataset.dataset_type === 'string' ? dataset.dataset_type.toLowerCase() : '';
+            if (type !== 'image') {
+                return false;
+            }
+            return !dataset.disabled;
+        }).length;
+    },
+    get videoDatasetCount() {
+        if (!Array.isArray(this.datasets)) {
+            return 0;
+        }
+        return this.datasets.filter((dataset) => {
+            if (!dataset || typeof dataset !== 'object') {
+                return false;
+            }
+            const type = typeof dataset.dataset_type === 'string' ? dataset.dataset_type.toLowerCase() : '';
+            if (type !== 'video') {
+                return false;
+            }
+            return !dataset.disabled;
+        }).length;
+    },
     get conditioningDatasetType() {
         return this.modelContext.conditioningDatasetType || 'conditioning';
     },
@@ -1013,6 +1047,18 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
 
         <!-- Dataset List -->
         <div class="dataset-list" x-show="!datasetsLoading">
+            <div class="alert alert-warning d-flex align-items-start gap-2 mb-3"
+                 x-show="requiresStrictI2VDatasets && videoDatasetCount === 0"
+                 x-cloak>
+                <i class="fas fa-exclamation-triangle mt-1"></i>
+                <div>
+                    <strong>Video datasets required.</strong>
+                    <div class="mb-0">
+                        Strict image-to-video flavours need at least one video dataset to supply frame sequences.
+                        Add a video dataset alongside any image data sources.
+                    </div>
+                </div>
+            </div>
             <template x-for="dataset in datasets" :key="dataset.id">
                 <div class="dataset-card mb-3" x-bind:data-dataset-id="dataset.id">
                     <div class="d-flex justify-content-between align-items-center mb-2">

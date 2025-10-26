@@ -53,7 +53,9 @@
 
                     {% if not has_parent %}
                         <!-- Main section -->
-                        <div class="form-section mb-4" id="section-{{ section.id }}" data-section-type="{% if section.get('advanced') %}advanced{% else %}main{% endif %}">
+                        <div class="form-section mb-4"
+                             id="section-{{ section.id }}"
+                             data-section-type="{% if section.get('advanced') %}advanced{% else %}main{% endif %}">
                             <h6 class="section-title {% if section.get('advanced') %}advanced-section{% endif %}">
                                 <!-- Collapse toggle for main sections (not advanced subsections) -->
                                 <button type="button" class="btn btn-sm btn-outline-secondary section-toggle me-2"
@@ -70,6 +72,19 @@
                             </h6>
                             {% if section.description %}
                             <p class="text-muted small">{{ section.description }}</p>
+                            {% endif %}
+                            {% if tab_name == 'validation' and section.id == 'prompt_management' %}
+                            <div class="prompt-overlay" id="prompt-management-disabled-overlay">
+                                <div class="prompt-overlay-content">
+                                    <i class="fas fa-ban"></i>
+                                    <div>
+                                        <strong>Prompt controls disabled.</strong>
+                                        <div>
+                                            Dataset caption driven validation is active; prompts are managed automatically for this model.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                             {% endif %}
 
                             {% if section.get('template') %}
@@ -452,11 +467,74 @@
         }
     }
 
+    function initializePromptManagementGuard() {
+        if (tabName !== 'validation') {
+            return;
+        }
+
+        if (window.__promptManagementGuardCleanup) {
+            try {
+                window.__promptManagementGuardCleanup();
+            } catch (err) {
+                console.debug('Prompt management guard cleanup failed', err);
+            }
+            delete window.__promptManagementGuardCleanup;
+        }
+
+        const promptSectionId = 'section-prompt_management';
+        const promptContentId = 'content-prompt_management';
+        const toggleState = (context) => {
+            const disabled = Boolean(
+                context
+                && (
+                    context.requiresValidationI2VSamples
+                    || context.requiresStrictI2VDatasets
+                ),
+            );
+            const section = document.getElementById(promptSectionId);
+            const content = document.getElementById(promptContentId);
+
+            if (section) {
+                section.classList.toggle('prompt-management-disabled', disabled);
+            }
+
+            if (!content) {
+                return;
+            }
+
+            const controls = content.querySelectorAll('input, textarea, select, button');
+            controls.forEach((element) => {
+                if (!Object.prototype.hasOwnProperty.call(element.dataset, 'promptGuardOriginalDisabled')) {
+                    element.dataset.promptGuardOriginalDisabled = element.disabled ? 'true' : 'false';
+                }
+                if (disabled) {
+                    element.disabled = true;
+                } else {
+                    element.disabled = element.dataset.promptGuardOriginalDisabled === 'true';
+                }
+            });
+        };
+
+        const handler = (event) => toggleState(event ? event.detail : null);
+        window.addEventListener('trainer-model-context-updated', handler);
+        window.__promptManagementGuardCleanup = () => window.removeEventListener('trainer-model-context-updated', handler);
+
+        try {
+            const trainerStore = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+            if (trainerStore && trainerStore.modelContext) {
+                toggleState(trainerStore.modelContext);
+            }
+        } catch (err) {
+            console.debug('Prompt management guard init failed', err);
+        }
+    }
+
     function initTab() {
         console.log('[FormTab] Initializing tab:', tabName);
         setupSectionCollapse();
         initializeConditionalFields();
         initializeTooltips();
+        initializePromptManagementGuard();
     }
 
     // Initialize immediately (for direct page loads)

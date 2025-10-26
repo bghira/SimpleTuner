@@ -154,6 +154,14 @@ class ModelsService:
             ),
             "is_video_model": issubclass(model_cls, VideoModelFoundation),
         }
+        strict_i2v_flavours: list[str] = []
+        try:
+            if hasattr(model_cls, "strict_i2v_flavours") and callable(model_cls.strict_i2v_flavours):
+                strict_i2v_flavours = list(model_cls.strict_i2v_flavours())
+        except Exception:
+            strict_i2v_flavours = []
+        capabilities["strict_i2v_flavours"] = strict_i2v_flavours
+        capabilities["strict_i2v_all_flavours"] = bool(getattr(model_cls, "STRICT_I2V_FOR_ALL_FLAVOURS", False))
 
         default_flavour = getattr(model_cls, "DEFAULT_MODEL_FLAVOUR", None)
         if default_flavour is None:
