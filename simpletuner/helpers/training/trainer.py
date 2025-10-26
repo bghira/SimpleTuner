@@ -24,7 +24,12 @@ from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
-from simpletuner.helpers.data_backend.factory import BatchFetcher, configure_multi_databackend, random_dataloader_iterator
+from simpletuner.helpers.data_backend.factory import (
+    BatchFetcher,
+    configure_multi_databackend,
+    random_dataloader_iterator,
+    run_distillation_cache_generation,
+)
 from simpletuner.helpers.models.all import model_families
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import trainable_parameter_count
@@ -1667,6 +1672,7 @@ class Trainer:
 
             if self.distiller:
                 logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
+                run_distillation_cache_generation(self.distiller)
         except Exception as e:
             logger.error(f"Failed to initialize distillation: {e}")
             raise

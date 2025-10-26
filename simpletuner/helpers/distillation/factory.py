@@ -3,7 +3,10 @@ import logging
 from enum import Enum
 from typing import Any, Dict, Optional, Union
 
+# Ensure registry-backed distillers (like self_forcing) register themselves on import.
+import simpletuner.helpers.distillation.self_forcing  # noqa: F401
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.registry import DistillationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +17,7 @@ class DistillationMethod(Enum):
     DCM = "dcm"
     DMD = "dmd"
     LCM = "lcm"
+    SELF_FORCING = "self_forcing"
 
     @classmethod
     def from_string(cls, method: str):
@@ -99,6 +103,14 @@ class DistillerFactory:
                 distill_config=distill_config,
                 model_type=model_type,
                 prediction_type=prediction_type,
+                student_model=student_model,
+            )
+        elif method == DistillationMethod.SELF_FORCING:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
                 student_model=student_model,
             )
         else:
@@ -254,6 +266,25 @@ class DistillerFactory:
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
+
+    @staticmethod
+    def _create_registered_distiller(
+        registry_key: str,
+        teacher_model,
+        noise_scheduler,
+        distill_config: Dict[str, Any],
+        student_model=None,
+    ) -> DistillationBase:
+        distiller_cls = DistillationRegistry.get(registry_key)
+        if distiller_cls is None:
+            raise ValueError(f"No distiller registered under '{registry_key}'.")
+
+        return distiller_cls(
+            teacher_model=teacher_model,
+            student_model=student_model,
+            noise_scheduler=noise_scheduler,
+            config=distill_config,
+        )
 
 
 def init_distillation(trainer_instance):
