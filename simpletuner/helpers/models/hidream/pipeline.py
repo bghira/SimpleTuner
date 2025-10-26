@@ -46,6 +46,7 @@ from transformers import (
 )
 
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
+from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -486,7 +487,12 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
                 adapter_name = get_adapter_name(controlnet)
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
-            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+            offload_state = cls._optionally_disable_offloading(_pipeline)
+            (
+                is_model_cpu_offload,
+                is_sequential_cpu_offload,
+                is_group_offload,
+            ) = unpack_offload_state(offload_state)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
@@ -499,10 +505,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
                 logger.info(f"Loaded ControlNet LoRA with incompatible keys: {incompatible_keys}")
 
             # Offload back.
-            if is_model_cpu_offload:
-                _pipeline.enable_model_cpu_offload()
-            elif is_sequential_cpu_offload:
-                _pipeline.enable_sequential_cpu_offload()
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
 
     @classmethod
     def load_lora_into_transformer(
@@ -638,7 +641,12 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
             if adapter_name is None:
                 adapter_name = get_adapter_name(text_encoder)
 
-            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+            offload_state = cls._optionally_disable_offloading(_pipeline)
+            (
+                is_model_cpu_offload,
+                is_sequential_cpu_offload,
+                is_group_offload,
+            ) = unpack_offload_state(offload_state)
 
             # inject LoRA layers and load the state dict
             # in transformers we automatically check whether the adapter name is already in use or not
@@ -655,10 +663,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
             text_encoder.to(device=text_encoder.device, dtype=text_encoder.dtype)
 
             # Offload back.
-            if is_model_cpu_offload:
-                _pipeline.enable_model_cpu_offload()
-            elif is_sequential_cpu_offload:
-                _pipeline.enable_sequential_cpu_offload()
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
 
     @classmethod
     def save_lora_weights(
