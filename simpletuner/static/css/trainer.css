@@ -1244,7 +1244,6 @@ optgroup option {
     inset: 0;
     background: rgba(12, 15, 25, 0.55);
     border-radius: 0.75rem;
-    display: flex;
     align-items: center;
     justify-content: center;
     padding: 1.25rem;

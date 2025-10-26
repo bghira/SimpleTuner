@@ -751,3 +751,37 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
         )
     )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_adapter_path",
+            arg_name="--validation_adapter_path",
+            ui_label="Validation Adapter Path",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="validation_adapters",
+            default_value=None,
+            placeholder="repo/id:weights.safetensors or /path/to/adapter.safetensors",
+            help_text="Temporarily load a single LoRA adapter during validation from a local file or Hugging Face repo.",
+            tooltip="Formats: 'org/repo:weights.safetensors', 'org/repo' (defaults to pytorch_lora_weights.safetensors) or a local path.",
+            importance=ImportanceLevel.ADVANCED,
+            order=1,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_adapter_config",
+            arg_name="--validation_adapter_config",
+            ui_label="Validation Adapter Config",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="validation_adapters",
+            default_value=None,
+            placeholder="/path/to/validation_adapters.json",
+            help_text="JSON file or inline JSON describing multiple adapter combinations to evaluate during validation.",
+            tooltip="Each entry can define 'label' and a list of adapter paths so multiple validation runs are automated.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=2,
+        )
+    )

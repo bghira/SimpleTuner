@@ -3,6 +3,7 @@ import inspect
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from io import BytesIO
 from typing import Union
 
@@ -39,6 +40,7 @@ from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.validation_adapters import ValidationAdapterRun, build_validation_adapter_runs
 
 logger = logging.getLogger("Validation")
 from simpletuner.helpers.training.multi_process import should_log
@@ -755,6 +757,13 @@ class Validation:
             logger.debug(f"Using model evaluator: {self.model_evaluator}")
         self._update_state()
         self.eval_scores = {}
+        adapter_runs = build_validation_adapter_runs(
+            getattr(args, "validation_adapter_path", None),
+            getattr(args, "validation_adapter_config", None),
+        )
+        self.validation_adapter_runs: list[ValidationAdapterRun] = [ValidationAdapterRun.base()]
+        self.validation_adapter_runs.extend(adapter_runs)
+        self._active_adapter_run: ValidationAdapterRun | None = None
 
     def _validation_seed_source(self):
         if self.config.validation_seed_source == "gpu":
@@ -1131,7 +1140,19 @@ class Validation:
                 self.validation_images = None
                 return self
             self.setup_scheduler()
-            self.process_prompts(validation_type=validation_type)
+            master_validation_images: dict = {}
+            self.validation_prompt_dict = {}
+            self.validation_video_paths.clear()
+            self.eval_scores = {}
+            for adapter_run in self.validation_adapter_runs:
+                self._log_adapter_run(adapter_run)
+                with self._temporary_validation_adapters(adapter_run):
+                    self.process_prompts(
+                        validation_type=validation_type,
+                        adapter_run=adapter_run,
+                        image_accumulator=master_validation_images,
+                    )
+            self.validation_images = master_validation_images
             self.finalize_validation(validation_type)
             if self.evaluation_result is not None:
                 logger.info(f"Evaluation result: {self.evaluation_result}")
@@ -1298,15 +1319,100 @@ class Validation:
             del self.model.pipeline
             self.model.pipeline = None
 
-    def process_prompts(self, validation_type: str = None):
+    def _has_adapter_variants(self) -> bool:
+        return any(not run.is_base for run in self.validation_adapter_runs)
+
+    def _decorate_shortname(self, shortname: str, adapter_run: ValidationAdapterRun | None) -> str:
+        if adapter_run is None or adapter_run.is_base:
+            return shortname
+        suffix = adapter_run.slug
+        if not shortname:
+            return suffix
+        return f"{shortname}__{suffix}"
+
+    def _log_adapter_run(self, adapter_run: ValidationAdapterRun):
+        if adapter_run.is_base and not self._has_adapter_variants():
+            return
+        if adapter_run.is_base:
+            logger.info("Running validation without additional adapters.")
+            return
+        logger.info(
+            "Running validation with adapter set '%s' containing %d adapter(s).",
+            adapter_run.label,
+            len(adapter_run.adapters),
+        )
+
+    @contextmanager
+    def _temporary_validation_adapters(self, adapter_run: ValidationAdapterRun):
+        if adapter_run is None or not adapter_run.adapters:
+            yield
+            return
+        pipeline = getattr(self.model, "pipeline", None)
+        if pipeline is None:
+            yield
+            return
+        if not hasattr(pipeline, "load_lora_weights"):
+            raise ValueError(
+                "The current pipeline does not support loading LoRA adapters. "
+                "Remove --validation_adapter_path/--validation_adapter_config to continue."
+            )
+        adapter_names: list[str] = []
+        adapter_scales: list[float] = []
+        for idx, adapter in enumerate(adapter_run.adapters):
+            adapter_name = f"validation_{adapter_run.slug}_{idx}"
+            load_kwargs = {"adapter_name": adapter_name}
+            if adapter.weight_name:
+                load_kwargs["weight_name"] = adapter.weight_name
+            try:
+                if adapter.is_local:
+                    pipeline.load_lora_weights(adapter.location, **load_kwargs)
+                else:
+                    pipeline.load_lora_weights(adapter.repo_id, **load_kwargs)
+            except Exception as exc:  # pragma: no cover - defensive log
+                logger.error("Failed to load validation adapter '%s': %s", adapter.location, exc)
+                raise
+            adapter_names.append(adapter_name)
+            adapter_scales.append(adapter.scale)
+        self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales)
+        try:
+            yield
+        finally:
+            self._remove_validation_adapters(pipeline, adapter_names)
+
+    def _set_validation_adapter_weights(self, pipeline, adapter_names: list[str], adapter_scales: list[float]):
+        if not adapter_names:
+            return
+        if hasattr(pipeline, "set_adapters"):
+            names = adapter_names if len(adapter_names) > 1 else adapter_names[0]
+            scales = adapter_scales if len(adapter_scales) > 1 else adapter_scales[0]
+            pipeline.set_adapters(names, scales)
+        elif hasattr(pipeline, "set_adapter"):
+            pipeline.set_adapter(adapter_names[0], adapter_scales[0])
+        else:
+            logger.warning("Pipeline does not expose set_adapters; using adapter defaults.")
+
+    def _remove_validation_adapters(self, pipeline, adapter_names: list[str]):
+        if not adapter_names:
+            return
+        if hasattr(pipeline, "delete_adapters"):
+            names = adapter_names if len(adapter_names) > 1 else adapter_names[0]
+            pipeline.delete_adapters(names)
+        else:
+            logger.warning("Could not delete temporary validation adapters: %s", adapter_names)
+
+    def process_prompts(
+        self,
+        validation_type: str = None,
+        adapter_run: ValidationAdapterRun | None = None,
+        image_accumulator: dict | None = None,
+    ):
         """Processes each validation prompt and logs the result."""
-        self.validation_prompt_dict = {}
         self.evaluation_result = None
-        validation_images = {}
+        if self.validation_prompt_dict is None:
+            self.validation_prompt_dict = {}
+        validation_images = image_accumulator if image_accumulator is not None else {}
         _content = self.validation_prompt_metadata["validation_prompts"]
         total_samples = len(_content) if _content is not None else 0
-        self.eval_scores = {}
-        self.validation_video_paths.clear()
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
@@ -1344,23 +1450,24 @@ class Validation:
                 ) = prompt
             else:
                 shortname = self.validation_prompt_metadata["validation_shortnames"][idx]
-            logger.debug(f"validation prompt (shortname={shortname}): '{prompt}'")
-            self.validation_prompt_dict[shortname] = prompt
+            decorated_shortname = self._decorate_shortname(shortname, adapter_run)
+            logger.debug(f"validation prompt (shortname={decorated_shortname}): '{prompt}'")
+            self.validation_prompt_dict[decorated_shortname] = prompt
             logger.debug(f"Processing validation for prompt: {prompt}")
             (
                 stitched_validation_images,
                 checkpoint_validation_images,
                 ema_validation_images,
-            ) = self.validate_prompt(prompt, shortname, validation_input_image, validation_type)
+            ) = self.validate_prompt(prompt, decorated_shortname, validation_input_image, validation_type)
             validation_images.update(stitched_validation_images)
             if isinstance(self.model, VideoModelFoundation):
-                self._save_videos(validation_images, shortname, prompt)
+                self._save_videos(validation_images, decorated_shortname, prompt)
             else:
-                self._save_images(validation_images, shortname, prompt)
+                self._save_images(validation_images, decorated_shortname, prompt)
             logger.debug(f"Completed generating image: {prompt}")
             self.validation_images = validation_images
             self.evaluation_result = self.evaluate_images(checkpoint_validation_images)
-            self._log_validations_to_webhook(validation_images, shortname, prompt)
+            self._log_validations_to_webhook(validation_images, decorated_shortname, prompt)
             idx += 1
         try:
             self._log_validations_to_trackers(validation_images)

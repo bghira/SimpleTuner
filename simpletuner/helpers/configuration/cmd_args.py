@@ -837,6 +837,19 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
 
+    if isinstance(getattr(args, "validation_adapter_path", None), str):
+        candidate = args.validation_adapter_path.strip()
+        args.validation_adapter_path = candidate or None
+
+    if getattr(args, "validation_adapter_config", None):
+        args.validation_adapter_config = _parse_json_like_option(
+            args.validation_adapter_config,
+            "--validation_adapter_config",
+        )
+
+    if args.validation_adapter_path and args.validation_adapter_config:
+        raise ValueError("Provide either --validation_adapter_path or --validation_adapter_config, not both.")
+
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
         warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
 
