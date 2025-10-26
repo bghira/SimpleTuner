@@ -66,6 +66,23 @@ class DistillationBase:
         # Store custom schedulers needed for specific distillation methods
         self.custom_schedulers = {}
 
+    def requires_distillation_cache(self) -> bool:
+        """Return True if this distiller expects a distillation cache to be available."""
+        return False
+
+    def get_required_distillation_cache_type(self) -> Optional[str]:
+        """Return the cache type identifier this distiller expects, if any."""
+        return None
+
+    def get_ode_generator_provider(self):
+        """
+        Return an object responsible for generating ODE pairs for this distiller.
+
+        Distillers that need deterministic ODE data should override this and return
+        an object exposing a `generate(cache, backend_config=None)` method.
+        """
+        return None
+
     def get_scheduler(self, scheduler_name: str = None):
         """A child class can override this to provide a custom scheduler."""
         self.logger.warning("No distillation scheduler provided. Using default.")
