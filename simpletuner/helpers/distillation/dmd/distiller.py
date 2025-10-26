@@ -9,6 +9,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.registry import DistillationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -335,3 +336,6 @@ class DMDDistiller(DistillationBase):
                 map_location = "cpu"
             payload = torch.load(opt_path, map_location=map_location)
             self.fake_score_optimizer.load_state_dict(payload["state"])
+
+
+DistillationRegistry.register("dmd", DMDDistiller, requires_distillation_cache=False)
