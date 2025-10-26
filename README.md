@@ -90,6 +90,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **Loss functions** - L2, Huber, Smooth L1 with scheduling support
 - **SNR weighting** - Min-SNR gamma weighting for improved training dynamics
 - **Group offloading** - Diffusers v0.33+ module-group CPU/disk staging with optional CUDA streams
+- **Validation adapter sweeps** - Temporarily attach LoRA adapters (single or JSON presets) during validation to measure adapter-only or comparison renders without touching the training loop
 
 ### Model-Specific Features
 
