@@ -71,6 +71,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
@@ -80,6 +81,7 @@ from simpletuner.helpers.data_backend.bucket_report import BucketReport
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
+from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
 from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
@@ -226,6 +228,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         # no overrides for image embed backends
         return output
     elif backend.get("dataset_type", None) == "conditioning_image_embeds":
+        return output
+    elif backend.get("dataset_type", None) == "distillation_cache":
+        output["dataset_type"] = "distillation_cache"
+        output["config"]["distillation_type"] = backend.get("distillation_type", "generic")
         return output
     else:
         if "caption_filter_list" in backend:
@@ -979,6 +985,7 @@ class FactoryRegistry:
         self.text_embed_backends = {}
         self.image_embed_backends = {}
         self.conditioning_image_embed_backends = {}
+        self.distillation_cache_backends = {}
         self.data_backends = {}
         self.default_text_embed_backend_id = None
 
@@ -991,6 +998,7 @@ class FactoryRegistry:
                 "text_embeds": 0,
                 "image_embeds": 0,
                 "conditioning_image_embeds": 0,
+                "distillation_cache": 0,
                 "data_backends": 0,
             },
             "configuration_time": 0,
@@ -1528,6 +1536,60 @@ class FactoryRegistry:
 
         self.metrics["backend_counts"]["conditioning_image_embeds"] = len(self.conditioning_image_embed_backends)
 
+    def configure_distillation_cache_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """Configure distillation cache storage backends."""
+        for backend in data_backend_config:
+            dataset_type = backend.get("dataset_type")
+            if dataset_type != "distillation_cache":
+                continue
+
+            if backend.get("disabled", False) or backend.get("disable", False):
+                info_log(f"Skipping disabled distillation cache backend {backend['id']} in config file.")
+                continue
+
+            info_log(f"Configuring distillation cache backend: {backend['id']}")
+
+            config = create_backend_config(backend, vars(self.args))
+            config.validate(vars(self.args))
+
+            init_backend = init_backend_config(backend, self.args, self.accelerator)
+            existing_config = StateTracker.get_data_backend_config(init_backend["id"])
+            if existing_config is not None and existing_config != {}:
+                raise ValueError(f"You can only have one backend named {init_backend['id']}")
+            StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+
+            builder = create_backend_builder(backend["type"], self.accelerator, self.args)
+            init_backend["data_backend"] = builder.build(config)
+
+            cache_dir = backend.get("cache_dir")
+            if not cache_dir:
+                base_cache = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
+                cache_dir = os.path.join(base_cache, "distillation", init_backend["id"])
+            init_backend["cache_dir"] = cache_dir
+            init_backend["distillation_type"] = backend.get(
+                "distillation_type", init_backend["config"].get("distillation_type", "generic")
+            )
+
+            preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
+            if not preserve_data_backend_cache and self.accelerator.is_local_main_process:
+                StateTracker.delete_cache_files(
+                    data_backend_id=init_backend["id"],
+                    preserve_data_backend_cache=preserve_data_backend_cache,
+                )
+
+            init_backend["distillation_cache"] = DistillationCache(
+                id=init_backend["id"],
+                data_backend=init_backend["data_backend"],
+                cache_dir=cache_dir,
+                distillation_type=init_backend["distillation_type"],
+            )
+            init_backend["distillation_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
+
+            StateTracker.register_data_backend(init_backend)
+            self.distillation_cache_backends[init_backend["id"]] = init_backend
+
+        self.metrics["backend_counts"]["distillation_cache"] = len(self.distillation_cache_backends)
+
     def _prevalidate_backend_ids(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Validate that data backends provide unique, non-empty identifiers before configuration."""
         try:
@@ -1546,7 +1608,13 @@ class FactoryRegistry:
 
         for backend in data_backend_config:
             dataset_type = backend.get("dataset_type", None)
-            if dataset_type is not None and dataset_type not in ["image", "conditioning", "eval", "video"]:
+            if dataset_type is not None and dataset_type not in [
+                "image",
+                "conditioning",
+                "eval",
+                "video",
+                "distillation_cache",
+            ]:
                 continue
             if backend.get("disabled", False) or backend.get("disable", False):
                 continue
@@ -2664,6 +2732,7 @@ class FactoryRegistry:
             - 'text_embed_backends': Dictionary of text embedding backends
             - 'image_embed_backends': Dictionary of image embedding backends
             - 'conditioning_image_embed_backends': Dictionary of conditioning image embedding backends
+            - 'distillation_cache_backends': Dictionary of distillation cache backends
             - 'default_text_embed_backend_id': ID of default text embedding backend
 
         Example:
@@ -2679,6 +2748,7 @@ class FactoryRegistry:
         self.configure_text_embed_backends(data_backend_config)
         self.configure_image_embed_backends(data_backend_config)
         self.configure_conditioning_image_embed_backends(data_backend_config)
+        self.configure_distillation_cache_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
 
         result = {
@@ -2686,6 +2756,7 @@ class FactoryRegistry:
             "text_embed_backends": self.text_embed_backends,
             "image_embed_backends": self.image_embed_backends,
             "conditioning_image_embed_backends": self.conditioning_image_embed_backends,
+            "distillation_cache_backends": self.distillation_cache_backends,
             "default_text_embed_backend_id": self.default_text_embed_backend_id,
         }
 
@@ -2696,6 +2767,7 @@ class FactoryRegistry:
                 "text_embed_backends": len(result["text_embed_backends"]),
                 "image_embed_backends": len(result["image_embed_backends"]),
                 "conditioning_image_embed_backends": len(result["conditioning_image_embed_backends"]),
+                "distillation_cache_backends": len(result["distillation_cache_backends"]),
             },
         )
 
@@ -2841,6 +2913,7 @@ def configure_multi_databackend_new(
     factory.configure_text_embed_backends(data_backend_config)
     factory.configure_image_embed_backends(data_backend_config)
     factory.configure_conditioning_image_embed_backends(data_backend_config)
+    factory.configure_distillation_cache_backends(data_backend_config)
     factory.configure_data_backends(data_backend_config)
 
     factory._log_performance_metrics("implementation_complete")
@@ -2850,6 +2923,7 @@ def configure_multi_databackend_new(
         "text_embed_backends": factory.text_embed_backends,
         "image_embed_backends": factory.image_embed_backends,
         "conditioning_image_embed_backends": factory.conditioning_image_embed_backends,
+        "distillation_cache_backends": factory.distillation_cache_backends,
         "default_text_embed_backend_id": factory.default_text_embed_backend_id,
     }
 
@@ -3073,6 +3147,57 @@ def random_dataloader_iterator(step, backends: dict):
                 logger.debug("All dataloaders exhausted. Moving to next epoch in main training loop.")
                 StateTracker.clear_exhausted_buckets()
                 return False
+
+
+def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> None:
+    """Trigger ODE generation for registered distillation cache backends if required."""
+    if distiller is None or not hasattr(distiller, "requires_distillation_cache"):
+        return
+
+    try:
+        requires_cache = bool(distiller.requires_distillation_cache())
+    except Exception:
+        requires_cache = False
+
+    if not requires_cache:
+        return
+
+    provider = distiller.get_ode_generator_provider() if hasattr(distiller, "get_ode_generator_provider") else None
+    if provider is None or not hasattr(provider, "generate") or not callable(provider.generate):
+        logger.debug("Distiller requested a cache but did not supply a valid ODE generator provider.")
+        return
+
+    required_type = None
+    if hasattr(distiller, "get_required_distillation_cache_type"):
+        required_type = distiller.get_required_distillation_cache_type()
+
+    distillation_backends = StateTracker.get_data_backends(
+        _type="distillation_cache",
+        _types=["distillation_cache"],
+    )
+
+    if not distillation_backends:
+        raise ValueError("Distillation method requires a distillation_cache dataset but none were configured.")
+
+    selected_backends = {}
+    for backend_id, backend in distillation_backends.items():
+        backend_type = backend.get("distillation_type") or backend.get("config", {}).get("distillation_type")
+        if required_type and backend_type != required_type:
+            continue
+        selected_backends[backend_id] = backend
+
+    if required_type and not selected_backends:
+        raise ValueError(
+            f"Distillation method requested cache type '{required_type}' but no matching distillation_cache dataset was provided."
+        )
+
+    targets = selected_backends if selected_backends else distillation_backends
+
+    for backend_id, backend in targets.items():
+        cache = backend.get("distillation_cache")
+        if cache is None:
+            raise ValueError(f"Distillation cache backend '{backend_id}' is missing its cache instance.")
+        provider.generate(cache, backend_config=backend.get("config", {}))
 
 
 def configure_multi_databackend(

@@ -2,6 +2,7 @@
 
 from . import validators
 from .base import BaseBackendConfig
+from .distillation_cache import DistillationCacheBackendConfig
 from .image import ImageBackendConfig
 from .image_embed import ImageEmbedBackendConfig
 from .text_embed import TextEmbedBackendConfig
@@ -34,6 +35,7 @@ __all__ = [
     "ImageBackendConfig",
     "TextEmbedBackendConfig",
     "ImageEmbedBackendConfig",
+    "DistillationCacheBackendConfig",
     "ConditioningImageEmbedBackendConfig",
     "validators",
     "create_backend_config",
@@ -49,6 +51,8 @@ def create_backend_config(backend_dict: dict, args: dict) -> BaseBackendConfig:
         return ImageEmbedBackendConfig.from_dict(backend_dict, args)
     elif dataset_type == "conditioning_image_embeds":
         return ConditioningImageEmbedBackendConfig.from_dict(backend_dict, args)
+    elif dataset_type == "distillation_cache":
+        return DistillationCacheBackendConfig.from_dict(backend_dict, args)
     elif dataset_type in ["image", "conditioning", "eval", "video"]:
         return ImageBackendConfig.from_dict(backend_dict, args)
     else:
