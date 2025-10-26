@@ -12,6 +12,7 @@ from PIL import Image
 from torchvision.io.video_reader import VideoReader
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -41,15 +42,15 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         filter_func: Optional[callable] = None,
         num_proc: int = 16,
         composite_config: dict = {},
-        dataset_type: str = "image",
+        dataset_type: Union[str, DatasetType] = DatasetType.IMAGE,
         auto_load: bool = False,
     ):
         self.id = id
         self.type = "huggingface"
         self.accelerator = accelerator
         self.dataset_name = dataset_name
-        self.dataset_type = dataset_type
-        self.file_extension = "jpg" if dataset_type == "image" else "mp4"
+        self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        self.file_extension = "mp4" if self.dataset_type is DatasetType.VIDEO else "jpg"
         self.split = split
         self.revision = revision
         self.image_column = image_column
@@ -135,7 +136,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             self._loading_dataset = False
 
     def _configure_video_column(self) -> None:
-        if self.dataset_type != "video" or self.streaming:
+        if self.dataset_type is not DatasetType.VIDEO or self.streaming:
             return
 
         try:
@@ -494,12 +495,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         try:
             # Get the item from dataset
             item = self.dataset[index]
-            sample = item.get(self.video_column if self.dataset_type == "video" else self.image_column)
+            column = self.video_column if self.dataset_type is DatasetType.VIDEO else self.image_column
+            sample = item.get(column)
 
             if sample is None:
-                logger.error(
-                    f"No {self.dataset_type} found in column '{self.video_column if self.dataset_type == 'video' else self.image_column}' for index {index}"
-                )
+                logger.error(f"No {self.dataset_type} found in column '{column}' for index {index}")
                 return None
 
             # Handle composite images if configured
@@ -586,7 +586,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                         except Exception:
                             logger.error(
                                 "Unable to convert '%s' bytes payload to raw bytes.",
-                                self.video_column if self.dataset_type == "video" else self.image_column,
+                                self.video_column if self.dataset_type is DatasetType.VIDEO else self.image_column,
                             )
                             data = None
                 elif path:
@@ -610,7 +610,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                 if data is None:
                     logger.error(
                         "Dataset sample in column '%s' missing usable data (keys=%s)",
-                        self.video_column if self.dataset_type == "video" else self.image_column,
+                        self.video_column if self.dataset_type is DatasetType.VIDEO else self.image_column,
                         list(sample.keys()),
                     )
                     return None
@@ -783,7 +783,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
 
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         try:
-            if self.dataset_type == "video":
+            if self.dataset_type is DatasetType.VIDEO:
                 index = self._get_index_from_path(filepath)
                 if index is None:
                     logger.error("Unable to resolve dataset index for %s", filepath)

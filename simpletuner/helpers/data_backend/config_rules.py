@@ -10,6 +10,7 @@ from simpletuner.helpers.configuration.registry import (
     make_default_rule,
     make_required_rule,
 )
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 
 
 def register_dataloader_rules():
@@ -24,7 +25,7 @@ def register_dataloader_rules():
         ConfigRule(
             field_name="datasets",
             rule_type=RuleType.COMBINATION,
-            value={"image": 1, "text_embeds": 1},
+            value={DatasetType.IMAGE.value: 1, DatasetType.TEXT_EMBEDS.value: 1},
             message="Your dataloader config must contain at least one image dataset AND at least one text_embed dataset",
             example="""[
     {

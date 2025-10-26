@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import (
     BackendBlueprint,
     find_blueprint,
@@ -166,8 +167,8 @@ def compute_validations(
 
     # For video models, require at least one video dataset
     # For image models, require at least one image dataset
-    image_count = sum(1 for dataset in datasets if dataset.get("dataset_type") == "image")
-    video_count = sum(1 for dataset in datasets if dataset.get("dataset_type") == "video")
+    image_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE)
+    video_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.VIDEO)
 
     if is_video_model:
         if video_count == 0:
@@ -197,7 +198,7 @@ def compute_validations(
                 )
             )
 
-    text_embed_datasets = [dataset for dataset in datasets if dataset.get("dataset_type") == "text_embeds"]
+    text_embed_datasets = [dataset for dataset in datasets if _dataset_type(dataset) is DatasetType.TEXT_EMBEDS]
     if not text_embed_datasets:
         validations.append(
             ValidationMessage(
@@ -226,8 +227,8 @@ def compute_validations(
             )
 
     # Check for orphaned text_embeds and image_embeds references
-    text_embed_ids = {dataset.get("id") for dataset in datasets if dataset.get("dataset_type") == "text_embeds"}
-    image_embed_ids = {dataset.get("id") for dataset in datasets if dataset.get("dataset_type") == "image_embeds"}
+    text_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.TEXT_EMBEDS}
+    image_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE_EMBEDS}
 
     for dataset in datasets:
         dataset_id = dataset.get("id", "unknown")
@@ -297,3 +298,14 @@ def compute_validations(
                 )
 
     return validations
+
+
+def _dataset_type(dataset: Dict[str, Any]) -> Optional[DatasetType]:
+    """Best-effort conversion of raw dataset_type values into DatasetType enums."""
+    value = dataset.get("dataset_type")
+    if value is None:
+        return None
+    try:
+        return DatasetType.from_value(value)
+    except ValueError:
+        return None

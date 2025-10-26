@@ -31,4 +31,7 @@ class DistillationRegistry:
     @classmethod
     def items(cls) -> Dict[str, Dict[str, Any]]:
         """Return a mapping of registered distillers to their metadata."""
-        return {name: {"class": distiller, "metadata": cls._metadata.get(name, {}).copy()} for name, distiller in cls._registry.items()}
+        return {
+            name: {"class": distiller, "metadata": cls._metadata.get(name, {}).copy()}
+            for name, distiller in cls._registry.items()
+        }

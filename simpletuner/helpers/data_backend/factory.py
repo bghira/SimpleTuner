@@ -79,6 +79,7 @@ from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.bucket_report import BucketReport
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.distillation.common import DistillationBase
@@ -137,6 +138,29 @@ def _log_with_state(level: str, message: str) -> None:
 
     if should_log:
         getattr(logger, level)(message)
+
+
+def _backend_dataset_type(backend: Dict[str, Any], *, default: DatasetType = DatasetType.IMAGE) -> DatasetType:
+    """Extract the dataset type enum from a backend declaration."""
+    return ensure_dataset_type(backend.get("dataset_type"), default=default)
+
+
+def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
+    """Return True when backend participates in the core training dataloader."""
+    primary_types = {
+        DatasetType.IMAGE,
+        DatasetType.CONDITIONING,
+        DatasetType.EVAL,
+        DatasetType.VIDEO,
+        DatasetType.CAPTION,
+    }
+    raw_type = backend.get("dataset_type")
+    if raw_type is None:
+        return backend.get("type") in {"local", "aws", "csv", "huggingface"}
+    try:
+        return ensure_dataset_type(raw_type, default=DatasetType.IMAGE) in primary_types
+    except ValueError:
+        return False
 
 
 def _synchronise_state_tracker(args: Any, accelerator: Any) -> Any:
@@ -217,20 +241,19 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
     else:
         logger.setLevel(logging.ERROR)
-    output = {"id": backend["id"], "config": {}}
-    if backend.get("dataset_type", None) == "text_embeds":
+    dataset_type = _backend_dataset_type(backend)
+    output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
+    if dataset_type is DatasetType.TEXT_EMBEDS:
         if "caption_filter_list" in backend:
             output["config"]["caption_filter_list"] = backend["caption_filter_list"]
-        output["dataset_type"] = "text_embeds"
 
         return output
-    elif backend.get("dataset_type", None) == "image_embeds":
+    elif dataset_type is DatasetType.IMAGE_EMBEDS:
         # no overrides for image embed backends
         return output
-    elif backend.get("dataset_type", None) == "conditioning_image_embeds":
+    elif dataset_type is DatasetType.CONDITIONING_IMAGE_EMBEDS:
         return output
-    elif backend.get("dataset_type", None) == "distillation_cache":
-        output["dataset_type"] = "distillation_cache"
+    elif dataset_type is DatasetType.DISTILLATION_CACHE:
         output["config"]["distillation_type"] = backend.get("distillation_type", "generic")
         return output
     else:
@@ -240,28 +263,33 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             )
 
     # Image backend config
-    output["dataset_type"] = backend.get("dataset_type", "image")
     bucket_report = BucketReport(dataset_id=output["id"], dataset_type=output["dataset_type"])
     output["bucket_report"] = bucket_report
     bucket_report.set_constraints(
         train_batch_size=_get_arg_value(args, "train_batch_size"),
         repeats=int(backend.get("repeats", 0) or 0),
     )
-    choices = ["image", "conditioning", "eval", "video"]
+    choices = [
+        DatasetType.IMAGE,
+        DatasetType.CONDITIONING,
+        DatasetType.EVAL,
+        DatasetType.VIDEO,
+        DatasetType.CAPTION,
+    ]
     controlnet_enabled = getattr(StateTracker.get_args(), "controlnet", False)
     if not isinstance(controlnet_enabled, bool):
         controlnet_enabled = False
     if (
         controlnet_enabled
-        and output["dataset_type"] == "image"
+        and dataset_type is DatasetType.IMAGE
         and (backend.get("conditioning_data", None) is None and backend.get("conditioning", None) is None)
     ):
         raise ValueError(
             f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
         )
 
-    if output["dataset_type"] not in choices:
-        raise ValueError(f"(id={backend['id']}) dataset_type must be one of {choices}.")
+    if dataset_type not in choices:
+        raise ValueError(f"(id={backend['id']}) dataset_type must be one of {[choice.value for choice in choices]}.")
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
     if "probability" in backend:
@@ -985,6 +1013,7 @@ class FactoryRegistry:
         self.text_embed_backends = {}
         self.image_embed_backends = {}
         self.conditioning_image_embed_backends = {}
+        self.caption_backends = {}
         self.distillation_cache_backends = {}
         self.data_backends = {}
         self.default_text_embed_backend_id = None
@@ -998,6 +1027,7 @@ class FactoryRegistry:
                 "text_embeds": 0,
                 "image_embeds": 0,
                 "conditioning_image_embeds": 0,
+                "caption": 0,
                 "distillation_cache": 0,
                 "data_backends": 0,
             },
@@ -1093,12 +1123,7 @@ class FactoryRegistry:
         if len(data_backend_config) == 0:
             raise ValueError("Must provide at least one data backend in the data backend config file.")
 
-        self._declared_data_backends = sum(
-            1
-            for backend in data_backend_config
-            if backend.get("dataset_type") in {None, "image", "conditioning", "eval", "video"}
-            or (backend.get("dataset_type") is None and backend.get("type") in {"local", "aws", "csv", "huggingface"})
-        )
+        self._declared_data_backends = sum(1 for backend in data_backend_config if _is_primary_training_backend(backend))
 
         self._log_performance_metrics(
             "config_loaded",
@@ -1244,7 +1269,7 @@ class FactoryRegistry:
         total_text_backends = sum(
             1
             for backend in data_backend_config
-            if backend.get("dataset_type") == "text_embeds"
+            if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
             and not backend.get("disabled", False)
             and not backend.get("disable", False)
         )
@@ -1265,8 +1290,7 @@ class FactoryRegistry:
         processed_text_backends = 0
 
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is None or dataset_type != "text_embeds":
+            if _backend_dataset_type(backend) is not DatasetType.TEXT_EMBEDS:
                 continue
 
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -1430,8 +1454,7 @@ class FactoryRegistry:
     def configure_image_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure image embedding backends."""
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is None or dataset_type not in ["image_embeds"]:
+            if _backend_dataset_type(backend) is not DatasetType.IMAGE_EMBEDS:
                 continue
 
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -1492,8 +1515,7 @@ class FactoryRegistry:
     def configure_conditioning_image_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure conditioning image embedding backends."""
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is None or dataset_type != "conditioning_image_embeds":
+            if _backend_dataset_type(backend) is not DatasetType.CONDITIONING_IMAGE_EMBEDS:
                 continue
 
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -1539,8 +1561,7 @@ class FactoryRegistry:
     def configure_distillation_cache_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure distillation cache storage backends."""
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type")
-            if dataset_type != "distillation_cache":
+            if _backend_dataset_type(backend) is not DatasetType.DISTILLATION_CACHE:
                 continue
 
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -1606,15 +1627,23 @@ class FactoryRegistry:
 
         seen_ids: set[str] = set()
 
+        allowed_types = {
+            DatasetType.IMAGE,
+            DatasetType.CONDITIONING,
+            DatasetType.EVAL,
+            DatasetType.VIDEO,
+            DatasetType.DISTILLATION_CACHE,
+            DatasetType.CAPTION,
+        }
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is not None and dataset_type not in [
-                "image",
-                "conditioning",
-                "eval",
-                "video",
-                "distillation_cache",
-            ]:
+            raw_type = backend.get("dataset_type", None)
+            normalized_type: Optional[DatasetType] = None
+            if raw_type is not None:
+                try:
+                    normalized_type = ensure_dataset_type(raw_type)
+                except ValueError:
+                    continue
+            if normalized_type is not None and normalized_type not in allowed_types:
                 continue
             if backend.get("disabled", False) or backend.get("disable", False):
                 continue
@@ -1640,24 +1669,28 @@ class FactoryRegistry:
         text_embed_cache_dir_paths = [
             backend.get("cache_dir", self.args.cache_dir_text)
             for backend in data_backend_config
-            if backend.get("dataset_type") == "text_embeds"
+            if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
         ]
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         data_backend_count = 0
         total_data_backends_seen = 0
 
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is not None and dataset_type not in [
-                "image",
-                "conditioning",
-                "eval",
-                "video",
-            ]:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                info_log(f"Skipping disabled data backend {backend.get('id')} in config file.")
+                continue
+            dataset_type = _backend_dataset_type(backend)
+            if dataset_type not in {
+                DatasetType.IMAGE,
+                DatasetType.CONDITIONING,
+                DatasetType.EVAL,
+                DatasetType.VIDEO,
+                DatasetType.CAPTION,
+            }:
                 continue
             total_data_backends_seen += 1
-            if backend.get("disabled", False) or backend.get("disable", False):
-                info_log(f"Skipping disabled data backend {backend['id']} in config file.")
+            if dataset_type is DatasetType.CAPTION:
+                self._configure_caption_backend(backend)
                 continue
 
             data_backend_count += 1
@@ -1666,6 +1699,7 @@ class FactoryRegistry:
             )
 
         self.metrics["backend_counts"]["data_backends"] = data_backend_count
+        self.metrics["backend_counts"]["caption"] = len(self.caption_backends)
         self._log_performance_metrics("data_backend_config_complete", {"data_backends_created": data_backend_count})
 
         has_conditioning_dataset = self._connect_conditioning_datasets(data_backend_config)
@@ -2574,6 +2608,26 @@ class FactoryRegistry:
                             main_config[setting],
                         )
 
+    def _configure_caption_backend(self, backend: Dict[str, Any]) -> None:
+        """Register caption datasets while sampler integration is under active development."""
+        info_log(f"(id={backend['id']}) Registering caption dataset (preview).")
+        config = create_backend_config(backend, vars(self.args))
+        config.validate(vars(self.args))
+
+        init_backend = init_backend_config(backend, self.args, self.accelerator)
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+
+        builder = create_backend_builder(backend["type"], self.accelerator, self.args)
+        init_backend["data_backend"] = builder.build(config)
+        if "instance_data_dir" not in init_backend:
+            init_backend["instance_data_dir"] = backend.get("instance_data_dir", "")
+
+        StateTracker.register_data_backend(init_backend)
+        self.caption_backends[init_backend["id"]] = init_backend
+        info_log(
+            f"(id={init_backend['id']}) Caption dataset registered. Metadata + sampler wiring will follow in a dedicated change."
+        )
+
     def _configure_single_data_backend(
         self,
         backend: Dict[str, Any],
@@ -2757,6 +2811,7 @@ class FactoryRegistry:
             "image_embed_backends": self.image_embed_backends,
             "conditioning_image_embed_backends": self.conditioning_image_embed_backends,
             "distillation_cache_backends": self.distillation_cache_backends,
+            "caption_backends": self.caption_backends,
             "default_text_embed_backend_id": self.default_text_embed_backend_id,
         }
 
@@ -2768,6 +2823,7 @@ class FactoryRegistry:
                 "image_embed_backends": len(result["image_embed_backends"]),
                 "conditioning_image_embed_backends": len(result["conditioning_image_embed_backends"]),
                 "distillation_cache_backends": len(result["distillation_cache_backends"]),
+                "caption_backends": len(result["caption_backends"]),
             },
         )
 

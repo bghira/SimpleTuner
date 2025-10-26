@@ -5,6 +5,7 @@ import os
 import time
 from pathlib import Path
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.models.all import model_families
 
@@ -531,12 +532,22 @@ class StateTracker:
         cls.data_backends = {}
 
     @classmethod
-    def get_data_backends(cls, _type="image", _types=["image", "video"]):
+    def get_data_backends(
+        cls,
+        _type: object = DatasetType.IMAGE,
+        _types: object = (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CAPTION),
+    ):
+        target_type = ensure_dataset_type(_type, default=DatasetType.IMAGE)
+        allowed_types = set()
+        if isinstance(_types, (list, tuple, set)):
+            allowed_types = {ensure_dataset_type(value, default=DatasetType.IMAGE) for value in _types}
+        elif _types is not None:
+            allowed_types = {ensure_dataset_type(_types, default=DatasetType.IMAGE)}
+
         output = {}
         for backend_id, backend in dict(cls.data_backends).items():
-            if backend.get("dataset_type", "image") == _type or (
-                type(_types) is list and backend.get("dataset_type", "image") in _types
-            ):
+            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+            if backend_type == target_type or (allowed_types and backend_type in allowed_types):
                 output[backend_id] = backend
         return output
 

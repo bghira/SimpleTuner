@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -15,7 +16,7 @@ class BaseBackendConfig(ABC):
     backend_type: str = ""
 
     disabled: bool = False
-    dataset_type: str = "image"
+    dataset_type: DatasetType = DatasetType.IMAGE
 
     resolution: Optional[Union[int, float]] = None
     resolution_type: Optional[str] = None
@@ -45,9 +46,17 @@ class BaseBackendConfig(ABC):
         pass
 
     def _validate_common_fields(self, args: Dict[str, Any]) -> None:
-        valid_dataset_types = ["image", "conditioning", "eval", "video", "text_embeds", "image_embeds"]
+        valid_dataset_types = [
+            DatasetType.IMAGE,
+            DatasetType.CONDITIONING,
+            DatasetType.EVAL,
+            DatasetType.VIDEO,
+            DatasetType.TEXT_EMBEDS,
+            DatasetType.IMAGE_EMBEDS,
+            DatasetType.CAPTION,
+        ]
         if self.dataset_type not in valid_dataset_types:
-            raise ValueError(f"(id={self.id}) dataset_type must be one of {valid_dataset_types}.")
+            raise ValueError(f"(id={self.id}) dataset_type must be one of {[dt.value for dt in valid_dataset_types]}.")
 
         self._validate_image_size_settings(args)
 
@@ -126,7 +135,7 @@ class BaseBackendConfig(ABC):
             self.target_downsample_size = args.get("target_downsample_size")
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {"id": self.id, "dataset_type": self.dataset_type, "config": self.config.copy()}
+        result = {"id": self.id, "dataset_type": self.dataset_type.value, "config": self.config.copy()}
 
         if self.resolution is not None:
             result["config"]["resolution"] = self.resolution
@@ -141,7 +150,7 @@ class BaseBackendConfig(ABC):
         if self.target_downsample_size is not None:
             result["config"]["target_downsample_size"] = self.target_downsample_size
         if self.dataset_type is not None:
-            result["config"]["dataset_type"] = self.dataset_type
+            result["config"]["dataset_type"] = self.dataset_type.value
         if self.compress_cache is not None:
             result["config"]["compress_cache"] = self.compress_cache
 
@@ -153,3 +162,5 @@ class BaseBackendConfig(ABC):
 
         if not isinstance(self.config, dict):
             self.config = {}
+
+        self.dataset_type = ensure_dataset_type(self.dataset_type, default=DatasetType.IMAGE)
