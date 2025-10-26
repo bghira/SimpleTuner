@@ -45,6 +45,7 @@ from huggingface_hub.utils import validate_hf_hub_args
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, T5EncoderModel, T5TokenizerFast
 
 from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
+from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -423,7 +424,12 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
             # otherwise loading LoRA weights will lead to an error
-            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+            offload_state = cls._optionally_disable_offloading(_pipeline)
+            (
+                is_model_cpu_offload,
+                is_sequential_cpu_offload,
+                is_group_offload,
+            ) = unpack_offload_state(offload_state)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
@@ -447,7 +453,8 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
             if warn_msg:
                 logger.warning(warn_msg)
 
-            cls._optionally_enable_offloading(is_model_cpu_offload, is_sequential_cpu_offload, _pipeline)
+            # Offload back.
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
 
     @classmethod
     def load_lora_into_transformer(
@@ -527,7 +534,12 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
             # otherwise loading LoRA weights will lead to an error
-            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+            offload_state = cls._optionally_disable_offloading(_pipeline)
+            (
+                is_model_cpu_offload,
+                is_sequential_cpu_offload,
+                is_group_offload,
+            ) = unpack_offload_state(offload_state)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
@@ -551,7 +563,8 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
             if warn_msg:
                 logger.warning(warn_msg)
 
-            cls._optionally_enable_offloading(is_model_cpu_offload, is_sequential_cpu_offload, _pipeline)
+            # Offload back.
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
 
     # Copied from diffusers.loaders.lora_pipeline.StableDiffusionLoraLoaderMixin.load_lora_into_text_encoder
     def load_lora_into_text_encoder(

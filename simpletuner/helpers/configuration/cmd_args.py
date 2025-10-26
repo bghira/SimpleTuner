@@ -837,6 +837,47 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
 
+    if isinstance(getattr(args, "validation_adapter_path", None), str):
+        candidate = args.validation_adapter_path.strip()
+        args.validation_adapter_path = candidate or None
+
+    if getattr(args, "validation_adapter_config", None):
+        args.validation_adapter_config = _parse_json_like_option(
+            args.validation_adapter_config,
+            "--validation_adapter_config",
+        )
+
+    if args.validation_adapter_path and args.validation_adapter_config:
+        raise ValueError("Provide either --validation_adapter_path or --validation_adapter_config, not both.")
+
+    if isinstance(getattr(args, "validation_adapter_name", None), str):
+        candidate = args.validation_adapter_name.strip()
+        args.validation_adapter_name = candidate or None
+
+    strength_value = getattr(args, "validation_adapter_strength", None)
+    if strength_value is None or strength_value in ("", "None"):
+        args.validation_adapter_strength = 1.0
+    else:
+        try:
+            strength = float(strength_value)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid --validation_adapter_strength value: {strength_value}") from None
+        if strength <= 0:
+            raise ValueError("--validation_adapter_strength must be greater than 0.")
+        args.validation_adapter_strength = strength
+
+    mode_value = getattr(args, "validation_adapter_mode", None)
+    if mode_value in (None, "", "None"):
+        args.validation_adapter_mode = "adapter_only"
+    else:
+        normalized_mode = str(mode_value).strip().lower()
+        valid_modes = {"adapter_only", "comparison", "none"}
+        if normalized_mode not in valid_modes:
+            raise ValueError(
+                f"Invalid --validation_adapter_mode '{mode_value}'. Expected one of: {', '.join(sorted(valid_modes))}."
+            )
+        args.validation_adapter_mode = normalized_mode
+
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
         warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
 

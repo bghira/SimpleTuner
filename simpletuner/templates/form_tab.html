@@ -529,12 +529,80 @@
         }
     }
 
+    function initializeValidationAdapterGuards() {
+        if (tabName !== 'validation') {
+            return;
+        }
+
+        const tabContent = document.getElementById(tabName + '-tab-content');
+        if (!tabContent) return;
+
+        const pathField = tabContent.querySelector('[name="validation_adapter_path"]');
+        const configField = tabContent.querySelector('[name="validation_adapter_config"]');
+        const singleFieldSelectors = [
+            '[data-field-name="validation_adapter_name"]',
+            '[data-field-name="validation_adapter_strength"]',
+            '[data-field-name="validation_adapter_mode"]',
+        ];
+
+        if (!pathField && !configField) {
+            return;
+        }
+
+        const applyDisabledState = (elements, disabled) => {
+            elements.forEach((input) => {
+                if (!input.dataset.adapterGuardOriginalDisabled) {
+                    input.dataset.adapterGuardOriginalDisabled = input.disabled ? 'true' : 'false';
+                }
+                if (disabled) {
+                    input.disabled = true;
+                } else {
+                    input.disabled = input.dataset.adapterGuardOriginalDisabled === 'true';
+                }
+            });
+        };
+
+        const toggleGuardState = () => {
+            const pathHasValue = Boolean(pathField && pathField.value && pathField.value.trim().length > 0);
+            const configHasValue = Boolean(configField && configField.value && configField.value.trim().length > 0);
+
+            if (pathField) {
+                pathField.disabled = configHasValue;
+            }
+
+            if (configField) {
+                configField.disabled = pathHasValue;
+            }
+
+            singleFieldSelectors.forEach((selector) => {
+                const container = tabContent.querySelector(selector);
+                if (!container) {
+                    return;
+                }
+                const inputs = container.querySelectorAll('input, select, textarea');
+                applyDisabledState(inputs, configHasValue);
+                container.classList.toggle('field-disabled', configHasValue);
+            });
+        };
+
+        const registerHandler = (element) => {
+            if (!element) return;
+            element.addEventListener('input', toggleGuardState);
+            element.addEventListener('change', toggleGuardState);
+        };
+
+        registerHandler(pathField);
+        registerHandler(configField);
+        toggleGuardState();
+    }
+
     function initTab() {
         console.log('[FormTab] Initializing tab:', tabName);
         setupSectionCollapse();
         initializeConditionalFields();
         initializeTooltips();
         initializePromptManagementGuard();
+        initializeValidationAdapterGuards();
     }
 
     // Initialize immediately (for direct page loads)
