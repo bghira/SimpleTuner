@@ -1069,6 +1069,56 @@ class OpticalFlowSampleGenerator(SampleGenerator):
         return rgb
 
 
+class I2VFirstFrameSampleGenerator(SampleGenerator):
+    """
+    Extract the first frame from video samples (or passthrough images) to build
+    self-contained I2V conditioning datasets.
+    """
+
+    def transform_batch(
+        self,
+        images: List[Any],
+        source_paths: List[str],
+        metadata_list: List[Dict],
+        accelerator,
+    ) -> List[Image.Image]:
+        frames: List[Image.Image] = []
+        for sample in images:
+            frames.append(self._extract_first_frame(sample))
+        return frames
+
+    @staticmethod
+    def _extract_first_frame(sample: Any) -> Image.Image:
+        if isinstance(sample, Image.Image):
+            return sample.convert("RGB")
+
+        if torch.is_tensor(sample):
+            sample = sample.detach().cpu().numpy()
+
+        if isinstance(sample, np.ndarray):
+            data = sample
+            if data.ndim == 4:
+                data = data[0]
+            if data.ndim != 3:
+                raise ValueError(f"Unsupported array shape for I2V conditioning: {sample.shape}")
+
+            if data.shape[0] in (1, 3) and data.shape[-1] not in (1, 3):
+                data = np.moveaxis(data, 0, -1)
+
+            if data.shape[-1] == 1:
+                data = np.repeat(data, 3, axis=-1)
+
+            if data.dtype != np.uint8:
+                data = np.clip(data, 0, 255).astype(np.uint8)
+
+            if data.shape[-1] != 3:
+                raise ValueError(f"Expected 3 channels for I2V conditioning frame, got shape {data.shape}")
+
+            return Image.fromarray(data, mode="RGB")
+
+        raise ValueError(f"Unsupported sample type for I2V conditioning: {type(sample)}")
+
+
 # Registry of available generators
 GENERATOR_REGISTRY: Dict[str, Type[SampleGenerator]] = {
     "superresolution": SuperResolutionSampleGenerator,
@@ -1089,6 +1139,8 @@ GENERATOR_REGISTRY: Dict[str, Type[SampleGenerator]] = {
     "flow": OpticalFlowSampleGenerator,  # Alias
     "segmentation": SegmentationSampleGenerator,
     "semantic_segmentation": SegmentationSampleGenerator,  # Alias
+    "i2v_first_frame": I2VFirstFrameSampleGenerator,
+    "wan_i2v_first_frame": I2VFirstFrameSampleGenerator,
 }
 
 
