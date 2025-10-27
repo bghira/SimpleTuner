@@ -483,12 +483,36 @@
 
         const promptSectionId = 'section-prompt_management';
         const promptContentId = 'content-prompt_management';
+        const normalizeBoolean = (value) => {
+            if (value === null || value === undefined) {
+                return false;
+            }
+            if (typeof value === 'boolean') {
+                return value;
+            }
+            if (typeof value === 'number') {
+                return value !== 0;
+            }
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (!normalized) {
+                    return false;
+                }
+                if (['true', '1', 'yes', 'on'].includes(normalized)) {
+                    return true;
+                }
+                if (['false', '0', 'no', 'off'].includes(normalized)) {
+                    return false;
+                }
+            }
+            return Boolean(value);
+        };
         const toggleState = (context) => {
             const disabled = Boolean(
                 context
                 && (
-                    context.requiresValidationI2VSamples
-                    || context.requiresStrictI2VDatasets
+                    normalizeBoolean(context.requiresValidationI2VSamples)
+                    || normalizeBoolean(context.strictI2VActive)
                 ),
             );
             const section = document.getElementById(promptSectionId);
