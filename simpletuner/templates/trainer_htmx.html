@@ -761,9 +761,34 @@ function trainerComponent() {
             const videoCapabilities = this.detectVideoCapabilities(info, config, metadata, this.modelDetails);
             context.isVideoModel = videoCapabilities.isVideoModel;
             context.supportsVideo = videoCapabilities.supportsVideo;
-            const strictI2VInfo = this.evaluateStrictI2VModel(this.modelDetails?.capabilities, info.modelFlavour);
+            console.debug(
+                '[ModelContext] video capability evaluation',
+                {
+                    family: info.modelFamily,
+                    flavour: info.modelFlavour,
+                    rawCapabilities: this.modelDetails?.capabilities,
+                    resolvedVideo: videoCapabilities,
+                },
+            );
+            const strictI2VInfo = this.evaluateStrictI2VModel(
+                this.modelDetails?.capabilities,
+                info.modelFlavour,
+                info.modelFamily,
+                videoCapabilities,
+            );
+            console.debug(
+                '[ModelContext] strict I2V evaluation',
+                {
+                    family: info.modelFamily,
+                    flavour: info.modelFlavour,
+                    capabilities: this.modelDetails?.capabilities,
+                    videoCapabilities,
+                    strictInfo: strictI2VInfo,
+                },
+            );
             context.requiresStrictI2VDatasets = strictI2VInfo.requiresStrictI2V;
             context.strictI2VFlavours = strictI2VInfo.strictFlavours;
+            context.strictI2VActive = strictI2VInfo.active;
 
             const requirementPayload = this.buildModelRequirementPayload(info, config, metadata);
             if (requirementPayload) {
@@ -825,6 +850,7 @@ function trainerComponent() {
                 requiresValidationEditCaptions: false,
                 requiresValidationI2VSamples: false,
                 requiresStrictI2VDatasets: false,
+                strictI2VActive: false,
                 strictI2VFlavours: [],
                 conditioningDatasetType: 'conditioning',
                 supportsConditioningGenerators: false,
@@ -962,18 +988,22 @@ function trainerComponent() {
             const family = typeof info?.modelFamily === 'string' ? info.modelFamily.toLowerCase() : '';
             const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
             const isVideoFamily = knownVideoFamilies.has(family);
-            const isVideoModel = Boolean(hasVideoFlag || isVideoType || isVideoFamily);
-            const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) || isVideoModel);
+            const isVideoModel = Boolean((hasVideoFlag || isVideoType || isVideoFamily) && isVideoFamily);
+            const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) && isVideoFamily);
             return { isVideoModel, supportsVideo };
         },
-        evaluateStrictI2VModel(capabilities, modelFlavour) {
+        evaluateStrictI2VModel(capabilities, modelFlavour, modelFamily = null, videoCapabilities = null) {
             const result = {
                 requiresStrictI2V: false,
                 strictFlavours: [],
+                active: false,
             };
             if (!capabilities || typeof capabilities !== 'object') {
                 return result;
             }
+            const familyKey = typeof modelFamily === 'string' ? modelFamily.trim().toLowerCase() : '';
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const isKnownVideoFamily = knownVideoFamilies.has(familyKey);
             const strictFlavoursRaw = Array.isArray(capabilities.strict_i2v_flavours)
                 ? capabilities.strict_i2v_flavours
                 : [];
@@ -986,7 +1016,9 @@ function trainerComponent() {
                 ? strictFlavours.some((entry) => entry.toLowerCase() === flavourKey)
                 : false;
             result.strictFlavours = strictFlavours;
-            result.requiresStrictI2V = Boolean(strictForAll || matchesFlavour);
+            const requires = Boolean(strictForAll || matchesFlavour);
+            result.requiresStrictI2V = requires && isKnownVideoFamily;
+            result.active = result.requiresStrictI2V && isKnownVideoFamily;
             return result;
         },
         cloneConfigForPayload(source) {
