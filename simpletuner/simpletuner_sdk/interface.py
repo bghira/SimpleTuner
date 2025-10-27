@@ -9,7 +9,8 @@ from fastapi.templating import Jinja2Templates
 from simpletuner.helpers.configuration.cmd_args import get_default_config as get_cmd_default_config
 
 # Import the proper configuration modules
-from simpletuner.helpers.models.all import get_all_model_flavours, model_families
+from simpletuner.helpers.models.all import get_all_model_flavours
+from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.optimizer_param import available_optimizer_keys, optimizer_choices
 
 
@@ -122,7 +123,7 @@ class WebInterface:
     def get_model_families_options(self) -> List[Dict[str, Any]]:
         """Get model families from the actual configuration"""
         options = []
-        for family_key, family_info in model_families.items():
+        for family_key, family_info in ModelRegistry.model_families().items():
             label = family_info.NAME
             is_default = family_key == "flux"  # Set default as needed
             options.append({"value": family_key, "label": label, "selected": is_default})
@@ -132,7 +133,7 @@ class WebInterface:
         """Get model paths dynamically from model classes"""
         all_paths = []
 
-        for family_key, model_class in model_families.items():
+        for family_key, model_class in ModelRegistry.model_families().items():
             # Check if the model class has HUGGINGFACE_PATHS attribute
             if hasattr(model_class, "HUGGINGFACE_PATHS"):
                 huggingface_paths = model_class.HUGGINGFACE_PATHS

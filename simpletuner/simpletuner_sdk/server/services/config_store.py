@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from simpletuner.helpers.configuration.cmd_args import get_argument_parser as _get_cli_argument_parser
 from simpletuner.helpers.models.all import get_all_model_flavours as _get_all_model_flavours
 from simpletuner.helpers.models.all import get_model_flavour_choices as _cli_get_model_flavour_choices
-from simpletuner.helpers.models.all import model_families as _MODEL_FAMILY_MAP
+from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.simpletuner_sdk.server.services.cache_service import get_config_cache
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root
@@ -83,9 +83,9 @@ def _get_flavour_choices_for_family(model_family: Optional[str]) -> List[str]:
         except Exception:
             pass
 
-    if _MODEL_FAMILY_MAP and model_family in _MODEL_FAMILY_MAP:
+    if model_family in ModelRegistry.model_families().keys():
         try:
-            return list(_MODEL_FAMILY_MAP[model_family].get_flavour_choices())
+            return list(ModelRegistry.model_families()[model_family].get_flavour_choices())
         except Exception:
             return []
 
