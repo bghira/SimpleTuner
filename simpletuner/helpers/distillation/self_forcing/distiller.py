@@ -7,6 +7,7 @@ import torch
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.dmd.distiller import DMDDistiller
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -14,7 +15,35 @@ from .generator import SelfForcingODEGenerator
 
 
 class SelfForcingDistillation(DistillationBase):
-    """Lightweight distiller that demonstrates self-forcing ODE pair generation."""
+    """Self-Forcing variant of DMD that materialises batches from caption + cache inputs."""
+
+    _DMD_DEFAULTS: Dict[str, Any] = {
+        "dmd_denoising_steps": "1000,757,522",
+        "min_timestep_ratio": 0.02,
+        "max_timestep_ratio": 0.98,
+        "generator_update_interval": 1,
+        "real_score_guidance_scale": 3.0,
+        "fake_score_lr": 1e-5,
+        "fake_score_weight_decay": 0.01,
+        "fake_score_betas": (0.9, 0.999),
+        "fake_score_eps": 1e-8,
+        "fake_score_grad_clip": 1.0,
+        "fake_score_guidance_scale": 0.0,
+        "num_frame_per_block": 3,
+        "independent_first_frame": False,
+        "same_step_across_blocks": False,
+        "last_step_only": False,
+        "num_training_frames": 21,
+        "context_noise": 0,
+        "ts_schedule": True,
+        "ts_schedule_max": False,
+        "min_score_timestep": 0,
+        "timestep_shift": 1.0,
+    }
+    _SELF_FORCING_DEFAULTS: Dict[str, Any] = {
+        "distillation_type": "self_forcing",
+        "ode_generator": {},
+    }
 
     def __init__(
         self,
@@ -24,18 +53,30 @@ class SelfForcingDistillation(DistillationBase):
         noise_scheduler=None,
         config: Optional[Dict[str, Any]] = None,
     ):
-        default_config = {
-            "distillation_type": "self_forcing",
-            "ode_generator": {},
-        }
+        merged_config: Dict[str, Any] = dict(self._DMD_DEFAULTS)
+        merged_config.update(self._SELF_FORCING_DEFAULTS)
         if config:
-            default_config.update(config)
+            merged_config.update(config)
 
-        super().__init__(teacher_model, student_model, default_config)
+        super().__init__(teacher_model, student_model, merged_config)
+
+        if noise_scheduler is None:
+            raise ValueError("Self-forcing distillation requires a noise scheduler.")
+
         self.noise_scheduler = noise_scheduler
-        self._ode_generator = SelfForcingODEGenerator(config=default_config.get("ode_generator", {}))
-        self._distillation_caches = []
+        self._ode_generator = SelfForcingODEGenerator(config=merged_config.get("ode_generator", {}))
+        self._distillation_caches: List[Any] = []
         self._cache_cycle: Optional[Iterable[Any]] = None
+
+        # Delegate DMD-specific optimisation to the existing distiller implementation.
+        self._dmd = DMDDistiller(
+            teacher_model=teacher_model,
+            student_model=student_model,
+            noise_scheduler=noise_scheduler,
+            config=dict(merged_config),
+        )
+        # Keep configs aligned so downstream consumers see the populated DMD defaults.
+        self.config = self._dmd.config
 
     def requires_distillation_cache(self) -> bool:
         return True
@@ -70,17 +111,69 @@ class SelfForcingDistillation(DistillationBase):
         prepared["captions"] = list(captions)
         prepared["records"] = caption_batch.get("records", [])
         prepared["data_backend_id"] = caption_batch.get("data_backend_id")
-        prepared["distillation_metadata"] = [entry.get("metadata", {}) for entry in cache_entries]
+        metadata = [entry.get("metadata", {}) for entry in cache_entries]
+        prepared["distillation_metadata"] = metadata
+        prepared["distillation_cache_entries"] = cache_entries
+
+        latents_device = prepared["latents"].device
+        latents_dtype = prepared["latents"].dtype
+
+        noise_tensor = synthetic_batch.get("noise")
+        if noise_tensor is not None:
+            prepared["noise"] = noise_tensor.to(device=latents_device, dtype=latents_dtype)
+
+        input_noise_tensor = synthetic_batch.get("input_noise")
+        if input_noise_tensor is not None:
+            prepared["input_noise"] = input_noise_tensor.to(device=latents_device, dtype=latents_dtype)
+        elif "noise" in prepared:
+            prepared["input_noise"] = prepared["noise"]
+
+        timestep_tensor = synthetic_batch.get("timesteps")
+        if timestep_tensor is not None:
+            prepared["timesteps"] = timestep_tensor.to(device=latents_device, dtype=torch.long).view(-1)
+
+        if self.noise_scheduler is None:
+            raise ValueError("Self-forcing distillation requires a noise scheduler.")
+        if "timesteps" in prepared and "input_noise" in prepared:
+            prepared["noisy_latents"] = self.noise_scheduler.add_noise(
+                prepared["latents"].float(),
+                prepared["input_noise"].float(),
+                prepared["timesteps"],
+            ).to(device=latents_device, dtype=latents_dtype)
+        prepared["clean_latents"] = prepared["latents"]
 
         return prepared
+
+    def prepare_batch(self, batch, model, state):
+        return self._dmd.prepare_batch(batch, model, state)
+
+    def compute_distill_loss(self, prepared_batch, model_output, original_loss):
+        return self._dmd.compute_distill_loss(prepared_batch, model_output, original_loss)
+
+    def pre_training_step(self, model, step):
+        return self._dmd.pre_training_step(model, step)
+
+    def post_training_step(self, model, step):
+        return self._dmd.post_training_step(model, step)
+
+    def generator_loss_step(self, prepared_batch, model_output, current_loss):
+        return self._dmd.generator_loss_step(prepared_batch, model_output, current_loss)
+
+    def discriminator_step(self, prepared_batch: Dict[str, Any], **kwargs):
+        return self._dmd.discriminator_step(prepared_batch=prepared_batch, **kwargs)
+
+    def on_load_checkpoint(self, ckpt_dir: str):
+        return self._dmd.on_load_checkpoint(ckpt_dir)
+
+    def on_save_checkpoint(self, step: int, ckpt_dir: str):
+        return self._dmd.on_save_checkpoint(step, ckpt_dir)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
     def _extract_captions(self, caption_batch: Dict[str, Any]) -> List[str]:
         captions = caption_batch.get("captions") or []
-        normalized = [str(caption) for caption in captions if caption is not None]
-        return normalized
+        return [str(caption) for caption in captions if caption is not None]
 
     def _ensure_cache_cycle(self) -> None:
         if self._cache_cycle is not None and self._distillation_caches:
@@ -141,7 +234,7 @@ class SelfForcingDistillation(DistillationBase):
                 raise ValueError(
                     f"Expected cached latents to have shape (C, H, W); received tensor with shape {tuple(latent_tensor.shape)}"
                 )
-            latents.append(latent_tensor)
+            latents.append(latent_tensor.clone().detach())
 
         return torch.stack(latents, dim=0)
 
@@ -173,13 +266,66 @@ class SelfForcingDistillation(DistillationBase):
             "data_backend_id": caption_batch.get("data_backend_id"),
         }
 
-        # Carry auxiliary payload values through for downstream consumers.
-        first_entry = cache_entries[0] if cache_entries else {}
-        for key in ("sigmas", "timesteps", "noise", "input_noise", "guidance_scale"):
-            if key in first_entry and key not in synthetic_batch:
-                synthetic_batch[key] = first_entry[key]
+        noise_tensor = self._stack_optional_latent(cache_entries, "noise", latents)
+        if noise_tensor is not None:
+            synthetic_batch["noise"] = noise_tensor
+
+        input_noise_tensor = self._stack_optional_latent(cache_entries, "input_noise", latents)
+        if input_noise_tensor is not None:
+            synthetic_batch["input_noise"] = input_noise_tensor
+        elif noise_tensor is not None:
+            synthetic_batch["input_noise"] = noise_tensor.clone()
+
+        timestep_tensor = self._stack_timesteps(cache_entries)
+        if timestep_tensor is not None:
+            synthetic_batch["timesteps"] = timestep_tensor
 
         return synthetic_batch
+
+    def _stack_optional_latent(
+        self,
+        cache_entries: Sequence[Dict[str, Any]],
+        key: str,
+        latents: torch.Tensor,
+    ) -> Optional[torch.Tensor]:
+        tensors: List[torch.Tensor] = []
+        expected_shape = latents.shape[1:]
+        for entry in cache_entries:
+            value = entry.get(key)
+            if value is None:
+                return None
+            tensor = value if torch.is_tensor(value) else torch.tensor(value, dtype=torch.float32)
+            if tensor.ndim == len(expected_shape) + 1 and tensor.shape[0] == 1:
+                tensor = tensor.squeeze(0)
+            if tensor.ndim != len(expected_shape):
+                raise ValueError(
+                    f"Expected cached '{key}' tensor to have shape {tuple(expected_shape)}; "
+                    f"received tensor with shape {tuple(tensor.shape)}"
+                )
+            if tuple(tensor.shape) != tuple(expected_shape):
+                tensor = tensor.reshape(expected_shape)
+            tensors.append(tensor.clone().detach())
+
+        if not tensors:
+            return None
+        return torch.stack(tensors, dim=0)
+
+    def _stack_timesteps(self, cache_entries: Sequence[Dict[str, Any]]) -> Optional[torch.Tensor]:
+        timesteps: List[int] = []
+        for entry in cache_entries:
+            value = entry.get("timesteps")
+            if value is None:
+                return None
+            if torch.is_tensor(value):
+                scalar = value.view(-1)[0].item()
+            elif isinstance(value, (list, tuple)) and value:
+                scalar = value[0]
+            else:
+                scalar = value
+            timesteps.append(int(scalar))
+        if not timesteps:
+            return None
+        return torch.tensor(timesteps, dtype=torch.long)
 
 
 DistillationRegistry.register(

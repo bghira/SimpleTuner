@@ -7,12 +7,13 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Union
 
+import pandas as pd
+
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.captions import CaptionRecord, normalize_caption_text
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
-import pandas as pd
 
 logger = logging.getLogger("CaptionMetadataBackend")
 if should_log():
