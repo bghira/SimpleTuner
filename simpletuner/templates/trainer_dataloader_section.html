@@ -900,7 +900,7 @@ function dataloaderSectionComponent() {
                 const trainer = Alpine.store('trainer');
                 if (trainer) {
                     if (typeof trainer.markDatasetsDirty === 'function') {
-                        trainer.markDatasetsDirty();
+                        trainer.markDatasetsDirty({ refresh: this.dataLoaderMode !== 'json' });
                     } else {
                         trainer.hasUnsavedChanges = true;
                     }
