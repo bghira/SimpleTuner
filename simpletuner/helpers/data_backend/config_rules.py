@@ -1,6 +1,6 @@
 """Configuration rules for dataloader validation."""
 
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
@@ -11,6 +11,13 @@ from simpletuner.helpers.configuration.registry import (
     make_required_rule,
 )
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.requirements import (
+    EMPTY_PROFILE,
+    DistillerRequirementProfile,
+    describe_requirement_groups,
+    evaluate_requirement_profile,
+)
 
 
 def register_dataloader_rules():
@@ -21,28 +28,6 @@ def register_dataloader_rules():
             message="Dataloader configuration file must be specified",
             example='data_backend_config: "config/multidatabackend.json"',
             suggestion="Create a multidatabackend.json file with your dataset configuration",
-        ),
-        ConfigRule(
-            field_name="datasets",
-            rule_type=RuleType.COMBINATION,
-            value={DatasetType.IMAGE.value: 1, DatasetType.TEXT_EMBEDS.value: 1},
-            message="Your dataloader config must contain at least one image dataset AND at least one text_embed dataset",
-            example="""[
-    {
-        "id": "my-images",
-        "type": "local",
-        "instance_data_dir": "/path/to/images",
-        "caption_strategy": "filename"
-    },
-    {
-        "id": "text-embeds",
-        "dataset_type": "text_embeds",
-        "type": "local",
-        "cache_dir": "cache/text",
-        "default": true
-    }
-]""",
-            suggestion="See https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options",
         ),
         ConfigRule(
             field_name="text_embed_default",
@@ -80,7 +65,7 @@ def register_dataloader_rules():
         "dataloader",
         _validate_dataloader_specific,
         """Validates dataloader-specific requirements:
-- Ensures image and text_embed datasets are present
+- Ensures required training datasets and text_embeds are present (respecting distiller requirements)
 - Validates default text_embed selection
 - Checks caption dropout configuration
 - Validates dataset backend types""",
@@ -113,10 +98,51 @@ def _validate_dataloader_specific(config: dict) -> List[ValidationResult]:
             )
         )
 
-    # Check for multiple text embeds without default
     datasets = config.get("datasets", [])
+    profile = _resolve_distiller_profile(config)
+    relax_training_requirement = _relaxes_training_requirement(profile)
+    requirement_eval = None
+
+    if profile:
+        requirement_eval = evaluate_requirement_profile(profile, datasets)
+        if not requirement_eval.fulfilled:
+            method_label = (_distillation_method_from_config(config) or "distiller").replace("_", " ")
+            results.append(
+                ValidationResult(
+                    passed=False,
+                    field="datasets",
+                    message=f"{method_label} requires datasets matching "
+                    f"{describe_requirement_groups(requirement_eval.missing_requirements)}",
+                    level="error",
+                )
+            )
+
     if isinstance(datasets, list):
+        dataset_types = [_dataset_type_from_entry(dataset) for dataset in datasets if isinstance(dataset, dict)]
+        has_image_dataset = any(dataset_type is DatasetType.IMAGE for dataset_type in dataset_types)
         text_embeds = [d for d in datasets if d.get("dataset_type") == "text_embeds"]
+
+        missing_chunks = []
+        if not relax_training_requirement and not has_image_dataset:
+            missing_chunks.append("an image dataset")
+        if len(text_embeds) == 0:
+            missing_chunks.append("a text_embed dataset")
+
+        if missing_chunks:
+            if len(missing_chunks) == 1:
+                message_detail = missing_chunks[0]
+            else:
+                message_detail = " AND ".join(missing_chunks)
+            results.append(
+                ValidationResult(
+                    passed=False,
+                    field="datasets",
+                    message=f"Your dataloader config must contain at least {message_detail}",
+                    level="error",
+                    suggestion="See documentation/DATALOADER.md for dataset configuration examples.",
+                )
+            )
+
         if len(text_embeds) > 1:
             defaults = [d for d in text_embeds if d.get("default", False)]
             if len(defaults) == 0:
@@ -141,6 +167,37 @@ def _validate_dataloader_specific(config: dict) -> List[ValidationResult]:
                 )
 
     return results
+
+
+def _dataset_type_from_entry(dataset: Dict[str, Any]) -> DatasetType:
+    raw_value = dataset.get("dataset_type")
+    try:
+        return DatasetType.from_value(raw_value, default=DatasetType.IMAGE)
+    except ValueError:
+        return DatasetType.IMAGE
+
+
+def _distillation_method_from_config(config: dict) -> Optional[str]:
+    for key in ("distillation_method", "--distillation_method"):
+        value = config.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _resolve_distiller_profile(config: dict) -> DistillerRequirementProfile:
+    method = _distillation_method_from_config(config)
+    if not method:
+        return EMPTY_PROFILE
+    return DistillationRegistry.get_requirement_profile(method)
+
+
+def _relaxes_training_requirement(profile: DistillerRequirementProfile) -> bool:
+    if not profile:
+        return False
+    if not profile.is_data_generator:
+        return False
+    return not any(profile.requires_dataset_type(dataset_type) for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO))
 
 
 # Register dataloader rules when module is imported
