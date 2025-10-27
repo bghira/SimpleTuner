@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from diffusers import FlowMatchEulerDiscreteScheduler
 from safetensors.torch import load_file, save_file
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 
@@ -338,4 +339,9 @@ class DMDDistiller(DistillationBase):
             self.fake_score_optimizer.load_state_dict(payload["state"])
 
 
-DistillationRegistry.register("dmd", DMDDistiller, requires_distillation_cache=False)
+DistillationRegistry.register(
+    "dmd",
+    DMDDistiller,
+    requires_distillation_cache=False,
+    data_requirements=[[DatasetType.IMAGE, DatasetType.VIDEO]],
+)

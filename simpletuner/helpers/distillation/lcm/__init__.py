@@ -8,6 +8,7 @@ import torch
 import torch.nn.functional as F
 from diffusers import DDPMScheduler, FlowMatchEulerDiscreteScheduler, LCMScheduler
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 
@@ -374,4 +375,9 @@ class LCMDistiller(DistillationBase):
             )
 
 
-DistillationRegistry.register("lcm", LCMDistiller, requires_distillation_cache=False)
+DistillationRegistry.register(
+    "lcm",
+    LCMDistiller,
+    requires_distillation_cache=False,
+    data_requirements=[[DatasetType.IMAGE, DatasetType.VIDEO]],
+)

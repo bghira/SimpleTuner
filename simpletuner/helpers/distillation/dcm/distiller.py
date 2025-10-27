@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from diffusers import FlowMatchEulerDiscreteScheduler
 from safetensors.torch import load_file, save_file
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.dcm.discriminator.wan import wan_forward, wan_forward_origin
 from simpletuner.helpers.distillation.dcm.loss import gan_d_loss, gan_g_loss
@@ -356,4 +357,9 @@ class DCMDistiller(DistillationBase):
             self.disc_optimizer.load_state_dict(payload["state"])
 
 
-DistillationRegistry.register("dcm", DCMDistiller, requires_distillation_cache=False)
+DistillationRegistry.register(
+    "dcm",
+    DCMDistiller,
+    requires_distillation_cache=False,
+    data_requirements=[[DatasetType.IMAGE, DatasetType.VIDEO]],
+)
