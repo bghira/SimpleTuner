@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 import torch
 
-from simpletuner.helpers.models.all import model_families
+from simpletuner.helpers.models.registry import ModelRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class FSDPService:
     ) -> Dict[str, Any]:
         """Detect transformer/block classes for the supplied model family."""
 
-        model_cls = model_families.get(model_family)
+        model_cls = ModelRegistry.model_families().get(model_family)
         if model_cls is None:
             raise FSDPServiceError(f"Unknown model_family '{model_family}'.")
 

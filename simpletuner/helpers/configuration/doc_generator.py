@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from simpletuner.helpers.configuration.registry import ConfigRegistry, ConfigRule, ConfigValidator, RuleType
-from simpletuner.helpers.models.all import model_families
+from simpletuner.helpers.models.registry import ModelRegistry
 
 
 @dataclass
@@ -254,7 +254,7 @@ class ConfigDocumentationGenerator:
                 config[rule.field_name] = rule.value
 
         # Add example dataloader config
-        if model_family in model_families:
+        if model_family in ModelRegistry.model_families().keys():
             config["data_backend_config"] = "config/multidatabackend.json"
 
         return config

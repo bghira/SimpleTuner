@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 from simpletuner.helpers.logging import get_logger
-from simpletuner.helpers.models.all import model_families
 
 logger = get_logger("StateTracker")
 
@@ -138,8 +137,6 @@ class StateTracker:
 
     @classmethod
     def set_model_family(cls, model_type: str):
-        if model_type not in model_families.keys():
-            raise ValueError(f"Unknown model type: {model_type}")
         cls.model_type = model_type
 
     @classmethod

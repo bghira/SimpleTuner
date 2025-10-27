@@ -12,7 +12,7 @@ import traceback
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import simpletuner.helpers.models  # noqa: F401  # Ensure model registry population
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -350,6 +350,7 @@ class MenuNavigator:
     def __init__(self, stdscr):
         self.stdscr = stdscr
         self.h, self.w = stdscr.getmaxyx()
+        self.last_selection = 0
 
     def show_menu(
         self,
@@ -359,6 +360,16 @@ class MenuNavigator:
         selected: int = 0,
     ) -> int:
         """Display a scrollable menu."""
+
+        if not items:
+            self.last_selection = 0
+            return -2
+
+        if selected < 0:
+            selected = 0
+        if selected >= len(items):
+            selected = len(items) - 1
+        self.last_selection = selected
 
         while True:
             self.stdscr.clear()
@@ -392,18 +403,23 @@ class MenuNavigator:
 
             key = self.stdscr.getch()
             if key == ord("q"):
+                self.last_selection = selected
                 return -1
             if key in [curses.KEY_LEFT, curses.KEY_BACKSPACE, 127, 8]:
+                self.last_selection = selected
                 return -2
             if key == curses.KEY_UP and selected > 0:
                 selected -= 1
             elif key == curses.KEY_DOWN and selected < len(items) - 1:
                 selected += 1
             elif key in [curses.KEY_ENTER, ord("\n"), ord("\r")]:
+                self.last_selection = selected
                 return selected
             elif ord("1") <= key <= ord("9"):
                 num = key - ord("1")
                 if num < len(items):
+                    selected = num
+                    self.last_selection = selected
                     return num
 
 
@@ -439,6 +455,8 @@ class SimpleTunerNCurses:
         ]
         self.menu_items.append(("Review & Save", self.review_and_save, "Review the configuration and write it to disk"))
         self._menu_index = 0
+        self._section_menu_indices: Dict[str, int] = {}
+        self._field_menu_indices: Dict[Tuple[str, str], int] = {}
 
         default_config = Path("config/config.json")
         if default_config.exists():
@@ -809,7 +827,14 @@ class SimpleTunerNCurses:
                 current_values[title] = f"{count} field{'s' if count != 1 else ''}"
                 menu_items.append((title, partial(self.edit_section, tab_name=tab_name, section_id=section["id"])))
 
-            choice = nav.show_menu(self.tab_lookup[tab_name].title, menu_items, current_values)
+            last_selected = self._section_menu_indices.get(tab_name, 0)
+            if menu_items:
+                last_selected = max(0, min(last_selected, len(menu_items) - 1))
+            else:
+                last_selected = 0
+
+            choice = nav.show_menu(self.tab_lookup[tab_name].title, menu_items, current_values, selected=last_selected)
+            self._section_menu_indices[tab_name] = nav.last_selection
 
             if choice == -1:
                 if self.confirm_quit(stdscr):
@@ -846,7 +871,15 @@ class SimpleTunerNCurses:
                 menu_items.append((label, partial(self.edit_field, tab_name=tab_name, field_name=field["name"])))
                 current_values[label] = self._format_field_value(field)
 
-            choice = nav.show_menu(display_title, menu_items, current_values)
+            menu_key: Tuple[str, str] = (tab_name, section_id)
+            last_selected = self._field_menu_indices.get(menu_key, 0)
+            if menu_items:
+                last_selected = max(0, min(last_selected, len(menu_items) - 1))
+            else:
+                last_selected = 0
+
+            choice = nav.show_menu(display_title, menu_items, current_values, selected=last_selected)
+            self._field_menu_indices[menu_key] = nav.last_selection
 
             if choice == -1:
                 if self.confirm_quit(stdscr):
