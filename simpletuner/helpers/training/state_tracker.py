@@ -4,8 +4,10 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Optional
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.models.all import model_families
 
@@ -17,6 +19,7 @@ filename_mapping = {
     "all_text_cache_files": "text",
     "all_conditioning_image_embed_files": "conditioning_image_embeds",
     "all_distillation_cache_files": "distillation_cache",
+    "all_caption_files": "caption",
 }
 
 
@@ -41,7 +44,7 @@ class StateTracker:
     all_text_cache_files = {}
     all_conditioning_image_embed_files = {}
     all_distillation_cache_files = {}
-    all_caption_files = None
+    all_caption_files = {}
 
     ## Backend entities for retrieval
     default_text_embed_cache = None
@@ -61,6 +64,8 @@ class StateTracker:
     args = None
     # Aspect to resolution map, we'll store once generated for consistency.
     aspect_resolution_map = {}
+    distillation_method: Optional[str] = None
+    distiller_profile: DistillerRequirementProfile = EMPTY_PROFILE
 
     # for schedulefree
     last_lr = 0.0
@@ -78,6 +83,7 @@ class StateTracker:
             "all_text_cache_files",
             "all_conditioning_image_embed_files",
             "all_distillation_cache_files",
+            "all_caption_files",
         ]:
             if filename_mapping[cache_name] in str(preserve_data_backend_cache):
                 continue
@@ -463,15 +469,36 @@ class StateTracker:
         return cls.all_text_cache_files[data_backend_id]
 
     @classmethod
-    def set_caption_files(cls, caption_files):
-        cls.all_caption_files = caption_files
-        cls._save_to_disk("all_caption_files", cls.all_caption_files)
+    def set_caption_files(cls, raw_file_list: list, data_backend_id: str):
+        if data_backend_id not in cls.all_caption_files or cls.all_caption_files.get(data_backend_id) is None:
+            cls.all_caption_files[data_backend_id] = {}
+        else:
+            cls.all_caption_files[data_backend_id].clear()
+
+        for subdirectory_list in raw_file_list or []:
+            _, _, files = subdirectory_list
+            for caption_path in files:
+                cls.all_caption_files[data_backend_id][caption_path] = False
+
+        cls._save_to_disk(
+            f"all_caption_files_{data_backend_id}",
+            cls.all_caption_files[data_backend_id],
+        )
+        return cls.all_caption_files[data_backend_id]
 
     @classmethod
-    def get_caption_files(cls, retry_limit: int = 0):
-        if not cls.all_caption_files:
-            cls.all_caption_files = cls._load_from_disk("all_caption_files", retry_limit=retry_limit)
-        return cls.all_caption_files
+    def get_caption_files(cls, data_backend_id: str, retry_limit: int = 0):
+        if data_backend_id in cls.all_caption_files and cls.all_caption_files[data_backend_id] is None:
+            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
+                f"all_caption_files_{data_backend_id}",
+                retry_limit=retry_limit,
+            )
+        elif data_backend_id not in cls.all_caption_files:
+            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
+                f"all_caption_files_{data_backend_id}",
+                retry_limit=retry_limit,
+            )
+        return cls.all_caption_files.get(data_backend_id, {})
 
     @classmethod
     def get_validation_sample_images(cls):
@@ -606,6 +633,19 @@ class StateTracker:
     @classmethod
     def get_args(cls):
         return cls.args
+
+    @classmethod
+    def set_distiller_profile(cls, method: Optional[str], profile: Optional[DistillerRequirementProfile]):
+        cls.distillation_method = method.lower() if isinstance(method, str) and method else None
+        cls.distiller_profile = profile or EMPTY_PROFILE
+
+    @classmethod
+    def get_distiller_profile(cls) -> DistillerRequirementProfile:
+        return cls.distiller_profile
+
+    @classmethod
+    def get_distillation_method(cls) -> Optional[str]:
+        return cls.distillation_method
 
     @classmethod
     def get_vaecache(cls, id: str):
