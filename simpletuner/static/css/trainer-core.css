@@ -309,12 +309,32 @@
 
 .event-filter-checkbox .form-check-input {
     cursor: pointer;
+    margin: 0;
 }
 
 .event-filter-checkbox .form-check-label {
     cursor: pointer;
     font-size: 0.78rem;
     color: var(--text-muted);
+}
+
+.event-filter-checkbox.form-check {
+    padding-left: 0;
+}
+
+.event-filter-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.event-filter-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-shrink: 0;
 }
 
 .event-dock .event-list {
