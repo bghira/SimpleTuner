@@ -7,8 +7,10 @@ from typing import Any, Dict, Optional
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 
 # Import metadata backends at module load so tests can patch these names.
+from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend as JsonMetadataBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
 from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
@@ -53,9 +55,17 @@ class BaseBackendBuilder(ABC):
         backend_dict = config.to_dict()["config"]
         metadata_backend_args = {}
         metadata_backend_type = config.metadata_backend or backend_dict.get("metadata_backend", "discovery")
+        dataset_type = ensure_dataset_type(getattr(config, "dataset_type", backend_dict.get("dataset_type")))
+        is_caption_dataset = dataset_type is DatasetType.CAPTION
 
         if metadata_backend_type in {"json", "discovery"}:
-            MetadataBackendCls = JsonMetadataBackend
+            if is_caption_dataset:
+                MetadataBackendCls = CaptionMetadataBackend
+                caption_extensions = backend_dict.get("caption_file_extensions")
+                if caption_extensions:
+                    metadata_backend_args["caption_extensions"] = caption_extensions
+            else:
+                MetadataBackendCls = JsonMetadataBackend
 
         elif metadata_backend_type == "parquet":
             MetadataBackendCls = ParquetMetadataBackend
@@ -67,13 +77,11 @@ class BaseBackendBuilder(ABC):
                 raise ValueError(
                     "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
                 )
-
         elif metadata_backend_type == "huggingface":
             MetadataBackendCls = HuggingfaceMetadataBackend
 
             hf_config = backend_dict.get("huggingface", {})
             metadata_backend_args["hf_config"] = hf_config
-            metadata_backend_args["dataset_type"] = backend_dict.get("dataset_type", "image")
 
             quality_filter = None
             if "filter_func" in hf_config and "quality_thresholds" in hf_config["filter_func"]:
