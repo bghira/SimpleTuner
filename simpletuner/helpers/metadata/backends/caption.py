@@ -12,7 +12,6 @@ from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.captions import CaptionRecord, normalize_caption_text
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
-
 import pandas as pd
 
 logger = logging.getLogger("CaptionMetadataBackend")

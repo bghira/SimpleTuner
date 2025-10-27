@@ -162,6 +162,15 @@ def compute_validations(
                     level="error",
                 )
             )
+        normalized_type = _dataset_type(dataset)
+        if normalized_type is DatasetType.CAPTION and backend_type.lower() == "csv":
+            validations.append(
+                ValidationMessage(
+                    field=_normalise_identifier(dataset),
+                    message="Caption datasets cannot use CSV backends; select local, AWS, parquet, or Hugging Face storage instead.",
+                    level="error",
+                )
+            )
 
     for dataset_id, count in id_counts.items():
         if count > 1:
