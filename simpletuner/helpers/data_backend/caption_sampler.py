@@ -11,6 +11,7 @@ from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 try:  # pragma: no cover - allow running without full torch install
     from torch.utils.data import Sampler as TorchSampler
 except Exception:  # noqa: BLE001
+
     class TorchSampler:  # type: ignore[misc]
         pass
 

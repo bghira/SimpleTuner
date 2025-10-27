@@ -11,6 +11,7 @@ from simpletuner.helpers.metadata.captions import CaptionRecord
 try:  # pragma: no cover - exercised indirectly in environments without torch
     from torch.utils.data import Dataset
 except Exception:  # noqa: BLE001
+
     class Dataset:  # type: ignore[override]
         """Minimal shim used when torch isn't installed in lightweight test environments."""
 
