@@ -118,6 +118,18 @@ def _validate_dataloader_specific(config: dict) -> List[ValidationResult]:
             )
 
     if isinstance(datasets, list):
+        for dataset in (entry for entry in datasets if isinstance(entry, dict)):
+            backend_type = str(dataset.get("type", "") or "").strip().lower()
+            dataset_type = _dataset_type_from_entry(dataset)
+            if dataset_type is DatasetType.CAPTION and backend_type == "csv":
+                results.append(
+                    ValidationResult(
+                        passed=False,
+                        field=str(dataset.get("id") or dataset.get("type") or "dataset"),
+                        message="Caption datasets cannot use CSV backends; point to text-aware storage instead.",
+                        level="error",
+                    )
+                )
         dataset_types = [_dataset_type_from_entry(dataset) for dataset in datasets if isinstance(dataset, dict)]
         has_image_dataset = any(dataset_type is DatasetType.IMAGE for dataset_type in dataset_types)
         text_embeds = [d for d in datasets if d.get("dataset_type") == "text_embeds"]

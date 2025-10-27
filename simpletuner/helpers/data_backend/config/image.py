@@ -260,6 +260,12 @@ class ImageBackendConfig(BaseBackendConfig):
         ]
         validators.validate_dataset_type(self.dataset_type, valid_types, self.id)
 
+        if self.dataset_type is DatasetType.CAPTION and str(self.backend_type).lower() == "csv":
+            raise ValueError(
+                f"(id={self.id}) Caption datasets cannot use CSV backends. "
+                "Use local, AWS, Parquet, or Hugging Face storage that actually carries caption text."
+            )
+
         self._validate_controlnet_requirements(args)
 
         validators.validate_crop_aspect(self.crop_aspect, self.crop_aspect_buckets, self.id)
