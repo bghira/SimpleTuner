@@ -2074,9 +2074,12 @@ function trainerComponent() {
             const sanitized = this.prepareDatasetsForSave();
             this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
         },
-        markDatasetsDirty() {
+        markDatasetsDirty(options = {}) {
+            const { refresh = true } = options || {};
             this.hasUnsavedChanges = true;
-            this.refreshDatasetsJson();
+            if (refresh && this.dataLoaderMode !== 'json') {
+                this.refreshDatasetsJson();
+            }
         },
         async loadCaptionFilters(force = false) {
             if (!force && Array.isArray(this.captionFilters) && this.captionFilters.length > 0) {
