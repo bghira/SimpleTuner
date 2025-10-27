@@ -61,6 +61,7 @@ class BaseBackendBuilder(ABC):
         if metadata_backend_type in {"json", "discovery"}:
             if is_caption_dataset:
                 MetadataBackendCls = CaptionMetadataBackend
+                metadata_backend_args["caption_ingest_strategy"] = "discovery"
                 caption_extensions = backend_dict.get("caption_file_extensions")
                 if caption_extensions:
                     metadata_backend_args["caption_extensions"] = caption_extensions
@@ -68,17 +69,21 @@ class BaseBackendBuilder(ABC):
                 MetadataBackendCls = JsonMetadataBackend
 
         elif metadata_backend_type == "parquet":
-            MetadataBackendCls = ParquetMetadataBackend
+            caption_ingest_via_parquet = is_caption_dataset
+            MetadataBackendCls = CaptionMetadataBackend if caption_ingest_via_parquet else ParquetMetadataBackend
             parquet_config = backend_dict.get("parquet")
             is_mock_backend = hasattr(MetadataBackendCls, "_mock_children")
             if parquet_config:
                 metadata_backend_args["parquet_config"] = parquet_config
+                if caption_ingest_via_parquet:
+                    metadata_backend_args["caption_ingest_strategy"] = "parquet"
             elif not is_mock_backend:
                 raise ValueError(
                     "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
                 )
         elif metadata_backend_type == "huggingface":
-            MetadataBackendCls = HuggingfaceMetadataBackend
+            caption_ingest_via_hf = is_caption_dataset
+            MetadataBackendCls = CaptionMetadataBackend if caption_ingest_via_hf else HuggingfaceMetadataBackend
 
             hf_config = backend_dict.get("huggingface", {})
             metadata_backend_args["hf_config"] = hf_config
@@ -87,9 +92,13 @@ class BaseBackendBuilder(ABC):
             if "filter_func" in hf_config and "quality_thresholds" in hf_config["filter_func"]:
                 quality_filter = hf_config["filter_func"]["quality_thresholds"]
 
-            metadata_backend_args["quality_filter"] = quality_filter
-            metadata_backend_args["split_composite_images"] = backend_dict.get("split_composite_images", False)
-            metadata_backend_args["composite_image_column"] = backend_dict.get("composite_image_column", "image")
+            if caption_ingest_via_hf:
+                metadata_backend_args["caption_ingest_strategy"] = "huggingface"
+                metadata_backend_args["quality_filter"] = quality_filter
+            else:
+                metadata_backend_args["quality_filter"] = quality_filter
+                metadata_backend_args["split_composite_images"] = backend_dict.get("split_composite_images", False)
+                metadata_backend_args["composite_image_column"] = backend_dict.get("composite_image_column", "image")
         else:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
 

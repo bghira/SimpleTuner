@@ -2742,13 +2742,25 @@ class FactoryRegistry:
         metadata_backend = init_backend["metadata_backend"]
         built_on_rank = False
         if isinstance(metadata_backend, CaptionMetadataBackend):
+            ingest_strategy = str(getattr(metadata_backend, "caption_ingest_strategy", "discovery")).lower()
             if self._should_skip_caption_discovery(backend):
-                info_log(f"(id={init_backend['id']}) Skipping caption discovery per skip_file_discovery settings.")
+                info_log(
+                    f"(id={init_backend['id']}) Skipping caption ingestion ({ingest_strategy}) per skip_file_discovery settings."
+                )
             elif self.accelerator.is_local_main_process:
-                caption_cache = self._discover_caption_files(init_backend, metadata_backend)
-                new_entries = metadata_backend.ingest_from_file_cache(caption_cache)
-                info_log(f"(id={init_backend['id']}) Captured {new_entries} caption entries.")
+                if ingest_strategy == "parquet":
+                    new_entries = metadata_backend.ingest_from_parquet_config()
+                elif ingest_strategy == "huggingface":
+                    new_entries = metadata_backend.ingest_from_huggingface_dataset()
+                else:
+                    caption_cache = self._discover_caption_files(init_backend, metadata_backend)
+                    new_entries = metadata_backend.ingest_from_file_cache(caption_cache)
+                info_log(f"(id={init_backend['id']}) Captured {new_entries} caption entries via {ingest_strategy}.")
                 built_on_rank = True
+            else:
+                debug_log(
+                    f"(id={init_backend['id']}) Waiting for caption ingestion ({ingest_strategy}) from local main process."
+                )
 
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
