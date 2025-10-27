@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import logging
 from typing import Any, Callable, Dict, Optional, Union
@@ -113,6 +115,20 @@ class DistillationBase:
     def prepare_batch(self, batch, model, state):
         """Process a batch for distillation training."""
         return batch
+
+    def consumes_caption_batches(self) -> bool:
+        """Return True if this distiller can turn caption-only batches into training inputs."""
+        return False
+
+    def prepare_caption_batch(self, caption_batch: Dict[str, Any], model, state) -> Dict[str, Any]:
+        """
+        Convert caption dataloader output into a training batch.
+
+        Distillers that override `consumes_caption_batches` must also override this method.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} declares caption support but does not implement prepare_caption_batch()."
+        )
 
     def compute_distill_loss(self, prepared_batch, model_output, original_loss):
         """Compute the distillation loss to be combined with the original loss."""
