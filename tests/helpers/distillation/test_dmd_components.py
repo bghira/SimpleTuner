@@ -151,9 +151,7 @@ class DMDDistillerComponentTests(unittest.TestCase):
 
     def test_critic_step_executes(self):
         # Replace optimizer with simple SGD for determinism.
-        self.distiller.fake_score_optimizer = torch.optim.SGD(
-            self.distiller.fake_score_transformer.parameters(), lr=1e-3
-        )
+        self.distiller.fake_score_optimizer = torch.optim.SGD(self.distiller.fake_score_transformer.parameters(), lr=1e-3)
         loss, logs = self.distiller._critic_step(self.prepared_batch)
         self.assertGreaterEqual(loss.detach().item(), 0.0)
         self.assertIn("dmd_critic_loss", logs)

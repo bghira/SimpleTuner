@@ -33,7 +33,7 @@ from simpletuner.helpers.data_backend.factory import (
 )
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
-from simpletuner.helpers.models.all import model_families
+from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import trainable_parameter_count
 from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
@@ -205,8 +205,8 @@ class Trainer:
             self._send_webhook_msg(f"Error: {e}", message_level="critical")
             raise e
 
-        if getattr(self, "config", None) is not None and self.config.model_family in model_families:
-            self.model = model_families[self.config.model_family](self.config, self.accelerator)
+        if getattr(self, "config", None) is not None and self.config.model_family in ModelRegistry.model_families().keys():
+            self.model = ModelRegistry.model_families()[self.config.model_family](self.config, self.accelerator)
             self.model.check_user_config()
             StateTracker.set_model(self.model)
         if self.webhook_handler and isinstance(self.model, VideoModelFoundation) and not self.webhook_handler.send_video:
@@ -1146,7 +1146,7 @@ class Trainer:
             candidate_family = self._extract_config_value(raw_config, "model_family", "--model_family")
         if candidate_family:
             candidate_family = str(candidate_family).strip()
-            model_cls = model_families.get(candidate_family)
+            model_cls = ModelRegistry.model_families().get(candidate_family)
             if model_cls and issubclass(model_cls, VideoModelFoundation):
                 return True
         return False
@@ -1230,9 +1230,7 @@ class Trainer:
         if model_family not in model_classes["full"]:
             raise ValueError(f"Invalid model family specified: {model_family}")
 
-        from simpletuner.helpers.models.all import model_families
-
-        model_implementation = model_families.get(model_family)
+        model_implementation = ModelRegistry.model_families().get(model_family)
         StateTracker.set_model_family(model_family)
         self.config.model_type_label = getattr(model_implementation, "NAME", None)
         if StateTracker.is_sdxl_refiner():

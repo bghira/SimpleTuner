@@ -1391,6 +1391,28 @@ class FieldService:
                         )
                         if "field-external-selection" not in extra_classes:
                             extra_classes.append("field-external-selection")
+                elif field.name == "model_flavour":
+                    flavour_options = self._build_model_flavour_options(config_values)
+                    selected_family_raw = self._get_config_value(config_values, "model_family")
+                    normalized_family = selected_family_raw.strip() if isinstance(selected_family_raw, str) else ""
+
+                    default_label = "Use default flavour"
+                    if normalized_family:
+                        default_choice = self._resolve_model_default_flavour(normalized_family)
+                        if default_choice:
+                            default_label = f"Use default ({default_choice})"
+
+                    if flavour_options:
+                        field_dict["options"] = [{"value": None, "label": default_label}] + flavour_options
+                    else:
+                        field_dict["options"] = [{"value": None, "label": default_label}]
+                        hint_message = (
+                            f"No registered flavours found for '{normalized_family}'. "
+                            "Enter a custom value to override the default path."
+                            if normalized_family
+                            else "Select a model family to view available flavours."
+                        )
+                        _append_hint(hint_message)
                 elif field.name == "eval_dataset_id":
                     normalized_options: List[Dict[str, str]] = []
                     seen_values: Set[str] = set()
@@ -1779,6 +1801,56 @@ class FieldService:
                 return None
 
         return None
+
+    def _build_model_flavour_options(self, config_values: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Build select options for model flavours based on the selected family."""
+
+        selected_family = self._get_config_value(config_values, "model_family")
+        if not isinstance(selected_family, str) or not selected_family.strip():
+            return []
+
+        family_key = selected_family.strip()
+        try:
+            model_class = ModelRegistry.get(family_key)
+        except Exception:  # pragma: no cover - defensive guard
+            model_class = None
+
+        if not model_class:
+            return []
+
+        try:
+            raw_choices = list(model_class.get_flavour_choices())
+        except Exception as exc:  # pragma: no cover - defensive guard
+            logger.warning("Failed to resolve model flavours for %s: %s", family_key, exc)
+            raw_map = getattr(model_class, "HUGGINGFACE_PATHS", {})
+            raw_choices = list(raw_map.keys()) if isinstance(raw_map, dict) else []
+
+        options: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+
+        for entry in raw_choices:
+            if isinstance(entry, dict):
+                value = entry.get("value")
+                label = entry.get("label", value)
+            elif isinstance(entry, (list, tuple)) and entry:
+                value = entry[0]
+                label = entry[1] if len(entry) > 1 else entry[0]
+            else:
+                value = entry
+                label = entry
+
+            if value is None:
+                continue
+
+            value_str = str(value).strip()
+            if not value_str or value_str in seen:
+                continue
+
+            seen.add(value_str)
+            label_str = str(label) if label is not None else value_str
+            options.append({"value": value_str, "label": label_str})
+
+        return options
 
     def _convert_to_api_format(self, field: Any, config_values: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Any]:
         """Convert field to API response format."""

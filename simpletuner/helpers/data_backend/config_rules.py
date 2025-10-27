@@ -29,6 +29,12 @@ def register_dataloader_rules():
             example='data_backend_config: "config/multidatabackend.json"',
             suggestion="Create a multidatabackend.json file with your dataset configuration",
         ),
+        make_required_rule(
+            field_name="datasets",
+            message="Define one or more dataset entries under 'datasets'",
+            example="datasets:\n  - id: images\n    type: local\n    dataset_type: image",
+            suggestion="Add at least one dataset block describing the training data location.",
+        ),
         ConfigRule(
             field_name="text_embed_default",
             rule_type=RuleType.CUSTOM,

@@ -5,7 +5,6 @@ from typing import Optional
 
 import torch
 
-
 _EPS = 1e-6
 
 
@@ -47,7 +46,9 @@ class FlowMatchingSchedulerAdapter:
     def device(self) -> torch.device:
         return self.sigmas.device
 
-    def to(self, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None) -> "FlowMatchingSchedulerAdapter":
+    def to(
+        self, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None
+    ) -> "FlowMatchingSchedulerAdapter":
         if device is not None:
             self.sigmas = self.sigmas.to(device=device)
             self.timesteps = self.timesteps.to(device=device)

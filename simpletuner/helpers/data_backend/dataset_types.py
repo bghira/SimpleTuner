@@ -34,7 +34,7 @@ class DatasetType(str, Enum):
             for member in cls:
                 if member.value == normalized:
                     return member
-        raise ValueError(f"Unknown dataset type: {value}")
+        raise ValueError(f"Unknown dataset_type: {value}")
 
     @classmethod
     def normalize_list(

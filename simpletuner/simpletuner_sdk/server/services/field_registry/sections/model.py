@@ -1,16 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-try:
-    from simpletuner.helpers.models.all import model_families
-except ImportError as exc:  # pragma: no cover - defensive fallback
-    logging.getLogger(__name__).error("Failed to import model_families: %s", exc)
-    model_families = {}
-
-try:
-    from simpletuner.helpers.training import quantised_precision_levels
-except ImportError:  # pragma: no cover - defensive fallback
-    quantised_precision_levels = ["no_change"]
+from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training import quantised_precision_levels
 
 from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
@@ -25,10 +17,10 @@ def register_model_fields(registry: "FieldRegistry") -> None:
     """Add model configuration fields."""
     logger.debug("_add_model_config_fields called")
     # Model Family
-    model_family_list = list(model_families.keys())
+    model_family_list = list(ModelRegistry.model_families().keys())
 
     def _family_label(key: str) -> str:
-        model_cls = model_families.get(key)
+        model_cls = ModelRegistry.model_families().get(key)
         if model_cls is None:
             return key.replace("_", " ").title()
         return getattr(model_cls, "NAME", key.replace("_", " ").title())
@@ -59,10 +51,10 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="model_config",
             subsection="architecture",
-            choices=[{"value": f, "label": _family_label(f)} for f in model_family_list],
+            choices=[{"value": f, "label": _family_label(f)} for f in ModelRegistry.model_families().keys()],
             validation_rules=[
                 ValidationRule(ValidationRuleType.REQUIRED, message="Model family is required"),
-                ValidationRule(ValidationRuleType.CHOICES, value=model_family_list),
+                ValidationRule(ValidationRuleType.CHOICES, value=ModelRegistry.model_families().keys()),
             ],
             help_text="The base model architecture family to train",
             tooltip="Different model families have different capabilities and requirements",
@@ -88,6 +80,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Some models have multiple variants with different sizes or capabilities",
             importance=ImportanceLevel.IMPORTANT,
             order=3,
+            dynamic_choices=True,
         )
     )
 
