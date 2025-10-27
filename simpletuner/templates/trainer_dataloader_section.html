@@ -143,11 +143,15 @@ function dataloaderSectionComponent() {
     },
     get isVideoModel() {
         const context = this.modelContext || {};
-        return Boolean(context.isVideoModel || context.supportsVideo);
+        return this.normalizeBoolean(context.isVideoModel) || this.normalizeBoolean(context.supportsVideo);
     },
     get requiresStrictI2VDatasets() {
         const context = this.modelContext || {};
-        return Boolean(context.requiresStrictI2VDatasets);
+        const active = this.normalizeBoolean(context.strictI2VActive);
+        if (active) {
+            console.debug('[DatasetBuilder] strict I2V active for current model flavour', context);
+        }
+        return active;
     },
     get imageDatasetCount() {
         if (!Array.isArray(this.datasets)) {
@@ -515,6 +519,30 @@ function dataloaderSectionComponent() {
             return 'dataset';
         }
         return dataset.id.toString().replace(/[^a-zA-Z0-9_-]/g, '-');
+    },
+    normalizeBoolean(value) {
+        if (value === null || value === undefined) {
+            return false;
+        }
+        if (typeof value === 'boolean') {
+            return value;
+        }
+        if (typeof value === 'number') {
+            return value !== 0;
+        }
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (!normalized) {
+                return false;
+            }
+            if (['true', '1', 'yes', 'on'].includes(normalized)) {
+                return true;
+            }
+            if (['false', '0', 'no', 'off'].includes(normalized)) {
+                return false;
+            }
+        }
+        return Boolean(value);
     },
     shouldShowConditioningSection(dataset) {
         if (!dataset) {
@@ -1047,7 +1075,8 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
 
         <!-- Dataset List -->
         <div class="dataset-list" x-show="!datasetsLoading">
-            <div class="alert alert-warning d-flex align-items-start gap-2 mb-3"
+            <div class="alert alert-warning align-items-start gap-2 mb-3"
+                 x-bind:class="{ 'd-flex': requiresStrictI2VDatasets && videoDatasetCount === 0 }"
                  x-show="requiresStrictI2VDatasets && videoDatasetCount === 0"
                  x-cloak>
                 <i class="fas fa-exclamation-triangle mt-1"></i>
