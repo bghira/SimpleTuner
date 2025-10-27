@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import huggingface_hub
 import wandb
@@ -24,6 +24,7 @@ from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
     configure_multi_databackend,
@@ -2781,11 +2782,46 @@ class Trainer:
             training_logger.debug(f"No batch was returned by the iterator_fn, returning {batch}")
             return batch
 
+        dataset_type = self._detect_batch_dataset_type(batch)
+        if dataset_type is DatasetType.CAPTION:
+            return self._prepare_caption_generated_batch(batch)
+
         prepared_batch = self.model.prepare_batch(batch, state=self.state)
 
         if getattr(self, "distiller", None) is not None:
             prepared_batch = self.distiller.prepare_batch(prepared_batch, self.model, self.state)
 
+        return prepared_batch
+
+    def _detect_batch_dataset_type(self, batch: dict) -> Optional[DatasetType]:
+        if not isinstance(batch, dict):
+            return None
+        raw_type = batch.get("dataset_type")
+        if raw_type is None:
+            return None
+        try:
+            return ensure_dataset_type(raw_type)
+        except ValueError:
+            return None
+
+    def _prepare_caption_generated_batch(self, batch: dict) -> Dict[str, Any]:
+        backend_id = batch.get("data_backend_id", "<caption>")
+        distiller = getattr(self, "distiller", None)
+        if distiller is None:
+            raise ValueError(
+                f"Caption dataset '{backend_id}' cannot be used without a distiller that generates training batches."
+            )
+        if not getattr(distiller, "consumes_caption_batches", lambda: False)():
+            raise ValueError(
+                f"Distiller {distiller.__class__.__name__} does not support caption-only batches "
+                f"(required for backend '{backend_id}')."
+            )
+        prepared_batch = distiller.prepare_caption_batch(batch, self.model, self.state)
+        if not isinstance(prepared_batch, dict):
+            raise ValueError(
+                f"Distiller {distiller.__class__.__name__} returned an invalid caption batch payload "
+                f"for backend '{backend_id}'. Expected a dict."
+            )
         return prepared_batch
 
     def get_prediction_target(self, prepared_batch: dict):
