@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import List
+from collections import deque
+from typing import Deque, List, Optional, Tuple
 
 from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -34,6 +35,9 @@ class DistillationCache(WebhookMixin):
 
         if self.data_backend and self.cache_dir:
             self.data_backend.create_directory(self.cache_dir)
+        self._artifact_paths: List[str] = []
+        self._artifact_cursor: int = 0
+        self._artifact_queue: Deque[str] = deque()
 
     def debug(self, message: str) -> None:
         logger.debug(f"{self.rank_info}(distillation_cache id={self.id}) {message}")
@@ -50,7 +54,26 @@ class DistillationCache(WebhookMixin):
         StateTracker.set_distillation_cache_files(listing, data_backend_id=self.id)
         flattened = self._flatten_listing(listing)
         self.debug(f"discovered {len(flattened)} distillation cache entries.")
+        if flattened:
+            existing = set(self._artifact_paths)
+            for path in flattened:
+                if path not in existing:
+                    self._artifact_paths.append(path)
+                    self._artifact_queue.append(path)
+            if not self._artifact_paths:
+                self._artifact_paths = list(flattened)
+            self._artifact_paths.sort()
         return flattened
+
+    def _refresh_queue_if_stale(self) -> None:
+        if self._artifact_queue:
+            return
+        discovered = self.discover_all_files()
+        if not discovered:
+            self._artifact_paths = []
+            self._artifact_cursor = 0
+            self._artifact_queue = deque()
+        return discovered
 
     def _flatten_listing(self, listing) -> List[str]:
         paths: List[str] = []
@@ -77,3 +100,32 @@ class DistillationCache(WebhookMixin):
         # Update StateTracker with the new listing so downstream consumers see the fresh entry.
         self.discover_all_files()
         return target
+
+    def load_next_pair(self) -> Tuple[Optional[object], Optional[str]]:
+        """
+        Retrieve the next cached pair for consumption.
+
+        Returns the payload loaded via torch along with the source path. If no entries
+        are available, (None, None) is returned.
+        """
+        self._refresh_queue_if_stale()
+        if not self._artifact_paths:
+            return None, None
+
+        if not self._artifact_queue:
+            # Replenish queue using round-robin traversal through stored paths.
+            if self._artifact_cursor >= len(self._artifact_paths):
+                self._artifact_cursor = 0
+            path = self._artifact_paths[self._artifact_cursor]
+            self._artifact_cursor = (self._artifact_cursor + 1) % len(self._artifact_paths)
+        else:
+            path = self._artifact_queue.popleft()
+            if path not in self._artifact_paths:
+                self._artifact_paths.append(path)
+
+        try:
+            payload = self.data_backend.torch_load(path)
+        except Exception as exc:  # pragma: no cover - storage edge case logging
+            logger.error("Failed to load distillation cache artifact '%s': %s", path, exc)
+            return None, None
+        return payload, path
