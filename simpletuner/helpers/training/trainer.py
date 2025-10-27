@@ -30,6 +30,8 @@ from simpletuner.helpers.data_backend.factory import (
     random_dataloader_iterator,
     run_distillation_cache_generation,
 )
+from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.all import model_families
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import trainable_parameter_count
@@ -210,6 +212,7 @@ class Trainer:
             self.configure_webhook(send_startup_message=False)
         self._misc_init()
         self.validation = None
+        self.distiller_requirement_profile: DistillerRequirementProfile = EMPTY_PROFILE
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
 
@@ -1329,12 +1332,15 @@ class Trainer:
                     job_id=self.job_id,
                 )
             )
+            distiller_profile = self._resolve_distiller_profile()
             configure_multi_databackend(
                 self.config,
                 accelerator=self.accelerator,
                 text_encoders=self.model.text_encoders,
                 tokenizers=self.model.tokenizers,
                 model=self.model,
+                distiller_profile=distiller_profile,
+                distillation_method=getattr(self.config, "distillation_method", None),
             )
             self._emit_event(
                 lifecycle_stage_event(
@@ -1642,6 +1648,19 @@ class Trainer:
                 logger.info(f"Applying BitFit freezing strategy to the {self.model.MODEL_TYPE.value}.")
                 self.model.model = apply_bitfit_freezing(unwrap_model(self.accelerator, self.model.model), self.config)
         self.enable_gradient_checkpointing()
+
+    def _resolve_distiller_profile(self) -> DistillerRequirementProfile:
+        """Return and cache the active distiller requirement profile."""
+        method = getattr(self.config, "distillation_method", None)
+        if not method:
+            StateTracker.set_distiller_profile(None, EMPTY_PROFILE)
+            self.distiller_requirement_profile = EMPTY_PROFILE
+            return EMPTY_PROFILE
+
+        profile = DistillationRegistry.get_requirement_profile(method)
+        self.distiller_requirement_profile = profile
+        StateTracker.set_distiller_profile(method, profile)
+        return profile
 
     def init_distillation(self):
         """Initialize distillation using the factory pattern."""
