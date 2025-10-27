@@ -125,6 +125,19 @@ class StrictI2VDatasetValidationTest(unittest.TestCase):
         errors = self._collect_errors(validations)
         self.assertFalse(any("image dataset" in msg for msg in errors))
 
+    def test_caption_csv_backend_rejected(self):
+        datasets = [
+            {"id": "captions", "dataset_type": "caption", "type": "csv"},
+            {"id": "text-embeds", "dataset_type": "text_embeds", "type": "local", "default": True},
+        ]
+        validations = compute_validations(
+            datasets,
+            blueprints=[],
+            distillation_method="caption_generator",
+        )
+        errors = self._collect_errors(validations)
+        self.assertTrue(any("Caption datasets cannot use CSV backends" in msg for msg in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

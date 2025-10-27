@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
 from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
+from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.metadata.captions import CaptionRecord
 from simpletuner.helpers.training.caption_collate import collate_caption_batch
@@ -98,6 +99,20 @@ class CaptionDatasetPipelineTests(unittest.TestCase):
         self.assertEqual(payload["dataset_type"], DatasetType.CAPTION)
         self.assertEqual(payload["captions"], ["caption 0", "caption 1"])
         self.assertEqual(payload["metadata_ids"], ["meta-0", "meta-1"])
+
+
+class CaptionConfigValidationTests(unittest.TestCase):
+    def test_csv_caption_backend_rejected(self):
+        backend_dict = {
+            "id": "captions",
+            "type": "csv",
+            "dataset_type": "caption",
+            "instance_data_dir": "/tmp/captions",
+        }
+        args = {"resolution": 1024, "resolution_type": "pixel"}
+        config = ImageBackendConfig.from_dict(backend_dict, args)
+        with self.assertRaisesRegex(ValueError, "Caption datasets cannot use CSV backends"):
+            config.validate(args)
 
 
 if __name__ == "__main__":

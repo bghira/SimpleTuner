@@ -482,9 +482,16 @@ class DummyConfig:
 
     def __init__(self, backend):
         self.backend = backend
+        self.id = backend.get("id")
+        self.backend_type = backend.get("type", "local")
+        self.dataset_type = backend.get("dataset_type")
+        self.config = dict(backend)
 
     def validate(self, *_args, **_kwargs):
         return None
+
+    def to_dict(self):
+        return {"config": dict(self.config)}
 
 
 class TestFactoryDistillerRequirements(unittest.TestCase):
@@ -561,6 +568,18 @@ class TestFactoryDistillerRequirements(unittest.TestCase):
         )
         self.create_backend_builder_patch.start()
         self.addCleanup(self.create_backend_builder_patch.stop)
+
+        self.build_backend_from_config_patch = patch(
+            "simpletuner.helpers.data_backend.factory.build_backend_from_config",
+            side_effect=lambda *_args, **_kwargs: {
+                "data_backend": MagicMock(),
+                "metadata_backend": MagicMock(),
+                "instance_data_dir": "/data/captions",
+                "config": {},
+            },
+        )
+        self.build_backend_from_config_patch.start()
+        self.addCleanup(self.build_backend_from_config_patch.stop)
 
         self.init_backend_config_patch = patch(
             "simpletuner.helpers.data_backend.factory.init_backend_config",
