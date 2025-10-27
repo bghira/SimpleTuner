@@ -29,14 +29,27 @@ class SelfForcingODEGenerator:
             return
 
         filename = cache.next_artifact_name(prefix=self.config.get("artifact_prefix", "self_forcing"))
+        latent_shape = tuple(self.config.get("latent_shape", (4, 64, 64)))
+        if len(latent_shape) != 3:
+            logger.warning("Invalid latent_shape %s; defaulting to (4, 64, 64).", latent_shape)
+            latent_shape = (4, 64, 64)
+        latents = torch.zeros((1, *latent_shape), dtype=torch.float32)
+        noise = torch.randn_like(latents)
+        default_timestep = int(self.config.get("default_timestep", 750))
+        timesteps = torch.full((latents.shape[0],), default_timestep, dtype=torch.long)
+        guidance_scale = float(self.config.get("guidance_scale", 6.0))
+
         payload = {
             "metadata": {
                 "generated_at": time.time(),
                 "distillation_type": cache.distillation_type,
-                "guidance_scale": self.config.get("guidance_scale", 6.0),
+                "guidance_scale": guidance_scale,
             },
-            # Placeholder tensor to confirm persistence works end-to-end.
-            "latents": torch.zeros((1,), dtype=torch.float32),
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise.clone(),
+            "timesteps": timesteps,
+            "guidance_scale": guidance_scale,
         }
 
         artifact_path = cache.write_tensor(filename, payload)
