@@ -11,10 +11,9 @@ torch.cuda = types.SimpleNamespace(  # type: ignore[attr-defined]
     is_available=lambda: False,
     get_device_properties=lambda *_: SimpleNamespace(major=0),
 )
-torch.backends = types.SimpleNamespace(  # type: ignore[attr-defined]
-    mps=SimpleNamespace(is_available=lambda: False)
-)
+torch.backends = types.SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False))  # type: ignore[attr-defined]
 if not hasattr(torch, "no_grad"):
+
     class _NoGradContext:
         def __call__(self, func):
             def wrapped(*args, **kwargs):
@@ -134,6 +133,12 @@ class InMemoryDataBackend:
         return sample_path
 
 
+class DummyHFBackend(InMemoryDataBackend):
+    def __init__(self, dataset):
+        super().__init__()
+        self.dataset = dataset
+
+
 class TestCaptionMetadataBackend(unittest.TestCase):
     def setUp(self):
         StateTracker.set_args(SimpleNamespace(output_dir="/tmp"))
@@ -160,7 +165,7 @@ class TestCaptionMetadataBackend(unittest.TestCase):
         self.backend.write(f"{self.instance_dir}/basic.txt", "first caption\n\nsecond")
         json_payload = json.dumps({"captions": ["json one", "json two"]})
         self.backend.write(f"{self.instance_dir}/data.json", json_payload)
-        jsonl_payload = '\n'.join([json.dumps({"caption": "line a"}), '"line b"'])
+        jsonl_payload = "\n".join([json.dumps({"caption": "line a"}), '"line b"'])
         self.backend.write(f"{self.instance_dir}/mixed.jsonl", jsonl_payload)
 
         caption_backend = self._create_backend()
@@ -191,6 +196,73 @@ class TestCaptionMetadataBackend(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].caption_text, "one caption")
         self.assertEqual(records[0].data_backend_id, "caption")
+
+    def test_ingest_from_parquet_manifest(self):
+        manifest_path = "/manifests/captions.jsonl"
+        rows = [
+            {"filename": "alpha.jpg", "caption": "First entry"},
+            {"filename": "beta.png", "caption": ["Second", "Alt second"]},
+        ]
+        payload = "\n".join(json.dumps(row) for row in rows)
+        self.backend.write(manifest_path, payload)
+
+        caption_backend = CaptionMetadataBackend(
+            id="caption",
+            instance_data_dir=self.instance_dir,
+            cache_file=self.cache_file,
+            metadata_file=self.metadata_file,
+            data_backend=self.backend,
+            accelerator=self.accelerator,
+            batch_size=1,
+            caption_ingest_strategy="parquet",
+            parquet_config={
+                "path": manifest_path,
+                "filename_column": "filename",
+                "caption_column": "caption",
+                "identifier_includes_extension": False,
+                "default_extension": "txt",
+            },
+        )
+
+        created = caption_backend.ingest_from_parquet_config()
+        self.assertEqual(created, 3)
+        records = list(caption_backend.iter_records())
+        self.assertEqual(len(records), 3)
+        texts = sorted(record.caption_text for record in records)
+        self.assertEqual(texts, ["Alt second", "First entry", "Second"])
+
+    def test_ingest_from_huggingface_dataset(self):
+        dataset = [
+            {"prompt": "  Example 1  ", "quality": {"score": 0.9}},
+            {"prompt": ["Example 2a", "Example 2b"], "quality": {"score": 0.4}},
+            {"description": "fallback caption", "quality": {"score": 0.8}},
+        ]
+        hf_backend = DummyHFBackend(dataset)
+        hf_backend.id = "caption"
+
+        caption_backend = CaptionMetadataBackend(
+            id="caption",
+            instance_data_dir=self.instance_dir,
+            cache_file=self.cache_file,
+            metadata_file=self.metadata_file,
+            data_backend=hf_backend,
+            accelerator=self.accelerator,
+            batch_size=1,
+            caption_ingest_strategy="huggingface",
+            hf_config={
+                "caption_column": "prompt",
+                "quality_column": "quality",
+                "description_column": "description",
+                "repo_id": "hf/test-dataset",
+            },
+            quality_filter={"score": 0.5},
+        )
+
+        created = caption_backend.ingest_from_huggingface_dataset()
+        self.assertEqual(created, 2)
+        payload = list(caption_backend.iter_records())
+        captions = sorted(record.caption_text for record in payload)
+        self.assertEqual(captions, ["Example 1", "fallback caption"])
 
 
 if __name__ == "__main__":
