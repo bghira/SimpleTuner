@@ -1198,7 +1198,7 @@ class ModelFoundation(ABC):
 
         device = self._resolve_group_offload_device()
         if device.type != "cuda":
-            device = torch.device("cuda")
+            device = torch.device(getattr(self.accelerator, "device", "cuda") if self.accelerator is not None else "cuda")
 
         use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
 
