@@ -156,7 +156,22 @@ function dataloaderSectionComponent() {
     },
     get conditioningFeaturesActive() {
         const context = this.modelContext || {};
-        return Boolean(context.controlnetEnabled || context.requiresConditioningDataset);
+        if (
+            context.controlnetEnabled
+            || context.requiresConditioningDataset
+            || context.requiresConditioningLatents
+            || context.requiresConditioningImageEmbeds
+        ) {
+            return true;
+        }
+
+        const capabilities =
+            (this.trainer && this.trainer.modelDetails && this.trainer.modelDetails.capabilities) || {};
+        return Boolean(
+            capabilities.overrides_requires_conditioning_dataset
+            || capabilities.overrides_requires_conditioning_latents
+            || capabilities.overrides_requires_conditioning_image_embeds
+        );
     },
     get conditioningSupported() {
         return this.conditioningFeaturesActive;

@@ -106,6 +106,14 @@ class TestableQwenImage(QwenImage):
 
 
 class QwenEditTests(unittest.TestCase):
+    def _make_model(self, flavour):
+        prompt_embeds = torch.ones(1, 4, 8)
+        prompt_mask = torch.ones(1, 4, dtype=torch.int64)
+        pipeline = DummyPipeline(prompt_embeds, prompt_mask)
+        transformer = DummyTransformer()
+        vae = DummyVAE()
+        return TestableQwenImage(pipeline, transformer, vae, model_flavour=flavour)
+
     def test_conditioning_image_embedder_returns_dict_entries(self):
         processor = DummyProcessor()
         embedder = QwenImage._EditV1ConditioningImageEmbedder(
@@ -212,6 +220,15 @@ class QwenEditTests(unittest.TestCase):
         self.assertIn("model_prediction", result)
         prediction = result["model_prediction"]
         self.assertEqual(prediction.shape, latents.shape)
+
+    def test_edit_flavours_require_conditioning_latents(self):
+        edit_v1 = self._make_model("edit-v1")
+        edit_v2 = self._make_model("edit-v2")
+        base_model = self._make_model("v1.0")
+
+        self.assertTrue(edit_v1.requires_conditioning_latents())
+        self.assertTrue(edit_v2.requires_conditioning_latents())
+        self.assertFalse(base_model.requires_conditioning_latents())
 
 
 if __name__ == "__main__":
