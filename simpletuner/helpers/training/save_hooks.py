@@ -6,6 +6,7 @@ import shutil
 import types
 from contextlib import contextmanager
 
+from diffusers.training_utils import _collate_lora_metadata
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from diffusers.utils.state_dict_utils import StateDictType
 from peft import set_peft_model_state_dict
@@ -118,50 +119,62 @@ class SaveHookManager:
             ]
             self.ema_model.store(trainable_parameters)
             self.ema_model.copy_to(trainable_parameters)
+            ema_trained_component = unwrap_model(self.accelerator, self.model.get_trained_component())
             lora_save_parameters = {
                 f"{self.model.MODEL_SUBFOLDER}_lora_layers": convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(unwrap_model(self.accelerator, self.model.get_trained_component())),
+                    get_peft_model_state_dict(ema_trained_component),
                     original_type=StateDictType.PEFT,
                 ),
             }
-            self.model.save_lora_weights(os.path.join(output_dir, "ema"), **lora_save_parameters)
+            ema_modules_to_save = {self.model.MODEL_SUBFOLDER: ema_trained_component}
+            ema_metadata = _collate_lora_metadata(ema_modules_to_save)
+            self.model.save_lora_weights(os.path.join(output_dir, "ema"), **lora_save_parameters, **ema_metadata)
             self.ema_model.restore(trainable_parameters)
 
+        trained_component_cls = type(unwrap_model(self.accelerator, self.model.get_trained_component()))
+        text_encoder_0_cls = None
+        text_encoder_1_cls = None
+
+        text_encoder_0 = self.model.get_text_encoder(0)
+        if text_encoder_0 is not None:
+            text_encoder_0_cls = type(unwrap_model(self.accelerator, text_encoder_0))
+
+        text_encoder_1 = self.model.get_text_encoder(1)
+        if text_encoder_1 is not None:
+            text_encoder_1_cls = type(unwrap_model(self.accelerator, text_encoder_1))
+
         lora_save_parameters = {}
+        modules_to_save = {}
         # TODO: Refactor this implementation for better structure.
         for model in models:
+            unwrapped_model = unwrap_model(self.accelerator, model)
             if self.args.controlnet and isinstance(
-                model,
-                type(unwrap_model(self.accelerator, self.model.get_trained_component())),
+                unwrapped_model,
+                trained_component_cls,
             ):
                 # controlnet_lora_layers
-                controlnet_layers = get_peft_model_state_dict(model)
+                controlnet_layers = get_peft_model_state_dict(unwrapped_model)
                 lora_save_parameters[f"controlnet_lora_layers"] = controlnet_layers
-            elif isinstance(
-                model,
-                type(unwrap_model(self.accelerator, self.model.get_trained_component())),
-            ):
+                modules_to_save["controlnet"] = unwrapped_model
+            elif isinstance(unwrapped_model, trained_component_cls):
                 # unet_lora_layers or transformer_lora_layers
                 lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(model),
+                    get_peft_model_state_dict(unwrapped_model),
                     original_type=StateDictType.PEFT,
                 )
-            elif isinstance(
-                model,
-                type(unwrap_model(self.accelerator, self.model.get_text_encoder(0))),
-            ):
+                modules_to_save[self.model.MODEL_SUBFOLDER] = unwrapped_model
+            elif text_encoder_0_cls is not None and isinstance(unwrapped_model, text_encoder_0_cls):
                 lora_save_parameters["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(model),
+                    get_peft_model_state_dict(unwrapped_model),
                     original_type=StateDictType.PEFT,
                 )
-            elif isinstance(
-                model,
-                type(unwrap_model(self.accelerator, self.model.get_text_encoder(1))),
-            ):
-                lora_save_parameters["text_encoder_1_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(model),
+                modules_to_save["text_encoder"] = unwrapped_model
+            elif text_encoder_1_cls is not None and isinstance(unwrapped_model, text_encoder_1_cls):
+                lora_save_parameters["text_encoder_2_lora_layers"] = convert_state_dict_to_diffusers(
+                    get_peft_model_state_dict(unwrapped_model),
                     original_type=StateDictType.PEFT,
                 )
+                modules_to_save["text_encoder_2"] = unwrapped_model
             elif not self.use_deepspeed_optimizer:
                 raise ValueError(f"unexpected save model: {model.__class__}")
 
@@ -169,7 +182,8 @@ class SaveHookManager:
             if weights:
                 weights.pop()
 
-        self.model.save_lora_weights(output_dir, **lora_save_parameters)
+        metadata = _collate_lora_metadata(modules_to_save)
+        self.model.save_lora_weights(output_dir, **lora_save_parameters, **metadata)
 
     def _save_lycoris(self, models, weights, output_dir):
         """

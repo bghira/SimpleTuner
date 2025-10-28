@@ -281,7 +281,7 @@ class WebInterface:
             "validation_epoch_interval": None,
             "seed": 42,
             "lora_rank": 16,
-            "lora_alpha": 16,
+            "lora_alpha": None,
             "lora_dropout": 0.1,
             "noise_offset": 0.1,
             "input_perturbation": 0.0,
