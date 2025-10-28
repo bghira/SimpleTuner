@@ -45,7 +45,11 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
 
-        validators.validate_dataset_type(self.dataset_type, [DatasetType.IMAGE_EMBEDS], self.id)
+        validators.validate_dataset_type(
+            self.dataset_type,
+            [DatasetType.IMAGE_EMBEDS, DatasetType.CONDITIONING_IMAGE_EMBEDS],
+            self.id,
+        )
 
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
 
