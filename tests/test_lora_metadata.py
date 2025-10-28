@@ -57,7 +57,9 @@ class _DummyModel:
         return self._text_encoders.get(index)
 
 
-_ema_stub = SimpleNamespace(store=lambda *args, **kwargs: None, copy_to=lambda *args, **kwargs: None, restore=lambda *args, **kwargs: None)
+_ema_stub = SimpleNamespace(
+    store=lambda *args, **kwargs: None, copy_to=lambda *args, **kwargs: None, restore=lambda *args, **kwargs: None
+)
 
 
 class SaveHookMetadataTests(unittest.TestCase):
@@ -91,8 +93,12 @@ class SaveHookMetadataTests(unittest.TestCase):
         manager, model, trained_component = self._make_manager(text_encoder=text_encoder)
 
         lora_state = {"weight": torch.tensor([1.0])}
-        with patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state), patch(
-            "simpletuner.helpers.training.save_hooks.convert_state_dict_to_diffusers", side_effect=lambda sd, original_type=None: sd
+        with (
+            patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state),
+            patch(
+                "simpletuner.helpers.training.save_hooks.convert_state_dict_to_diffusers",
+                side_effect=lambda sd, original_type=None: sd,
+            ),
         ):
             with tempfile.TemporaryDirectory() as tmpdir:
                 models = [trained_component, text_encoder]
@@ -114,12 +120,18 @@ class SaveHookMetadataTests(unittest.TestCase):
 
     def test_save_hook_handles_controlnet_metadata(self):
         text_encoder = _DummyTextEncoder("text_encoder")
-        manager, model, trained_component = self._make_manager(args_overrides={"controlnet": True}, text_encoder=text_encoder)
+        manager, model, trained_component = self._make_manager(
+            args_overrides={"controlnet": True}, text_encoder=text_encoder
+        )
         controlnet_module = _DummyControlNet("controlnet")
 
         lora_state = {"weight": torch.tensor([2.0])}
-        with patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state), patch(
-            "simpletuner.helpers.training.save_hooks.convert_state_dict_to_diffusers", side_effect=lambda sd, original_type=None: sd
+        with (
+            patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state),
+            patch(
+                "simpletuner.helpers.training.save_hooks.convert_state_dict_to_diffusers",
+                side_effect=lambda sd, original_type=None: sd,
+            ),
         ):
             with tempfile.TemporaryDirectory() as tmpdir:
                 models = [controlnet_module, text_encoder]
@@ -143,9 +155,10 @@ class FluxPipelineMetadataTests(unittest.TestCase):
         transformer_weights = {"lora_down.weight": torch.tensor([3.0])}
         adapter_metadata = {"r": 4, "lora_alpha": 8}
 
-        with patch.object(FluxPipeline, "pack_weights", side_effect=fake_pack) as mock_pack, patch.object(
-            FluxPipeline, "write_lora_layers"
-        ) as mock_write:
+        with (
+            patch.object(FluxPipeline, "pack_weights", side_effect=fake_pack) as mock_pack,
+            patch.object(FluxPipeline, "write_lora_layers") as mock_write,
+        ):
             FluxPipeline.save_lora_weights(
                 save_directory="/tmp/out",
                 transformer_lora_layers=transformer_weights,
