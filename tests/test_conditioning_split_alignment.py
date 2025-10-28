@@ -82,11 +82,17 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         StateTracker.all_vae_cache_files = {}
         StateTracker.all_text_cache_files = {}
 
-    def _init_state(self, *, num_processes: int, process_index: int) -> DummyAccelerator:
+    def _init_state(
+        self,
+        *,
+        num_processes: int,
+        process_index: int,
+        train_batch_size: int = 1,
+    ) -> DummyAccelerator:
         accelerator = DummyAccelerator(num_processes=num_processes, process_index=process_index)
         args = SimpleNamespace(
             output_dir="/tmp",
-            train_batch_size=1,
+            train_batch_size=train_batch_size,
             gradient_accumulation_steps=1,
             disable_bucket_pruning=False,
             ignore_missing_files=True,
@@ -107,16 +113,22 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         source_dir: str,
         conditioning_id: str,
         conditioning_dir: str,
+        source_config_overrides: dict | None = None,
+        conditioning_config_overrides: dict | None = None,
     ):
+        source_config = {
+            "resolution_type": "area",
+            "resolution": 1.0,
+            "repeats": 0,
+            "instance_data_dir": source_dir,
+        }
+        if source_config_overrides:
+            source_config.update(source_config_overrides)
+
         StateTracker.register_data_backend({"id": source_id})
         StateTracker.set_data_backend_config(
             source_id,
-            {
-                "resolution_type": "area",
-                "resolution": 1.0,
-                "repeats": 0,
-                "instance_data_dir": source_dir,
-            },
+            source_config,
         )
         train_backend = InMemoryDataBackend(source_id)
         training_metadata = DiscoveryMetadataBackend(
@@ -126,10 +138,11 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             metadata_file=f"{source_dir}/aspect_ratio_bucket_metadata",
             data_backend=train_backend,
             accelerator=accelerator,
-            batch_size=1,
-            resolution=1.0,
-            resolution_type="area",
-            repeats=0,
+            batch_size=StateTracker.get_args().train_batch_size,
+            resolution=source_config.get("resolution", 1.0),
+            resolution_type=source_config.get("resolution_type", "area"),
+            minimum_image_size=source_config.get("minimum_image_size"),
+            repeats=int(source_config.get("repeats", 0) or 0),
         )
         training_metadata.aspect_ratio_bucket_indices = deepcopy(base_buckets)
         source_entry = StateTracker.get_data_backend(source_id)
@@ -142,16 +155,20 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         )
         training_metadata.split_buckets_between_processes()
 
+        conditioning_config = {
+            "resolution_type": "area",
+            "resolution": 1.0,
+            "repeats": 0,
+            "instance_data_dir": conditioning_dir,
+            "source_dataset_id": source_id,
+        }
+        if conditioning_config_overrides:
+            conditioning_config.update(conditioning_config_overrides)
+
         StateTracker.register_data_backend({"id": conditioning_id})
         StateTracker.set_data_backend_config(
             conditioning_id,
-            {
-                "resolution_type": "area",
-                "resolution": 1.0,
-                "repeats": 0,
-                "instance_data_dir": conditioning_dir,
-                "source_dataset_id": source_id,
-            },
+            conditioning_config,
         )
         conditioning_backend = InMemoryDataBackend(conditioning_id)
         conditioning_metadata = DiscoveryMetadataBackend(
@@ -161,10 +178,11 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             metadata_file=f"{conditioning_dir}/aspect_ratio_bucket_metadata",
             data_backend=conditioning_backend,
             accelerator=accelerator,
-            batch_size=1,
-            resolution=1.0,
-            resolution_type="area",
-            repeats=0,
+            batch_size=StateTracker.get_args().train_batch_size,
+            resolution=conditioning_config.get("resolution", 1.0),
+            resolution_type=conditioning_config.get("resolution_type", "area"),
+            minimum_image_size=conditioning_config.get("minimum_image_size"),
+            repeats=int(conditioning_config.get("repeats", 0) or 0),
         )
         conditioning_entry = StateTracker.get_data_backend(conditioning_id)
         conditioning_entry.update(
@@ -237,6 +255,65 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                     mutated,
                     msg="Double splitting should alter conditioning buckets — guard against this.",
                 )
+
+    def test_reference_strict_conditioning_inherits_sampling_parameters(self):
+        base_images = {"1.0": [f"/datasets/train/img_{i}.png" for i in range(26)]}
+        accelerator = self._init_state(num_processes=4, process_index=0, train_batch_size=8)
+        source_id = "inherit_train"
+        conditioning_id = "inherit_control"
+        source_config_overrides = {
+            "resolution": 1.048576,
+            "resolution_type": "area",
+            "minimum_image_size": 0.25,
+            "maximum_image_size": 4.25,
+            "target_downsample_size": 1.75,
+            "repeats": 80,
+            "crop": True,
+            "crop_aspect": "random",
+            "crop_aspect_buckets": [0.5, 1.0, 1.5],
+            "crop_style": "center",
+        }
+        conditioning_config_overrides = {
+            "source_dataset_id": source_id,
+            "conditioning_type": "reference_strict",
+            "repeats": 0,
+            "minimum_image_size": 0.0,
+            "maximum_image_size": None,
+            "target_downsample_size": None,
+            "crop": False,
+            "crop_aspect": "square",
+            "crop_aspect_buckets": [],
+            "crop_style": "random",
+        }
+
+        train_meta, cond_meta = self._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets=base_images,
+            source_id=source_id,
+            source_dir="/datasets/inherit_train",
+            conditioning_id=conditioning_id,
+            conditioning_dir="/datasets/inherit_control",
+            source_config_overrides=source_config_overrides,
+            conditioning_config_overrides=conditioning_config_overrides,
+        )
+
+        conditioning_config = StateTracker.get_data_backend_config(conditioning_id)
+
+        self.assertEqual(conditioning_config["repeats"], source_config_overrides["repeats"])
+        self.assertEqual(cond_meta.repeats, source_config_overrides["repeats"])
+        self.assertAlmostEqual(conditioning_config["resolution"], source_config_overrides["resolution"])
+        self.assertEqual(conditioning_config["resolution_type"], source_config_overrides["resolution_type"])
+        self.assertEqual(conditioning_config["minimum_image_size"], source_config_overrides["minimum_image_size"])
+        self.assertEqual(conditioning_config["maximum_image_size"], source_config_overrides["maximum_image_size"])
+        self.assertEqual(
+            conditioning_config["target_downsample_size"],
+            source_config_overrides["target_downsample_size"],
+        )
+        self.assertTrue(conditioning_config["crop"])
+        self.assertEqual(conditioning_config["crop_aspect"], source_config_overrides["crop_aspect"])
+        self.assertEqual(conditioning_config["crop_style"], source_config_overrides["crop_style"])
+        self.assertEqual(conditioning_config["crop_aspect_buckets"], source_config_overrides["crop_aspect_buckets"])
+        self.assertGreater(len(cond_meta), 0, "Conditioning metadata should provide batches after duplication.")
 
 
 if __name__ == "__main__":  # pragma: no cover - convenience for local debugging

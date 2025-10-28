@@ -6,7 +6,6 @@ import unittest
 
 import simpletuner
 from simpletuner.simpletuner_sdk.server import ServerMode
-
 from tests.unittest_support import APITestCase
 
 
