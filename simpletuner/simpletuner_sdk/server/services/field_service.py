@@ -1195,8 +1195,9 @@ class FieldService:
             return value
 
         elif field_name == "lora_alpha":
-            # Always match lora_rank value
-            return config_values.get("lora_rank", 16)
+            if value in (None, ""):
+                return config_values.get("lora_rank", 16)
+            return value
 
         return value
 

@@ -658,6 +658,9 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
         weight_name: str = None,
         save_function: Callable = None,
         safe_serialization: bool = True,
+        transformer_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_lora_adapter_metadata: Optional[dict] = None,
+        controlnet_lora_adapter_metadata: Optional[dict] = None,
     ):
         r"""
         Save the LoRA parameters of the UNet, text encoder and optionally the ControlNet.
@@ -684,6 +687,7 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
                 Whether to save the model using `safetensors` or the traditional PyTorch way with `pickle`.
         """
         state_dict = {}
+        lora_adapter_metadata = {}
 
         if not (transformer_lora_layers or text_encoder_lora_layers or controlnet_lora_layers):
             raise ValueError(
@@ -700,6 +704,16 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
             controlnet_prefix = "controlnet"
             state_dict.update(cls.pack_weights(controlnet_lora_layers, controlnet_prefix))
 
+        if transformer_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
+
+        if text_encoder_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(text_encoder_lora_adapter_metadata, cls.text_encoder_name))
+
+        if controlnet_lora_adapter_metadata:
+            controlnet_prefix = "controlnet"
+            lora_adapter_metadata.update(cls.pack_weights(controlnet_lora_adapter_metadata, controlnet_prefix))
+
         # Save the model
         cls.write_lora_layers(
             state_dict=state_dict,
@@ -708,6 +722,7 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
             weight_name=weight_name,
             save_function=save_function,
             safe_serialization=safe_serialization,
+            lora_adapter_metadata=lora_adapter_metadata,
         )
 
     # Copied from diffusers.loaders.lora_pipeline.StableDiffusionLoraLoaderMixin.fuse_lora with unet->transformer

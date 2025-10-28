@@ -207,9 +207,12 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
         weight_name: str = None,
         save_function: Callable = None,
         safe_serialization: bool = True,
+        transformer_lora_adapter_metadata: Optional[dict] = None,
+        controlnet_lora_adapter_metadata: Optional[dict] = None,
     ):
         """Save LoRA weights for both transformer and controlnet."""
         state_dict = {}
+        lora_adapter_metadata = {}
 
         # Pack transformer weights (only the non-replaced blocks)
         if transformer_lora_layers:
@@ -220,6 +223,12 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
         if controlnet_lora_layers:
             state_dict.update(controlnet_lora_layers)  # they're already packed
 
+        if transformer_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
+
+        if controlnet_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(controlnet_lora_adapter_metadata, cls.controlnet_name))
+
         # Save the model
         cls.write_lora_layers(
             state_dict=state_dict,
@@ -228,6 +237,7 @@ class PixArtSigmaControlNetLoraLoaderMixin(LoraBaseMixin):
             weight_name=weight_name,
             save_function=save_function,
             safe_serialization=safe_serialization,
+            lora_adapter_metadata=lora_adapter_metadata,
         )
 
     def load_lora_weights(

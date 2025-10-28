@@ -45,10 +45,10 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="lora_config",
             subsection="advanced",
+            default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.1, message="LoRA alpha should be positive")],
             dependencies=[
                 FieldDependency(field="model_type", value="lora"),
-                FieldDependency(field="lora_type", value="standard"),
             ],
             help_text="Scaling factor for LoRA updates",
             tooltip="Usually set equal to rank. Controls the magnitude of LoRA's effect.",
