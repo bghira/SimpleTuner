@@ -71,12 +71,12 @@
         return {
             dataset_type: {
                 image: {
-                    show: ['.media-config', '.embed-references', '.conditioning-config', '.cache-dir-vae'],
+                    show: ['.media-config', '.embed-references', '.cache-dir-vae'],
                     hide: ['.text-embed-filter', '.text-embeds-default', '.cache-dir']
                 },
                 video: {
-                    show: ['.media-config', '.video-config', '.embed-references', '.conditioning-config', '.cache-dir-vae'],
-                    hide: ['.text-embed-filter', '.text-embeds-default', '.cache-dir']
+                    show: ['.media-config', '.video-config', '.embed-references', '.cache-dir-vae'],
+                    hide: ['.text-embed-filter', '.text-embeds-default', '.cache-dir', '.conditioning-config']
                 },
                 text_embeds: {
                     show: ['.text-embed-filter', '.text-embeds-default', '.cache-dir'],
