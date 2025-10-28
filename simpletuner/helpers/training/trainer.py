@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import huggingface_hub
-import wandb
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
@@ -49,6 +49,7 @@ from simpletuner.helpers.training.optimizer_param import (
     create_optimizer_with_param_groups,
     determine_optimizer_class_with_config,
     determine_params_to_optimize,
+    is_bitsandbytes_available,
     is_lr_schedulefree,
     is_lr_scheduler_disabled,
 )
@@ -238,6 +239,49 @@ class Trainer:
         ) and not self.config.use_deepspeed_optimizer:
             target_logs["grad_absmax"] = self.grad_norm
 
+    def _config_uses_bitsandbytes(self) -> bool:
+        if not getattr(self, "config", None):
+            return False
+
+        def _contains_bnb(value: object) -> bool:
+            if isinstance(value, str):
+                return "bnb" in value.lower()
+            if isinstance(value, dict):
+                return any(_contains_bnb(item) for item in value.values())
+            if isinstance(value, (list, tuple, set)):
+                return any(_contains_bnb(item) for item in value)
+            return False
+
+        for attr_value in vars(self.config).values():
+            try:
+                if _contains_bnb(attr_value):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _enable_dynamo_dynamic_output_capture(self) -> None:
+        try:
+            import torch._dynamo as torch_dynamo
+        except Exception as exc:
+            logger.warning("Unable to configure Torch Dynamo dynamic output capture: %s", exc)
+            return
+
+        config_obj = getattr(torch_dynamo, "config", None)
+        if config_obj is None:
+            logger.debug("Torch Dynamo config unavailable; skipping dynamic output capture configuration.")
+            return
+        if not hasattr(config_obj, "capture_dynamic_output_shape_ops"):
+            logger.debug(
+                "Torch Dynamo config lacks capture_dynamic_output_shape_ops; skipping dynamic output capture configuration."
+            )
+            return
+        if getattr(config_obj, "capture_dynamic_output_shape_ops", False):
+            return
+
+        config_obj.capture_dynamic_output_shape_ops = True
+        logger.info("Torch Dynamo capture_dynamic_output_shape_ops enabled for bitsandbytes models.")
+
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
         skip_config_fallback = False
         args_payload = args
@@ -402,6 +446,9 @@ class Trainer:
 
             dynamo_plugin = None
             if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
+                if is_bitsandbytes_available and self._config_uses_bitsandbytes():
+                    self._enable_dynamo_dynamic_output_capture()
+
                 plugin_kwargs: Dict[str, object] = {"backend": resolved_dynamo_backend}
 
                 mode_value = getattr(self.config, "dynamo_mode", None)
