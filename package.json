@@ -1,6 +1,6 @@
 {
   "name": "simpletuner",
-  "version": "3.0.2",
+  "version": "3.0.4",
   "description": "> ℹ️ No data is sent to any third parties except through opt-in flag `report_to`, `push_to_hub`, or webhooks which must be manually configured.",
   "main": "index.js",
   "directories": {
