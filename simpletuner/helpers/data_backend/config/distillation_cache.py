@@ -1,5 +1,3 @@
-"""Image embed backend configuration class."""
-
 from dataclasses import dataclass
 from typing import Any, Dict
 
@@ -10,20 +8,24 @@ from .base import BaseBackendConfig
 
 
 @dataclass
-class ImageEmbedBackendConfig(BaseBackendConfig):
+class DistillationCacheBackendConfig(BaseBackendConfig):
+    distillation_type: str = "generic"
 
     def __post_init__(self):
-        self.dataset_type = DatasetType.IMAGE_EMBEDS
+        self.dataset_type = DatasetType.DISTILLATION_CACHE
         super().__post_init__()
 
     @classmethod
-    def from_dict(cls, backend_dict: Dict[str, Any], args: Dict[str, Any]) -> "ImageEmbedBackendConfig":
+    def from_dict(cls, backend_dict: Dict[str, Any], args: Dict[str, Any]) -> "DistillationCacheBackendConfig":
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
-            dataset_type=DatasetType.IMAGE_EMBEDS,
+            dataset_type=DatasetType.DISTILLATION_CACHE,
             disabled=backend_dict.get("disabled", backend_dict.get("disable", False)),
         )
+
+        config.distillation_type = backend_dict.get("distillation_type", "generic")
+        config.config["distillation_type"] = config.distillation_type
 
         compress_arg = backend_dict.get("compress_cache", None)
         if compress_arg is None:
@@ -36,7 +38,6 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
             config.config["compress_cache"] = config.compress_cache
 
         config.apply_defaults(args)
-
         return config
 
     def apply_defaults(self, args: Dict[str, Any]) -> None:
@@ -44,12 +45,11 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
 
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
-
-        validators.validate_dataset_type(self.dataset_type, [DatasetType.IMAGE_EMBEDS], self.id)
-
-        validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
+        validators.validate_dataset_type(self.dataset_type, [DatasetType.DISTILLATION_CACHE], self.id)
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {"id": self.id, "dataset_type": DatasetType.IMAGE_EMBEDS.value, "config": {}}
-
-        return result
+        return {
+            "id": self.id,
+            "dataset_type": DatasetType.DISTILLATION_CACHE.value,
+            "config": {"distillation_type": self.distillation_type},
+        }

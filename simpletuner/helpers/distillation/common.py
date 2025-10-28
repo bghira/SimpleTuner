@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import logging
 from typing import Any, Callable, Dict, Optional, Union
@@ -66,6 +68,23 @@ class DistillationBase:
         # Store custom schedulers needed for specific distillation methods
         self.custom_schedulers = {}
 
+    def requires_distillation_cache(self) -> bool:
+        """Return True if this distiller expects a distillation cache to be available."""
+        return False
+
+    def get_required_distillation_cache_type(self) -> Optional[str]:
+        """Return the cache type identifier this distiller expects, if any."""
+        return None
+
+    def get_ode_generator_provider(self):
+        """
+        Return an object responsible for generating ODE pairs for this distiller.
+
+        Distillers that need deterministic ODE data should override this and return
+        an object exposing a `generate(cache, backend_config=None)` method.
+        """
+        return None
+
     def get_scheduler(self, scheduler_name: str = None):
         """A child class can override this to provide a custom scheduler."""
         self.logger.warning("No distillation scheduler provided. Using default.")
@@ -96,6 +115,20 @@ class DistillationBase:
     def prepare_batch(self, batch, model, state):
         """Process a batch for distillation training."""
         return batch
+
+    def consumes_caption_batches(self) -> bool:
+        """Return True if this distiller can turn caption-only batches into training inputs."""
+        return False
+
+    def prepare_caption_batch(self, caption_batch: Dict[str, Any], model, state) -> Dict[str, Any]:
+        """
+        Convert caption dataloader output into a training batch.
+
+        Distillers that override `consumes_caption_batches` must also override this method.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} declares caption support but does not implement prepare_caption_batch()."
+        )
 
     def compute_distill_loss(self, prepared_batch, model_output, original_loss):
         """Compute the distillation loss to be combined with the original loss."""

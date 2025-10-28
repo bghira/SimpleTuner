@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+
 from . import validators
 from .base import BaseBackendConfig
 
@@ -13,7 +15,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
     caption_filter_list: Optional[List[str]] = None
 
     def __post_init__(self):
-        self.dataset_type = "text_embeds"
+        self.dataset_type = DatasetType.TEXT_EMBEDS
         super().__post_init__()
 
     @classmethod
@@ -21,7 +23,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
-            dataset_type="text_embeds",
+            dataset_type=DatasetType.TEXT_EMBEDS,
             disabled=backend_dict.get("disabled", backend_dict.get("disable", False)),
             caption_filter_list=backend_dict.get("caption_filter_list", []),
         )
@@ -67,14 +69,14 @@ class TextEmbedBackendConfig(BaseBackendConfig):
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
 
-        validators.validate_dataset_type(self.dataset_type, ["text_embeds"], self.id)
+        validators.validate_dataset_type(self.dataset_type, [DatasetType.TEXT_EMBEDS], self.id)
 
         validators.check_for_caption_filter_list_misuse(
             self.dataset_type, self.caption_filter_list is not None and len(self.caption_filter_list) > 0, self.id
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {"id": self.id, "dataset_type": "text_embeds", "config": {}}
+        result = {"id": self.id, "dataset_type": DatasetType.TEXT_EMBEDS.value, "config": {}}
 
         if self.caption_filter_list is not None:
             result["config"]["caption_filter_list"] = self.caption_filter_list

@@ -58,14 +58,26 @@ Edit your `config/config.json`:
     "distillation_method": "dmd",
     "distillation_config": {
         "dmd_denoising_steps": "1000,757,522",
+        "generator_update_interval": 1,
+        "real_score_guidance_scale": 3.0,
+        "fake_score_lr": 1e-5,
+        "fake_score_weight_decay": 0.01,
+        "fake_score_betas": [0.9, 0.999],
+        "fake_score_eps": 1e-8,
+        "fake_score_grad_clip": 1.0,
+        "fake_score_guidance_scale": 0.0,
         "min_timestep_ratio": 0.02,
         "max_timestep_ratio": 0.98,
-        "generator_update_interval": 5,
-        "real_score_guidance_scale": 3.0,
-        "simulate_generator_forward": false,
-        "fake_score_lr": 1e-5,
-        "fake_score_lr_scheduler": "cosine_with_min_lr",
-        "min_lr_ratio": 0.5
+        "num_frame_per_block": 3,
+        "independent_first_frame": false,
+        "same_step_across_blocks": false,
+        "last_step_only": false,
+        "num_training_frames": 21,
+        "context_noise": 0,
+        "ts_schedule": true,
+        "ts_schedule_max": false,
+        "min_score_timestep": 0,
+        "timestep_shift": 1.0
     },
     "ema_update_interval": 5,
     "ema_validation": "ema_only",
@@ -121,10 +133,13 @@ Edit your `config/config.json`:
 
 ### Key DMD Settings:
 
-* **`dmd_denoising_steps`**: Steps to distill to (default: "1000,757,522" for 3-step)
-* **`generator_update_interval`**: Update generator every N steps (balances training)
-* **`simulate_generator_forward`**: Enable multi-step simulation (increases memory)
-* **`fake_score_lr`**: Separate learning rate for fake score transformer
+* **`dmd_denoising_steps`** – Target timesteps for the backward simulation (default: `1000,757,522` for a 3-step student).
+* **`generator_update_interval`** – Run the expensive generator replay every _N_ trainer steps. Increase to trade sample quality for speed.
+* **`fake_score_lr` / `fake_score_weight_decay` / `fake_score_betas`** – Optimiser hyperparameters for the fake score transformer.
+* **`fake_score_guidance_scale`** – Optional classifier-free guidance on the fake score network (defaults to off).
+* **`num_frame_per_block`, `same_step_across_blocks`, `last_step_only`** – Control how temporal blocks are scheduled during self-forcing rollout.
+* **`num_training_frames`** – Maximum frames generated during the backward simulation (larger values improve fidelity at a memory cost).
+* **`min_timestep_ratio`, `max_timestep_ratio`, `timestep_shift`** – Shape the KL sampling window. Match these with your teacher’s flow schedule if you deviate from defaults.
 
 ---
 
@@ -159,7 +174,7 @@ These may be generated from the parent model.
 
 ## 🚀 Training Tips
 
-1. **Start without simulation**: Set `"simulate_generator_forward": false` initially
+1. **Keep generator interval small**: Start with `"generator_update_interval": 1`. Increase only if you need throughput and can tolerate noisier updates.
 2. **Monitor both losses**: Watch `dmd_loss` and `fake_score_loss` in wandb
 3. **Validation frequency**: DMD converges quickly, validate often
 4. **Memory management**:
@@ -185,7 +200,7 @@ These may be generated from the parent model.
 
 | Problem | Fix |
 |---------|-----|
-| **OOM errors** | Disable `simulate_generator_forward`, reduce batch size |
+| **OOM errors** | Reduce `num_training_frames`, drop `generator_update_interval`, or lower batch size |
 | **Fake score not learning** | Increase `fake_score_lr` or use different scheduler |
 | **Generator overfitting** | Increase `generator_update_interval` to 10 |
 | **Poor 3-step quality** | Try "1000,500" for 2-step first |
@@ -200,10 +215,11 @@ For brave souls wanting to experiment:
 ```json
 "distillation_config": {
     "dmd_denoising_steps": "1000,666,333",
-    "simulate_generator_forward": true,
-    "fake_score_use_ema": true,
-    "adversarial_weight": 0.1,
-    "shift": 7.0
+    "generator_update_interval": 4,
+    "fake_score_guidance_scale": 1.2,
+    "num_training_frames": 28,
+    "same_step_across_blocks": true,
+    "timestep_shift": 7.0
 }
 ```
 

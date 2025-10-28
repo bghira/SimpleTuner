@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import huggingface_hub
 import wandb
@@ -24,7 +24,15 @@ from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
-from simpletuner.helpers.data_backend.factory import BatchFetcher, configure_multi_databackend, random_dataloader_iterator
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.factory import (
+    BatchFetcher,
+    configure_multi_databackend,
+    random_dataloader_iterator,
+    run_distillation_cache_generation,
+)
+from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import trainable_parameter_count
@@ -205,6 +213,7 @@ class Trainer:
             self.configure_webhook(send_startup_message=False)
         self._misc_init()
         self.validation = None
+        self.distiller_requirement_profile: DistillerRequirementProfile = EMPTY_PROFILE
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
 
@@ -1322,12 +1331,15 @@ class Trainer:
                     job_id=self.job_id,
                 )
             )
+            distiller_profile = self._resolve_distiller_profile()
             configure_multi_databackend(
                 self.config,
                 accelerator=self.accelerator,
                 text_encoders=self.model.text_encoders,
                 tokenizers=self.model.tokenizers,
                 model=self.model,
+                distiller_profile=distiller_profile,
+                distillation_method=getattr(self.config, "distillation_method", None),
             )
             self._emit_event(
                 lifecycle_stage_event(
@@ -1636,6 +1648,19 @@ class Trainer:
                 self.model.model = apply_bitfit_freezing(unwrap_model(self.accelerator, self.model.model), self.config)
         self.enable_gradient_checkpointing()
 
+    def _resolve_distiller_profile(self) -> DistillerRequirementProfile:
+        """Return and cache the active distiller requirement profile."""
+        method = getattr(self.config, "distillation_method", None)
+        if not method:
+            StateTracker.set_distiller_profile(None, EMPTY_PROFILE)
+            self.distiller_requirement_profile = EMPTY_PROFILE
+            return EMPTY_PROFILE
+
+        profile = DistillationRegistry.get_requirement_profile(method)
+        self.distiller_requirement_profile = profile
+        StateTracker.set_distiller_profile(method, profile)
+        return profile
+
     def init_distillation(self):
         """Initialize distillation using the factory pattern."""
         from simpletuner.helpers.distillation.factory import DistillerFactory
@@ -1665,6 +1690,7 @@ class Trainer:
 
             if self.distiller:
                 logger.info(f"Successfully initialized {self.config.distillation_method.upper()} distiller")
+                run_distillation_cache_generation(self.distiller)
         except Exception as e:
             logger.error(f"Failed to initialize distillation: {e}")
             raise
@@ -2764,11 +2790,46 @@ class Trainer:
             training_logger.debug(f"No batch was returned by the iterator_fn, returning {batch}")
             return batch
 
+        dataset_type = self._detect_batch_dataset_type(batch)
+        if dataset_type is DatasetType.CAPTION:
+            return self._prepare_caption_generated_batch(batch)
+
         prepared_batch = self.model.prepare_batch(batch, state=self.state)
 
         if getattr(self, "distiller", None) is not None:
             prepared_batch = self.distiller.prepare_batch(prepared_batch, self.model, self.state)
 
+        return prepared_batch
+
+    def _detect_batch_dataset_type(self, batch: dict) -> Optional[DatasetType]:
+        if not isinstance(batch, dict):
+            return None
+        raw_type = batch.get("dataset_type")
+        if raw_type is None:
+            return None
+        try:
+            return ensure_dataset_type(raw_type)
+        except ValueError:
+            return None
+
+    def _prepare_caption_generated_batch(self, batch: dict) -> Dict[str, Any]:
+        backend_id = batch.get("data_backend_id", "<caption>")
+        distiller = getattr(self, "distiller", None)
+        if distiller is None:
+            raise ValueError(
+                f"Caption dataset '{backend_id}' cannot be used without a distiller that generates training batches."
+            )
+        if not getattr(distiller, "consumes_caption_batches", lambda: False)():
+            raise ValueError(
+                f"Distiller {distiller.__class__.__name__} does not support caption-only batches "
+                f"(required for backend '{backend_id}')."
+            )
+        prepared_batch = distiller.prepare_caption_batch(batch, self.model, self.state)
+        if not isinstance(prepared_batch, dict):
+            raise ValueError(
+                f"Distiller {distiller.__class__.__name__} returned an invalid caption batch payload "
+                f"for backend '{backend_id}'. Expected a dict."
+            )
         return prepared_batch
 
     def get_prediction_target(self, prepared_batch: dict):
