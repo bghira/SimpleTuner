@@ -324,6 +324,34 @@
     border-bottom: 1px solid var(--glass-border);
 }
 
+.dataset-section-header.d-flex {
+    gap: var(--spacing-sm);
+}
+
+.dataset-section-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    border-radius: var(--radius-sm-md);
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.dataset-section-toggle i {
+    transition: transform 0.2s ease;
+}
+
+.dataset-section-toggle:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.dataset-section-toggle[aria-expanded="true"] i {
+    transform: rotate(90deg);
+}
+
 .dataset-section-body {
     padding: var(--spacing-lg-xl);
 }
@@ -399,6 +427,20 @@
     justify-content: space-between;
     gap: var(--spacing-md);
     margin-bottom: var(--spacing-lg);
+}
+
+.dataset-subgroup-header.collapse-header {
+    justify-content: flex-start;
+    gap: var(--spacing-sm);
+}
+
+.dataset-subgroup-header.collapse-header .dataset-subgroup-title {
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.dataset-subgroup-body {
+    margin-top: var(--spacing-md);
 }
 
 .dataset-subgroup .form-text:last-child {
@@ -846,6 +888,65 @@
 .dataset-subgroup .col-md-4 {
     display: flex;
     padding: 0 var(--spacing-sm);
+}
+
+.dataset-inline-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: var(--spacing-md);
+    align-items: start;
+}
+
+.dataset-inline-grid .dataset-inline-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    min-width: 0;
+}
+
+.dataset-inline-field-tight {
+    min-width: 10rem;
+}
+
+.dataset-inline-field-checkbox {
+    display: flex;
+    align-items: center;
+    padding-top: 0;
+}
+
+.dataset-inline-field-checkbox .form-check {
+    margin: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    width: 100%;
+}
+
+.dataset-inline-grid .form-text {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.dataset-section-split {
+    margin-top: var(--spacing-lg);
+}
+
+@media (min-width: 992px) {
+    .dataset-inline-grid.sizing-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .dataset-inline-grid.cropping-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 991.98px) {
+    .dataset-inline-grid.sizing-grid,
+    .dataset-inline-grid.cropping-grid {
+        grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    }
 }
 
 /* Empty state for hidden checkboxes */
