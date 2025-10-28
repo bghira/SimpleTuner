@@ -53,6 +53,7 @@ class BaseBackendConfig(ABC):
             DatasetType.VIDEO,
             DatasetType.TEXT_EMBEDS,
             DatasetType.IMAGE_EMBEDS,
+            DatasetType.CONDITIONING_IMAGE_EMBEDS,
             DatasetType.CAPTION,
         ]
         if self.dataset_type not in valid_dataset_types:
