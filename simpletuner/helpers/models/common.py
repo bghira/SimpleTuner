@@ -5,6 +5,7 @@ import os
 import random
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Dict
 
 import numpy as np
 import torch
@@ -536,9 +537,19 @@ class ModelFoundation(ABC):
         """
         Moves the model to the target device.
         """
-        if self.model is not None:
+        target_device_obj = torch.device(target_device) if isinstance(target_device, str) else target_device
+        accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
+        should_configure_offload = (
+            self.group_offload_requested()
+            and accelerator_device is not None
+            and isinstance(target_device_obj, torch.device)
+            and target_device_obj == accelerator_device
+        )
+        skip_moving_trained_component = should_configure_offload and self.group_offload_configured
+
+        if self.model is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.model).to(target_device)
-        if self.controlnet is not None:
+        if self.controlnet is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
             self.vae.to(target_device)
@@ -547,6 +558,9 @@ class ModelFoundation(ABC):
                 if text_encoder.device != "meta":
                     text_encoder.to(target_device)
         self.move_extra_models(target_device)
+
+        if should_configure_offload:
+            self.configure_group_offload()
 
     def get_vae(self):
         """
@@ -745,6 +759,7 @@ class ModelFoundation(ABC):
         This moves all models to the 'meta' device which releases GPU memory.
         """
         logger.info("Unloading all model components...")
+        self._group_offload_configured = False
 
         # Unload VAE
         self.unload_vae()
@@ -782,6 +797,7 @@ class ModelFoundation(ABC):
         return pretrained_load_args
 
     def load_model(self, move_to_device: bool = True):
+        self._group_offload_configured = False
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
@@ -927,7 +943,6 @@ class ModelFoundation(ABC):
             )
             if self.config.controlnet:
                 setattr(pipeline_instance, "controlnet", self.unwrap_model(model=self.controlnet))
-            self._configure_pipeline_offloading(pipeline_instance)
             return pipeline_instance
 
         pipeline_kwargs = {
@@ -1122,7 +1137,6 @@ class ModelFoundation(ABC):
             else:
                 raise
         self.pipelines[pipeline_type] = pipeline_instance
-        self._configure_pipeline_offloading(pipeline_instance)
 
         return pipeline_instance
 
@@ -1137,23 +1151,22 @@ class ModelFoundation(ABC):
         """Subclass hook for providing conditioning image embedder (default: unsupported)."""
         return None
 
-    def get_group_offload_components(self, pipeline: DiffusionPipeline):
-        """
-        Return the component mapping used for group offloading.
-        Sub-classes can override to prune or extend the mapping.
-        """
-        return getattr(pipeline, "components", {})
+    def group_offload_requested(self) -> bool:
+        return bool(getattr(self.config, "enable_group_offload", False))
 
-    def get_group_offload_exclusions(self, pipeline: DiffusionPipeline):
-        """
-        Names of components that should be excluded from group offloading.
-        """
-        return ()
+    @property
+    def group_offload_configured(self) -> bool:
+        return getattr(self, "_group_offload_configured", False)
 
-    def _resolve_group_offload_device(self, pipeline: DiffusionPipeline):
-        pipeline_device = getattr(pipeline, "device", None)
-        if pipeline_device is not None:
-            return torch.device(pipeline_device)
+    def get_group_offload_modules(self) -> Dict[str, torch.nn.Module]:
+        modules: Dict[str, torch.nn.Module] = {}
+        if self.MODEL_TYPE is ModelTypes.TRANSFORMER and getattr(self, "model", None) is not None:
+            unwrapped_model = self.unwrap_model(self.model)
+            if isinstance(unwrapped_model, torch.nn.Module):
+                modules["transformer"] = unwrapped_model
+        return modules
+
+    def _resolve_group_offload_device(self) -> torch.device:
         if hasattr(self.accelerator, "device"):
             return torch.device(self.accelerator.device)
         return torch.device("cpu")
@@ -1165,49 +1178,47 @@ class ModelFoundation(ABC):
         expanded = os.path.expanduser(raw_path)
         return expanded
 
-    def _configure_pipeline_offloading(self, pipeline: DiffusionPipeline):
-        if pipeline is None:
+    def configure_group_offload(self) -> None:
+        if self.group_offload_configured or not self.group_offload_requested():
             return
 
-        enable_group_offload = bool(getattr(self.config, "enable_group_offload", False))
-        enable_model_cpu_offload = bool(getattr(self.config, "enable_model_cpu_offload", False))
+        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
+            raise ValueError("Group offload is only supported for transformer-based models.")
 
-        if enable_group_offload and enable_model_cpu_offload:
-            logger.warning(
-                "Both group offload and model CPU offload requested; prioritising group offload. "
-                "Disable one of the options to silence this warning."
+        modules = self.get_group_offload_modules()
+        if not modules:
+            raise ValueError(
+                "Group offload requested but no transformer module is available. Ensure the model has been loaded."
             )
 
-        if enable_group_offload:
-            try:
-                device = self._resolve_group_offload_device(pipeline)
-                use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
-                if use_stream:
-                    if device.type != "cuda" or not torch.cuda.is_available():
-                        use_stream = False
-                enable_group_offload_on_components(
-                    self.get_group_offload_components(pipeline),
-                    device=device,
-                    offload_type=getattr(self.config, "group_offload_type", "block_level"),
-                    number_blocks_per_group=getattr(self.config, "group_offload_blocks_per_group", 1),
-                    use_stream=use_stream,
-                    offload_to_disk_path=self._resolve_group_offload_disk_path(),
-                    exclude=self.get_group_offload_exclusions(pipeline),
-                )
-                logger.info("Group offloading enabled for pipeline components.")
-            except ImportError as error:
-                logger.warning("Group offloading unavailable: %s", error)
-            except ValueError as error:
-                logger.warning("Group offloading validation error: %s", error)
-            except Exception as error:
-                logger.warning("Failed to configure group offloading: %s", error)
-            return
+        if not torch.cuda.is_available():
+            raise ValueError(
+                "Group offload requires a CUDA device. Disable --enable_group_offload or select a CUDA accelerator."
+            )
 
-        if enable_model_cpu_offload and hasattr(pipeline, "enable_model_cpu_offload"):
-            try:
-                pipeline.enable_model_cpu_offload()
-            except RuntimeError as error:
-                logger.warning("Model CPU offload unavailable: %s", error)
+        device = self._resolve_group_offload_device()
+        if device.type != "cuda":
+            device = torch.device("cuda")
+
+        use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
+
+        offload_type = getattr(self.config, "group_offload_type", "block_level")
+        blocks_per_group = getattr(self.config, "group_offload_blocks_per_group", 1)
+
+        try:
+            enable_group_offload_on_components(
+                modules,
+                device=device,
+                offload_type=offload_type,
+                number_blocks_per_group=blocks_per_group,
+                use_stream=use_stream,
+                offload_to_disk_path=self._resolve_group_offload_disk_path(),
+            )
+        except Exception as error:
+            raise RuntimeError(f"Failed to configure group offloading: {error}") from error
+
+        logger.info("Group offloading enabled for %s.", ", ".join(modules.keys()))
+        self._group_offload_configured = True
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
@@ -1818,6 +1829,7 @@ class ImageModelFoundation(ModelFoundation):
         self.controlnet = None
         self.text_encoders = None
         self.tokenizers = None
+        self._group_offload_configured = False
 
     def expand_sigmas(self, batch: dict) -> dict:
         batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)

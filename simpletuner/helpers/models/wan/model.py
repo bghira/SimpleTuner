@@ -718,17 +718,6 @@ class Wan(VideoModelFoundation):
             self._apply_time_embedding_override(self.model)
             self._patch_condition_embedder(self.model)
 
-    def get_group_offload_components(self, pipeline):
-        base_components = super().get_group_offload_components(pipeline)
-        transformers = {}
-        for name in ("transformer", "transformer_2"):
-            module = base_components.get(name)
-            if module is None:
-                module = getattr(pipeline, name, None)
-            if isinstance(module, torch.nn.Module):
-                transformers[name] = module
-        return transformers
-
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         pipeline = super().get_pipeline(pipeline_type, load_base_model)
         if hasattr(pipeline, "config"):

@@ -317,14 +317,6 @@ class Auraflow(ImageModelFoundation):
 
         return {"model_prediction": model_pred}
 
-    def get_group_offload_components(self, pipeline):
-        components = dict(super().get_group_offload_components(pipeline))
-        if "transformer" not in components and getattr(self, "model", None) is not None:
-            components["transformer"] = self.unwrap_model(self.model)
-        if self.config.controlnet and "controlnet" not in components and getattr(self, "controlnet", None) is not None:
-            components["controlnet"] = self.unwrap_model(self.controlnet)
-        return components
-
     def get_lora_target_layers(self):
         if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             controlnet_block_modules = [f"controlnet_blocks.{i}" for i in range(36)]

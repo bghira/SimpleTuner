@@ -2423,18 +2423,28 @@ class Trainer:
         target_device = "cpu"
         if destination == "accelerator":
             target_device = self.accelerator.device
+        is_accelerator_target = destination == "accelerator"
+        group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
+        group_offload_configured = getattr(self.model, "group_offload_configured", False)
         logger.info(
             f"Moving the {str(self.model.get_trained_component().__class__)} to GPU in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
         )
         if self.model.get_trained_component() is not None:
-            if self.config.is_quantized:
-                self.model.get_trained_component(unwrap_model=False).to(target_device)
-            else:
-                self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
+            should_move_trained_component = not (
+                group_offload_requested and group_offload_configured and is_accelerator_target
+            )
+            if should_move_trained_component:
+                if self.config.is_quantized:
+                    self.model.get_trained_component(unwrap_model=False).to(target_device)
+                else:
+                    self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
             self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
                 target_device, dtype=self.config.weight_dtype
             )
+
+        if group_offload_requested and is_accelerator_target:
+            self.model.configure_group_offload()
 
         if "sageattention" in self.config.attention_mechanism and "training" in self.config.sageattention_usage:
             logger.info("Using SageAttention for training. This is an unsupported, experimental configuration.")
