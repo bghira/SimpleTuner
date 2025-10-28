@@ -68,6 +68,14 @@ def enable_group_offload_on_components(
         excluded_names.add("vae")
     if "vqvae" not in excluded_names:
         excluded_names.add("vqvae")
+    if "text_encoder" not in excluded_names:
+        excluded_names.add("text_encoder")
+    if "text_encoder_2" not in excluded_names:
+        excluded_names.add("text_encoder_2")
+    if "text_encoder_3" not in excluded_names:
+        excluded_names.add("text_encoder_3")
+    if "text_encoder_4" not in excluded_names:
+        excluded_names.add("text_encoder_4")
 
     for name, module in components.items():
         if name in excluded_names:
