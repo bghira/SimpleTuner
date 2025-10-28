@@ -1,0 +1,77 @@
+<div class="d-flex justify-content-between align-items-center mb-2 dataset-card-header">
+            <div class="d-flex align-items-center gap-2">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                        @click="toggleSectionCollapsed(dataset, 'card')"
+                        :aria-expanded="sectionIsCollapsed(dataset, 'card') ? 'false' : 'true'"
+                        :aria-controls="`dataset-body-${datasetSafeId(dataset)}`">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+                <h6 class="mb-0 d-flex align-items-center gap-2">
+                    <span x-text="getDatasetTypeIcon(dataset.dataset_type)"></span>
+                    <span x-text="dataset.id"></span>
+                </h6>
+            </div>
+            <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="`dataset-disabled-${datasetSafeId(dataset)}`"
+                           x-model="dataset.disabled"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="`dataset-disabled-${datasetSafeId(dataset)}`">
+                        Disable dataset
+                    </label>
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="btn-group" role="group" aria-label="Dataset actions">
+                        <button type="button"
+                                class="btn btn-sm dataset-connection-btn"
+                                :class="{
+                                    'btn-outline-primary': !dataset._connectionStatus || dataset._connectionStatus === 'pending',
+                                    'btn-outline-success': dataset._connectionStatus === 'success',
+                                    'btn-outline-danger': dataset._connectionStatus === 'error'
+                                }"
+                                :title="dataset._connectionStatus === 'success'
+                                    ? (dataset._connectionMessage || 'Connection succeeded. Click to test again.')
+                                    : dataset._connectionStatus === 'error'
+                                        ? (dataset._connectionMessage || 'Connection failed. Click to retry.')
+                                        : 'Test backend connectivity'"
+                                :aria-label="dataset._connectionStatus === 'success'
+                                    ? 'Connection succeeded. Click to test again.'
+                                    : dataset._connectionStatus === 'error'
+                                        ? 'Connection failed. Click to retry.'
+                                        : 'Test backend connectivity'"
+                                @click="testDatasetConnection(dataset)"
+                                :disabled="dataset._connectionTesting || !supportsConnectionTest(dataset)">
+                            <span x-show="dataset._connectionTesting" x-cloak>
+                                <i class="fas fa-spinner fa-spin"></i>
+                            </span>
+                            <span x-show="!dataset._connectionTesting && dataset._connectionStatus === 'success'" x-cloak>
+                                <i class="fas fa-check-square text-success"></i>
+                            </span>
+                            <span x-show="!dataset._connectionTesting && dataset._connectionStatus === 'error'" x-cloak>
+                                <i class="fas fa-exclamation-triangle text-warning"></i>
+                            </span>
+                            <span x-show="!dataset._connectionTesting && (!dataset._connectionStatus || dataset._connectionStatus === 'pending')" x-cloak>
+                                <i class="far fa-square"></i>
+                            </span>
+                        </button>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                title="Duplicate dataset"
+                                aria-label="Duplicate dataset"
+                                @click="duplicateDataset(dataset.id)">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-danger"
+                                title="Remove dataset"
+                                aria-label="Remove dataset"
+                                @click="removeDataset(dataset.id)">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
