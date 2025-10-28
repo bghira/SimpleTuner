@@ -135,7 +135,75 @@ function trainerComponent() {
     };
 
     return {
+        versionInfo: null,
+        _versionLoading: false,
+        async loadVersionInfo(force = false) {
+            if (this._versionLoading) {
+                return;
+            }
+            if (!force && this.versionInfo && this.versionInfo.version) {
+                return;
+            }
+            this._versionLoading = true;
+            try {
+                const response = await fetch('/api/version', { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`Request failed with status ${response.status}`);
+                }
+                const payload = await response.json();
+                const rawMajor = payload?.major;
+                let major = null;
+                if (typeof rawMajor === 'number' && Number.isFinite(rawMajor)) {
+                    major = rawMajor;
+                } else if (typeof rawMajor === 'string') {
+                    const parsed = parseInt(rawMajor, 10);
+                    if (!Number.isNaN(parsed)) {
+                        major = parsed;
+                    }
+                }
+                const dirtyFlag = payload?.git_dirty;
+                const gitDirty =
+                    typeof dirtyFlag === 'boolean'
+                        ? dirtyFlag
+                        : null;
+                const commit = typeof payload?.git_commit === 'string' && payload.git_commit.trim()
+                    ? payload.git_commit.trim()
+                    : null;
+                this.versionInfo = {
+                    version: payload?.version ?? null,
+                    major,
+                    git_install: Boolean(payload?.git_install),
+                    git_commit: commit,
+                    git_dirty: gitDirty,
+                };
+            } catch (error) {
+                console.debug('Failed to load version info:', error);
+            } finally {
+                this._versionLoading = false;
+            }
+        },
+        sidebarVersionText() {
+            const info = this.versionInfo;
+            if (!info) {
+                return '';
+            }
+            const parts = [];
+            if (info.version) {
+                parts.push(`v${String(info.version)}`);
+            } else if (typeof info.major === 'number' && Number.isFinite(info.major)) {
+                parts.push(`v${info.major}.x`);
+            }
+            if (info.git_install) {
+                const commitLabel = info.git_commit || 'repo';
+                const dirtySuffix = info.git_dirty ? '*' : '';
+                parts.push(`git ${commitLabel}${dirtySuffix}`);
+            }
+            return parts.join(' • ');
+        },
         init() {
+            this.loadVersionInfo().catch((error) => {
+                console.debug('Version info fetch failed:', error);
+            });
             const handler = (event) => {
                 const payload = (event && event.detail && (event.detail.resolved_defaults || event.detail.defaults)) || null;
                 if (!payload) {
@@ -4649,6 +4717,7 @@ function trainerComponent() {
     <aside class="sidebar" x-ref="sidebar">
         <div class="sidebar-header">
             <h1>🐈 SimpleTuner</h1>
+            <p class="sidebar-version" x-show="sidebarVersionText()" x-text="sidebarVersionText()"></p>
         </div>
 
         <nav class="sidebar-nav">
