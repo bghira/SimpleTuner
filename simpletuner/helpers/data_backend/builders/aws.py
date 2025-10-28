@@ -85,12 +85,9 @@ class AwsBackendBuilder(BaseBackendBuilder):
         return None
 
     def _state_tracker_args(self) -> Optional[Any]:
-        try:
-            from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.helpers.training.state_tracker import StateTracker
 
-            return StateTracker.get_args()
-        except Exception:  # pragma: no cover - defensive fallback
-            return None
+        return StateTracker.get_args()
 
     def build_with_metadata(
         self, config: BaseBackendConfig, args: Dict[str, Any], aws_data_prefix: str = None

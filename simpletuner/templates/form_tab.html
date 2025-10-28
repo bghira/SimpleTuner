@@ -53,7 +53,9 @@
 
                     {% if not has_parent %}
                         <!-- Main section -->
-                        <div class="form-section mb-4" id="section-{{ section.id }}" data-section-type="{% if section.get('advanced') %}advanced{% else %}main{% endif %}">
+                        <div class="form-section mb-4"
+                             id="section-{{ section.id }}"
+                             data-section-type="{% if section.get('advanced') %}advanced{% else %}main{% endif %}">
                             <h6 class="section-title {% if section.get('advanced') %}advanced-section{% endif %}">
                                 <!-- Collapse toggle for main sections (not advanced subsections) -->
                                 <button type="button" class="btn btn-sm btn-outline-secondary section-toggle me-2"
@@ -70,6 +72,19 @@
                             </h6>
                             {% if section.description %}
                             <p class="text-muted small">{{ section.description }}</p>
+                            {% endif %}
+                            {% if tab_name == 'validation' and section.id == 'prompt_management' %}
+                            <div class="prompt-overlay" id="prompt-management-disabled-overlay">
+                                <div class="prompt-overlay-content">
+                                    <i class="fas fa-ban"></i>
+                                    <div>
+                                        <strong>Prompt controls disabled.</strong>
+                                        <div>
+                                            Dataset caption driven validation is active; prompts are managed automatically for this model.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                             {% endif %}
 
                             {% if section.get('template') %}
@@ -452,11 +467,166 @@
         }
     }
 
+    function initializePromptManagementGuard() {
+        if (tabName !== 'validation') {
+            return;
+        }
+
+        if (window.__promptManagementGuardCleanup) {
+            try {
+                window.__promptManagementGuardCleanup();
+            } catch (err) {
+                console.debug('Prompt management guard cleanup failed', err);
+            }
+            delete window.__promptManagementGuardCleanup;
+        }
+
+        const promptSectionId = 'section-prompt_management';
+        const promptContentId = 'content-prompt_management';
+        const normalizeBoolean = (value) => {
+            if (value === null || value === undefined) {
+                return false;
+            }
+            if (typeof value === 'boolean') {
+                return value;
+            }
+            if (typeof value === 'number') {
+                return value !== 0;
+            }
+            if (typeof value === 'string') {
+                const normalized = value.trim().toLowerCase();
+                if (!normalized) {
+                    return false;
+                }
+                if (['true', '1', 'yes', 'on'].includes(normalized)) {
+                    return true;
+                }
+                if (['false', '0', 'no', 'off'].includes(normalized)) {
+                    return false;
+                }
+            }
+            return Boolean(value);
+        };
+        const toggleState = (context) => {
+            const disabled = Boolean(
+                context
+                && (
+                    normalizeBoolean(context.requiresValidationI2VSamples)
+                    || normalizeBoolean(context.strictI2VActive)
+                ),
+            );
+            const section = document.getElementById(promptSectionId);
+            const content = document.getElementById(promptContentId);
+
+            if (section) {
+                section.classList.toggle('prompt-management-disabled', disabled);
+            }
+
+            if (!content) {
+                return;
+            }
+
+            const controls = content.querySelectorAll('input, textarea, select, button');
+            controls.forEach((element) => {
+                if (!Object.prototype.hasOwnProperty.call(element.dataset, 'promptGuardOriginalDisabled')) {
+                    element.dataset.promptGuardOriginalDisabled = element.disabled ? 'true' : 'false';
+                }
+                if (disabled) {
+                    element.disabled = true;
+                } else {
+                    element.disabled = element.dataset.promptGuardOriginalDisabled === 'true';
+                }
+            });
+        };
+
+        const handler = (event) => toggleState(event ? event.detail : null);
+        window.addEventListener('trainer-model-context-updated', handler);
+        window.__promptManagementGuardCleanup = () => window.removeEventListener('trainer-model-context-updated', handler);
+
+        try {
+            const trainerStore = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+            if (trainerStore && trainerStore.modelContext) {
+                toggleState(trainerStore.modelContext);
+            }
+        } catch (err) {
+            console.debug('Prompt management guard init failed', err);
+        }
+    }
+
+    function initializeValidationAdapterGuards() {
+        if (tabName !== 'validation') {
+            return;
+        }
+
+        const tabContent = document.getElementById(tabName + '-tab-content');
+        if (!tabContent) return;
+
+        const pathField = tabContent.querySelector('[name="validation_adapter_path"]');
+        const configField = tabContent.querySelector('[name="validation_adapter_config"]');
+        const singleFieldSelectors = [
+            '[data-field-name="validation_adapter_name"]',
+            '[data-field-name="validation_adapter_strength"]',
+            '[data-field-name="validation_adapter_mode"]',
+        ];
+
+        if (!pathField && !configField) {
+            return;
+        }
+
+        const applyDisabledState = (elements, disabled) => {
+            elements.forEach((input) => {
+                if (!input.dataset.adapterGuardOriginalDisabled) {
+                    input.dataset.adapterGuardOriginalDisabled = input.disabled ? 'true' : 'false';
+                }
+                if (disabled) {
+                    input.disabled = true;
+                } else {
+                    input.disabled = input.dataset.adapterGuardOriginalDisabled === 'true';
+                }
+            });
+        };
+
+        const toggleGuardState = () => {
+            const pathHasValue = Boolean(pathField && pathField.value && pathField.value.trim().length > 0);
+            const configHasValue = Boolean(configField && configField.value && configField.value.trim().length > 0);
+
+            if (pathField) {
+                pathField.disabled = configHasValue;
+            }
+
+            if (configField) {
+                configField.disabled = pathHasValue;
+            }
+
+            singleFieldSelectors.forEach((selector) => {
+                const container = tabContent.querySelector(selector);
+                if (!container) {
+                    return;
+                }
+                const inputs = container.querySelectorAll('input, select, textarea');
+                applyDisabledState(inputs, configHasValue);
+                container.classList.toggle('field-disabled', configHasValue);
+            });
+        };
+
+        const registerHandler = (element) => {
+            if (!element) return;
+            element.addEventListener('input', toggleGuardState);
+            element.addEventListener('change', toggleGuardState);
+        };
+
+        registerHandler(pathField);
+        registerHandler(configField);
+        toggleGuardState();
+    }
+
     function initTab() {
         console.log('[FormTab] Initializing tab:', tabName);
         setupSectionCollapse();
         initializeConditionalFields();
         initializeTooltips();
+        initializePromptManagementGuard();
+        initializeValidationAdapterGuards();
     }
 
     // Initialize immediately (for direct page loads)

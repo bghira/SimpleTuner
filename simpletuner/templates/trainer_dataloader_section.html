@@ -48,6 +48,20 @@ const SKIP_DISCOVERY_OPTIONS = [
 
 window.CONDITIONING_GENERATOR_TYPES = window.CONDITIONING_GENERATOR_TYPES || CONDITIONING_GENERATOR_TYPES;
 
+const DATASET_COLLAPSE_SECTION_MAP = {
+    card: '_collapsed',
+    basic: '_showBasicSection',
+    sizing: '_showSizing',
+    cropping: '_showCropping',
+    storage: '_showStorage',
+    captions: '_showCaptions',
+    video: '_showVideoSettings',
+    conditioning: '_showConditioning',
+    advanced: '_showAdvanced'
+};
+
+const COLLAPSED_SECTIONS_ENDPOINT = '/api/webui/ui-state/collapsed-sections/datasets';
+
 function dataloaderSectionComponent() {
     return {
     storeReady: false,
@@ -56,6 +70,10 @@ function dataloaderSectionComponent() {
     _trainerCache: null,
     _captionFilterCache: null,
     _captionFilterCacheTime: 0,
+    _collapsedState: {},
+    _collapseStateLoaded: false,
+    _collapseStateLoading: false,
+    _collapseSaveTimeout: null,
 
     init() {
         window.dataloaderSectionComponentInstance = this;
@@ -94,6 +112,11 @@ function dataloaderSectionComponent() {
         this.syncCaptionFilterSelections();
         this.syncGeneratorSelectionsForAll();
         this.dangerMode = this.computeDangerModeEnabled();
+        if (!this._collapseStateLoaded && !this._collapseStateLoading) {
+            this.loadCollapsedState();
+        } else if (this._collapseStateLoaded) {
+            this.applyCollapsedStateAll();
+        }
     },
 
     get trainer() {
@@ -143,7 +166,45 @@ function dataloaderSectionComponent() {
     },
     get isVideoModel() {
         const context = this.modelContext || {};
-        return Boolean(context.isVideoModel || context.supportsVideo);
+        return this.normalizeBoolean(context.isVideoModel) || this.normalizeBoolean(context.supportsVideo);
+    },
+    get requiresStrictI2VDatasets() {
+        const context = this.modelContext || {};
+        const active = this.normalizeBoolean(context.strictI2VActive);
+        if (active) {
+            console.debug('[DatasetBuilder] strict I2V active for current model flavour', context);
+        }
+        return active;
+    },
+    get imageDatasetCount() {
+        if (!Array.isArray(this.datasets)) {
+            return 0;
+        }
+        return this.datasets.filter((dataset) => {
+            if (!dataset || typeof dataset !== 'object') {
+                return false;
+            }
+            const type = typeof dataset.dataset_type === 'string' ? dataset.dataset_type.toLowerCase() : '';
+            if (type !== 'image') {
+                return false;
+            }
+            return !dataset.disabled;
+        }).length;
+    },
+    get videoDatasetCount() {
+        if (!Array.isArray(this.datasets)) {
+            return 0;
+        }
+        return this.datasets.filter((dataset) => {
+            if (!dataset || typeof dataset !== 'object') {
+                return false;
+            }
+            const type = typeof dataset.dataset_type === 'string' ? dataset.dataset_type.toLowerCase() : '';
+            if (type !== 'video') {
+                return false;
+            }
+            return !dataset.disabled;
+        }).length;
     },
     get conditioningDatasetType() {
         return this.modelContext.conditioningDatasetType || 'conditioning';
@@ -233,6 +294,30 @@ function dataloaderSectionComponent() {
         }
         if (dataset._showConditioning === undefined) {
             dataset._showConditioning = true;
+        }
+        if (dataset._collapsed === undefined) {
+            dataset._collapsed = false;
+        }
+        if (dataset._showBasicSection === undefined) {
+            dataset._showBasicSection = true;
+        }
+        if (dataset._showSizing === undefined) {
+            dataset._showSizing = true;
+        }
+        if (dataset._showCropping === undefined) {
+            dataset._showCropping = true;
+        }
+        if (dataset._showStorage === undefined) {
+            dataset._showStorage = true;
+        }
+        if (dataset._showCaptions === undefined) {
+            dataset._showCaptions = true;
+        }
+        if (dataset._showVideoSettings === undefined) {
+            dataset._showVideoSettings = true;
+        }
+        if (this._collapseStateLoaded) {
+            this.applyCollapsedStateToDataset(dataset);
         }
     },
     syncCaptionFilterSelections() {
@@ -482,6 +567,30 @@ function dataloaderSectionComponent() {
         }
         return dataset.id.toString().replace(/[^a-zA-Z0-9_-]/g, '-');
     },
+    normalizeBoolean(value) {
+        if (value === null || value === undefined) {
+            return false;
+        }
+        if (typeof value === 'boolean') {
+            return value;
+        }
+        if (typeof value === 'number') {
+            return value !== 0;
+        }
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (!normalized) {
+                return false;
+            }
+            if (['true', '1', 'yes', 'on'].includes(normalized)) {
+                return true;
+            }
+            if (['false', '0', 'no', 'off'].includes(normalized)) {
+                return false;
+            }
+        }
+        return Boolean(value);
+    },
     shouldShowConditioningSection(dataset) {
         if (!dataset) {
             return false;
@@ -504,6 +613,189 @@ function dataloaderSectionComponent() {
         }
 
         return hasLinks || hasGenerators;
+    },
+    collapseSectionKey(dataset, section) {
+        if (!dataset || !dataset.id) {
+            return null;
+        }
+        return `${dataset.id}::${section}`;
+    },
+    sectionAvailable(dataset, section) {
+        if (!dataset) {
+            return false;
+        }
+        switch (section) {
+            case 'sizing':
+            case 'cropping':
+                return dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds';
+            case 'captions':
+                return !['text_embeds', 'image_embeds'].includes(dataset.dataset_type);
+            case 'video':
+                return dataset.dataset_type === 'video';
+            case 'conditioning':
+                return this.shouldShowConditioningSection(dataset);
+            default:
+                return true;
+        }
+    },
+    sectionIsCollapsed(dataset, section) {
+        if (!dataset) {
+            return false;
+        }
+        if (section === 'card') {
+            return !!dataset._collapsed;
+        }
+        const prop = DATASET_COLLAPSE_SECTION_MAP[section];
+        if (!prop) {
+            return false;
+        }
+        const value = dataset[prop];
+        if (prop.startsWith('_show')) {
+            if (typeof value === 'boolean') {
+                return !value;
+            }
+            return false;
+        }
+        return !value;
+    },
+    sectionIsExpanded(dataset, section) {
+        return !this.sectionIsCollapsed(dataset, section);
+    },
+    setSectionCollapsed(dataset, section, collapsed, options = {}) {
+        if (!dataset) {
+            return;
+        }
+        const prop = DATASET_COLLAPSE_SECTION_MAP[section];
+        if (!prop) {
+            return;
+        }
+        const shouldCollapse = !!collapsed;
+        if (section === 'card') {
+            dataset._collapsed = shouldCollapse;
+        } else if (prop.startsWith('_show')) {
+            dataset[prop] = !shouldCollapse;
+        } else {
+            dataset[prop] = !shouldCollapse;
+        }
+
+        if (!this._collapsedState) {
+            this._collapsedState = {};
+        }
+
+        const key = this.collapseSectionKey(dataset, section);
+        if (key) {
+            if (this.sectionAvailable(dataset, section)) {
+                this._collapsedState[key] = shouldCollapse;
+            } else {
+                delete this._collapsedState[key];
+            }
+        }
+
+        if (!options.silent && this._collapseStateLoaded) {
+            this.queueCollapsedStateSave();
+        }
+    },
+    toggleSectionCollapsed(dataset, section) {
+        const collapsed = this.sectionIsCollapsed(dataset, section);
+        this.setSectionCollapsed(dataset, section, !collapsed);
+    },
+    collectCollapsedState() {
+        const state = {};
+        if (!Array.isArray(this.datasets)) {
+            return state;
+        }
+        this.datasets.forEach((dataset) => {
+            if (!dataset || !dataset.id) {
+                return;
+            }
+            Object.keys(DATASET_COLLAPSE_SECTION_MAP).forEach((section) => {
+                if (!this.sectionAvailable(dataset, section)) {
+                    return;
+                }
+                const key = this.collapseSectionKey(dataset, section);
+                if (key) {
+                    state[key] = this.sectionIsCollapsed(dataset, section);
+                }
+            });
+        });
+        return state;
+    },
+    queueCollapsedStateSave() {
+        if (!this._collapseStateLoaded) {
+            return;
+        }
+        if (this._collapseSaveTimeout) {
+            clearTimeout(this._collapseSaveTimeout);
+        }
+        this._collapseSaveTimeout = setTimeout(() => {
+            this.saveCollapsedState();
+        }, 200);
+    },
+    async saveCollapsedState() {
+        if (!this._collapseStateLoaded) {
+            return;
+        }
+        const sections = this.collectCollapsedState();
+        try {
+            await fetch(COLLAPSED_SECTIONS_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sections })
+            });
+            this._collapsedState = { ...sections };
+        } catch (error) {
+            console.warn('[DatasetBuilder] Failed to save collapsed state', error);
+        }
+        if (this._collapseSaveTimeout) {
+            clearTimeout(this._collapseSaveTimeout);
+            this._collapseSaveTimeout = null;
+        }
+    },
+    async loadCollapsedState() {
+        if (this._collapseStateLoading) {
+            return;
+        }
+        this._collapseStateLoading = true;
+        try {
+            const response = await fetch(COLLAPSED_SECTIONS_ENDPOINT);
+            if (response.ok) {
+                const data = await response.json();
+                if (data && typeof data === 'object') {
+                    this._collapsedState = data;
+                } else {
+                    this._collapsedState = {};
+                }
+            } else {
+                this._collapsedState = {};
+            }
+        } catch (error) {
+            console.warn('[DatasetBuilder] Failed to load collapsed state', error);
+            this._collapsedState = {};
+        }
+        this._collapseStateLoading = false;
+        this._collapseStateLoaded = true;
+        this.applyCollapsedStateAll();
+    },
+    applyCollapsedStateAll() {
+        if (!Array.isArray(this.datasets)) {
+            return;
+        }
+        this.datasets.forEach((dataset) => this.applyCollapsedStateToDataset(dataset));
+    },
+    applyCollapsedStateToDataset(dataset) {
+        if (!dataset || !dataset.id || !this._collapsedState) {
+            return;
+        }
+        Object.keys(DATASET_COLLAPSE_SECTION_MAP).forEach((section) => {
+            if (!this.sectionAvailable(dataset, section)) {
+                return;
+            }
+            const key = this.collapseSectionKey(dataset, section);
+            if (!key || !(key in this._collapsedState)) {
+                return;
+            }
+            this.setSectionCollapsed(dataset, section, !!this._collapsedState[key], { silent: true });
+        });
     },
     onConditioningDataChange(dataset, event) {
         const trainer = Alpine.store('trainer');
@@ -838,7 +1130,7 @@ function dataloaderSectionComponent() {
                 const trainer = Alpine.store('trainer');
                 if (trainer) {
                     if (typeof trainer.markDatasetsDirty === 'function') {
-                        trainer.markDatasetsDirty();
+                        trainer.markDatasetsDirty({ refresh: this.dataLoaderMode !== 'json' });
                     } else {
                         trainer.hasUnsavedChanges = true;
                     }
@@ -1013,13 +1305,35 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
 
         <!-- Dataset List -->
         <div class="dataset-list" x-show="!datasetsLoading">
+            <div class="alert alert-warning align-items-start gap-2 mb-3"
+                 x-bind:class="{ 'd-flex': requiresStrictI2VDatasets && videoDatasetCount === 0 }"
+                 x-show="requiresStrictI2VDatasets && videoDatasetCount === 0"
+                 x-cloak>
+                <i class="fas fa-exclamation-triangle mt-1"></i>
+                <div>
+                    <strong>Video datasets required.</strong>
+                    <div class="mb-0">
+                        Strict image-to-video flavours need at least one video dataset to supply frame sequences.
+                        Add a video dataset alongside any image data sources.
+                    </div>
+                </div>
+            </div>
             <template x-for="dataset in datasets" :key="dataset.id">
                 <div class="dataset-card mb-3" x-bind:data-dataset-id="dataset.id">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h6 class="mb-0">
-                            <span x-text="getDatasetTypeIcon(dataset.dataset_type)"></span>
-                            <span x-text="dataset.id"></span>
-                        </h6>
+                    <div class="d-flex justify-content-between align-items-center mb-2 dataset-card-header">
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                                    @click="toggleSectionCollapsed(dataset, 'card')"
+                                    :aria-expanded="sectionIsCollapsed(dataset, 'card') ? 'false' : 'true'"
+                                    :aria-controls="`dataset-body-${datasetSafeId(dataset)}`">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                            <h6 class="mb-0 d-flex align-items-center gap-2">
+                                <span x-text="getDatasetTypeIcon(dataset.dataset_type)"></span>
+                                <span x-text="dataset.id"></span>
+                            </h6>
+                        </div>
                         <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
                             <div class="form-check form-check-inline mb-0">
                                 <input class="form-check-input"
@@ -1083,9 +1397,26 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                             </div>
                         </div>
                     </div>
+                    <div :id="`dataset-body-${datasetSafeId(dataset)}`"
+                         x-show="sectionIsExpanded(dataset, 'card')"
+                         x-transition
+                         x-cloak>
                     <div class="dataset-section">
-                        <div class="dataset-section-header">Basic Settings</div>
-                        <div class="dataset-section-body">
+                        <div class="dataset-section-header d-flex align-items-center">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                                    @click="toggleSectionCollapsed(dataset, 'basic')"
+                                    :aria-expanded="sectionIsCollapsed(dataset, 'basic') ? 'false' : 'true'"
+                                    :aria-controls="`dataset-basic-${datasetSafeId(dataset)}`">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                            <span>Basic Settings</span>
+                        </div>
+                        <div class="dataset-section-body"
+                             :id="`dataset-basic-${datasetSafeId(dataset)}`"
+                             x-show="sectionIsExpanded(dataset, 'basic')"
+                             x-transition
+                             x-cloak>
                     <div class="row g-3 align-items-end">
                         <div class="col-md-6 mb-2">
                             <label class="form-label">Type <span class="text-danger">*</span></label>
@@ -1110,91 +1441,110 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                         </div>
                     </div>
                     <div class="dataset-subgroup"
-                         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
-                        <div class="dataset-subgroup-title">Sizing</div>
-                        <div class="row g-3">
-                            <div class="col-md-3">
-                                <div class="mb-3">
-                                    <label class="form-label">Resolution</label>
-                                    <input type="number"
-                                           class="form-control form-control-sm"
-                                           min="0"
-                                           step="1"
-                                           x-model.number.lazy="dataset.resolution"
-                                           @input="markAsUnsaved()"
-                                           placeholder="1024">
-                                    <div class="form-text"
-                                         x-text="dataset.resolution_type === 'pixel_area'
-                                            ? 'Shorter edge (squared for area)'
-                                            : 'Shorter edge in pixels'
-                                         ">
-                                        Shorter edge (squared for area)
-                                    </div>
+                         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+                         :class="{'is-collapsed': sectionIsCollapsed(dataset, 'sizing')}">
+                        <div class="dataset-subgroup-header collapse-header">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                                    @click="toggleSectionCollapsed(dataset, 'sizing')"
+                                    :aria-expanded="sectionIsCollapsed(dataset, 'sizing') ? 'false' : 'true'"
+                                    :aria-controls="`dataset-sizing-${datasetSafeId(dataset)}`">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                            <div class="dataset-subgroup-title mb-0">Sizing</div>
+                        </div>
+                        <div class="dataset-subgroup-body"
+                             :id="`dataset-sizing-${datasetSafeId(dataset)}`"
+                             x-show="sectionIsExpanded(dataset, 'sizing')"
+                             x-transition
+                             x-cloak>
+                        <div class="dataset-inline-grid sizing-grid">
+                            <div class="dataset-inline-field">
+                                <label class="form-label mb-1">Resolution</label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       min="0"
+                                       step="1"
+                                       x-model.number.lazy="dataset.resolution"
+                                       @input="markAsUnsaved()"
+                                       placeholder="1024">
+                                <div class="form-text"
+                                     x-text="dataset.resolution_type === 'pixel_area'
+                                        ? 'Shorter edge (squared for area)'
+                                        : 'Shorter edge in pixels'
+                                     ">
+                                    Shorter edge (squared for area)
                                 </div>
                             </div>
-                            <div class="col-md-3">
-                                <div class="mb-3">
-                                    <label class="form-label">Resolution Type</label>
-                                    <select class="form-select form-select-sm"
-                                            x-model="dataset.resolution_type"
-                                            @change="markAsUnsaved()">
-                                        <option value="pixel">Pixels (shorter edge)</option>
-                                        <option value="pixel_area">Pixel area (megapixels)</option>
-                                    </select>
+                            <div class="dataset-inline-field">
+                                <label class="form-label mb-1">Resolution Type</label>
+                                <select class="form-select form-select-sm"
+                                        x-model="dataset.resolution_type"
+                                        @change="markAsUnsaved()">
+                                    <option value="pixel">Pixels (shorter edge)</option>
+                                    <option value="pixel_area">Pixel area (megapixels)</option>
+                                </select>
+                            </div>
+                            <div class="dataset-inline-field">
+                                <label class="form-label mb-1">Min Size</label>
+                                <input type="number" class="form-control form-control-sm"
+                                       x-model.number.lazy="dataset.minimum_image_size"
+                                       min="0"
+                                       step="1"
+                                       @input="markAsUnsaved()"
+                                       placeholder="0 (disabled)">
+                                <div class="form-text">
+                                    Skip smaller images
                                 </div>
                             </div>
-                            <div class="col-md-3">
-                                <div class="mb-3">
-                                    <label class="form-label">Min Size</label>
-                                    <input type="number" class="form-control form-control-sm"
-                                           x-model.number.lazy="dataset.minimum_image_size"
-                                           min="0"
-                                           step="1"
-                                           @input="markAsUnsaved()"
-                                           placeholder="0 (disabled)">
-                                    <div class="form-text">
-                                        Skip smaller images
-                                    </div>
+                            <div class="dataset-inline-field">
+                                <label class="form-label mb-1">Max Size</label>
+                                <input type="number" class="form-control form-control-sm"
+                                       x-model.number.lazy="dataset.maximum_image_size"
+                                       min="0"
+                                       step="1"
+                                       @input="markAsUnsaved()"
+                                       placeholder="0 (disabled)">
+                                <div class="form-text">
+                                    Downsample larger images to the target size
                                 </div>
                             </div>
-                            <div class="col-md-3">
-                                <div class="mb-3">
-                                    <label class="form-label">Max Size</label>
-                                    <input type="number" class="form-control form-control-sm"
-                                           x-model.number.lazy="dataset.maximum_image_size"
-                                           min="0"
-                                           step="1"
-                                           @input="markAsUnsaved()"
-                                           placeholder="0 (disabled)">
-                                    <div class="form-text">
-                                        Downsample larger images to the target size
-                                    </div>
+                            <div class="dataset-inline-field">
+                                <label class="form-label mb-1">Downsample Target</label>
+                                <input type="number" class="form-control form-control-sm"
+                                       x-model.number.lazy="dataset.target_downsample_size"
+                                       min="0"
+                                       step="1"
+                                       @input="markAsUnsaved()"
+                                       placeholder="Auto">
+                                <div class="form-text">
+                                    Target size used when downsampling larger images
                                 </div>
                             </div>
                         </div>
-                        <div class="row g-3 mt-3">
-                            <div class="col-md-3">
-                                <div class="mb-3">
-                                    <label class="form-label">Downsample Target</label>
-                                    <input type="number" class="form-control form-control-sm"
-                                           x-model.number.lazy="dataset.target_downsample_size"
-                                           min="0"
-                                           step="1"
-                                           @input="markAsUnsaved()"
-                                           placeholder="Auto">
-                                    <div class="form-text">
-                                        Target size used when downsampling larger images
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </div>
                     <div class="dataset-subgroup"
-                         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
-                        <div class="dataset-subgroup-title">Cropping</div>
-                        <div class="row g-3 align-items-end">
-                            <div class="col-12">
-                                <div class="form-check">
+                         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+                         :class="{'is-collapsed': sectionIsCollapsed(dataset, 'cropping')}">
+                        <div class="dataset-subgroup-header collapse-header">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                                    @click="toggleSectionCollapsed(dataset, 'cropping')"
+                                    :aria-expanded="sectionIsCollapsed(dataset, 'cropping') ? 'false' : 'true'"
+                                    :aria-controls="`dataset-cropping-${datasetSafeId(dataset)}`">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                            <div class="dataset-subgroup-title mb-0">Cropping</div>
+                        </div>
+                        <div class="dataset-subgroup-body"
+                             :id="`dataset-cropping-${datasetSafeId(dataset)}`"
+                             x-show="sectionIsExpanded(dataset, 'cropping')"
+                             x-transition
+                             x-cloak>
+                        <div class="dataset-inline-grid cropping-grid">
+                            <div class="dataset-inline-field dataset-inline-field-checkbox">
+                                <div class="form-check mb-0">
                                     <input class="form-check-input"
                                            type="checkbox"
                                            :id="`dataset-crop-${datasetSafeId(dataset)}`"
@@ -1203,10 +1553,10 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                                     <label class="form-check-label" :for="`dataset-crop-${datasetSafeId(dataset)}`">Enable image cropping</label>
                                 </div>
                             </div>
-                        </div>
-                        <div class="row g-3 mt-3" x-show="dataset.crop" x-cloak>
-                            <div class="col-md-6">
-                                <label class="form-label">Crop Style</label>
+                            <div class="dataset-inline-field dataset-inline-field-tight"
+                                 x-show="dataset.crop"
+                                 x-cloak>
+                                <label class="form-label mb-1">Crop Style</label>
                                 <select class="form-select form-select-sm"
                                         x-model="dataset.crop_style"
                                         @change="markAsUnsaved()">
@@ -1216,8 +1566,10 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                                     <option value="random">Random</option>
                                 </select>
                             </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Crop Aspect</label>
+                            <div class="dataset-inline-field dataset-inline-field-tight"
+                                 x-show="dataset.crop"
+                                 x-cloak>
+                                <label class="form-label mb-1">Crop Aspect</label>
                                 <select class="form-select form-select-sm"
                                         x-model="dataset.crop_aspect"
                                         @change="markAsUnsaved()">
@@ -1227,10 +1579,10 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                                     <option value="random">Weighted buckets</option>
                                 </select>
                             </div>
-                        </div>
-                        <div class="row g-3 mt-2" x-show="dataset.crop" x-cloak>
-                            <div class="col-12">
-                                <label class="form-label">Crop Aspect Buckets</label>
+                            <div class="dataset-inline-field"
+                                 x-show="dataset.crop"
+                                 x-cloak>
+                                <label class="form-label mb-1">Crop Aspect Buckets</label>
                                 <input type="text" class="form-control form-control-sm"
                                        x-model="dataset._cropAspectBucketsText"
                                        @input="markAsUnsaved()"
@@ -1244,12 +1596,29 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                                 </div>
                             </div>
                         </div>
-                    </div>
                         </div>
                     </div>
-                    <div class="dataset-section">
-                        <div class="dataset-section-header">Storage</div>
-                        <div class="dataset-section-body">
+                </div>
+            </div>
+            <div class="row g-3 dataset-section-split align-items-stretch">
+                <div class="col-12 d-flex"
+                     :class="sectionAvailable(dataset, 'captions') ? 'col-md-6' : 'col-md-12'">
+                    <div class="dataset-section flex-fill">
+                        <div class="dataset-section-header d-flex align-items-center">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                                    @click="toggleSectionCollapsed(dataset, 'storage')"
+                                    :aria-expanded="sectionIsCollapsed(dataset, 'storage') ? 'false' : 'true'"
+                                    :aria-controls="`dataset-storage-${datasetSafeId(dataset)}`">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                            <span>Storage</span>
+                        </div>
+                        <div class="dataset-section-body"
+                             :id="`dataset-storage-${datasetSafeId(dataset)}`"
+                             x-show="sectionIsExpanded(dataset, 'storage')"
+                             x-transition
+                             x-cloak>
                             <div class="dataset-subgroup">
                                 <div class="dataset-subgroup-title">Backend Configuration</div>
                                 <div class="row g-3">
@@ -1484,11 +1853,25 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                             </div>
                         </div>
                     </div>
-                    <div class="dataset-section"
-                         x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)"
-                         x-cloak>
-                        <div class="dataset-section-header">Captions &amp; Metadata</div>
-                        <div class="dataset-section-body">
+                </div>
+                <template x-if="sectionAvailable(dataset, 'captions')">
+                <div class="col-12 col-md-6 d-flex">
+                    <div class="dataset-section flex-fill">
+                        <div class="dataset-section-header d-flex align-items-center">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                                    @click="toggleSectionCollapsed(dataset, 'captions')"
+                                    :aria-expanded="sectionIsCollapsed(dataset, 'captions') ? 'false' : 'true'"
+                                    :aria-controls="`dataset-captions-${datasetSafeId(dataset)}`">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                            <span>Captions &amp; Metadata</span>
+                        </div>
+                        <div class="dataset-section-body"
+                             :id="`dataset-captions-${datasetSafeId(dataset)}`"
+                             x-show="sectionIsExpanded(dataset, 'captions')"
+                             x-transition
+                             x-cloak>
                             <div class="dataset-subgroup">
                                 <div class="dataset-subgroup-title">Caption &amp; Metadata Strategy</div>
                                 <div class="row g-3">
@@ -1620,14 +2003,18 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                             </div>
                         </div>
                     </div>
-                    <div class="dataset-section dataset-section-advanced dataset-section-collapsible"
-                         :class="{'is-open': dataset._showAdvanced}">
+                </div>
+                </template>
+            </div>
+            <div class="dataset-section dataset-section-advanced dataset-section-collapsible"
+                         :class="{'is-open': !sectionIsCollapsed(dataset, 'advanced')}">
                         <div class="dataset-section-header d-flex align-items-center justify-content-between advanced-section">
                             <div class="d-flex align-items-center">
                                 <button type="button"
-                                        class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
-                                        @click="dataset._showAdvanced = !dataset._showAdvanced"
-                                        :aria-expanded="dataset._showAdvanced ? 'true' : 'false'">
+                                        class="btn btn-sm btn-outline-secondary dataset-section-toggle advanced-toggle me-2"
+                                        @click="toggleSectionCollapsed(dataset, 'advanced')"
+                                        :aria-expanded="sectionIsCollapsed(dataset, 'advanced') ? 'false' : 'true'"
+                                        :aria-controls="`dataset-advanced-${datasetSafeId(dataset)}`">
                                     <i class="fas fa-chevron-right"></i>
                                 </button>
                                 <span>Advanced Options</span>
@@ -1635,7 +2022,8 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                             <span class="badge bg-secondary">Advanced</span>
                         </div>
                         <div class="dataset-section-body advanced-options"
-                             x-show="dataset._showAdvanced"
+                             :id="`dataset-advanced-${datasetSafeId(dataset)}`"
+                             x-show="sectionIsExpanded(dataset, 'advanced')"
                              x-transition
                              x-cloak>
                             <div class="dataset-subgroup"
@@ -1879,8 +2267,21 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                     </div>
                     <template x-if="dataset.dataset_type === 'video'">
                         <div class="dataset-section video-settings">
-                            <div class="dataset-section-header">Video Settings</div>
-                            <div class="dataset-section-body">
+                            <div class="dataset-section-header d-flex align-items-center">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                                        @click="toggleSectionCollapsed(dataset, 'video')"
+                                        :aria-expanded="sectionIsCollapsed(dataset, 'video') ? 'false' : 'true'"
+                                        :aria-controls="`dataset-video-${datasetSafeId(dataset)}`">
+                                    <i class="fas fa-chevron-right"></i>
+                                </button>
+                                <span>Video Settings</span>
+                            </div>
+                            <div class="dataset-section-body"
+                                 :id="`dataset-video-${datasetSafeId(dataset)}`"
+                                 x-show="sectionIsExpanded(dataset, 'video')"
+                                 x-transition
+                                 x-cloak>
                                 <div class="dataset-subgroup">
                                     <div class="dataset-subgroup-title">Frame Configuration</div>
                                     <div class="row g-3">
@@ -1945,13 +2346,14 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                     </template>
                     <template x-if="shouldShowConditioningSection(dataset)">
                         <div class="dataset-section conditioning-section dataset-section-collapsible"
-                             :class="{'is-open': dataset._showConditioning}">
+                             :class="{'is-open': !sectionIsCollapsed(dataset, 'conditioning')}">
                             <div class="dataset-section-header d-flex align-items-center justify-content-between advanced-section">
                                 <div class="d-flex align-items-center">
                                     <button type="button"
-                                            class="btn btn-sm btn-outline-secondary advanced-toggle me-2"
-                                            @click="dataset._showConditioning = !dataset._showConditioning"
-                                            :aria-expanded="dataset._showConditioning ? 'true' : 'false'">
+                                            class="btn btn-sm btn-outline-secondary dataset-section-toggle advanced-toggle me-2"
+                                            @click="toggleSectionCollapsed(dataset, 'conditioning')"
+                                            :aria-expanded="sectionIsCollapsed(dataset, 'conditioning') ? 'false' : 'true'"
+                                            :aria-controls="`dataset-conditioning-${datasetSafeId(dataset)}`">
                                         <i class="fas fa-chevron-right"></i>
                                     </button>
                                     <span>Conditioning</span>
@@ -1959,7 +2361,8 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                                 <span class="badge bg-secondary" x-text="conditioningDatasetType"></span>
                             </div>
                             <div class="dataset-section-body"
-                                 x-show="dataset._showConditioning"
+                                 :id="`dataset-conditioning-${datasetSafeId(dataset)}`"
+                                 x-show="sectionIsExpanded(dataset, 'conditioning')"
                                  x-transition
                                  x-cloak>
                                 <div class="dataset-subgroup conditioning-links">
@@ -2090,7 +2493,8 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                         </div>
                     </template>
                 </div>
-            </template>
+            </div>
+        </template>
             <div x-show="datasets.length === 0" class="text-center text-muted py-4">
                 <i class="fas fa-database mb-2" style="font-size: 2rem;"></i>
                 <p>No datasets configured. Add a dataset to get started.</p>

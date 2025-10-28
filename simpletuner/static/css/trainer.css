@@ -1237,3 +1237,41 @@ optgroup option {
 .config-card:first-child::before {
     display: none;
 }
+
+.prompt-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(12, 15, 25, 0.55);
+    border-radius: 0.75rem;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    z-index: 2;
+    backdrop-filter: blur(0.4rem);
+}
+
+.form-section.prompt-management-disabled {
+    position: relative;
+}
+
+.form-section.prompt-management-disabled .prompt-overlay {
+    display: flex;
+}
+
+.form-section.prompt-management-disabled .prompt-overlay-content {
+    display: flex;
+    gap: 0.75rem;
+    color: #fff;
+    text-align: left;
+}
+
+.form-section.prompt-management-disabled .prompt-overlay-content strong {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.form-section.prompt-management-disabled .prompt-overlay-content i {
+    font-size: 1.5rem;
+}
+}

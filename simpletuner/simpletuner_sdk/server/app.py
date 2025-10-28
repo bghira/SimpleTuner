@@ -23,6 +23,10 @@ logger = logging.getLogger("SimpleTunerServer")
 # Track if we're shutting down to avoid duplicate cleanup
 _shutting_down = False
 
+# Record the first process that imported this module so the shutdown endpoint
+# can signal parent reload/watchdog processes when running in dev mode.
+os.environ.setdefault("SIMPLETUNER_SERVER_ROOT_PID", str(os.getpid()))
+
 
 # These placeholders allow tests to monkeypatch heavy imports before the app factory runs.
 WebInterface = None

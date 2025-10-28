@@ -291,6 +291,47 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
+### `--validation_adapter_path`
+
+- **What**: Temporarily loads a single LoRA adapter when running scheduled validations.
+- **Formats**:
+  - Hugging Face repo: `org/repo` or `org/repo:weight_name.safetensors` (defaults to `pytorch_lora_weights.safetensors`).
+  - Local file or directory path pointing to a safetensors adapter.
+- **Notes**:
+  - Mutually exclusive with `--validation_adapter_config`; supplying both raises an error.
+  - The adapter is only attached for validation runs (baseline training weights remain untouched).
+
+### `--validation_adapter_name`
+
+- **What**: Optional identifier to apply to the temporary adapter loaded via `--validation_adapter_path`.
+- **Why**: Controls how the adapter run is labelled in logs/web UI and ensures predictable adapter names when multiple adapters are tested sequentially.
+
+### `--validation_adapter_strength`
+
+- **What**: Strength multiplier applied when enabling the temporary adapter (defaults to `1.0`).
+- **Why**: Lets you sweep lighter/heavier LoRA scaling during validation without altering training state; accepts any value greater than zero.
+
+### `--validation_adapter_mode`
+
+- **Choices**: `adapter_only`, `comparison`, `none`
+- **What**:
+  - `adapter_only`: run validations only with the temporary adapter attached.
+  - `comparison`: generate both base-model and adapter-enabled samples for side-by-side review.
+  - `none`: skip attaching the adapter (useful for disabling the feature without deleting CLI flags).
+
+### `--validation_adapter_config`
+
+- **What**: JSON file or inline JSON that describes multiple validation adapter combinations to iterate over.
+- **Format**: Either an array of entries or an object with a `runs` array. Each entry may include:
+  - `label`: Friendly name shown in logs/UI.
+  - `path`: Hugging Face repo ID or local path (same formats as `--validation_adapter_path`).
+  - `adapter_name`: Optional identifier per adapter.
+  - `strength`: Optional scalar override.
+  - `adapters`/`paths`: Array of objects/strings to load multiple adapters in a single run.
+- **Notes**:
+  - When provided, the single-adapter options (`--validation_adapter_path`, `--validation_adapter_name`, `--validation_adapter_strength`, `--validation_adapter_mode`) are ignored/disabled in the UI.
+  - Each run is loaded one at a time and fully detached before the next run begins.
+
 ### `--evaluation_type`
 
 - **What**: Enable CLIP evaluation of generated images during validations.

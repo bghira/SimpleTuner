@@ -5,12 +5,13 @@ import torch
 
 try:
     from diffusers.hooks import apply_group_offloading
-    from diffusers.hooks.group_offloading import _is_group_offload_enabled
+    from diffusers.hooks.group_offloading import _is_group_offload_enabled, _maybe_remove_and_reapply_group_offloading
 
     _DIFFUSERS_GROUP_OFFLOAD_AVAILABLE = True
 except ImportError:  # pragma: no cover - handled by runtime checks
     apply_group_offloading = None  # type: ignore[assignment]
     _is_group_offload_enabled = None  # type: ignore[assignment]
+    _maybe_remove_and_reapply_group_offloading = None  # type: ignore[assignment]
     _DIFFUSERS_GROUP_OFFLOAD_AVAILABLE = False
 
 
@@ -103,3 +104,33 @@ def enable_group_offload_on_components(
                 offload_device=offload_device,
                 **kwargs,
             )
+
+
+def unpack_offload_state(offload_state):
+    """
+    Normalize the value returned by diffusers' _optionally_disable_offloading helper.
+    """
+
+    if isinstance(offload_state, tuple):
+        padded = list(offload_state) + [False] * (3 - len(offload_state))
+        return bool(padded[0]), bool(padded[1]), bool(padded[2])
+
+    return bool(offload_state), False, False
+
+
+def restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload):
+    """
+    Re-apply the appropriate offloading hooks depending on prior state.
+    """
+
+    if _pipeline is None:
+        return
+
+    if is_model_cpu_offload and hasattr(_pipeline, "enable_model_cpu_offload"):
+        _pipeline.enable_model_cpu_offload()
+    elif is_sequential_cpu_offload and hasattr(_pipeline, "enable_sequential_cpu_offload"):
+        _pipeline.enable_sequential_cpu_offload()
+    elif is_group_offload and _maybe_remove_and_reapply_group_offloading and hasattr(_pipeline, "components"):
+        for component in _pipeline.components.values():
+            if isinstance(component, torch.nn.Module):
+                _maybe_remove_and_reapply_group_offloading(component)

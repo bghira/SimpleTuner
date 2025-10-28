@@ -151,6 +151,8 @@ class ModelFoundation(ABC):
     MAXIMUM_CANVAS_SIZE = None
     SUPPORTS_LORA = None
     SUPPORTS_CONTROLNET = None
+    STRICT_I2V_FLAVOURS = tuple()
+    STRICT_I2V_FOR_ALL_FLAVOURS = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -179,6 +181,49 @@ class ModelFoundation(ABC):
         """
         if cls.SUPPORTS_CONTROLNET is not None:
             return bool(cls.SUPPORTS_CONTROLNET)
+        return False
+
+    @classmethod
+    def strict_i2v_flavours(cls):
+        """
+        Return flavour identifiers that require strict image-to-video validation inputs.
+        """
+        flavours = getattr(cls, "STRICT_I2V_FLAVOURS", tuple())
+        if not flavours:
+            return []
+        if isinstance(flavours, (list, tuple, set, frozenset)):
+            result = []
+            for entry in flavours:
+                try:
+                    value = str(entry).strip()
+                except Exception:
+                    continue
+                if value:
+                    result.append(value)
+            return list(dict.fromkeys(result))
+        if isinstance(flavours, str):
+            trimmed = flavours.strip()
+            return [trimmed] if trimmed else []
+        return []
+
+    @classmethod
+    def is_strict_i2v_flavour(cls, flavour) -> bool:
+        """
+        Determine whether the provided flavour requires strict image-to-video validation inputs.
+        """
+        if getattr(cls, "STRICT_I2V_FOR_ALL_FLAVOURS", False):
+            return True
+        if not flavour:
+            return False
+        try:
+            candidate = str(flavour).strip().lower()
+        except Exception:
+            return False
+        if not candidate:
+            return False
+        for entry in cls.strict_i2v_flavours():
+            if entry.strip().lower() == candidate:
+                return True
         return False
 
     def log_model_devices(self):

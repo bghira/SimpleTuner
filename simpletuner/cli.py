@@ -617,6 +617,7 @@ def cmd_server(args) -> int:
     # Ensure a configuration directory exists and record it for downstream services
     config_dir = get_config_directory()
     os.environ.setdefault("SIMPLETUNER_CONFIG_DIR", str(config_dir))
+    os.environ.setdefault("SIMPLETUNER_SERVER_ROOT_PID", str(os.getpid()))
 
     try:
         import uvicorn

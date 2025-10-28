@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 
 # Use the lazy wrapper for field registry
+from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry as field_registry
 
 logger = logging.getLogger(__name__)
@@ -148,10 +149,7 @@ if os.getenv("DEBUG_MODE", "false").lower() == "true":
     @router.get("/model-family", response_class=HTMLResponse)
     async def debug_model_family(request: Request):
         """Debug model_family field specifically."""
-        try:
-            from simpletuner.helpers.models.all import model_families
-        except ImportError:
-            model_families = {}
+        model_families = ModelRegistry.model_families()
 
         try:
             # Get basic tab fields

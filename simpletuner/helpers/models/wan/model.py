@@ -316,6 +316,7 @@ class Wan(VideoModelFoundation):
             "ti2v-5b-2.2",
         }
     )
+    STRICT_I2V_FLAVOURS = tuple(sorted((I2V_FLAVOURS | FLF2V_FLAVOURS)))
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
@@ -323,6 +324,7 @@ class Wan(VideoModelFoundation):
         self._conditioning_image_embedder = None
         self._wan_logged_missing_img_encoder = False
         self._wan_vae_patch_lock = threading.Lock()
+        self._wan_warned_missing_i2v_conditioning = False
         if not hasattr(self.config, "wan_force_2_1_time_embedding"):
             self.config.wan_force_2_1_time_embedding = False
         self._wan_expand_timesteps = False
@@ -534,13 +536,25 @@ class Wan(VideoModelFoundation):
         return super().encode_with_vae(vae, patched_samples)
 
     def _apply_i2v_conditioning_to_kwargs(self, prepared_batch, transformer_kwargs):
-        if not self._is_i2v_like_flavour():
+        is_i2v_batch = bool(prepared_batch.get("is_i2v_data", False))
+        if not (self._is_i2v_like_flavour() or is_i2v_batch):
             return
         first_frame, last_frame = self._extract_conditioning_frames(prepared_batch)
-        if first_frame is None or transformer_kwargs.get("hidden_states") is None:
+        if first_frame is None:
+            if is_i2v_batch and not getattr(self, "_wan_warned_missing_i2v_conditioning", False) and should_log():
+                logger.warning(
+                    "Wan I2V conditioning data was requested but no conditioning frames were provided. "
+                    "Ensure your dataset supplies conditioning images when training I2V flavours."
+                )
+                self._wan_warned_missing_i2v_conditioning = True
+            return
+        elif getattr(self, "_wan_warned_missing_i2v_conditioning", False):
+            self._wan_warned_missing_i2v_conditioning = False
+
+        latent_tensor = transformer_kwargs.get("hidden_states")
+        if latent_tensor is None:
             return
 
-        latent_tensor = transformer_kwargs["hidden_states"]
         latent_device = latent_tensor.device
         latent_dtype = latent_tensor.dtype
 

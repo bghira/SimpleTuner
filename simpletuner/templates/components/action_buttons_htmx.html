@@ -88,6 +88,48 @@
                 </span>
             </span>
         </button>
+
+        <!-- Shutdown Button -->
+        <button type="button"
+                class="trainer-action-btn btn {{ btn_size }}btn-outline-danger ms-2"
+                id="shutdownBtn"
+                title="Shut down SimpleTuner"
+                data-bs-toggle="modal"
+                data-bs-target="#shutdownConfirmModal">
+            <i class="fas fa-power-off me-1"></i>
+            <span class="btn-text">Shutdown</span>
+        </button>
+    </div>
+</div>
+
+<!-- Shutdown confirmation modal -->
+<div class="modal fade shutdown-confirm-modal" id="shutdownConfirmModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="d-flex align-items-center">
+                    <div class="shutdown-icon me-3">
+                        <i class="fas fa-power-off"></i>
+                    </div>
+                    <div>
+                        <h5 class="modal-title mb-1">Confirm Shutdown</h5>
+                        <small class="text-muted">This will terminate the SimpleTuner process.</small>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-2 fw-semibold text-danger">Do you really want to shut down?</p>
+                <p class="mb-0 text-muted">All running jobs and services will stop. You can restart SimpleTuner later from your terminal.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="confirmShutdownBtn">
+                    <span class="shutdown-btn-label">Shutdown</span>
+                    <span class="spinner-border spinner-border-sm ms-2 d-none" role="status" aria-hidden="true"></span>
+                </button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -111,6 +153,83 @@
 /* Smooth transitions */
 .action-buttons button {
     transition: all 0.2s ease;
+}
+
+/* Shutdown modal styling */
+.shutdown-confirm-modal .modal-content {
+    border: none;
+    border-radius: 0.85rem;
+    overflow: hidden;
+    box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.25);
+    background-color: #101016;
+}
+
+.shutdown-confirm-modal {
+    padding: 1.5rem;
+    z-index: 15000;
+}
+
+.shutdown-confirm-modal.show {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+}
+
+.shutdown-confirm-modal .modal-dialog {
+    margin: 0 auto;
+    max-width: 520px;
+}
+
+.shutdown-confirm-modal .modal-header {
+    background: linear-gradient(120deg, #2b0f24, #241735);
+    color: #f8f9fa;
+    border: none;
+}
+
+.shutdown-confirm-modal .modal-body {
+    background-color: #15151c;
+    color: #f0f1f5;
+}
+
+.shutdown-confirm-modal .modal-footer {
+    background-color: #13131a;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.shutdown-confirm-modal .shutdown-icon {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    color: #ff6b81;
+    box-shadow: inset 0 0 12px rgba(255, 107, 129, 0.35);
+}
+
+.shutdown-confirm-modal .btn-outline-secondary {
+    color: #f6f6fa;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.shutdown-confirm-modal .btn-outline-secondary:hover {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.shutdown-confirm-modal .btn-danger {
+    border: none;
+    background: linear-gradient(120deg, #b31217, #e52d27);
+    box-shadow: 0 1rem 1.75rem rgba(229, 45, 39, 0.35);
+}
+
+.shutdown-confirm-modal .btn-danger:hover,
+.shutdown-confirm-modal .btn-danger:focus {
+    background: linear-gradient(120deg, #d91d2d, #ff4e50);
+    color: #fff;
 }
 
 /* Loading state for buttons */
@@ -150,6 +269,180 @@ if (!window.__trainerActionHTMXBound) {
     window.__trainerActionHTMXBound = true;
 
     const TRAINER_BUTTON_IDS = new Set(['validateBtn', 'runBtn', 'cancelBtn']);
+    const shutdownState = {
+        requestInFlight: false,
+        initiated: false,
+        buttonRef: null,
+    };
+
+    function ensureShutdownModalPlacement() {
+        const modalEl = document.getElementById('shutdownConfirmModal');
+        if (!modalEl) {
+            return;
+        }
+        if (modalEl.dataset.shutdownModalRoot === '1') {
+            return;
+        }
+        if (modalEl.parentElement !== document.body) {
+            document.body.appendChild(modalEl);
+        }
+        modalEl.dataset.shutdownModalRoot = '1';
+    }
+
+    ensureShutdownModalPlacement();
+    document.addEventListener('htmx:afterSwap', ensureShutdownModalPlacement);
+
+    function setShutdownLoading(isLoading) {
+        const confirmBtn = document.getElementById('confirmShutdownBtn');
+        if (!confirmBtn) {
+            return;
+        }
+        const spinner = confirmBtn.querySelector('.spinner-border');
+        const label = confirmBtn.querySelector('.shutdown-btn-label');
+        confirmBtn.disabled = isLoading || shutdownState.initiated;
+        if (spinner) {
+            spinner.classList.toggle('d-none', !isLoading);
+        }
+        if (label) {
+            label.textContent = isLoading ? 'Shutting down...' : 'Shutdown';
+        }
+    }
+
+    function hideShutdownModal() {
+        const modalEl = document.getElementById('shutdownConfirmModal');
+        if (!modalEl) {
+            return;
+        }
+        if (window.bootstrap?.Modal) {
+            let modal = window.bootstrap.Modal.getInstance(modalEl);
+            if (!modal) {
+                modal = new window.bootstrap.Modal(modalEl);
+            }
+            modal.hide();
+        }
+        modalEl.classList.remove('show');
+        modalEl.setAttribute('aria-hidden', 'true');
+        modalEl.style.removeProperty('display');
+    }
+
+    function updateShutdownButtonState({ disabled, label, title } = {}) {
+        const shutdownBtn = document.getElementById('shutdownBtn') || shutdownState.buttonRef;
+        if (!shutdownBtn) {
+            return;
+        }
+        shutdownState.buttonRef = shutdownBtn;
+        if (typeof disabled === 'boolean') {
+            shutdownBtn.disabled = disabled;
+            shutdownBtn.classList.toggle('disabled', disabled);
+            if (disabled) {
+                shutdownBtn.setAttribute('aria-disabled', 'true');
+            } else {
+                shutdownBtn.removeAttribute('aria-disabled');
+            }
+        }
+        if (typeof title === 'string') {
+            shutdownBtn.title = title;
+        } else if (title === null) {
+            shutdownBtn.removeAttribute('title');
+        }
+    }
+
+    function disableShutdownButton() {
+        updateShutdownButtonState({
+            disabled: true,
+            title: 'Shutdown already requested',
+        });
+    }
+
+    function enableShutdownButton() {
+        shutdownState.initiated = false;
+        shutdownState.requestInFlight = false;
+        setShutdownLoading(false);
+        updateShutdownButtonState({
+            disabled: false,
+            title: 'Shut down SimpleTuner',
+        });
+    }
+
+    async function submitShutdownRequest() {
+        if (shutdownState.requestInFlight || shutdownState.initiated) {
+            return;
+        }
+        shutdownState.requestInFlight = true;
+        setShutdownLoading(true);
+
+        try {
+            const response = await fetch('/api/system/shutdown', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'same-origin',
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (error) {
+                payload = {};
+            }
+
+            if (!response.ok) {
+                const detail = payload?.detail || payload?.message || `Shutdown failed (status ${response.status})`;
+                window.showToast?.(detail, 'error');
+                return;
+            }
+
+            shutdownState.initiated = true;
+            disableShutdownButton();
+            hideShutdownModal();
+
+            const message = payload?.message || 'SimpleTuner is shutting down. You can close this tab.';
+            if (window.showToast) {
+                window.showToast(message, 'warning');
+            }
+        } catch (error) {
+            console.error('Shutdown request failed', error);
+            window.showToast?.('Failed to reach the shutdown endpoint. Check your server logs.', 'error');
+        } finally {
+            shutdownState.requestInFlight = false;
+            setShutdownLoading(false);
+        }
+    }
+
+    document.addEventListener('click', function(evt) {
+        const confirmBtn = evt.target.closest('#confirmShutdownBtn');
+        if (!confirmBtn) {
+            return;
+        }
+        evt.preventDefault();
+        submitShutdownRequest();
+    });
+
+    function maybeEnableShutdownButton() {
+        if (!shutdownState.initiated && !shutdownState.requestInFlight) {
+            enableShutdownButton();
+        }
+    }
+
+    window.addEventListener('serverConfigReady', maybeEnableShutdownButton);
+
+    if (window.ServerConfig && window.ServerConfig.isReady) {
+        // ServerConfig already initialised before this component loaded; re-enable immediately.
+        maybeEnableShutdownButton();
+    }
+
+    window.addEventListener('trainer-connection-status', function(evt) {
+        const status = evt?.detail?.status;
+        if (status === 'connected') {
+            enableShutdownButton();
+        } else if (status === 'disconnected' || status === 'reconnecting') {
+            updateShutdownButtonState({
+                disabled: true,
+                title: status === 'reconnecting' ? 'Shutdown paused while reconnecting to API' : 'API offline; shutdown unavailable',
+            });
+        }
+    });
 
     window.__handleTrainerRunAfterRequest = function(button, evt) {
         const detail = evt?.detail || {};

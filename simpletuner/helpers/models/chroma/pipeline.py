@@ -45,6 +45,7 @@ from huggingface_hub.utils import validate_hf_hub_args
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, T5EncoderModel, T5TokenizerFast
 
 from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
+from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -423,7 +424,12 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
             # otherwise loading LoRA weights will lead to an error
-            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+            offload_state = cls._optionally_disable_offloading(_pipeline)
+            (
+                is_model_cpu_offload,
+                is_sequential_cpu_offload,
+                is_group_offload,
+            ) = unpack_offload_state(offload_state)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
@@ -447,7 +453,8 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
             if warn_msg:
                 logger.warning(warn_msg)
 
-            cls._optionally_enable_offloading(is_model_cpu_offload, is_sequential_cpu_offload, _pipeline)
+            # Offload back.
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
 
     @classmethod
     def load_lora_into_transformer(
@@ -527,7 +534,12 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
 
             # In case the pipeline has been already offloaded to CPU - temporarily remove the hooks
             # otherwise loading LoRA weights will lead to an error
-            is_model_cpu_offload, is_sequential_cpu_offload = cls._optionally_disable_offloading(_pipeline)
+            offload_state = cls._optionally_disable_offloading(_pipeline)
+            (
+                is_model_cpu_offload,
+                is_sequential_cpu_offload,
+                is_group_offload,
+            ) = unpack_offload_state(offload_state)
 
             peft_kwargs = {}
             if is_peft_version(">=", "0.13.1"):
@@ -551,7 +563,8 @@ class ChromaLoraLoaderMixin(LoraBaseMixin):
             if warn_msg:
                 logger.warning(warn_msg)
 
-            cls._optionally_enable_offloading(is_model_cpu_offload, is_sequential_cpu_offload, _pipeline)
+            # Offload back.
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
 
     # Copied from diffusers.loaders.lora_pipeline.StableDiffusionLoraLoaderMixin.load_lora_into_text_encoder
     def load_lora_into_text_encoder(
@@ -828,19 +841,23 @@ class ChromaPipeline(
             return_tensors="pt",
         )
         text_input_ids = text_inputs.input_ids
-        attention_mask = text_inputs.attention_mask.clone()
+        tokenizer_mask = text_inputs.attention_mask
+        tokenizer_mask_device = tokenizer_mask.to(device)
 
-        seq_lengths = attention_mask.sum(dim=1)
-        mask_indices = torch.arange(attention_mask.size(1)).unsqueeze(0).expand(batch_size, -1)
-        attention_mask = (mask_indices <= seq_lengths.unsqueeze(1)).bool()
-
+        # unlike Flux, Chroma uses the tokenizer's attention mask when generating the T5 embeddings
         prompt_embeds = self.text_encoder(
-            text_input_ids.to(device), output_hidden_states=False, attention_mask=attention_mask.to(device)
+            text_input_ids.to(device),
+            output_hidden_states=False,
+            attention_mask=tokenizer_mask_device,
         )[0]
 
         dtype = self.text_encoder.dtype
         prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
-        attention_mask = attention_mask.to(device=device)
+
+        # for the text tokens, Chroma requires that all except the first padding token are masked out
+        seq_lengths = tokenizer_mask_device.sum(dim=1)
+        mask_indices = torch.arange(tokenizer_mask_device.size(1), device=device).unsqueeze(0).expand(batch_size, -1)
+        attention_mask = (mask_indices <= seq_lengths.unsqueeze(1)).to(dtype=dtype, device=device)
 
         _, seq_len, _ = prompt_embeds.shape
 
@@ -1141,7 +1158,15 @@ class ChromaPipeline(
             return attention_mask
 
         attention_mask = torch.cat(
-            [attention_mask, torch.ones(batch_size, sequence_length, device=attention_mask.device, dtype=torch.bool)],
+            [
+                attention_mask,
+                torch.ones(
+                    batch_size,
+                    sequence_length,
+                    device=attention_mask.device,
+                    dtype=attention_mask.dtype,
+                ),
+            ],
             dim=1,
         )
 

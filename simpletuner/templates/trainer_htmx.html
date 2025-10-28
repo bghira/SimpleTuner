@@ -314,6 +314,9 @@ function trainerComponent() {
             requiresConditioningImageEmbeds: false,
             requiresConditioningValidationInputs: false,
             requiresValidationEditCaptions: false,
+            requiresValidationI2VSamples: false,
+            requiresStrictI2VDatasets: false,
+            strictI2VFlavours: [],
             supportsConditioningGenerators: false,
             hasControlnetPipeline: false,
             modelFlavour: null,
@@ -758,6 +761,34 @@ function trainerComponent() {
             const videoCapabilities = this.detectVideoCapabilities(info, config, metadata, this.modelDetails);
             context.isVideoModel = videoCapabilities.isVideoModel;
             context.supportsVideo = videoCapabilities.supportsVideo;
+            console.debug(
+                '[ModelContext] video capability evaluation',
+                {
+                    family: info.modelFamily,
+                    flavour: info.modelFlavour,
+                    rawCapabilities: this.modelDetails?.capabilities,
+                    resolvedVideo: videoCapabilities,
+                },
+            );
+            const strictI2VInfo = this.evaluateStrictI2VModel(
+                this.modelDetails?.capabilities,
+                info.modelFlavour,
+                info.modelFamily,
+                videoCapabilities,
+            );
+            console.debug(
+                '[ModelContext] strict I2V evaluation',
+                {
+                    family: info.modelFamily,
+                    flavour: info.modelFlavour,
+                    capabilities: this.modelDetails?.capabilities,
+                    videoCapabilities,
+                    strictInfo: strictI2VInfo,
+                },
+            );
+            context.requiresStrictI2VDatasets = strictI2VInfo.requiresStrictI2V;
+            context.strictI2VFlavours = strictI2VInfo.strictFlavours;
+            context.strictI2VActive = strictI2VInfo.active;
 
             const requirementPayload = this.buildModelRequirementPayload(info, config, metadata);
             if (requirementPayload) {
@@ -794,7 +825,6 @@ function trainerComponent() {
                     }
                 }
             }
-
             context.supportsConditioningGenerators = Boolean(
                 context.supportsConditioningGenerators
                 || context.controlnetEnabled
@@ -803,6 +833,13 @@ function trainerComponent() {
             );
 
             this.modelContext = { ...this.defaultModelContext(), ...context };
+            try {
+                window.dispatchEvent(new CustomEvent('trainer-model-context-updated', {
+                    detail: this.modelContext,
+                }));
+            } catch (error) {
+                console.debug('Failed to dispatch model context event', error);
+            }
         },
         defaultModelContext() {
             return {
@@ -812,6 +849,9 @@ function trainerComponent() {
                 requiresConditioningValidationInputs: false,
                 requiresValidationEditCaptions: false,
                 requiresValidationI2VSamples: false,
+                requiresStrictI2VDatasets: false,
+                strictI2VActive: false,
+                strictI2VFlavours: [],
                 conditioningDatasetType: 'conditioning',
                 supportsConditioningGenerators: false,
                 hasControlnetPipeline: false,
@@ -948,9 +988,38 @@ function trainerComponent() {
             const family = typeof info?.modelFamily === 'string' ? info.modelFamily.toLowerCase() : '';
             const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
             const isVideoFamily = knownVideoFamilies.has(family);
-            const isVideoModel = Boolean(hasVideoFlag || isVideoType || isVideoFamily);
-            const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) || isVideoModel);
+            const isVideoModel = Boolean((hasVideoFlag || isVideoType || isVideoFamily) && isVideoFamily);
+            const supportsVideo = Boolean(this.normalizeBoolean(capabilities.supports_video) && isVideoFamily);
             return { isVideoModel, supportsVideo };
+        },
+        evaluateStrictI2VModel(capabilities, modelFlavour, modelFamily = null, videoCapabilities = null) {
+            const result = {
+                requiresStrictI2V: false,
+                strictFlavours: [],
+                active: false,
+            };
+            if (!capabilities || typeof capabilities !== 'object') {
+                return result;
+            }
+            const familyKey = typeof modelFamily === 'string' ? modelFamily.trim().toLowerCase() : '';
+            const knownVideoFamilies = new Set(['wan', 'ltxvideo', 'cosmos2image']);
+            const isKnownVideoFamily = knownVideoFamilies.has(familyKey);
+            const strictFlavoursRaw = Array.isArray(capabilities.strict_i2v_flavours)
+                ? capabilities.strict_i2v_flavours
+                : [];
+            const strictFlavours = strictFlavoursRaw
+                .map((value) => (typeof value === 'string' ? value.trim() : ''))
+                .filter((value, index, arr) => value && arr.indexOf(value) === index);
+            const strictForAll = this.normalizeBoolean(capabilities.strict_i2v_all_flavours);
+            const flavourKey = typeof modelFlavour === 'string' ? modelFlavour.trim().toLowerCase() : '';
+            const matchesFlavour = flavourKey
+                ? strictFlavours.some((entry) => entry.toLowerCase() === flavourKey)
+                : false;
+            result.strictFlavours = strictFlavours;
+            const requires = Boolean(strictForAll || matchesFlavour);
+            result.requiresStrictI2V = requires && isKnownVideoFamily;
+            result.active = result.requiresStrictI2V && isKnownVideoFamily;
+            return result;
         },
         cloneConfigForPayload(source) {
             if (!source || typeof source !== 'object') {
@@ -2005,9 +2074,12 @@ function trainerComponent() {
             const sanitized = this.prepareDatasetsForSave();
             this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
         },
-        markDatasetsDirty() {
+        markDatasetsDirty(options = {}) {
+            const { refresh = true } = options || {};
             this.hasUnsavedChanges = true;
-            this.refreshDatasetsJson();
+            if (refresh && this.dataLoaderMode !== 'json') {
+                this.refreshDatasetsJson();
+            }
         },
         async loadCaptionFilters(force = false) {
             if (!force && Array.isArray(this.captionFilters) && this.captionFilters.length > 0) {
