@@ -1,0 +1,149 @@
+<div class="col-12 col-md-6 d-flex">
+        <div class="dataset-section flex-fill">
+            <div class="dataset-section-header d-flex align-items-center">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                        @click="toggleSectionCollapsed(dataset, 'captions')"
+                        :aria-expanded="sectionIsCollapsed(dataset, 'captions') ? 'false' : 'true'"
+                        :aria-controls="`dataset-captions-${datasetSafeId(dataset)}`">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+                <span>Captions &amp; Metadata</span>
+            </div>
+            <div class="dataset-section-body"
+                 :id="`dataset-captions-${datasetSafeId(dataset)}`"
+                 x-show="sectionIsExpanded(dataset, 'captions')"
+                 x-transition
+                 x-cloak>
+                <div class="dataset-subgroup">
+                    <div class="dataset-subgroup-title">Caption &amp; Metadata Strategy</div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Caption Strategy</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="dataset.caption_strategy"
+                                    @change="markAsUnsaved()">
+                                <option value="textfile">Text files (.txt)</option>
+                                <option value="csv">CSV</option>
+                                <option value="parquet">Parquet</option>
+                                <option value="jsonl">JSON Lines</option>
+                                <option value="instanceprompt">Instance prompt only</option>
+                                <option value="">Use dataset default</option>
+                            </select>
+                            <div class="form-text">How captions are stored and loaded.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Metadata Backend</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="dataset.metadata_backend"
+                                    @change="markAsUnsaved()">
+                                <option value="">Auto discover (default)</option>
+                                <option value="discovery">Discovery scan</option>
+                                <option value="json">JSON manifest</option>
+                                <option value="parquet">Parquet index</option>
+                                <option value="csv">CSV index</option>
+                                <option value="huggingface">Hugging Face dataset</option>
+                            </select>
+                            <div class="form-text">How file metadata is indexed and accessed.</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="dataset-subgroup mt-3"
+                     x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+                    <div class="dataset-subgroup-title">Trigger Words</div>
+                    <div x-effect="if (dataset.caption_strategy === 'instanceprompt' && dataset.prepend_instance_prompt) { dataset.prepend_instance_prompt = false; markAsUnsaved(); }"></div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Instance Prompt</label>
+                            <textarea class="form-control form-control-sm"
+                                      rows="2"
+                                      x-model="dataset.instance_prompt"
+                                      @input="markAsUnsaved()"
+                                      :placeholder="dataset.caption_strategy === 'instanceprompt' ? 'Prompt content applied to every sample' : 'Optional prompt prepended when enabled'"
+                                      :disabled="dataset.caption_strategy !== 'instanceprompt' && !dataset.prepend_instance_prompt"></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check mt-3">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       :id="`dataset-prepend-${datasetSafeId(dataset)}`"
+                                       x-model="dataset.prepend_instance_prompt"
+                                       @change="markAsUnsaved()"
+                                       :disabled="dataset.caption_strategy === 'instanceprompt'">
+                                <label class="form-check-label" :for="`dataset-prepend-${datasetSafeId(dataset)}`">
+                                    Prepend instance prompt to captions
+                                </label>
+                            </div>
+                            <p class="form-text" x-show="dataset.caption_strategy !== 'instanceprompt'">
+                                Enable to inject the instance prompt ahead of each caption when captions are present.
+                            </p>
+                            <p class="form-text" x-show="dataset.caption_strategy === 'instanceprompt'">
+                                Instance prompt mode always uses this text without additional captions.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                <div class="dataset-subgroup mt-3"
+                     x-show="dataset.caption_strategy === 'parquet' || dataset.metadata_backend === 'parquet'">
+                    <div class="dataset-subgroup-title">Parquet Details</div>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Parquet Path</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model="dataset.parquet.path"
+                                   @input="markAsUnsaved()"
+                                   placeholder="/path/to/file.parquet">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Filename Column</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model="dataset.parquet.filename_column"
+                                   @input="markAsUnsaved()"
+                                   placeholder="id">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Caption Column</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model="dataset.parquet.caption_column"
+                                   @input="markAsUnsaved()"
+                                   placeholder="caption">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Fallback Caption Column</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model="dataset.parquet.fallback_caption_column"
+                                   @input="markAsUnsaved()"
+                                   placeholder="tags">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Width Column</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model="dataset.parquet.width_column"
+                                   @input="markAsUnsaved()"
+                                   placeholder="width">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Height Column</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model="dataset.parquet.height_column"
+                                   @input="markAsUnsaved()"
+                                   placeholder="height">
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check mt-2">
+                                <input class="form-check-input"
+                                       type="checkbox"
+                                       :id="`dataset-parquet-ext-${datasetSafeId(dataset)}`"
+                                       x-model="dataset.parquet.identifier_includes_extension"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label" :for="`dataset-parquet-ext-${datasetSafeId(dataset)}`">
+                                    Identifier includes extension
+                                </label>
+                                <div class="form-text">Assumes filenames already include their extension (recommended).</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>

@@ -130,12 +130,6 @@ class Cosmos2Image(VideoModelFoundation):
 
         return prompt_embeds
 
-    def get_group_offload_components(self, pipeline):
-        components = dict(super().get_group_offload_components(pipeline))
-        if "transformer" not in components and getattr(self, "model", None) is not None:
-            components["transformer"] = self.unwrap_model(self.model)
-        return components
-
     def pre_vae_encode_transform_sample(self, sample):
         """
         We have to boost the thing from image to video w/ single frame.

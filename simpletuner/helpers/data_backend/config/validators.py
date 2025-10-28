@@ -3,6 +3,7 @@
 import os
 from typing import Any, Dict, List, Optional, Union
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -42,8 +43,10 @@ def validate_crop_style(crop_style: str, backend_id: str = "") -> None:
 
 
 def validate_dataset_type(dataset_type: str, valid_types: List[str], backend_id: str) -> None:
-    if dataset_type not in valid_types:
-        raise ValueError(f"(id={backend_id}) dataset_type must be one of {valid_types}.")
+    normalized_type = ensure_dataset_type(dataset_type)
+    normalized_valid = [ensure_dataset_type(value) for value in valid_types]
+    if normalized_type not in normalized_valid:
+        raise ValueError(f"(id={backend_id}) dataset_type must be one of {[value.value for value in normalized_valid]}.")
 
 
 def validate_resolution_type(resolution_type: str, backend_id: str) -> None:
@@ -164,8 +167,11 @@ def validate_backend_id(backend_id: str) -> None:
         raise ValueError("Backend configuration must have a non-empty 'id' field.")
 
 
-def check_for_caption_filter_list_misuse(dataset_type: str, has_caption_filter_list: bool, backend_id: str) -> None:
-    if has_caption_filter_list and dataset_type != "text_embeds":
+def check_for_caption_filter_list_misuse(
+    dataset_type: Union[str, DatasetType], has_caption_filter_list: bool, backend_id: str
+) -> None:
+    normalized = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+    if has_caption_filter_list and normalized is not DatasetType.TEXT_EMBEDS:
         raise ValueError(
-            f"caption_filter_list is only a valid setting for text datasets. It is currently set for the {dataset_type} dataset {backend_id}."
+            f"caption_filter_list is only a valid setting for text datasets. It is currently set for the {normalized.value} dataset {backend_id}."
         )

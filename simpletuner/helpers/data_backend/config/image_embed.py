@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+
 from . import validators
 from .base import BaseBackendConfig
 
@@ -11,7 +13,7 @@ from .base import BaseBackendConfig
 class ImageEmbedBackendConfig(BaseBackendConfig):
 
     def __post_init__(self):
-        self.dataset_type = "image_embeds"
+        self.dataset_type = DatasetType.IMAGE_EMBEDS
         super().__post_init__()
 
     @classmethod
@@ -19,7 +21,7 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
-            dataset_type="image_embeds",
+            dataset_type=DatasetType.IMAGE_EMBEDS,
             disabled=backend_dict.get("disabled", backend_dict.get("disable", False)),
         )
 
@@ -43,11 +45,15 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
 
-        validators.validate_dataset_type(self.dataset_type, ["image_embeds"], self.id)
+        validators.validate_dataset_type(
+            self.dataset_type,
+            [DatasetType.IMAGE_EMBEDS, DatasetType.CONDITIONING_IMAGE_EMBEDS],
+            self.id,
+        )
 
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {"id": self.id, "dataset_type": "image_embeds", "config": {}}
+        result = {"id": self.id, "dataset_type": DatasetType.IMAGE_EMBEDS.value, "config": {}}
 
         return result

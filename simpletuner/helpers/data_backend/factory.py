@@ -71,20 +71,34 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.bucket_report import BucketReport
+from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
+from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
+from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.requirements import (
+    EMPTY_PROFILE,
+    DistillerRequirementProfile,
+    RequirementEvaluation,
+    describe_requirement_groups,
+    evaluate_requirement_profile,
+)
+from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
 from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
+from simpletuner.helpers.training.caption_collate import collate_caption_batch
 from simpletuner.helpers.training.collate import collate_fn
 from simpletuner.helpers.training.default_settings import default, latest_config_version
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
@@ -135,6 +149,29 @@ def _log_with_state(level: str, message: str) -> None:
 
     if should_log:
         getattr(logger, level)(message)
+
+
+def _backend_dataset_type(backend: Dict[str, Any], *, default: DatasetType = DatasetType.IMAGE) -> DatasetType:
+    """Extract the dataset type enum from a backend declaration."""
+    return ensure_dataset_type(backend.get("dataset_type"), default=default)
+
+
+def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
+    """Return True when backend participates in the core training dataloader."""
+    primary_types = {
+        DatasetType.IMAGE,
+        DatasetType.CONDITIONING,
+        DatasetType.EVAL,
+        DatasetType.VIDEO,
+        DatasetType.CAPTION,
+    }
+    raw_type = backend.get("dataset_type")
+    if raw_type is None:
+        return backend.get("type") in {"local", "aws", "csv", "huggingface"}
+    try:
+        return ensure_dataset_type(raw_type, default=DatasetType.IMAGE) in primary_types
+    except ValueError:
+        return False
 
 
 def _synchronise_state_tracker(args: Any, accelerator: Any) -> Any:
@@ -215,17 +252,20 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
     else:
         logger.setLevel(logging.ERROR)
-    output = {"id": backend["id"], "config": {}}
-    if backend.get("dataset_type", None) == "text_embeds":
+    dataset_type = _backend_dataset_type(backend)
+    output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
+    if dataset_type is DatasetType.TEXT_EMBEDS:
         if "caption_filter_list" in backend:
             output["config"]["caption_filter_list"] = backend["caption_filter_list"]
-        output["dataset_type"] = "text_embeds"
 
         return output
-    elif backend.get("dataset_type", None) == "image_embeds":
+    elif dataset_type is DatasetType.IMAGE_EMBEDS:
         # no overrides for image embed backends
         return output
-    elif backend.get("dataset_type", None) == "conditioning_image_embeds":
+    elif dataset_type is DatasetType.CONDITIONING_IMAGE_EMBEDS:
+        return output
+    elif dataset_type is DatasetType.DISTILLATION_CACHE:
+        output["config"]["distillation_type"] = backend.get("distillation_type", "generic")
         return output
     else:
         if "caption_filter_list" in backend:
@@ -234,28 +274,33 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             )
 
     # Image backend config
-    output["dataset_type"] = backend.get("dataset_type", "image")
     bucket_report = BucketReport(dataset_id=output["id"], dataset_type=output["dataset_type"])
     output["bucket_report"] = bucket_report
     bucket_report.set_constraints(
         train_batch_size=_get_arg_value(args, "train_batch_size"),
         repeats=int(backend.get("repeats", 0) or 0),
     )
-    choices = ["image", "conditioning", "eval", "video"]
+    choices = [
+        DatasetType.IMAGE,
+        DatasetType.CONDITIONING,
+        DatasetType.EVAL,
+        DatasetType.VIDEO,
+        DatasetType.CAPTION,
+    ]
     controlnet_enabled = getattr(StateTracker.get_args(), "controlnet", False)
     if not isinstance(controlnet_enabled, bool):
         controlnet_enabled = False
     if (
         controlnet_enabled
-        and output["dataset_type"] == "image"
+        and dataset_type is DatasetType.IMAGE
         and (backend.get("conditioning_data", None) is None and backend.get("conditioning", None) is None)
     ):
         raise ValueError(
             f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
         )
 
-    if output["dataset_type"] not in choices:
-        raise ValueError(f"(id={backend['id']}) dataset_type must be one of {choices}.")
+    if dataset_type not in choices:
+        raise ValueError(f"(id={backend['id']}) dataset_type must be one of {[choice.value for choice in choices]}.")
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
     if "probability" in backend:
@@ -950,7 +995,16 @@ class FactoryRegistry:
     factory implementation.
     """
 
-    def __init__(self, args: Any, accelerator: Any, text_encoders: Any, tokenizers: Any, model: ModelFoundation) -> None:
+    def __init__(
+        self,
+        args: Any,
+        accelerator: Any,
+        text_encoders: Any,
+        tokenizers: Any,
+        model: ModelFoundation,
+        distiller_profile: Optional[DistillerRequirementProfile] = None,
+        distillation_method: Optional[str] = None,
+    ) -> None:
         """
         Initialize the factory registry with core components and performance tracking.
 
@@ -979,8 +1033,15 @@ class FactoryRegistry:
         self.text_embed_backends = {}
         self.image_embed_backends = {}
         self.conditioning_image_embed_backends = {}
+        self.caption_backends = {}
+        self.distillation_cache_backends = {}
         self.data_backends = {}
         self.default_text_embed_backend_id = None
+        self.distiller_requirement_profile: DistillerRequirementProfile = distiller_profile or EMPTY_PROFILE
+        self.distillation_method = (
+            distillation_method.lower() if isinstance(distillation_method, str) and distillation_method else None
+        )
+        self._distiller_requirement_result: Optional[RequirementEvaluation] = None
 
         self.start_time = time.time()
         self.metrics = {
@@ -991,6 +1052,8 @@ class FactoryRegistry:
                 "text_embeds": 0,
                 "image_embeds": 0,
                 "conditioning_image_embeds": 0,
+                "caption": 0,
+                "distillation_cache": 0,
                 "data_backends": 0,
             },
             "configuration_time": 0,
@@ -1061,6 +1124,49 @@ class FactoryRegistry:
         except (TypeError, ValueError):
             return False
 
+    def _evaluate_distiller_requirements(
+        self,
+        data_backend_config: List[Dict[str, Any]],
+    ) -> Optional[RequirementEvaluation]:
+        """Validate configured datasets against the active distiller profile."""
+        profile = self.distiller_requirement_profile
+        if not profile:
+            return None
+
+        active_entries = [
+            backend
+            for backend in data_backend_config
+            if not backend.get("disabled", False) and not backend.get("disable", False)
+        ]
+        result = evaluate_requirement_profile(profile, active_entries)
+        if not result.fulfilled:
+            missing_desc = describe_requirement_groups(result.missing_requirements)
+            provided = ", ".join(sorted({dataset_type.value for dataset_type in result.dataset_types}))
+            provided = provided or "no datasets"
+            method_label = (self.distillation_method or "distiller").replace("_", " ")
+            raise ValueError(
+                f"{method_label} requires datasets matching {missing_desc}, but configuration only provided {provided}."
+            )
+
+        self._distiller_requirement_result = result
+        return result
+
+    def _should_relax_primary_dataset_requirement(
+        self,
+        evaluation: Optional[RequirementEvaluation],
+    ) -> bool:
+        """Return True when generator-style distillers explicitly relax image/video requirements."""
+        if evaluation is None:
+            return False
+
+        profile = evaluation.profile
+        if not profile.is_data_generator:
+            return False
+
+        return not any(
+            profile.requires_dataset_type(dataset_type) for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO)
+        )
+
     def _finalize_metrics(self) -> None:
         """Finalize performance metrics."""
         self.metrics["initialization_time"] = time.time() - self.start_time
@@ -1085,12 +1191,7 @@ class FactoryRegistry:
         if len(data_backend_config) == 0:
             raise ValueError("Must provide at least one data backend in the data backend config file.")
 
-        self._declared_data_backends = sum(
-            1
-            for backend in data_backend_config
-            if backend.get("dataset_type") in {None, "image", "conditioning", "eval", "video"}
-            or (backend.get("dataset_type") is None and backend.get("type") in {"local", "aws", "csv", "huggingface"})
-        )
+        self._declared_data_backends = sum(1 for backend in data_backend_config if _is_primary_training_backend(backend))
 
         self._log_performance_metrics(
             "config_loaded",
@@ -1108,6 +1209,7 @@ class FactoryRegistry:
                 "datasets": data_backend_config,
                 "caption_dropout_probability": getattr(self.args, "caption_dropout_probability", 0.1),
                 "metadata_update_interval": getattr(self.args, "metadata_update_interval", 65),
+                "distillation_method": getattr(self.args, "distillation_method", None),
             }
             self._validate_with_config_registry(validation_config, model_family)
             self._log_performance_metrics("config_validated")
@@ -1329,7 +1431,7 @@ class FactoryRegistry:
         total_text_backends = sum(
             1
             for backend in data_backend_config
-            if backend.get("dataset_type") == "text_embeds"
+            if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
             and not backend.get("disabled", False)
             and not backend.get("disable", False)
         )
@@ -1350,8 +1452,7 @@ class FactoryRegistry:
         processed_text_backends = 0
 
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is None or dataset_type != "text_embeds":
+            if _backend_dataset_type(backend) is not DatasetType.TEXT_EMBEDS:
                 continue
 
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -1515,8 +1616,7 @@ class FactoryRegistry:
     def configure_image_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure image embedding backends."""
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is None or dataset_type not in ["image_embeds"]:
+            if _backend_dataset_type(backend) is not DatasetType.IMAGE_EMBEDS:
                 continue
 
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -1577,8 +1677,7 @@ class FactoryRegistry:
     def configure_conditioning_image_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure conditioning image embedding backends."""
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is None or dataset_type != "conditioning_image_embeds":
+            if _backend_dataset_type(backend) is not DatasetType.CONDITIONING_IMAGE_EMBEDS:
                 continue
 
             if backend.get("disabled", False) or backend.get("disable", False):
@@ -1621,6 +1720,59 @@ class FactoryRegistry:
 
         self.metrics["backend_counts"]["conditioning_image_embeds"] = len(self.conditioning_image_embed_backends)
 
+    def configure_distillation_cache_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """Configure distillation cache storage backends."""
+        for backend in data_backend_config:
+            if _backend_dataset_type(backend) is not DatasetType.DISTILLATION_CACHE:
+                continue
+
+            if backend.get("disabled", False) or backend.get("disable", False):
+                info_log(f"Skipping disabled distillation cache backend {backend['id']} in config file.")
+                continue
+
+            info_log(f"Configuring distillation cache backend: {backend['id']}")
+
+            config = create_backend_config(backend, vars(self.args))
+            config.validate(vars(self.args))
+
+            init_backend = init_backend_config(backend, self.args, self.accelerator)
+            existing_config = StateTracker.get_data_backend_config(init_backend["id"])
+            if existing_config is not None and existing_config != {}:
+                raise ValueError(f"You can only have one backend named {init_backend['id']}")
+            StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+
+            builder = create_backend_builder(backend["type"], self.accelerator, self.args)
+            init_backend["data_backend"] = builder.build(config)
+
+            cache_dir = backend.get("cache_dir")
+            if not cache_dir:
+                base_cache = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
+                cache_dir = os.path.join(base_cache, "distillation", init_backend["id"])
+            init_backend["cache_dir"] = cache_dir
+            init_backend["distillation_type"] = backend.get(
+                "distillation_type", init_backend["config"].get("distillation_type", "generic")
+            )
+
+            preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
+            if not preserve_data_backend_cache and self.accelerator.is_local_main_process:
+                StateTracker.delete_cache_files(
+                    data_backend_id=init_backend["id"],
+                    preserve_data_backend_cache=preserve_data_backend_cache,
+                )
+
+            init_backend["distillation_cache"] = DistillationCache(
+                id=init_backend["id"],
+                data_backend=init_backend["data_backend"],
+                cache_dir=cache_dir,
+                distillation_type=init_backend["distillation_type"],
+            )
+            init_backend["distillation_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
+
+            StateTracker.register_data_backend(init_backend)
+            self.distillation_cache_backends[init_backend["id"]] = init_backend
+
+        self.metrics["backend_counts"]["distillation_cache"] = len(self.distillation_cache_backends)
+
     def _prevalidate_backend_ids(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Validate that data backends provide unique, non-empty identifiers before configuration."""
         try:
@@ -1637,9 +1789,23 @@ class FactoryRegistry:
 
         seen_ids: set[str] = set()
 
+        allowed_types = {
+            DatasetType.IMAGE,
+            DatasetType.CONDITIONING,
+            DatasetType.EVAL,
+            DatasetType.VIDEO,
+            DatasetType.DISTILLATION_CACHE,
+            DatasetType.CAPTION,
+        }
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is not None and dataset_type not in ["image", "conditioning", "eval", "video"]:
+            raw_type = backend.get("dataset_type", None)
+            normalized_type: Optional[DatasetType] = None
+            if raw_type is not None:
+                try:
+                    normalized_type = ensure_dataset_type(raw_type)
+                except ValueError:
+                    continue
+            if normalized_type is not None and normalized_type not in allowed_types:
                 continue
             if backend.get("disabled", False) or backend.get("disable", False):
                 continue
@@ -1665,24 +1831,28 @@ class FactoryRegistry:
         text_embed_cache_dir_paths = [
             backend.get("cache_dir", self.args.cache_dir_text)
             for backend in data_backend_config
-            if backend.get("dataset_type") == "text_embeds"
+            if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
         ]
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         data_backend_count = 0
         total_data_backends_seen = 0
 
         for backend in data_backend_config:
-            dataset_type = backend.get("dataset_type", None)
-            if dataset_type is not None and dataset_type not in [
-                "image",
-                "conditioning",
-                "eval",
-                "video",
-            ]:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                info_log(f"Skipping disabled data backend {backend.get('id')} in config file.")
+                continue
+            dataset_type = _backend_dataset_type(backend)
+            if dataset_type not in {
+                DatasetType.IMAGE,
+                DatasetType.CONDITIONING,
+                DatasetType.EVAL,
+                DatasetType.VIDEO,
+                DatasetType.CAPTION,
+            }:
                 continue
             total_data_backends_seen += 1
-            if backend.get("disabled", False) or backend.get("disable", False):
-                info_log(f"Skipping disabled data backend {backend['id']} in config file.")
+            if dataset_type is DatasetType.CAPTION:
+                self._configure_caption_backend(backend)
                 continue
 
             data_backend_count += 1
@@ -1691,8 +1861,11 @@ class FactoryRegistry:
             )
 
         self.metrics["backend_counts"]["data_backends"] = data_backend_count
+        self.metrics["backend_counts"]["caption"] = len(self.caption_backends)
         self._log_performance_metrics("data_backend_config_complete", {"data_backends_created": data_backend_count})
 
+        requirement_result = self._evaluate_distiller_requirements(data_backend_config)
+        relax_primary_requirement = self._should_relax_primary_dataset_requirement(requirement_result)
         has_conditioning_dataset = self._connect_conditioning_datasets(data_backend_config)
 
         declared_backends = getattr(self, "_declared_data_backends", None)
@@ -1703,7 +1876,10 @@ class FactoryRegistry:
             raise ValueError("Must provide at least one data backend in the data backend config file.")
 
         if data_backend_count == 0:
-            info_log("No enabled data backends found in the configuration; skipping data backend setup.")
+            if relax_primary_requirement:
+                info_log("No image/video datasets were configured; proceeding in generator mode per distiller requirements.")
+            else:
+                info_log("No enabled data backends found in the configuration; skipping data backend setup.")
             return
 
         if len(self.data_backends) == 0 and data_backend_count > 0:
@@ -2112,6 +2288,11 @@ class FactoryRegistry:
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
     ) -> None:
         """Create the dataset and sampler objects."""
+        dataset_type = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
+        if dataset_type is DatasetType.CAPTION:
+            self._create_caption_dataloader(backend, init_backend)
+            return
+
         caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
         prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
         instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
@@ -2190,6 +2371,36 @@ class FactoryRegistry:
                 f"Backend {init_backend['id']} has caption_strategy=instanceprompt, but no instance_prompt was provided. You must provide an instance_prompt, or change the caption_strategy."
                 f"\n -> backend: {init_backend}"
             )
+
+    def _create_caption_dataloader(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
+        """Attach CaptionDataset + CaptionSampler + caption collate to the backend."""
+        repeats = max(int(init_backend["config"].get("repeats", 0) or 0), 0)
+        shuffle = backend.get("shuffle", True)
+        seed = getattr(self.args, "seed", 0)
+        batch_size = backend.get("train_batch_size", getattr(self.args, "train_batch_size", 1))
+
+        init_backend["train_dataset"] = CaptionDataset(
+            id=init_backend["id"],
+            metadata_backend=init_backend["metadata_backend"],
+        )
+        init_backend["sampler"] = CaptionSampler(
+            id=init_backend["id"],
+            metadata_backend=init_backend["metadata_backend"],
+            accelerator=self.accelerator,
+            batch_size=batch_size,
+            repeats=repeats,
+            shuffle=shuffle,
+            seed=seed,
+        )
+        init_backend["train_dataloader"] = torch.utils.data.DataLoader(
+            init_backend["train_dataset"],
+            batch_size=1,
+            shuffle=False,
+            sampler=init_backend["sampler"],
+            collate_fn=collate_caption_batch,
+            num_workers=0,
+            persistent_workers=False,
+        )
 
     def _process_text_embeddings(
         self, backend: Dict[str, Any], init_backend: Dict[str, Any], conditioning_type: Optional[str]
@@ -2599,6 +2810,93 @@ class FactoryRegistry:
                             main_config[setting],
                         )
 
+    def _configure_caption_backend(self, backend: Dict[str, Any]) -> None:
+        """Configure caption-only datasets."""
+        dataset_type = _backend_dataset_type(backend, default=DatasetType.CAPTION)
+        if dataset_type is not DatasetType.CAPTION:
+            raise ValueError(f"(id={backend.get('id')}) Expected caption dataset, received {dataset_type}.")
+
+        info_log(f"(id={backend['id']}) Configuring caption dataset.")
+        config = create_backend_config(backend, vars(self.args))
+        config.validate(vars(self.args))
+
+        init_backend = init_backend_config(backend, self.args, self.accelerator)
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+
+        built_backend = build_backend_from_config(config, self.accelerator, vars(self.args))
+        init_backend["data_backend"] = built_backend["data_backend"]
+        init_backend["metadata_backend"] = built_backend["metadata_backend"]
+        init_backend["instance_data_dir"] = (
+            built_backend.get("instance_data_dir")
+            or init_backend.get("instance_data_dir")
+            or backend.get("instance_data_dir", "")
+        )
+
+        metadata_backend = init_backend["metadata_backend"]
+        built_on_rank = False
+        if isinstance(metadata_backend, CaptionMetadataBackend):
+            ingest_strategy = str(getattr(metadata_backend, "caption_ingest_strategy", "discovery")).lower()
+            if self._should_skip_caption_discovery(backend):
+                info_log(
+                    f"(id={init_backend['id']}) Skipping caption ingestion ({ingest_strategy}) per skip_file_discovery settings."
+                )
+            elif self.accelerator.is_local_main_process:
+                if ingest_strategy == "parquet":
+                    new_entries = metadata_backend.ingest_from_parquet_config()
+                elif ingest_strategy == "huggingface":
+                    new_entries = metadata_backend.ingest_from_huggingface_dataset()
+                else:
+                    caption_cache = self._discover_caption_files(init_backend, metadata_backend)
+                    new_entries = metadata_backend.ingest_from_file_cache(caption_cache)
+                info_log(f"(id={init_backend['id']}) Captured {new_entries} caption entries via {ingest_strategy}.")
+                built_on_rank = True
+            else:
+                debug_log(
+                    f"(id={init_backend['id']}) Waiting for caption ingestion ({ingest_strategy}) from local main process."
+                )
+
+        if self._is_multi_process():
+            self.accelerator.wait_for_everyone()
+
+        if isinstance(metadata_backend, CaptionMetadataBackend) and not built_on_rank:
+            metadata_backend.load_image_metadata()
+
+        StateTracker.register_data_backend(init_backend)
+        self.caption_backends[init_backend["id"]] = init_backend
+        info_log(f"(id={init_backend['id']}) Caption dataset registered.")
+
+    def _should_skip_caption_discovery(self, backend: Dict[str, Any]) -> bool:
+        global_skip = str(getattr(self.args, "skip_file_discovery", "") or "")
+        backend_skip = str(backend.get("skip_file_discovery", "") or "")
+        return ("caption" in global_skip) or ("caption" in backend_skip)
+
+    def _discover_caption_files(
+        self, init_backend: Dict[str, Any], metadata_backend: CaptionMetadataBackend
+    ) -> Dict[str, bool]:
+        """Return cached caption files, discovering them if necessary."""
+        existing = StateTracker.get_caption_files(init_backend["id"])
+        if existing:
+            return existing
+
+        instance_dir = init_backend.get("instance_data_dir")
+        if not instance_dir:
+            warning_log(f"(id={init_backend['id']}) Caption dataset has no instance_data_dir; skipping discovery.")
+            return {}
+
+        extensions = [ext.lstrip(".") for ext in metadata_backend.supported_extensions]
+        try:
+            raw_listing = init_backend["data_backend"].list_files(
+                instance_data_dir=instance_dir,
+                file_extensions=extensions,
+            )
+        except FileNotFoundError:
+            warning_log(
+                f"(id={init_backend['id']}) Skipping caption discovery because data directory was not found: {instance_dir}"
+            )
+            return {}
+
+        return StateTracker.set_caption_files(raw_listing, init_backend["id"])
+
     def _configure_single_data_backend(
         self,
         backend: Dict[str, Any],
@@ -2757,6 +3055,7 @@ class FactoryRegistry:
             - 'text_embed_backends': Dictionary of text embedding backends
             - 'image_embed_backends': Dictionary of image embedding backends
             - 'conditioning_image_embed_backends': Dictionary of conditioning image embedding backends
+            - 'distillation_cache_backends': Dictionary of distillation cache backends
             - 'default_text_embed_backend_id': ID of default text embedding backend
 
         Example:
@@ -2773,6 +3072,7 @@ class FactoryRegistry:
         self.configure_text_embed_backends(data_backend_config)
         self.configure_image_embed_backends(data_backend_config)
         self.configure_conditioning_image_embed_backends(data_backend_config)
+        self.configure_distillation_cache_backends(data_backend_config)
         self.configure_data_backends(data_backend_config)
 
         result = {
@@ -2780,6 +3080,8 @@ class FactoryRegistry:
             "text_embed_backends": self.text_embed_backends,
             "image_embed_backends": self.image_embed_backends,
             "conditioning_image_embed_backends": self.conditioning_image_embed_backends,
+            "distillation_cache_backends": self.distillation_cache_backends,
+            "caption_backends": self.caption_backends,
             "default_text_embed_backend_id": self.default_text_embed_backend_id,
         }
 
@@ -2790,6 +3092,8 @@ class FactoryRegistry:
                 "text_embed_backends": len(result["text_embed_backends"]),
                 "image_embed_backends": len(result["image_embed_backends"]),
                 "conditioning_image_embed_backends": len(result["conditioning_image_embed_backends"]),
+                "distillation_cache_backends": len(result["distillation_cache_backends"]),
+                "caption_backends": len(result["caption_backends"]),
             },
         )
 
@@ -2915,6 +3219,8 @@ def configure_multi_databackend_new(
     tokenizers: Any,
     model: ModelFoundation,
     data_backend_config: Optional[List[Dict[str, Any]]] = None,
+    distiller_profile: Optional[DistillerRequirementProfile] = None,
+    distillation_method: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Configure multiple data backends using modular factory components."""
     start_time = time.time()
@@ -2925,7 +3231,15 @@ def configure_multi_databackend_new(
 
     args = _synchronise_state_tracker(args, accelerator)
 
-    factory = FactoryRegistry(args, accelerator, text_encoders, tokenizers, model)
+    factory = FactoryRegistry(
+        args,
+        accelerator,
+        text_encoders,
+        tokenizers,
+        model,
+        distiller_profile=distiller_profile,
+        distillation_method=distillation_method,
+    )
 
     if data_backend_config is None:
         data_backend_config = factory.load_configuration()
@@ -2935,6 +3249,7 @@ def configure_multi_databackend_new(
     factory.configure_text_embed_backends(data_backend_config)
     factory.configure_image_embed_backends(data_backend_config)
     factory.configure_conditioning_image_embed_backends(data_backend_config)
+    factory.configure_distillation_cache_backends(data_backend_config)
     factory.configure_data_backends(data_backend_config)
 
     factory._log_performance_metrics("implementation_complete")
@@ -2944,6 +3259,7 @@ def configure_multi_databackend_new(
         "text_embed_backends": factory.text_embed_backends,
         "image_embed_backends": factory.image_embed_backends,
         "conditioning_image_embed_backends": factory.conditioning_image_embed_backends,
+        "distillation_cache_backends": factory.distillation_cache_backends,
         "default_text_embed_backend_id": factory.default_text_embed_backend_id,
     }
 
@@ -3169,6 +3485,57 @@ def random_dataloader_iterator(step, backends: dict):
                 return False
 
 
+def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> None:
+    """Trigger ODE generation for registered distillation cache backends if required."""
+    if distiller is None or not hasattr(distiller, "requires_distillation_cache"):
+        return
+
+    try:
+        requires_cache = bool(distiller.requires_distillation_cache())
+    except Exception:
+        requires_cache = False
+
+    if not requires_cache:
+        return
+
+    provider = distiller.get_ode_generator_provider() if hasattr(distiller, "get_ode_generator_provider") else None
+    if provider is None or not hasattr(provider, "generate") or not callable(provider.generate):
+        logger.debug("Distiller requested a cache but did not supply a valid ODE generator provider.")
+        return
+
+    required_type = None
+    if hasattr(distiller, "get_required_distillation_cache_type"):
+        required_type = distiller.get_required_distillation_cache_type()
+
+    distillation_backends = StateTracker.get_data_backends(
+        _type="distillation_cache",
+        _types=["distillation_cache"],
+    )
+
+    if not distillation_backends:
+        raise ValueError("Distillation method requires a distillation_cache dataset but none were configured.")
+
+    selected_backends = {}
+    for backend_id, backend in distillation_backends.items():
+        backend_type = backend.get("distillation_type") or backend.get("config", {}).get("distillation_type")
+        if required_type and backend_type != required_type:
+            continue
+        selected_backends[backend_id] = backend
+
+    if required_type and not selected_backends:
+        raise ValueError(
+            f"Distillation method requested cache type '{required_type}' but no matching distillation_cache dataset was provided."
+        )
+
+    targets = selected_backends if selected_backends else distillation_backends
+
+    for backend_id, backend in targets.items():
+        cache = backend.get("distillation_cache")
+        if cache is None:
+            raise ValueError(f"Distillation cache backend '{backend_id}' is missing its cache instance.")
+        provider.generate(cache, backend_config=backend.get("config", {}))
+
+
 def configure_multi_databackend(
     args: dict,
     accelerator,
@@ -3176,6 +3543,8 @@ def configure_multi_databackend(
     tokenizers,
     model: ModelFoundation,
     data_backend_config: Optional[List[Dict[str, Any]]] = None,
+    distiller_profile: Optional[DistillerRequirementProfile] = None,
+    distillation_method: Optional[str] = None,
 ):
     """Configure multiple dataloaders using the FactoryRegistry implementation."""
     return configure_multi_databackend_new(
@@ -3185,6 +3554,8 @@ def configure_multi_databackend(
         tokenizers,
         model,
         data_backend_config=data_backend_config,
+        distiller_profile=distiller_profile,
+        distillation_method=distillation_method,
     )
 
 

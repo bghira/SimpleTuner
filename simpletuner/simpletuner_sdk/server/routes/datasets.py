@@ -114,6 +114,7 @@ async def get_dataset_plan() -> DatasetPlanResponse:
     # Get model_family from active config
     model_family = None
     model_flavour = None
+    distillation_method = None
     try:
         from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 
@@ -122,6 +123,7 @@ async def get_dataset_plan() -> DatasetPlanResponse:
         config_blob = active_config["config"]
         model_family = config_blob.get("model_family") or config_blob.get("--model_family")
         model_flavour = config_blob.get("model_flavour") or config_blob.get("--model_flavour")
+        distillation_method = config_blob.get("distillation_method") or config_blob.get("--distillation_method")
     except Exception:
         pass
 
@@ -130,6 +132,7 @@ async def get_dataset_plan() -> DatasetPlanResponse:
         get_dataset_blueprints(),
         model_family=model_family,
         model_flavour=model_flavour,
+        distillation_method=distillation_method,
     )
     return DatasetPlanResponse(
         datasets=datasets,
@@ -158,6 +161,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
     # Get model_family from active config
     model_family = None
     model_flavour = None
+    distillation_method = None
     try:
         from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 
@@ -166,6 +170,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         config_blob = active_config["config"]
         model_family = config_blob.get("model_family") or config_blob.get("--model_family")
         model_flavour = config_blob.get("model_flavour") or config_blob.get("--model_flavour")
+        distillation_method = config_blob.get("distillation_method") or config_blob.get("--distillation_method")
     except Exception:
         pass
 
@@ -174,6 +179,7 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         get_dataset_blueprints(),
         model_family=model_family,
         model_flavour=model_flavour,
+        distillation_method=distillation_method,
     )
     errors = [message for message in validations if message.level == "error"]
     if errors:

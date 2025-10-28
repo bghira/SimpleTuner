@@ -1,14 +1,20 @@
-# helpers/distillation/dmd/distiller.py
+from __future__ import annotations
+
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import torch
 import torch.nn.functional as F
-from diffusers import FlowMatchEulerDiscreteScheduler
 from safetensors.torch import load_file, save_file
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.registry import DistillationRegistry
+
+from ..self_forcing.pipeline import SelfForcingTrainingPipeline
+from ..self_forcing.scheduler import FlowMatchingSchedulerAdapter
+from ..self_forcing.wrappers import FoundationModelWrapper, ModuleWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -18,291 +24,355 @@ DMD_OPTIMIZER_DEFAULT_FILENAME = "fake_score_transformer_optim.pt"
 
 class DMDDistiller(DistillationBase):
     """
-    Distribution Matching Distillation (DMD) implementation.
-
-    Following the FastVideo approach with:
-    - Generator (student) learning from real score transformer (teacher)
-    - Fake score transformer as discriminator
-    - Multi-step simulation for train-inference consistency
+    Distribution Matching Distillation (DMD) ported from the realtime-video stack.
+    This implementation orchestrates generator rollout via the self-forcing pipeline,
+    computes the KL-based generator loss, and updates a trainable fake score model.
     """
+
+    DEFAULTS: Dict[str, Any] = {
+        "dmd_denoising_steps": "1000,757,522",
+        "generator_update_interval": 1,
+        "real_score_guidance_scale": 3.0,
+        "fake_score_guidance_scale": 0.0,
+        "fake_score_lr": 1e-5,
+        "fake_score_weight_decay": 0.01,
+        "fake_score_betas": (0.9, 0.999),
+        "fake_score_eps": 1e-8,
+        "fake_score_grad_clip": 1.0,
+        "min_timestep_ratio": 0.02,
+        "max_timestep_ratio": 0.98,
+        "num_frame_per_block": 3,
+        "independent_first_frame": False,
+        "same_step_across_blocks": False,
+        "last_step_only": False,
+        "num_training_frames": 21,
+        "context_noise": 0,
+        "ts_schedule": True,
+        "ts_schedule_max": False,
+        "min_score_timestep": 0,
+        "timestep_shift": 1.0,
+    }
 
     def __init__(
         self,
         teacher_model,
         student_model=None,
         *,
-        noise_scheduler: FlowMatchEulerDiscreteScheduler,
+        noise_scheduler,
         config: Optional[Dict[str, Any]] = None,
-    ):
-        default = {
-            # DMD denoising steps (e.g., "1000,757,522" for 3-step)
-            "dmd_denoising_steps": "1000,757,522",
-            # Min/max timestep ratios for sampling
-            "min_timestep_ratio": 0.02,
-            "max_timestep_ratio": 0.98,
-            # Generator update interval
-            "generator_update_interval": 5,
-            # Real score guidance scale
-            "real_score_guidance_scale": 3.0,
-            # Whether to simulate generator forward like inference
-            "simulate_generator_forward": False,
-            # Model family for fake score transformer
-            "model_family": "wan",
-            # Learning rates
-            "fake_score_lr": 1e-5,
-            "fake_score_lr_scheduler": "cosine_with_min_lr",
-            "min_lr_ratio": 0.5,
-        }
+    ) -> None:
+        merged = dict(self.DEFAULTS)
         if config:
-            default.update(config)
-
-        super().__init__(teacher_model, student_model, default)
+            merged.update(config)
+        super().__init__(teacher_model, student_model, merged)
 
         if not self.is_flow_matching:
             raise ValueError("DMD requires a flow-matching teacher.")
 
-        self.noise_scheduler = noise_scheduler
-
-        # Parse denoising steps
-        self.denoising_step_list = [int(s) for s in self.config["dmd_denoising_steps"].split(",")]
-
-        # Initialize fake score transformer
-        self.fake_score_transformer = None
-        self._init_fake_score_transformer()
-
-        # Track generator updates
+        self.device = teacher_model.accelerator.device
+        self.weight_dtype = getattr(teacher_model.config, "weight_dtype", torch.float32)
+        self.generator_update_interval = int(self.config["generator_update_interval"])
         self.generator_update_counter = 0
 
-    def _init_fake_score_transformer(self):
-        """Initialize fake score transformer based on model family."""
-        fam = self.config["model_family"]
+        self.scheduler_adapter = FlowMatchingSchedulerAdapter(noise_scheduler).to(device=self.device)
 
-        if fam == "wan":
-            # Clone teacher architecture for fake score transformer
-            self.fake_score_transformer = self.teacher_model.get_trained_component().__class__(
-                **self.teacher_model.get_trained_component().config
-            )
-            # Initialize with teacher weights
-            self.fake_score_transformer.load_state_dict(self.teacher_model.get_trained_component().state_dict())
-        else:
-            raise NotImplementedError(f"Model family '{fam}' not implemented")
+        self.student_model = student_model or teacher_model
+        self.generator_wrapper = FoundationModelWrapper(self.student_model, self.scheduler_adapter)
+        self.real_score_wrapper = FoundationModelWrapper(self.teacher_model, self.scheduler_adapter)
 
-        # Optimizer for fake score transformer
-        self.fake_score_optimizer = torch.optim.AdamW(
-            self.fake_score_transformer.parameters(),
-            lr=self.config["fake_score_lr"],
-            betas=(0.9, 0.999),
-            weight_decay=0.01,
-            eps=1e-8,
+        self.fake_score_transformer, self.fake_score_optimizer = self._init_fake_score_transformer()
+        self.fake_score_wrapper = ModuleWrapper(
+            self.fake_score_transformer,
+            self.scheduler_adapter,
+            self.weight_dtype,
         )
 
-    def prepare_batch(self, batch: Dict[str, Any], *_):
-        """Prepare batch for DMD training."""
-        latents = batch["latents"]  # Clean latents
-        B, device = latents.shape[0], latents.device
+        self.denoising_steps = self._parse_denoising_steps(self.config["dmd_denoising_steps"])
+        self.pipeline = SelfForcingTrainingPipeline(
+            denoising_step_list=self.denoising_steps,
+            scheduler=self.scheduler_adapter,
+            generator=self.generator_wrapper,
+            num_frame_per_block=int(self.config["num_frame_per_block"]),
+            independent_first_frame=bool(self.config["independent_first_frame"]),
+            same_step_across_blocks=bool(self.config["same_step_across_blocks"]),
+            last_step_only=bool(self.config["last_step_only"]),
+            num_max_frames=int(self.config["num_training_frames"]),
+            context_noise=int(self.config["context_noise"]),
+        )
 
-        # Sample timestep from denoising steps
-        index = torch.randint(0, len(self.denoising_step_list), [1], device=device, dtype=torch.long)
-        target_timestep = self.denoising_step_list[index.item()]
-        timestep = torch.tensor([target_timestep], device=device, dtype=torch.long)
+        num_train_timesteps = getattr(noise_scheduler.config, "num_train_timesteps", len(self.scheduler_adapter.sigmas))
+        self.num_train_timestep = int(num_train_timesteps)
+        self.min_step = int(self.config["min_timestep_ratio"] * self.num_train_timestep)
+        self.max_step = int(self.config["max_timestep_ratio"] * self.num_train_timestep)
 
-        # Add noise to create noisy latents
-        noise = torch.randn_like(latents)
-        noisy_latents = self.noise_scheduler.add_noise(latents, noise, timestep)
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _parse_denoising_steps(self, raw: str | Sequence[int]) -> Tuple[int, ...]:
+        if isinstance(raw, str):
+            return tuple(int(step.strip()) for step in raw.split(",") if step.strip())
+        return tuple(int(step) for step in raw)
 
-        batch["noisy_latents"] = noisy_latents
-        batch["timesteps"] = timestep.repeat(B)
-        batch["clean_latents"] = latents
-        batch["dmd_timestep_index"] = index
+    def _init_fake_score_transformer(self) -> Tuple[torch.nn.Module, torch.optim.Optimizer]:
+        try:
+            teacher_component = self.teacher_model.get_trained_component(unwrap_model=True)
+        except TypeError:
+            teacher_component = self.teacher_model.get_trained_component()
+        if not hasattr(teacher_component, "config"):
+            raise ValueError("Teacher component is missing `config`, cannot clone fake score transformer.")
+        config_dict = (
+            teacher_component.config.to_dict()
+            if hasattr(teacher_component.config, "to_dict")
+            else dict(teacher_component.config)
+        )
+        try:
+            fake_score = teacher_component.__class__(**config_dict)
+        except TypeError:
+            fake_score = teacher_component.__class__(teacher_component.config)
+        fake_score.load_state_dict(teacher_component.state_dict())
+        fake_score.to(device=self.device, dtype=self.weight_dtype)
+        fake_score.train()
 
-        # If simulating generator forward, prepare multi-step inputs
-        if self.config["simulate_generator_forward"]:
-            batch = self._prepare_multi_step_batch(batch)
+        optimizer = torch.optim.AdamW(
+            fake_score.parameters(),
+            lr=float(self.config["fake_score_lr"]),
+            betas=tuple(self.config["fake_score_betas"]),
+            weight_decay=float(self.config["fake_score_weight_decay"]),
+            eps=float(self.config["fake_score_eps"]),
+        )
+        return fake_score, optimizer
 
-        return batch
+    def _build_conditionals(self, prepared_batch: Dict[str, Any]) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        cond: Dict[str, Any] = {"prompt_embeds": prepared_batch["encoder_hidden_states"]}
+        if prepared_batch.get("added_cond_kwargs") is not None:
+            cond["added_cond_kwargs"] = prepared_batch["added_cond_kwargs"]
+        for key in ("conditioning_image_embeds", "conditioning_pixel_values", "conditioning_latents"):
+            if key in prepared_batch and prepared_batch[key] is not None:
+                cond[key] = prepared_batch[key]
 
-    def _prepare_multi_step_batch(self, batch: Dict[str, Any]):
-        """Prepare batch for multi-step simulation."""
-        latents = batch["latents"]
-        device = latents.device
-        target_idx = batch["dmd_timestep_index"].item()
+        negative = prepared_batch.get("negative_encoder_hidden_states")
+        if negative is None:
+            uncond = cond
+        else:
+            uncond = dict(cond)
+            uncond["prompt_embeds"] = negative
+        return cond, uncond
 
-        # Start from pure noise
-        current_noise_latents = torch.randn_like(latents)
+    def _sample_training_timestep(
+        self,
+        batch_size: int,
+        num_frames: int,
+        *,
+        denoised_from: Optional[int],
+        denoised_to: Optional[int],
+    ) -> torch.Tensor:
+        min_t = int(denoised_to if self.config["ts_schedule"] and denoised_to is not None else self.min_step)
+        max_t = int(denoised_from if self.config["ts_schedule_max"] and denoised_from is not None else self.max_step)
+        if max_t <= min_t:
+            max_t = min_t + 1
+        return torch.randint(
+            low=min_t,
+            high=max_t,
+            size=(batch_size, num_frames),
+            device=self.device,
+            dtype=torch.long,
+        )
 
-        # Simulate steps up to target
+    # ------------------------------------------------------------------
+    # Core losses
+    # ------------------------------------------------------------------
+    def _compute_kl_grad(
+        self,
+        noisy_latents: torch.Tensor,
+        clean_latents: torch.Tensor,
+        timesteps: torch.Tensor,
+        conditional_dict: Dict[str, torch.Tensor],
+        unconditional_dict: Dict[str, torch.Tensor],
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        _, fake_pred = self.fake_score_wrapper.forward(
+            noisy_latents,
+            timesteps,
+            conditional_dict,
+        )
+
+        _, real_cond = self.real_score_wrapper.forward(
+            noisy_latents,
+            timesteps,
+            conditional_dict,
+        )
+
+        real_guidance = float(self.config["real_score_guidance_scale"])
+        if real_guidance != 0.0 and unconditional_dict is not conditional_dict:
+            _, real_uncond = self.real_score_wrapper.forward(
+                noisy_latents,
+                timesteps,
+                unconditional_dict,
+            )
+            real_pred = real_uncond + real_guidance * (real_cond - real_uncond)
+        else:
+            real_pred = real_cond
+
+        fake_guidance = float(self.config["fake_score_guidance_scale"])
+        if fake_guidance != 0.0 and unconditional_dict is not conditional_dict:
+            _, fake_uncond = self.fake_score_wrapper.forward(
+                noisy_latents,
+                timesteps,
+                unconditional_dict,
+            )
+            fake_pred = fake_uncond + fake_guidance * (fake_pred - fake_uncond)
+
+        grad = fake_pred - real_pred
         with torch.no_grad():
-            for step_idx in range(target_idx):
-                current_timestep = self.denoising_step_list[step_idx]
-                timestep_tensor = torch.tensor([current_timestep], device=device, dtype=torch.long)
+            normaliser = torch.abs(clean_latents - real_pred).mean(dim=[1, 2, 3, 4], keepdim=True).clamp(min=1e-6)
+        grad = grad / normaliser
 
-                # Student prediction
-                pred_noise = self.student_model.get_trained_component()(
-                    current_noise_latents,
-                    timestep_tensor.repeat(latents.shape[0]),
-                    batch["encoder_hidden_states"],
-                    return_dict=False,
-                )[0]
+        logs = {
+            "dmd_kl_grad_norm": torch.mean(torch.abs(grad)).detach(),
+            "dmd_timestep_mean": torch.mean(timesteps.float()).detach(),
+        }
+        return grad, logs
 
-                # Denoise
-                pred_clean = self._pred_noise_to_pred_video(pred_noise, current_noise_latents, timestep_tensor)
+    def _distribution_matching_loss(
+        self,
+        generated_latents: torch.Tensor,
+        conditional_dict: Dict[str, torch.Tensor],
+        unconditional_dict: Dict[str, torch.Tensor],
+        *,
+        denoised_from: Optional[int],
+        denoised_to: Optional[int],
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        batch_size, channels, num_frames, height, width = generated_latents.shape
+        timesteps = self._sample_training_timestep(
+            batch_size,
+            num_frames,
+            denoised_from=denoised_from,
+            denoised_to=denoised_to,
+        )
 
-                # Add noise for next step if not final
-                if step_idx < target_idx - 1:
-                    next_timestep = self.denoising_step_list[step_idx + 1]
-                    next_timestep_tensor = torch.tensor([next_timestep], device=device, dtype=torch.long)
-                    noise = torch.randn_like(pred_clean)
-                    current_noise_latents = self.noise_scheduler.add_noise(pred_clean, noise, next_timestep_tensor)
+        flat_generated = generated_latents.reshape(batch_size * num_frames, channels, height, width)
+        flat_noise = torch.randn_like(flat_generated)
+        noisy_flat = self.scheduler_adapter.add_noise(flat_generated, flat_noise, timesteps.reshape(-1))
+        noisy_latents = noisy_flat.reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
 
-        batch["noisy_latents"] = current_noise_latents
-        return batch
+        grad, logs = self._compute_kl_grad(
+            noisy_latents,
+            generated_latents,
+            timesteps,
+            conditional_dict,
+            unconditional_dict,
+        )
+        target = (generated_latents - grad).detach()
+        loss = 0.5 * F.mse_loss(generated_latents.double(), target.double())
+        logs["dmd_loss"] = loss.detach()
+        return loss, logs
 
+    def _generator_step(self, prepared_batch: Dict[str, Any]) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        conditional_dict, unconditional_dict = self._build_conditionals(prepared_batch)
+        latents_shape = prepared_batch["latents"].shape
+        noise = torch.randn(latents_shape, device=self.device, dtype=self.weight_dtype)
+
+        pipeline_output = self.pipeline.inference_with_trajectory(
+            noise=noise,
+            conditional_dict=conditional_dict,
+        )
+        generated_latents, denoised_from, denoised_to = pipeline_output
+
+        loss, logs = self._distribution_matching_loss(
+            generated_latents,
+            conditional_dict,
+            unconditional_dict,
+            denoised_from=denoised_from,
+            denoised_to=denoised_to,
+        )
+        logs["dmd_generator_loss"] = loss.detach()
+        return loss, logs
+
+    def _critic_step(self, prepared_batch: Dict[str, Any]) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        self.fake_score_optimizer.zero_grad(set_to_none=True)
+
+        conditional_dict, _ = self._build_conditionals(prepared_batch)
+        latents_shape = prepared_batch["latents"].shape
+        noise = torch.randn(latents_shape, device=self.device, dtype=self.weight_dtype)
+
+        with torch.no_grad():
+            pipeline_output = self.pipeline.inference_with_trajectory(
+                noise=noise,
+                conditional_dict=conditional_dict,
+            )
+            generated_latents, denoised_from, denoised_to = pipeline_output
+
+        batch_size, channels, num_frames, height, width = generated_latents.shape
+        timesteps = self._sample_training_timestep(
+            batch_size,
+            num_frames,
+            denoised_from=denoised_from,
+            denoised_to=denoised_to,
+        )
+        flat_generated = generated_latents.reshape(batch_size * num_frames, channels, height, width)
+        flat_noise = torch.randn_like(flat_generated)
+        noisy_flat = self.scheduler_adapter.add_noise(flat_generated, flat_noise, timesteps.reshape(-1))
+        noisy_latents = noisy_flat.reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
+
+        _, pred_clean = self.fake_score_wrapper.forward(noisy_latents, timesteps, conditional_dict)
+        pred_noise = self.scheduler_adapter.convert_x0_to_noise(
+            pred_clean.reshape(batch_size * num_frames, channels, height, width),
+            noisy_flat,
+            timesteps.reshape(-1),
+        ).reshape_as(pred_clean)
+
+        flat_true_noise = flat_noise.reshape_as(pred_noise)
+        loss = F.mse_loss(pred_noise.float(), flat_true_noise.float())
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            self.fake_score_transformer.parameters(),
+            float(self.config["fake_score_grad_clip"]),
+        )
+        self.fake_score_optimizer.step()
+
+        logs = {
+            "dmd_critic_loss": loss.detach(),
+            "dmd_critic_timestep": torch.mean(timesteps.float()).detach(),
+        }
+        return loss, logs
+
+    # ------------------------------------------------------------------
+    # DistillationBase overrides
+    # ------------------------------------------------------------------
     def compute_distill_loss(
         self,
         prepared_batch: Dict[str, Any],
         model_output: Dict[str, Any],
-        _original_loss: torch.Tensor,
-    ):
-        """Compute DMD loss (only called when generator is being updated)."""
+        original_loss: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
         self.generator_update_counter += 1
+        if self.generator_update_counter % self.generator_update_interval != 0:
+            return original_loss, {}
 
-        # Skip if not generator update step
-        if self.generator_update_counter % self.config["generator_update_interval"] != 0:
-            return torch.tensor(0.0, device=model_output["model_prediction"].device), {}
+        generator_loss, logs = self._generator_step(prepared_batch)
+        loss = original_loss + generator_loss
 
-        pred_noise = model_output["model_prediction"]
-        noisy_latents = prepared_batch["noisy_latents"]
-        timesteps = prepared_batch["timesteps"]
+        logs["total"] = loss.detach()
+        return loss, {k: float(v) for k, v in logs.items()}
 
-        # Convert to predicted clean
-        generator_pred_video = self._pred_noise_to_pred_video(pred_noise, noisy_latents, timesteps[0:1])
-
-        # Compute DMD loss
-        loss = self._dmd_forward(generator_pred_video, prepared_batch)
-
-        logs = {
-            "dmd_loss": loss.item(),
-            "total": loss.item(),
-        }
-
-        return loss, logs
-
-    def _dmd_forward(self, generator_pred_video: torch.Tensor, batch: Dict[str, Any]):
-        """Compute DMD loss with real and fake score transformers."""
-        clean_latents = batch["clean_latents"]
-
-        # Sample new timestep for DMD
-        min_t = int(self.config["min_timestep_ratio"] * 1000)
-        max_t = int(self.config["max_timestep_ratio"] * 1000)
-        timestep = torch.randint(min_t, max_t, [1], device=clean_latents.device, dtype=torch.long)
-
-        # Add noise to both clean and generated
-        noise = torch.randn_like(clean_latents)
-        noisy_clean = self.noise_scheduler.add_noise(clean_latents, noise, timestep)
-        noisy_gen = self.noise_scheduler.add_noise(generator_pred_video, noise, timestep)
-
-        # Get predictions from both transformers
-        with torch.no_grad():
-            # Real score (teacher) predictions with CFG
-            real_cond = self.teacher_model.get_trained_component()(
-                noisy_gen,
-                timestep.repeat(noisy_gen.shape[0]),
-                batch["encoder_hidden_states"],
-                return_dict=False,
-            )[0]
-
-            if "negative_encoder_hidden_states" in batch:
-                real_uncond = self.teacher_model.get_trained_component()(
-                    noisy_gen,
-                    timestep.repeat(noisy_gen.shape[0]),
-                    batch["negative_encoder_hidden_states"],
-                    return_dict=False,
-                )[0]
-                cfg_scale = self.config["real_score_guidance_scale"]
-                real_score_pred = real_uncond + cfg_scale * (real_cond - real_uncond)
-            else:
-                real_score_pred = real_cond
-
-        # Fake score predictions
-        fake_score_pred = self.fake_score_transformer(
-            noisy_gen,
-            timestep.repeat(noisy_gen.shape[0]),
-            batch["encoder_hidden_states"],
-            return_dict=False,
-        )[0]
-
-        # Convert to clean predictions
-        real_pred_clean = self._pred_noise_to_pred_video(real_score_pred, noisy_gen, timestep)
-        fake_pred_clean = self._pred_noise_to_pred_video(fake_score_pred, noisy_gen, timestep)
-
-        # DMD loss
-        loss = F.mse_loss(fake_pred_clean, real_pred_clean.detach())
-
-        return loss
-
-    def fake_score_step(self, prepared_batch: Dict[str, Any]):
-        """Update fake score transformer."""
-        # Get generator prediction
-        with torch.no_grad():
-            pred_noise = self.student_model.get_trained_component()(
-                prepared_batch["noisy_latents"],
-                prepared_batch["timesteps"],
-                prepared_batch["encoder_hidden_states"],
-                return_dict=False,
-            )[0]
-
-            generator_pred_video = self._pred_noise_to_pred_video(
-                pred_noise,
-                prepared_batch["noisy_latents"],
-                prepared_batch["timesteps"][0:1],
-            )
-
-        # Sample timestep for fake score training
-        min_t = int(self.config["min_timestep_ratio"] * 1000)
-        max_t = int(self.config["max_timestep_ratio"] * 1000)
-        fake_score_timestep = torch.randint(min_t, max_t, [1], device=generator_pred_video.device, dtype=torch.long)
-
-        # Add noise
-        noise = torch.randn_like(generator_pred_video)
-        noisy_fake = self.noise_scheduler.add_noise(generator_pred_video, noise, fake_score_timestep)
-
-        # Fake score prediction
-        fake_pred = self.fake_score_transformer(
-            noisy_fake,
-            fake_score_timestep.repeat(noisy_fake.shape[0]),
-            prepared_batch["encoder_hidden_states"],
-            return_dict=False,
-        )[0]
-
-        # Fake score loss (predict noise)
-        loss = F.mse_loss(fake_pred, noise)
-
-        # Update
-        self.fake_score_optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.fake_score_transformer.parameters(), 1.0)
-        self.fake_score_optimizer.step()
-
-        logger.debug(f"Fake score loss: {loss.item():.4f}")
-
-    def _pred_noise_to_pred_video(self, pred_noise, noise_input, timestep):
-        """Convert predicted noise to predicted clean video."""
-        # Simple flow matching: x0 = (xt - σt * noise) / (1 - σt)
-        sigma = self.noise_scheduler.sigmas[timestep.item()]
-        pred_clean = (noise_input - sigma * pred_noise) / (1 - sigma)
-        return pred_clean
-
-    def on_save_checkpoint(self, step: int, ckpt_dir: str):
-        """Save fake score transformer checkpoint."""
-        if self.fake_score_transformer is None or (torch.distributed.is_initialized() and torch.distributed.get_rank() != 0):
+    def discriminator_step(self, prepared_batch: Dict[str, Any], **_: Any) -> None:
+        if self.fake_score_transformer is None:
             return
+        try:
+            critic_loss, logs = self._critic_step(prepared_batch)
+            for key, value in logs.items():
+                logger.debug("%s: %.5f", key, float(value))
+            logger.debug("DMD critic loss: %.5f", float(critic_loss))
+        except Exception:
+            logger.exception("Failed to run DMD critic update.")
 
-        # Model weights
+    def on_save_checkpoint(self, step: int, ckpt_dir: str) -> None:
+        if self.fake_score_transformer is None:
+            return
+        os.makedirs(ckpt_dir, exist_ok=True)
         weight_path = os.path.join(ckpt_dir, DMD_SAFETENSORS_DEFAULT_FILENAME)
         tensor_dict = {k: v.detach().cpu() for k, v in self.fake_score_transformer.state_dict().items()}
         save_file(tensor_dict, weight_path)
 
-        # Optimizer state
         opt_path = os.path.join(ckpt_dir, DMD_OPTIMIZER_DEFAULT_FILENAME)
         torch.save(
             {
@@ -312,26 +382,25 @@ class DMDDistiller(DistillationBase):
             opt_path,
         )
 
-    def on_load_checkpoint(self, ckpt_dir: str):
-        """Load fake score transformer checkpoint."""
+    def on_load_checkpoint(self, ckpt_dir: str) -> None:
         if self.fake_score_transformer is None:
             return
 
         weight_path = os.path.join(ckpt_dir, DMD_SAFETENSORS_DEFAULT_FILENAME)
-        if not os.path.exists(weight_path):
-            return
+        if os.path.exists(weight_path):
+            tensor_dict = load_file(weight_path, device="cpu")
+            self.fake_score_transformer.load_state_dict(tensor_dict, strict=True)
+            self.fake_score_transformer.to(device=self.device, dtype=self.weight_dtype)
 
-        # Load weights
-        tensor_dict = load_file(weight_path, device="cpu")
-        self.fake_score_transformer.load_state_dict(tensor_dict, strict=True)
-        self.fake_score_transformer.to(self.teacher_model.get_trained_component().device, non_blocking=True)
-
-        # Load optimizer
         opt_path = os.path.join(ckpt_dir, DMD_OPTIMIZER_DEFAULT_FILENAME)
         if os.path.exists(opt_path):
-            if torch.cuda.is_available():
-                map_location = {"cuda:0": f"cuda:{torch.cuda.current_device()}"}
-            else:
-                map_location = "cpu"
-            payload = torch.load(opt_path, map_location=map_location)
+            payload = torch.load(opt_path, map_location=self.device)
             self.fake_score_optimizer.load_state_dict(payload["state"])
+
+
+DistillationRegistry.register(
+    "dmd",
+    DMDDistiller,
+    requires_distillation_cache=False,
+    data_requirements=[[DatasetType.IMAGE, DatasetType.VIDEO]],
+)

@@ -8,10 +8,12 @@ import torch.nn.functional as F
 from diffusers import FlowMatchEulerDiscreteScheduler
 from safetensors.torch import load_file, save_file
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.dcm.discriminator.wan import wan_forward, wan_forward_origin
 from simpletuner.helpers.distillation.dcm.loss import gan_d_loss, gan_g_loss
 from simpletuner.helpers.distillation.dcm.solver import EulerSolver, InferencePCMFMScheduler, extract_into_tensor
+from simpletuner.helpers.distillation.registry import DistillationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -353,3 +355,11 @@ class DCMDistiller(DistillationBase):
         if os.path.exists(opt_path):
             payload = torch.load(opt_path, map_location={"cuda:0": f"cuda:{torch.cuda.current_device()}"})
             self.disc_optimizer.load_state_dict(payload["state"])
+
+
+DistillationRegistry.register(
+    "dcm",
+    DCMDistiller,
+    requires_distillation_cache=False,
+    data_requirements=[[DatasetType.IMAGE, DatasetType.VIDEO]],
+)

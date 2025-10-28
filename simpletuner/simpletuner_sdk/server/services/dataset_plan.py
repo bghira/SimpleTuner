@@ -10,6 +10,14 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.requirements import (
+    EMPTY_PROFILE,
+    DistillerRequirementProfile,
+    describe_requirement_groups,
+    evaluate_requirement_profile,
+)
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import (
     BackendBlueprint,
     find_blueprint,
@@ -90,9 +98,13 @@ def compute_validations(
     blueprints: Optional[List[BackendBlueprint]] = None,
     model_family: Optional[str] = None,
     model_flavour: Optional[str] = None,
+    distillation_method: Optional[str] = None,
 ) -> List[ValidationMessage]:
     """Perform lightweight validation mirroring the UI logic."""
     validations: List[ValidationMessage] = []
+    distiller_profile = _resolve_distiller_profile(distillation_method)
+    relax_training_requirement = _relaxes_training_requirement(distiller_profile)
+    requirement_eval = None
 
     if not datasets:
         validations.append(
@@ -103,6 +115,19 @@ def compute_validations(
             )
         )
         return validations
+
+    if distiller_profile:
+        requirement_eval = evaluate_requirement_profile(distiller_profile, datasets)
+        if not requirement_eval.fulfilled:
+            method_label = (distillation_method or "distiller").replace("_", " ")
+            validations.append(
+                ValidationMessage(
+                    field="datasets",
+                    message=f"{method_label} requires datasets matching "
+                    f"{describe_requirement_groups(requirement_eval.missing_requirements)}",
+                    level="error",
+                )
+            )
 
     id_counts: Dict[str, int] = {}
     for dataset in datasets:
@@ -137,6 +162,15 @@ def compute_validations(
                     level="error",
                 )
             )
+        normalized_type = _dataset_type(dataset)
+        if normalized_type is DatasetType.CAPTION and backend_type.lower() == "csv":
+            validations.append(
+                ValidationMessage(
+                    field=_normalise_identifier(dataset),
+                    message="Caption datasets cannot use CSV backends; select local, AWS, parquet, or Hugging Face storage instead.",
+                    level="error",
+                )
+            )
 
     for dataset_id, count in id_counts.items():
         if count > 1:
@@ -166,10 +200,10 @@ def compute_validations(
 
     # For video models, require at least one video dataset
     # For image models, require at least one image dataset
-    image_count = sum(1 for dataset in datasets if dataset.get("dataset_type") == "image")
-    video_count = sum(1 for dataset in datasets if dataset.get("dataset_type") == "video")
+    image_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE)
+    video_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.VIDEO)
 
-    if is_video_model:
+    if is_video_model and not relax_training_requirement:
         if video_count == 0:
             if requires_strict_video_inputs:
                 validations.append(
@@ -187,7 +221,7 @@ def compute_validations(
                         level="error",
                     )
                 )
-    else:
+    elif not relax_training_requirement:
         if image_count == 0:
             validations.append(
                 ValidationMessage(
@@ -197,7 +231,7 @@ def compute_validations(
                 )
             )
 
-    text_embed_datasets = [dataset for dataset in datasets if dataset.get("dataset_type") == "text_embeds"]
+    text_embed_datasets = [dataset for dataset in datasets if _dataset_type(dataset) is DatasetType.TEXT_EMBEDS]
     if not text_embed_datasets:
         validations.append(
             ValidationMessage(
@@ -226,8 +260,8 @@ def compute_validations(
             )
 
     # Check for orphaned text_embeds and image_embeds references
-    text_embed_ids = {dataset.get("id") for dataset in datasets if dataset.get("dataset_type") == "text_embeds"}
-    image_embed_ids = {dataset.get("id") for dataset in datasets if dataset.get("dataset_type") == "image_embeds"}
+    text_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.TEXT_EMBEDS}
+    image_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE_EMBEDS}
 
     for dataset in datasets:
         dataset_id = dataset.get("id", "unknown")
@@ -297,3 +331,28 @@ def compute_validations(
                 )
 
     return validations
+
+
+def _dataset_type(dataset: Dict[str, Any]) -> Optional[DatasetType]:
+    """Best-effort conversion of raw dataset_type values into DatasetType enums."""
+    value = dataset.get("dataset_type")
+    if value is None:
+        return None
+    try:
+        return DatasetType.from_value(value)
+    except ValueError:
+        return None
+
+
+def _resolve_distiller_profile(distillation_method: Optional[str]) -> DistillerRequirementProfile:
+    if not distillation_method:
+        return EMPTY_PROFILE
+    return DistillationRegistry.get_requirement_profile(distillation_method)
+
+
+def _relaxes_training_requirement(profile: DistillerRequirementProfile) -> bool:
+    if not profile:
+        return False
+    if not profile.is_data_generator:
+        return False
+    return not any(profile.requires_dataset_type(dataset_type) for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO))

@@ -393,6 +393,8 @@ class PixartSigma(ImageModelFoundation):
             save_directory=output_dir,
             transformer_lora_layers=None,  # No transformer LoRA
             controlnet_lora_layers=controlnet_lora_layers,
+            transformer_lora_adapter_metadata=kwargs.get("transformer_lora_adapter_metadata"),
+            controlnet_lora_adapter_metadata=kwargs.get("controlnet_lora_adapter_metadata"),
         )
 
     def custom_model_card_schedule_info(self):

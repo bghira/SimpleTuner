@@ -345,6 +345,8 @@ class WanTransformerBlock(nn.Module):
     ) -> torch.Tensor:
         self._ensure_module_dtype(hidden_states.device, hidden_states.dtype)
 
+        temb = temb.to(device=self.scale_shift_table.device, dtype=temb.dtype, non_blocking=True)
+
         shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (self.scale_shift_table + temb.float()).chunk(
             6, dim=1
         )

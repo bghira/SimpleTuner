@@ -680,6 +680,11 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
         save_function: Callable = None,
         safe_serialization: bool = True,
         transformer_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_2_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_3_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_4_lora_adapter_metadata: Optional[dict] = None,
+        controlnet_lora_adapter_metadata: Optional[dict] = None,
     ):
         r"""
         Save the LoRA parameters corresponding to the transformer, text encoders, and optionally controlnet.
@@ -711,6 +716,16 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
                 Whether to save the model using `safetensors` or the traditional PyTorch way with `pickle`.
             transformer_lora_adapter_metadata:
                 LoRA adapter metadata associated with the transformer to be serialized with the state dict.
+            text_encoder_lora_adapter_metadata:
+                LoRA adapter metadata associated with the text encoder to be serialized with the state dict.
+            text_encoder_2_lora_adapter_metadata:
+                LoRA adapter metadata associated with the second text encoder to be serialized with the state dict.
+            text_encoder_3_lora_adapter_metadata:
+                LoRA adapter metadata associated with the third text encoder to be serialized with the state dict.
+            text_encoder_4_lora_adapter_metadata:
+                LoRA adapter metadata associated with the fourth text encoder to be serialized with the state dict.
+            controlnet_lora_adapter_metadata:
+                LoRA adapter metadata associated with the controlnet to be serialized with the state dict.
         """
         state_dict = {}
         lora_adapter_metadata = {}
@@ -745,6 +760,21 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
 
         if transformer_lora_adapter_metadata is not None:
             lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
+
+        if text_encoder_lora_adapter_metadata is not None:
+            lora_adapter_metadata.update(cls.pack_weights(text_encoder_lora_adapter_metadata, "text_encoder"))
+
+        if text_encoder_2_lora_adapter_metadata is not None:
+            lora_adapter_metadata.update(cls.pack_weights(text_encoder_2_lora_adapter_metadata, "text_encoder_2"))
+
+        if text_encoder_3_lora_adapter_metadata is not None:
+            lora_adapter_metadata.update(cls.pack_weights(text_encoder_3_lora_adapter_metadata, "text_encoder_3"))
+
+        if text_encoder_4_lora_adapter_metadata is not None:
+            lora_adapter_metadata.update(cls.pack_weights(text_encoder_4_lora_adapter_metadata, "text_encoder_4"))
+
+        if controlnet_lora_adapter_metadata is not None:
+            lora_adapter_metadata.update(cls.pack_weights(controlnet_lora_adapter_metadata, cls.controlnet_name))
 
         # Save the model
         cls.write_lora_layers(

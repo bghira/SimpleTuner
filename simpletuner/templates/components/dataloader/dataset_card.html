@@ -1,0 +1,16 @@
+<div class="dataset-card mb-3" x-bind:data-dataset-id="dataset.id">
+    {% include 'components/dataloader/dataset_card_header.html' %}
+    <div :id="`dataset-body-${datasetSafeId(dataset)}`"
+         x-show="sectionIsExpanded(dataset, 'card')"
+         x-transition
+         x-cloak>
+        {% include 'components/dataloader/sections/basic.html' %}
+        <div class="row g-3 dataset-section-split align-items-stretch">
+            {% include 'components/dataloader/sections/storage.html' %}
+            {% include 'components/dataloader/sections/captions.html' %}
+        </div>
+        {% include 'components/dataloader/sections/advanced.html' %}
+        {% include 'components/dataloader/sections/video.html' %}
+        {% include 'components/dataloader/sections/conditioning.html' %}
+    </div>
+</div>

@@ -3,7 +3,10 @@ import logging
 from enum import Enum
 from typing import Any, Dict, Optional, Union
 
+# Ensure registry-backed distillers (like self_forcing) register themselves on import.
+import simpletuner.helpers.distillation.self_forcing  # noqa: F401
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.registry import DistillationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +17,7 @@ class DistillationMethod(Enum):
     DCM = "dcm"
     DMD = "dmd"
     LCM = "lcm"
+    SELF_FORCING = "self_forcing"
 
     @classmethod
     def from_string(cls, method: str):
@@ -101,6 +105,14 @@ class DistillerFactory:
                 prediction_type=prediction_type,
                 student_model=student_model,
             )
+        elif method == DistillationMethod.SELF_FORCING:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
+                student_model=student_model,
+            )
         else:
             raise ValueError(f"Unsupported distillation method: {method}")
 
@@ -120,16 +132,27 @@ class DistillerFactory:
             raise ImportError("DMD distiller not found. Please ensure simpletuner.helpers.distillation.dmd is available.")
 
         dmd_config = {
-            "model_family": model_family or "wan",
             "dmd_denoising_steps": "1000,757,522",  # 3-step default
             "min_timestep_ratio": 0.02,
             "max_timestep_ratio": 0.98,
-            "generator_update_interval": 5,
+            "generator_update_interval": 1,
             "real_score_guidance_scale": 3.0,
-            "simulate_generator_forward": False,
             "fake_score_lr": 1e-5,
-            "fake_score_lr_scheduler": "cosine_with_min_lr",
-            "min_lr_ratio": 0.5,
+            "fake_score_weight_decay": 0.01,
+            "fake_score_betas": (0.9, 0.999),
+            "fake_score_eps": 1e-8,
+            "fake_score_grad_clip": 1.0,
+            "fake_score_guidance_scale": 0.0,
+            "num_frame_per_block": 3,
+            "independent_first_frame": False,
+            "same_step_across_blocks": False,
+            "last_step_only": False,
+            "num_training_frames": 21,
+            "context_noise": 0,
+            "ts_schedule": True,
+            "ts_schedule_max": False,
+            "min_score_timestep": 0,
+            "timestep_shift": 1.0,
         }
 
         # flow-matching models need shift parameter
@@ -254,6 +277,25 @@ class DistillerFactory:
             )
         else:
             raise ValueError(f"Unknown model type: {model_type}")
+
+    @staticmethod
+    def _create_registered_distiller(
+        registry_key: str,
+        teacher_model,
+        noise_scheduler,
+        distill_config: Dict[str, Any],
+        student_model=None,
+    ) -> DistillationBase:
+        distiller_cls = DistillationRegistry.get(registry_key)
+        if distiller_cls is None:
+            raise ValueError(f"No distiller registered under '{registry_key}'.")
+
+        return distiller_cls(
+            teacher_model=teacher_model,
+            student_model=student_model,
+            noise_scheduler=noise_scheduler,
+            config=distill_config,
+        )
 
 
 def init_distillation(trainer_instance):

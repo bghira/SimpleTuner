@@ -4,7 +4,10 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Optional
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.logging import get_logger
 
 logger = get_logger("StateTracker")
@@ -14,6 +17,8 @@ filename_mapping = {
     "all_vae_cache_files": "vae",
     "all_text_cache_files": "text",
     "all_conditioning_image_embed_files": "conditioning_image_embeds",
+    "all_distillation_cache_files": "distillation_cache",
+    "all_caption_files": "caption",
 }
 
 
@@ -37,7 +42,8 @@ class StateTracker:
     all_vae_cache_files = {}
     all_text_cache_files = {}
     all_conditioning_image_embed_files = {}
-    all_caption_files = None
+    all_distillation_cache_files = {}
+    all_caption_files = {}
 
     ## Backend entities for retrieval
     default_text_embed_cache = None
@@ -57,6 +63,8 @@ class StateTracker:
     args = None
     # Aspect to resolution map, we'll store once generated for consistency.
     aspect_resolution_map = {}
+    distillation_method: Optional[str] = None
+    distiller_profile: DistillerRequirementProfile = EMPTY_PROFILE
 
     # for schedulefree
     last_lr = 0.0
@@ -73,6 +81,8 @@ class StateTracker:
             "all_vae_cache_files",
             "all_text_cache_files",
             "all_conditioning_image_embed_files",
+            "all_distillation_cache_files",
+            "all_caption_files",
         ]:
             if filename_mapping[cache_name] in str(preserve_data_backend_cache):
                 continue
@@ -402,6 +412,32 @@ class StateTracker:
         return cls.all_conditioning_image_embed_files[data_backend_id] or {}
 
     @classmethod
+    def set_distillation_cache_files(cls, raw_file_list: list, data_backend_id: str):
+        if cls.all_distillation_cache_files.get(data_backend_id) is not None:
+            cls.all_distillation_cache_files[data_backend_id].clear()
+        else:
+            cls.all_distillation_cache_files[data_backend_id] = {}
+        for subdirectory_list in raw_file_list:
+            _, _, files = subdirectory_list
+            for artifact_path in files:
+                cls.all_distillation_cache_files[data_backend_id][artifact_path] = False
+        cls._save_to_disk(
+            f"all_distillation_cache_files_{data_backend_id}",
+            cls.all_distillation_cache_files[data_backend_id],
+        )
+
+    @classmethod
+    def get_distillation_cache_files(cls, data_backend_id: str, retry_limit: int = 0):
+        if (
+            data_backend_id not in cls.all_distillation_cache_files
+            or cls.all_distillation_cache_files.get(data_backend_id) is None
+        ):
+            cls.all_distillation_cache_files[data_backend_id] = cls._load_from_disk(
+                f"all_distillation_cache_files_{data_backend_id}", retry_limit=retry_limit
+            )
+        return cls.all_distillation_cache_files.get(data_backend_id) or {}
+
+    @classmethod
     def set_text_cache_files(cls, raw_file_list: list, data_backend_id: str):
         if cls.all_text_cache_files[data_backend_id] is not None:
             cls.all_text_cache_files[data_backend_id].clear()
@@ -430,15 +466,36 @@ class StateTracker:
         return cls.all_text_cache_files[data_backend_id]
 
     @classmethod
-    def set_caption_files(cls, caption_files):
-        cls.all_caption_files = caption_files
-        cls._save_to_disk("all_caption_files", cls.all_caption_files)
+    def set_caption_files(cls, raw_file_list: list, data_backend_id: str):
+        if data_backend_id not in cls.all_caption_files or cls.all_caption_files.get(data_backend_id) is None:
+            cls.all_caption_files[data_backend_id] = {}
+        else:
+            cls.all_caption_files[data_backend_id].clear()
+
+        for subdirectory_list in raw_file_list or []:
+            _, _, files = subdirectory_list
+            for caption_path in files:
+                cls.all_caption_files[data_backend_id][caption_path] = False
+
+        cls._save_to_disk(
+            f"all_caption_files_{data_backend_id}",
+            cls.all_caption_files[data_backend_id],
+        )
+        return cls.all_caption_files[data_backend_id]
 
     @classmethod
-    def get_caption_files(cls, retry_limit: int = 0):
-        if not cls.all_caption_files:
-            cls.all_caption_files = cls._load_from_disk("all_caption_files", retry_limit=retry_limit)
-        return cls.all_caption_files
+    def get_caption_files(cls, data_backend_id: str, retry_limit: int = 0):
+        if data_backend_id in cls.all_caption_files and cls.all_caption_files[data_backend_id] is None:
+            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
+                f"all_caption_files_{data_backend_id}",
+                retry_limit=retry_limit,
+            )
+        elif data_backend_id not in cls.all_caption_files:
+            cls.all_caption_files[data_backend_id] = cls._load_from_disk(
+                f"all_caption_files_{data_backend_id}",
+                retry_limit=retry_limit,
+            )
+        return cls.all_caption_files.get(data_backend_id, {})
 
     @classmethod
     def get_validation_sample_images(cls):
@@ -499,12 +556,22 @@ class StateTracker:
         cls.data_backends = {}
 
     @classmethod
-    def get_data_backends(cls, _type="image", _types=["image", "video"]):
+    def get_data_backends(
+        cls,
+        _type: object = DatasetType.IMAGE,
+        _types: object = (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CAPTION),
+    ):
+        target_type = ensure_dataset_type(_type, default=DatasetType.IMAGE)
+        allowed_types = set()
+        if isinstance(_types, (list, tuple, set)):
+            allowed_types = {ensure_dataset_type(value, default=DatasetType.IMAGE) for value in _types}
+        elif _types is not None:
+            allowed_types = {ensure_dataset_type(_types, default=DatasetType.IMAGE)}
+
         output = {}
         for backend_id, backend in dict(cls.data_backends).items():
-            if backend.get("dataset_type", "image") == _type or (
-                type(_types) is list and backend.get("dataset_type", "image") in _types
-            ):
+            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+            if backend_type == target_type or (allowed_types and backend_type in allowed_types):
                 output[backend_id] = backend
         return output
 
@@ -563,6 +630,19 @@ class StateTracker:
     @classmethod
     def get_args(cls):
         return cls.args
+
+    @classmethod
+    def set_distiller_profile(cls, method: Optional[str], profile: Optional[DistillerRequirementProfile]):
+        cls.distillation_method = method.lower() if isinstance(method, str) and method else None
+        cls.distiller_profile = profile or EMPTY_PROFILE
+
+    @classmethod
+    def get_distiller_profile(cls) -> DistillerRequirementProfile:
+        return cls.distiller_profile
+
+    @classmethod
+    def get_distillation_method(cls) -> Optional[str]:
+        return cls.distillation_method
 
     @classmethod
     def get_vaecache(cls, id: str):

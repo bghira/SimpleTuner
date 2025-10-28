@@ -9,7 +9,24 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
-from accelerate import FullyShardedDataParallelPlugin
+
+try:
+    from accelerate import FullyShardedDataParallelPlugin
+except Exception:  # pragma: no cover - lightweight stub when accelerate is unavailable
+
+    class FullyShardedDataParallelPlugin:  # type: ignore[override]
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+            self.fsdp_version = kwargs.get("fsdp_version")
+            self.reshard_after_forward = kwargs.get("reshard_after_forward")
+            self.cpu_ram_efficient_loading = kwargs.get("cpu_ram_efficient_loading")
+            self.state_dict_type = kwargs.get("state_dict_type")
+            self.auto_wrap_policy = kwargs.get("auto_wrap_policy")
+            self.transformer_cls_names_to_wrap = kwargs.get("transformer_cls_names_to_wrap")
+
+        def set_state_dict_type(self, value):
+            self.state_dict_type = value
 
 
 def _ensure_torchao_stub():
@@ -232,13 +249,113 @@ def _ensure_torchvision_stub():
     sys.modules["torchvision.transforms"] = transforms_module
 
 
+def _ensure_accelerate_stub():
+    existing = sys.modules.get("accelerate")
+    if existing is not None and not hasattr(existing, "__path__"):
+        del sys.modules["accelerate"]
+        for name in list(sys.modules):
+            if name.startswith("accelerate."):
+                del sys.modules[name]
+    try:
+        import accelerate  # type: ignore  # noqa: F401
+
+        return
+    except Exception:
+        pass
+
+    accelerate_module = types.ModuleType("accelerate")
+    accelerate_spec = machinery.ModuleSpec("accelerate", loader=None)
+    accelerate_spec.submodule_search_locations = ["accelerate_stub"]
+    accelerate_module.__spec__ = accelerate_spec
+    accelerate_module.__path__ = ["accelerate_stub"]
+
+    class _Accelerator:
+        def __init__(self, *_, **__):
+            self.is_main_process = True
+            self.is_local_main_process = True
+            self.device = "cpu"
+            self.state = types.SimpleNamespace(deepspeed_plugin=None)
+
+        def prepare(self, *objects):
+            return objects
+
+        def wait_for_everyone(self):
+            return None
+
+        def accumulate(self, *_args, **_kwargs):
+            class _Context:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+            return _Context()
+
+    class _DeepSpeedPlugin:
+        pass
+
+    class _InitProcessGroupKwargs:
+        pass
+
+    class _FSDPPlugin:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+        def set_state_dict_type(self, value):
+            self.state_dict_type = value
+
+    accelerate_module.Accelerator = _Accelerator
+    accelerate_module.DeepSpeedPlugin = _DeepSpeedPlugin
+    accelerate_module.InitProcessGroupKwargs = _InitProcessGroupKwargs
+    accelerate_module.FullyShardedDataParallelPlugin = _FSDPPlugin
+
+    accelerate_utils = types.ModuleType("accelerate.utils")
+    accelerate_utils_spec = machinery.ModuleSpec("accelerate.utils", loader=None)
+    accelerate_utils_spec.submodule_search_locations = ["accelerate_stub/utils"]
+    accelerate_utils.__spec__ = accelerate_utils_spec
+    accelerate_utils.__path__ = ["accelerate_stub/utils"]
+    accelerate_utils.DistributedType = types.SimpleNamespace()
+    accelerate_utils.DynamoBackend = object
+    accelerate_utils.ParallelismConfig = object
+    accelerate_utils.TorchContextParallelConfig = object
+    accelerate_utils.TorchDynamoPlugin = object
+    accelerate_utils.ProjectConfiguration = type("ProjectConfiguration", (), {})
+    accelerate_utils.set_seed = lambda *_, **__: None
+
+    accelerate_state = types.ModuleType("accelerate.state")
+    accelerate_state_spec = machinery.ModuleSpec("accelerate.state", loader=None)
+    accelerate_state_spec.submodule_search_locations = ["accelerate_stub/state"]
+    accelerate_state.__spec__ = accelerate_state_spec
+    accelerate_state.__path__ = ["accelerate_stub/state"]
+    accelerate_state.AcceleratorState = type("AcceleratorState", (), {})
+
+    sys.modules["accelerate.utils"] = accelerate_utils
+    sys.modules["accelerate.state"] = accelerate_state
+    accelerate_module.utils = accelerate_utils
+    accelerate_module.state = accelerate_state
+    sys.modules["accelerate"] = accelerate_module
+
+
 _ensure_torchao_stub()
 _ensure_optimi_stub()
 _ensure_fastapi_stub()
 _ensure_toml_stub()
 _ensure_peft_stub()
 _ensure_torchvision_stub()
+_ensure_accelerate_stub()
 
+wandb_stub = types.SimpleNamespace(
+    init=lambda *_, **__: None,
+    login=lambda *_, **__: None,
+    finish=lambda *_, **__: None,
+    log=lambda *_, **__: None,
+    config={},
+)
+sys.modules.setdefault("wandb", wandb_stub)
+
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.training.trainer import Trainer
 
 # Import test configuration to suppress logging/warnings
@@ -306,6 +423,39 @@ class TestTrainer(unittest.TestCase):
         trainer.config = Mock(seed=42, seed_for_each_device=False)
         trainer.init_seed()
         mock_set_seed.assert_called_with(42, False)
+
+    def test_prepare_batch_requires_caption_aware_distiller(self):
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.model.prepare_batch = Mock()
+        trainer.state = {}
+        trainer.distiller = None
+        caption_batch = {"dataset_type": DatasetType.CAPTION, "data_backend_id": "captions", "captions": ["hello"]}
+        with self.assertRaises(ValueError):
+            trainer.prepare_batch(caption_batch)
+
+        trainer.distiller = Mock()
+        trainer.distiller.consumes_caption_batches.return_value = False
+        with self.assertRaises(ValueError):
+            trainer.prepare_batch(caption_batch)
+
+    def test_prepare_batch_routes_captions_to_distiller(self):
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.model.prepare_batch = Mock()
+        trainer.state = {}
+        distiller = Mock()
+        distiller.consumes_caption_batches.return_value = True
+        prepared = {"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}
+        distiller.prepare_caption_batch.return_value = prepared
+        trainer.distiller = distiller
+
+        batch = {"dataset_type": DatasetType.CAPTION, "data_backend_id": "captions", "captions": ["hello world"]}
+        result = trainer.prepare_batch(batch)
+        self.assertIs(result, prepared)
+        trainer.model.prepare_batch.assert_not_called()
+        distiller.prepare_batch.assert_not_called()
+        distiller.prepare_caption_batch.assert_called_once_with(batch, trainer.model, trainer.state)
 
     def test_run_trainer_job_aborts_promptly(self):
         from simpletuner.helpers.training import trainer as trainer_module

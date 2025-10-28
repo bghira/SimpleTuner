@@ -2,6 +2,7 @@ import logging
 import os
 
 from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO if _get_rank() == 0 else logging.WARNING)
@@ -69,6 +70,47 @@ class DatasetDuplicator:
             # Regular copy without path translation
             logger.info("Copying metadata without path translation")
             target_meta.set_metadata(metadata_backend=source_meta, update_json=True)
+
+        source_config = source_backend.get("config", {}) or {}
+        target_config = target_backend.get("config", {}) or {}
+        conditioning_type = target_config.get("conditioning_type") or target_backend.get("conditioning_type")
+
+        propagated_fields = [
+            "resolution",
+            "resolution_type",
+            "minimum_image_size",
+            "maximum_image_size",
+            "target_downsample_size",
+            "repeats",
+        ]
+        for field in propagated_fields:
+            if field in source_config:
+                target_config[field] = source_config[field]
+
+        if conditioning_type == "reference_strict":
+            alignment_fields = ["crop", "crop_aspect", "crop_style", "crop_aspect_buckets"]
+            for field in alignment_fields:
+                if field in source_config:
+                    target_config[field] = source_config[field]
+
+        target_backend["config"] = target_config
+        if target_backend.get("id"):
+            StateTracker.set_data_backend_config(target_backend["id"], target_config)
+
+        if "repeats" in target_config:
+            target_meta.repeats = int(target_config.get("repeats") or 0)
+        if "resolution" in target_config and target_config["resolution"] is not None:
+            target_meta.resolution = float(target_config["resolution"])
+        if "resolution_type" in target_config and target_config["resolution_type"] is not None:
+            target_meta.resolution_type = target_config["resolution_type"]
+        if "minimum_image_size" in target_config:
+            target_meta.minimum_image_size = target_config["minimum_image_size"]
+        if "maximum_image_size" in target_config:
+            target_meta.maximum_image_size = target_config["maximum_image_size"]
+        if "target_downsample_size" in target_config:
+            target_meta.target_downsample_size = target_config["target_downsample_size"]
+
+        target_meta.config = target_config
 
         # Save the updated metadata
         target_meta.save_cache()

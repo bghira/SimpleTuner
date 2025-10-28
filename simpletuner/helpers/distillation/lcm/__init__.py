@@ -8,7 +8,9 @@ import torch
 import torch.nn.functional as F
 from diffusers import DDPMScheduler, FlowMatchEulerDiscreteScheduler, LCMScheduler
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.registry import DistillationRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -371,3 +373,11 @@ class LCMDistiller(DistillationBase):
                 self.noise_scheduler.config,
                 timestep_scaling=self.config["timestep_scaling_factor"],
             )
+
+
+DistillationRegistry.register(
+    "lcm",
+    LCMDistiller,
+    requires_distillation_cache=False,
+    data_requirements=[[DatasetType.IMAGE, DatasetType.VIDEO]],
+)

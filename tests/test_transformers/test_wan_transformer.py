@@ -934,6 +934,28 @@ class TestWanTransformerBlock(TransformerBaseTest, TransformerBlockTestMixin):
 
             mock_ffn.assert_called_once()
 
+    def test_temporal_embedding_device_alignment(self):
+        """Ensure temb tensors are aligned to the block device before scale-shift operations."""
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA is required for WAN transformer device alignment test.")
+
+        block = WanTransformerBlock(**self.block_config).to("cuda")
+
+        hidden_states = self.hidden_states.to("cuda")
+        encoder_hidden_states = self.encoder_hidden_states.to("cuda")
+        temb = torch.randn(self.batch_size, 6, self.hidden_dim, device="cpu")
+        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64, device="cuda")
+
+        output = block.forward(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            temb=temb,
+            rotary_emb=rotary_emb,
+        )
+
+        self.assert_tensor_device(output, "cuda")
+        self.assert_tensor_device(block.scale_shift_table, "cuda")
+
     def test_dtype_conversions_float_operations(self):
         """Test dtype conversions for float operations in normalization."""
         if not torch.cuda.is_available():

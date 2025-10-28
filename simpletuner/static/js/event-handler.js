@@ -48,6 +48,7 @@ class EventHandler {
         this.severityRanks = {
             debug: 0,
             info: 1,
+            success: 1,
             warning: 2,
             error: 3
         };
@@ -59,6 +60,43 @@ class EventHandler {
         this.copyResetTimeout = null;
 
         this.init();
+    }
+
+    normalizeSeverity(value, fallback = 'info') {
+        const normalized = (value ?? '').toString().toLowerCase().trim();
+        if (!normalized) {
+            return fallback;
+        }
+        if (['fatal', 'fatal_error', 'critical', 'exception'].includes(normalized)) {
+            return 'error';
+        }
+        if (normalized === 'warn') {
+            return 'warning';
+        }
+        if (normalized === 'success') {
+            return 'success';
+        }
+        if (normalized === 'trace' || normalized === 'verbose') {
+            return 'debug';
+        }
+        if (this.severityRanks.hasOwnProperty(normalized)) {
+            return normalized;
+        }
+        return fallback;
+    }
+
+    normalizeFilterValue(value) {
+        const normalized = (value ?? '').toString().toLowerCase().trim();
+        if (!normalized || normalized === 'all') {
+            return 'all';
+        }
+        if (['fatal', 'fatal_error', 'critical'].includes(normalized)) {
+            return 'error';
+        }
+        if (normalized === 'warn') {
+            return 'warning';
+        }
+        return this.severityRanks.hasOwnProperty(normalized) ? normalized : 'all';
     }
 
     async init() {
@@ -367,7 +405,7 @@ class EventHandler {
 
             // Create structured content with enhanced data display
             const messageContent = this.formatEnhancedMessage(event);
-            const severity = this.getEventSeverity(event);
+            const severity = this.normalizeSeverity(this.getEventSeverity(event));
 
             eventItem.innerHTML = `
                 <div class="event-header">
@@ -498,9 +536,9 @@ class EventHandler {
         this.filterControls.includeLower = document.getElementById('eventIncludeLowerLevels');
 
         if (this.filterControls.select) {
-            this.severityFilter = this.filterControls.select.value || 'all';
+            this.severityFilter = this.normalizeFilterValue(this.filterControls.select.value);
             this.filterControls.select.addEventListener('change', () => {
-                this.severityFilter = this.filterControls.select.value || 'all';
+                this.severityFilter = this.normalizeFilterValue(this.filterControls.select.value);
                 this.applyEventFilters();
             });
         }
@@ -574,7 +612,7 @@ class EventHandler {
 
         if (this.copyResetTimeout) {
             clearTimeout(this.copyResetTimeout);
-            this.copyResetTimeout = null;
+        this.copyResetTimeout = null;
         }
 
         this.copyResetTimeout = setTimeout(() => {
@@ -609,8 +647,9 @@ class EventHandler {
             return '';
         }
 
-        if (this.severityFilter && this.severityFilter !== 'all') {
-            let filterLabel = this.severityFilter;
+        const activeFilter = this.normalizeFilterValue(this.severityFilter);
+        if (activeFilter && activeFilter !== 'all') {
+            let filterLabel = activeFilter;
             const select = this.filterControls.select;
             if (select && typeof select.selectedIndex === 'number' && select.options && select.options.length) {
                 const option = select.options[select.selectedIndex];
@@ -768,19 +807,18 @@ class EventHandler {
     }
 
     matchesSeverityFilter(severity) {
-        if (!severity) {
-            severity = 'info';
-        }
-        if (!this.severityFilter || this.severityFilter === 'all') {
+        const filterKey = this.normalizeFilterValue(this.severityFilter);
+        if (!filterKey || filterKey === 'all') {
             return true;
         }
 
-        const filterRank = this.severityRanks[this.severityFilter];
+        const normalizedSeverity = this.normalizeSeverity(severity);
+        const filterRank = this.severityRanks[filterKey];
         if (filterRank == null) {
             return true;
         }
 
-        const severityRank = this.severityRanks[severity] ?? this.severityRanks.info;
+        const severityRank = this.severityRanks[normalizedSeverity] ?? this.severityRanks.info;
         if (this.includeLowerLevels) {
             return severityRank <= filterRank;
         }
@@ -792,7 +830,8 @@ class EventHandler {
             return;
         }
 
-        const hasFilter = this.severityFilter && this.severityFilter !== 'all';
+        const activeFilter = this.normalizeFilterValue(this.severityFilter);
+        const hasFilter = activeFilter !== 'all';
         const items = Array.from(this.eventList.querySelectorAll('.event-item'));
         if (!items.length) {
             this.eventList.dataset.filtering = hasFilter ? 'true' : 'false';
@@ -802,7 +841,7 @@ class EventHandler {
 
         let visibleCount = 0;
         for (const item of items) {
-            const severity = item.dataset.severity || 'info';
+            const severity = item.dataset?.severity;
             const shouldShow = !hasFilter || this.matchesSeverityFilter(severity);
             item.hidden = !shouldShow;
             if (shouldShow) {

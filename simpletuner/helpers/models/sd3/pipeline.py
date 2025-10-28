@@ -779,6 +779,10 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         weight_name: str = None,
         save_function: Callable = None,
         safe_serialization: bool = True,
+        transformer_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_2_lora_adapter_metadata: Optional[dict] = None,
+        controlnet_lora_adapter_metadata: Optional[dict] = None,
     ):
         r"""
         Save the LoRA parameters corresponding to the transformer, text encoders, and optionally controlnet.
@@ -808,6 +812,7 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 Whether to save the model using `safetensors` or the traditional PyTorch way with `pickle`.
         """
         state_dict = {}
+        lora_adapter_metadata = {}
 
         if not (transformer_lora_layers or text_encoder_lora_layers or text_encoder_2_lora_layers or controlnet_lora_layers):
             raise ValueError(
@@ -826,6 +831,18 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
         if controlnet_lora_layers:
             state_dict.update(cls.pack_weights(controlnet_lora_layers, cls.controlnet_name))
 
+        if transformer_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
+
+        if text_encoder_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(text_encoder_lora_adapter_metadata, "text_encoder"))
+
+        if text_encoder_2_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(text_encoder_2_lora_adapter_metadata, "text_encoder_2"))
+
+        if controlnet_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(controlnet_lora_adapter_metadata, cls.controlnet_name))
+
         # Save the model
         cls.write_lora_layers(
             state_dict=state_dict,
@@ -834,6 +851,7 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
             weight_name=weight_name,
             save_function=save_function,
             safe_serialization=safe_serialization,
+            lora_adapter_metadata=lora_adapter_metadata,
         )
 
     def fuse_lora(

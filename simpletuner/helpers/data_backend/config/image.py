@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 from . import validators
@@ -83,7 +84,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
-            dataset_type=backend_dict.get("dataset_type", "image"),
+            dataset_type=DatasetType.from_value(backend_dict.get("dataset_type"), DatasetType.IMAGE),
         )
 
         config.disabled = backend_dict.get("disabled", backend_dict.get("disable", False))
@@ -250,8 +251,20 @@ class ImageBackendConfig(BaseBackendConfig):
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
 
-        valid_types = ["image", "conditioning", "eval", "video"]
+        valid_types = [
+            DatasetType.IMAGE,
+            DatasetType.CONDITIONING,
+            DatasetType.EVAL,
+            DatasetType.VIDEO,
+            DatasetType.CAPTION,
+        ]
         validators.validate_dataset_type(self.dataset_type, valid_types, self.id)
+
+        if self.dataset_type is DatasetType.CAPTION and str(self.backend_type).lower() == "csv":
+            raise ValueError(
+                f"(id={self.id}) Caption datasets cannot use CSV backends. "
+                "Use local, AWS, Parquet, or Hugging Face storage that actually carries caption text."
+            )
 
         self._validate_controlnet_requirements(args)
 
@@ -272,7 +285,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         self._validate_backend_specific_settings()
 
-        if self.dataset_type == "video":
+        if self.dataset_type == DatasetType.VIDEO:
             self._validate_video_settings(args)
 
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
@@ -283,7 +296,7 @@ class ImageBackendConfig(BaseBackendConfig):
             state_args is not None
             and hasattr(state_args, "controlnet")
             and state_args.controlnet
-            and self.dataset_type == "image"
+            and self.dataset_type == DatasetType.IMAGE
             and (self.conditioning_data is None and self.conditioning is None)
         ):
             raise ValueError(
@@ -353,7 +366,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config = result["config"]
 
         result["type"] = self.backend_type
-        config["dataset_type"] = self.dataset_type
+        config["dataset_type"] = self.dataset_type.value
 
         config["crop"] = self.crop
         config["crop_aspect"] = self.crop_aspect

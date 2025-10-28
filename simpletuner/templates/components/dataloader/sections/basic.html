@@ -1,0 +1,199 @@
+<div class="dataset-section">
+            <div class="dataset-section-header d-flex align-items-center">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                        @click="toggleSectionCollapsed(dataset, 'basic')"
+                        :aria-expanded="sectionIsCollapsed(dataset, 'basic') ? 'false' : 'true'"
+                        :aria-controls="`dataset-basic-${datasetSafeId(dataset)}`">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+                <span>Basic Settings</span>
+            </div>
+            <div class="dataset-section-body"
+                 :id="`dataset-basic-${datasetSafeId(dataset)}`"
+                 x-show="sectionIsExpanded(dataset, 'basic')"
+                 x-transition
+                 x-cloak>
+        <div class="row g-3 align-items-end">
+            <div class="col-md-6 mb-2">
+                <label class="form-label">Type <span class="text-danger">*</span></label>
+                <select class="form-control form-control-sm"
+                        x-model="dataset.dataset_type"
+                        @change="markAsUnsaved()"
+                        :class="{'is-invalid': hasFieldError(dataset.id, 'dataset_type')}">
+                    <option value="">Select type...</option>
+                    <option value="image">🖼️ Image</option>
+                    <option value="video">🎬 Video</option>
+                    <option value="conditioning"
+                            :disabled="!conditioningSupported && dataset.dataset_type !== 'conditioning'">
+                        🎨 Conditioning
+                    </option>
+                    <option value="text_embeds">💾 Text Embeds</option>
+                    <option value="image_embeds">💾 Image Embeds</option>
+                </select>
+                <div class="invalid-feedback"
+                     x-show="hasFieldError(dataset.id, 'dataset_type')"
+                     x-text="getFieldError(dataset.id, 'dataset_type')">
+                </div>
+            </div>
+        </div>
+        <div class="dataset-subgroup"
+             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+             :class="{'is-collapsed': sectionIsCollapsed(dataset, 'sizing')}">
+            <div class="dataset-subgroup-header collapse-header">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                        @click="toggleSectionCollapsed(dataset, 'sizing')"
+                        :aria-expanded="sectionIsCollapsed(dataset, 'sizing') ? 'false' : 'true'"
+                        :aria-controls="`dataset-sizing-${datasetSafeId(dataset)}`">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+                <div class="dataset-subgroup-title mb-0">Sizing</div>
+            </div>
+            <div class="dataset-subgroup-body"
+                 :id="`dataset-sizing-${datasetSafeId(dataset)}`"
+                 x-show="sectionIsExpanded(dataset, 'sizing')"
+                 x-transition
+                 x-cloak>
+            <div class="dataset-inline-grid sizing-grid">
+                <div class="dataset-inline-field">
+                    <label class="form-label mb-1">Resolution</label>
+                    <input type="number"
+                           class="form-control form-control-sm"
+                           min="0"
+                           step="1"
+                           x-model.number.lazy="dataset.resolution"
+                           @input="markAsUnsaved()"
+                           placeholder="1024">
+                    <div class="form-text"
+                         x-text="dataset.resolution_type === 'pixel_area'
+                            ? 'Shorter edge (squared for area)'
+                            : 'Shorter edge in pixels'
+                         ">
+                        Shorter edge (squared for area)
+                    </div>
+                </div>
+                <div class="dataset-inline-field">
+                    <label class="form-label mb-1">Resolution Type</label>
+                    <select class="form-select form-select-sm"
+                            x-model="dataset.resolution_type"
+                            @change="markAsUnsaved()">
+                        <option value="pixel">Pixels (shorter edge)</option>
+                        <option value="pixel_area">Pixel area (megapixels)</option>
+                    </select>
+                </div>
+                <div class="dataset-inline-field">
+                    <label class="form-label mb-1">Min Size</label>
+                    <input type="number" class="form-control form-control-sm"
+                           x-model.number.lazy="dataset.minimum_image_size"
+                           min="0"
+                           step="1"
+                           @input="markAsUnsaved()"
+                           placeholder="0 (disabled)">
+                    <div class="form-text">
+                        Skip smaller images
+                    </div>
+                </div>
+                <div class="dataset-inline-field">
+                    <label class="form-label mb-1">Max Size</label>
+                    <input type="number" class="form-control form-control-sm"
+                           x-model.number.lazy="dataset.maximum_image_size"
+                           min="0"
+                           step="1"
+                           @input="markAsUnsaved()"
+                           placeholder="0 (disabled)">
+                    <div class="form-text">
+                        Downsample larger images to the target size
+                    </div>
+                </div>
+                <div class="dataset-inline-field">
+                    <label class="form-label mb-1">Downsample Target</label>
+                    <input type="number" class="form-control form-control-sm"
+                           x-model.number.lazy="dataset.target_downsample_size"
+                           min="0"
+                           step="1"
+                           @input="markAsUnsaved()"
+                           placeholder="Auto">
+                    <div class="form-text">
+                        Target size used when downsampling larger images
+                    </div>
+                </div>
+            </div>
+            </div>
+        </div>
+        <div class="dataset-subgroup"
+             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+             :class="{'is-collapsed': sectionIsCollapsed(dataset, 'cropping')}">
+            <div class="dataset-subgroup-header collapse-header">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                        @click="toggleSectionCollapsed(dataset, 'cropping')"
+                        :aria-expanded="sectionIsCollapsed(dataset, 'cropping') ? 'false' : 'true'"
+                        :aria-controls="`dataset-cropping-${datasetSafeId(dataset)}`">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+                <div class="dataset-subgroup-title mb-0">Cropping</div>
+            </div>
+            <div class="dataset-subgroup-body"
+                 :id="`dataset-cropping-${datasetSafeId(dataset)}`"
+                 x-show="sectionIsExpanded(dataset, 'cropping')"
+                 x-transition
+                 x-cloak>
+            <div class="dataset-inline-grid cropping-grid">
+                <div class="dataset-inline-field dataset-inline-field-checkbox">
+                    <div class="form-check mb-0">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               :id="`dataset-crop-${datasetSafeId(dataset)}`"
+                               x-model="dataset.crop"
+                               @change="markAsUnsaved()">
+                        <label class="form-check-label" :for="`dataset-crop-${datasetSafeId(dataset)}`">Enable image cropping</label>
+                    </div>
+                </div>
+                <div class="dataset-inline-field dataset-inline-field-tight"
+                     x-show="dataset.crop"
+                     x-cloak>
+                    <label class="form-label mb-1">Crop Style</label>
+                    <select class="form-select form-select-sm"
+                            x-model="dataset.crop_style"
+                            @change="markAsUnsaved()">
+                        <option value="center">Center</option>
+                        <option value="corner">Corner</option>
+                        <option value="face">Face Detection</option>
+                        <option value="random">Random</option>
+                    </select>
+                </div>
+                <div class="dataset-inline-field dataset-inline-field-tight"
+                     x-show="dataset.crop"
+                     x-cloak>
+                    <label class="form-label mb-1">Crop Aspect</label>
+                    <select class="form-select form-select-sm"
+                            x-model="dataset.crop_aspect"
+                            @change="markAsUnsaved()">
+                        <option value="square">Square</option>
+                        <option value="preserve">Preserve original</option>
+                        <option value="closest">Closest bucket</option>
+                        <option value="random">Weighted buckets</option>
+                    </select>
+                </div>
+                <div class="dataset-inline-field"
+                     x-show="dataset.crop"
+                     x-cloak>
+                    <label class="form-label mb-1">Crop Aspect Buckets</label>
+                    <input type="text" class="form-control form-control-sm"
+                           x-model="dataset._cropAspectBucketsText"
+                           @input="markAsUnsaved()"
+                           :disabled="!['closest', 'random'].includes(dataset.crop_aspect)"
+                           placeholder="0.75, 1.0, 1.33">
+                    <div class="form-text"
+                         x-text="['closest', 'random'].includes(dataset.crop_aspect)
+                            ? 'Comma separated list of aspect ratios used for bucket selection.'
+                            : 'Select &quot;Closest bucket&quot; or &quot;Weighted buckets&quot; to enable custom aspect buckets.'">
+                        Comma separated list of aspect ratios used for bucket selection.
+                    </div>
+                </div>
+            </div>
+            </div>
+        </div>
+    </div>
+</div>
