@@ -260,6 +260,7 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.system import router as system_router
     from .routes.training import router as training_router
     from .routes.validation import router as validation_router
+    from .routes.version import router as version_router
     from .routes.web import router as web_router
     from .routes.webui_state import router as webui_state_router
 
@@ -277,6 +278,7 @@ def _add_trainer_routes(app: FastAPI):
         publishing_router,
         hardware_router,
         system_router,
+        version_router,
     ):
         _include_router_if_present(router)
 
