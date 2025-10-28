@@ -181,6 +181,10 @@ class QwenImage(ImageModelFoundation):
     def _is_edit_flavour(self) -> bool:
         return self._is_edit_v1_flavour() or self._is_edit_v2_flavour()
 
+    def requires_conditioning_latents(self) -> bool:
+        # Edit flavours rely on conditioning latents (masked regions) alongside the base inputs.
+        return self._is_edit_flavour()
+
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode prompts using Qwen's text encoder.
