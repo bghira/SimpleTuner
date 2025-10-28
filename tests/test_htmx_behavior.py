@@ -179,7 +179,20 @@ class HTMXBehaviourTestCase(WebUITestCase):
 
             # Don't expect DOM changes when using fetch() API
             request, dom_entry = fire_request(expect_dom=False)
-            flags = driver.execute_script("return window.__htmxHarness.indicatorFlags;")
+
+            def indicator_settled():
+                flags = driver.execute_script("return window.__htmxHarness.indicatorFlags;") or {}
+                hx_ready = (not flags.get("hxActivated")) or bool(flags.get("hxCleared"))
+                data_ready = (not flags.get("dataShown")) or bool(flags.get("dataHidden"))
+                return hx_ready and data_ready
+
+            try:
+                WebDriverWait(driver, 5).until(lambda d: indicator_settled())
+            except TimeoutException:
+                # Continue - assertions below will surface remaining issues
+                pass
+
+            flags = driver.execute_script("return window.__htmxHarness.indicatorFlags;") or {}
 
             with self.subTest("form_submission_includes_all_fields"):
                 params = request.get("parameters", {})
