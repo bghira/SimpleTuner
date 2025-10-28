@@ -1,0 +1,148 @@
+<template x-if="shouldShowConditioningSection(dataset)">
+            <div class="dataset-section conditioning-section dataset-section-collapsible"
+                 :class="{'is-open': !sectionIsCollapsed(dataset, 'conditioning')}">
+                <div class="dataset-section-header d-flex align-items-center justify-content-between advanced-section">
+                    <div class="d-flex align-items-center">
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary dataset-section-toggle advanced-toggle me-2"
+                                @click="toggleSectionCollapsed(dataset, 'conditioning')"
+                                :aria-expanded="sectionIsCollapsed(dataset, 'conditioning') ? 'false' : 'true'"
+                                :aria-controls="`dataset-conditioning-${datasetSafeId(dataset)}`">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                        <span>Conditioning</span>
+                    </div>
+                    <span class="badge bg-secondary" x-text="conditioningDatasetType"></span>
+                </div>
+                <div class="dataset-section-body"
+                     :id="`dataset-conditioning-${datasetSafeId(dataset)}`"
+                     x-show="sectionIsExpanded(dataset, 'conditioning')"
+                     x-transition
+                     x-cloak>
+                    <div class="dataset-subgroup conditioning-links">
+                        <div class="dataset-subgroup-title">Conditioning Datasets</div>
+                        <p class="text-muted small mb-2">
+                            Link existing <code x-text="conditioningDatasetType"></code> datasets to feed control inputs during training.
+                        </p>
+                        <template x-if="conditioningOptions(dataset).length === 0">
+                            <div class="alert alert-secondary py-2 px-3 mb-2">
+                                Create a <code x-text="conditioningDatasetType"></code> dataset to enable linking.
+                            </div>
+                        </template>
+                        <select class="form-select form-select-sm"
+                                multiple
+                                x-model="dataset.conditioning_data"
+                                @change="onConditioningDataChange(dataset, $event)">
+                            <template x-for="option in conditioningOptions(dataset)" :key="option">
+                                <option :value="option" x-text="option"></option>
+                            </template>
+                        </select>
+                        <div class="form-text">Hold <kbd>⌘</kbd>/<kbd>Ctrl</kbd> to select multiple entries.</div>
+                        <div class="invalid-feedback d-block"
+                             x-show="hasFieldError(dataset.id, 'conditioning_data')"
+                             x-text="getFieldError(dataset.id, 'conditioning_data')"></div>
+                    </div>
+
+                    <div class="dataset-subgroup conditioning-generators">
+                        <div class="dataset-subgroup-header d-flex align-items-center justify-content-between">
+                            <div class="dataset-subgroup-title mb-0">Conditioning Generators</div>
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-primary"
+                                    @click="addConditioningGenerator(dataset)"
+                                    :disabled="!conditioningSupported"
+                                    title="Automatically derive control inputs from source data">
+                                <i class="fas fa-plus"></i>
+                                Add Generator
+                            </button>
+                        </div>
+                        <template x-if="conditioningRequired && (!Array.isArray(dataset.conditioning) || dataset.conditioning.length === 0)">
+                            <div class="alert alert-warning py-2 px-3 mb-2">
+                                Active model requires conditioning. Link a dataset above or add a generator.
+                            </div>
+                        </template>
+                        <template x-for="(generator, genIndex) in dataset.conditioning" :key="generator._uiKey || genIndex">
+                            <div class="card conditioning-generator mb-2">
+                                <div class="card-body p-3">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="me-3 flex-grow-1">
+                                            <div class="mb-3">
+                                                <label class="form-label">Generator Type</label>
+                                                <select class="form-select form-select-sm"
+                                                        x-model="generator._selectedType"
+                                                        @change="onGeneratorTypeSelect(generator)"
+                                                        :disabled="!conditioningSupported">
+                                                    <option value="">Select generator...</option>
+                                                <template x-for="option in availableGeneratorTypes" :key="option.value">
+                                                    <option :value="option.value"
+                                                            :selected="option.value === generator._selectedType"
+                                                            :title="option.description"
+                                                            x-text="option.label"></option>
+                                                </template>
+                                            </select>
+                                                <div class="form-text text-muted"
+                                                     x-show="generator._selectedType && generator._selectedType !== '__custom__'"
+                                                     x-text="getGeneratorDescription(generator._selectedType)"></div>
+                                                <div class="mt-2" x-show="generator._selectedType === '__custom__'">
+                                                    <input type="text"
+                                                           class="form-control form-control-sm"
+                                                           x-model="generator._customType"
+                                                           @input="onGeneratorTypeManual(generator)"
+                                                           placeholder="Enter generator id (e.g. my_custom_generator)">
+                                                    <div class="form-text">Provide the exact generator identifier expected by your pipeline.</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-danger"
+                                                @click="removeConditioningGenerator(dataset, generator)"
+                                                title="Remove generator">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label mb-1">Parameters (JSON)</label>
+                                        <textarea class="form-control form-control-sm font-monospace"
+                                                  rows="4"
+                                                  x-model="generator._paramsText"
+                                                  @blur="onGeneratorParamsBlur(generator)"
+                                                  :class="{'is-invalid': generator._paramsParseError}"></textarea>
+                                        <div class="invalid-feedback" x-show="generator._paramsParseError" x-text="generator._paramsParseError"></div>
+                                    </div>
+
+                                    <div>
+                                        <label class="form-label mb-1">Captions</label>
+                                        <select class="form-select form-select-sm"
+                                                x-model="generator._captionsMode"
+                                                @change="onGeneratorCaptionsModeChange(generator)">
+                                            <option value="inherit">Inherit from dataset</option>
+                                            <option value="none">Disable captions</option>
+                                            <option value="single">Single prompt</option>
+                                            <option value="list">Prompt list</option>
+                                        </select>
+                                        <div class="mt-2" x-show="generator._captionsMode === 'single'">
+                                            <input type="text"
+                                                   class="form-control form-control-sm"
+                                                   x-model="generator._captionsValue"
+                                                   @input="onGeneratorCaptionsInput(generator)"
+                                                   placeholder="eg. outline sketch">
+                                        </div>
+                                        <div class="mt-2" x-show="generator._captionsMode === 'list'">
+                                            <textarea class="form-control form-control-sm"
+                                                      rows="3"
+                                                      x-model="generator._captionsValue"
+                                                      @input="onGeneratorCaptionsInput(generator)"
+                                                      placeholder="One caption per line"></textarea>
+                                            <div class="form-text">Provide one caption per line.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        <div class="text-muted small" x-show="!dataset.conditioning || dataset.conditioning.length === 0">
+                            No conditioning generators configured.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>

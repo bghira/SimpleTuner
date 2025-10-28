@@ -1,0 +1,79 @@
+<template x-if="dataset.dataset_type === 'video'">
+            <div class="dataset-section video-settings">
+                <div class="dataset-section-header d-flex align-items-center">
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                            @click="toggleSectionCollapsed(dataset, 'video')"
+                            :aria-expanded="sectionIsCollapsed(dataset, 'video') ? 'false' : 'true'"
+                            :aria-controls="`dataset-video-${datasetSafeId(dataset)}`">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                    <span>Video Settings</span>
+                </div>
+                <div class="dataset-section-body"
+                     :id="`dataset-video-${datasetSafeId(dataset)}`"
+                     x-show="sectionIsExpanded(dataset, 'video')"
+                     x-transition
+                     x-cloak>
+                    <div class="dataset-subgroup">
+                        <div class="dataset-subgroup-title">Frame Configuration</div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Frames per Clip</label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       min="1"
+                                       x-model.number.lazy="dataset.video.num_frames"
+                                       @input="markAsUnsaved()"
+                                       placeholder="125">
+                                <div class="form-text">Target frame count extracted from each video.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Min Frames</label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       min="1"
+                                       x-model.number.lazy="dataset.video.min_frames"
+                                       @input="markAsUnsaved()"
+                                       placeholder="125">
+                                <div class="form-text">Excludes videos with fewer frames than this.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Max Frames</label>
+                                <input type="number"
+                                       class="form-control form-control-sm"
+                                       min="1"
+                                       x-model.number.lazy="dataset.video.max_frames"
+                                       @input="markAsUnsaved()"
+                                       placeholder="250">
+                                <div class="form-text">Excludes videos with more frames than this. 0 = no limit.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="dataset-subgroup mt-3">
+                        <div class="dataset-subgroup-title">Video Processing</div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="checkbox-item">
+                                    <div class="form-check">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               :id="`video-i2v-${datasetSafeId(dataset)}`"
+                                               x-model="dataset.video.is_i2v"
+                                               @change="markAsUnsaved()">
+                                        <div class="checkbox-content">
+                                            <label class="form-check-label" :for="`video-i2v-${datasetSafeId(dataset)}`">
+                                                Enable I2V augmentation
+                                            </label>
+                                            <div class="form-text">
+                                                Enables image-to-video augmentation mode for training.
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>

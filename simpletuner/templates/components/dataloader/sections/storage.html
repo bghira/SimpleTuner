@@ -1,0 +1,261 @@
+<div class="col-12 d-flex"
+         :class="sectionAvailable(dataset, 'captions') ? 'col-md-6' : 'col-md-12'">
+        <div class="dataset-section flex-fill">
+            <div class="dataset-section-header d-flex align-items-center">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                        @click="toggleSectionCollapsed(dataset, 'storage')"
+                        :aria-expanded="sectionIsCollapsed(dataset, 'storage') ? 'false' : 'true'"
+                        :aria-controls="`dataset-storage-${datasetSafeId(dataset)}`">
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+                <span>Storage</span>
+            </div>
+            <div class="dataset-section-body"
+                 :id="`dataset-storage-${datasetSafeId(dataset)}`"
+                 x-show="sectionIsExpanded(dataset, 'storage')"
+                 x-transition
+                 x-cloak>
+                <div class="dataset-subgroup">
+                    <div class="dataset-subgroup-title">Backend Configuration</div>
+                    <div class="row g-3">
+                        <div class="col-md-12">
+                            <label class="form-label">Storage Backend</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="dataset.type"
+                                    @change="onStorageBackendChange(dataset)">
+                                <option value="local">Local filesystem</option>
+                                <option value="aws">AWS S3 / compatible</option>
+                                <option value="csv">CSV URL list</option>
+                                <option value="huggingface">Hugging Face dataset</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="dataset-subgroup mt-3"
+                     x-show="(dataset.type === 'local' && dataset.dataset_type !== 'image_embeds') || dataset.dataset_type === 'image' || dataset.dataset_type === 'video'">
+                    <div class="dataset-subgroup-title">Storage Paths</div>
+                    <div class="row g-3">
+                        <div class="col-md-6"
+                             x-show="dataset.type === 'local' && dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+                            <label class="form-label">Instance Data Directory</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model.lazy="dataset.instance_data_dir"
+                                       @input="markAsUnsaved()"
+                                       placeholder="/path/to/data">
+                                <button class="btn btn-outline-secondary"
+                                        type="button"
+                                        @click.prevent="openDatasetPathBrowser(dataset, 'instance_data_dir')"
+                                        title="Browse local directories">
+                                    <i class="fas fa-folder-open"></i>
+                                </button>
+                            </div>
+                            <div class="form-text">Path to your training images or videos.</div>
+                        </div>
+                        <div class="col-md-6"
+                             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+                            <label class="form-label">VAE Cache Directory</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model.lazy="dataset.cache_dir_vae"
+                                   @input="markAsUnsaved()"
+                                   placeholder="/path/to/cache/vae">
+                            <div class="form-text">Where VAE-encoded latents are cached.</div>
+                        </div>
+                        <div class="col-md-6"
+                             x-show="dataset.type === 'local' && dataset.dataset_type === 'text_embeds'">
+                            <label class="form-label">Text Embed Cache</label>
+                            <input type="text" class="form-control form-control-sm"
+                                   x-model.lazy="dataset.cache_dir"
+                                   @input="markAsUnsaved()"
+                                   placeholder="/path/to/cache">
+                            <div class="form-text">Location to store or reuse prompt embeddings.</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="storage-config mt-3">
+                    <template x-if="dataset.type === 'aws'">
+                    <div class="dataset-subgroup">
+                        <div class="dataset-subgroup-title">Bucket Settings</div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Bucket Name</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.aws_bucket_name"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="my-training-bucket">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Object Prefix</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.aws_data_prefix"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="datasets/run-name">
+                                <div class="form-text">Optional object prefix within the bucket (acts like a folder).</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Region</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.aws_region_name"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="us-east-1">
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-4">
+                                <label class="form-label">Endpoint URL</label>
+                                <div class="input-group input-group-sm">
+                                    <input :type="dataset._awsEndpointVisible ? 'text' : 'password'"
+                                           class="form-control"
+                                           x-model="dataset.aws_endpoint_url"
+                                           @input="touchConnectionField(dataset)"
+                                           placeholder="https://s3.amazonaws.com"
+                                           autocomplete="off">
+                                    <button class="btn btn-outline-secondary"
+                                            type="button"
+                                            @click="dataset._awsEndpointVisible = !dataset._awsEndpointVisible"
+                                            :title="dataset._awsEndpointVisible ? 'Hide value' : 'Show value'">
+                                        <i class="fas" :class="dataset._awsEndpointVisible ? 'fa-eye-slash' : 'fa-eye'"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Access Key ID</label>
+                                <div class="input-group input-group-sm">
+                                    <input :type="dataset._awsAccessVisible ? 'text' : 'password'"
+                                           class="form-control"
+                                           x-model="dataset.aws_access_key_id"
+                                           @input="touchConnectionField(dataset)"
+                                           autocomplete="off">
+                                    <button class="btn btn-outline-secondary"
+                                            type="button"
+                                            @click="dataset._awsAccessVisible = !dataset._awsAccessVisible"
+                                            :title="dataset._awsAccessVisible ? 'Hide value' : 'Show value'">
+                                        <i class="fas" :class="dataset._awsAccessVisible ? 'fa-eye-slash' : 'fa-eye'"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Secret Access Key</label>
+                                <div class="input-group input-group-sm">
+                                    <input :type="dataset._awsSecretVisible ? 'text' : 'password'"
+                                           class="form-control"
+                                           x-model="dataset.aws_secret_access_key"
+                                           @input="touchConnectionField(dataset)"
+                                           autocomplete="off">
+                                    <button class="btn btn-outline-secondary"
+                                            type="button"
+                                            @click="dataset._awsSecretVisible = !dataset._awsSecretVisible"
+                                            :title="dataset._awsSecretVisible ? 'Hide value' : 'Show value'">
+                                        <i class="fas" :class="dataset._awsSecretVisible ? 'fa-eye-slash' : 'fa-eye'"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </template>
+                    <template x-if="dataset.type === 'csv'">
+                    <div class="dataset-subgroup">
+                        <div class="dataset-subgroup-title">CSV Configuration</div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">CSV File</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.csv_file"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="/path/to/urls.csv">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Caption Column</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.csv_caption_column"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="caption">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Cache Directory</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.csv_cache_dir"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="/path/to/cache">
+                            </div>
+                        </div>
+                    </div>
+                    </template>
+                    <template x-if="dataset.type === 'huggingface'">
+                    <div class="dataset-subgroup">
+                        <div class="dataset-subgroup-title">Hugging Face Settings</div>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Dataset Name</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.dataset_name"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="username/dataset">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Dataset Config</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.dataset_config"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="default">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Split</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.split"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="train">
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Revision</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.revision"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="main">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Image Column</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.image_column"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="image">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Caption Column</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="dataset.caption_column"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="text">
+                            </div>
+                        </div>
+                        <div class="row g-3 mt-3">
+                            <div class="col-md-4">
+                                <div class="form-check mt-4">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           :id="`dataset-streaming-${datasetSafeId(dataset)}`"
+                                           x-model="dataset.streaming"
+                                           @change="touchConnectionField(dataset)">
+                                    <label class="form-check-label" :for="`dataset-streaming-${datasetSafeId(dataset)}`">
+                                        Enable streaming
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label">Auth Token</label>
+                                <input type="password" class="form-control form-control-sm"
+                                       x-model="dataset.auth_token"
+                                       @input="touchConnectionField(dataset)"
+                                       placeholder="hf_...">
+                                <div class="form-text">Optional token for private datasets.</div>
+                            </div>
+                        </div>
+                    </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
