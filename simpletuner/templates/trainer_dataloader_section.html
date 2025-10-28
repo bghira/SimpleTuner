@@ -156,22 +156,7 @@ function dataloaderSectionComponent() {
     },
     get conditioningFeaturesActive() {
         const context = this.modelContext || {};
-        if (
-            context.controlnetEnabled
-            || context.requiresConditioningDataset
-            || context.requiresConditioningLatents
-            || context.requiresConditioningImageEmbeds
-        ) {
-            return true;
-        }
-
-        const capabilities =
-            (this.trainer && this.trainer.modelDetails && this.trainer.modelDetails.capabilities) || {};
-        return Boolean(
-            capabilities.overrides_requires_conditioning_dataset
-            || capabilities.overrides_requires_conditioning_latents
-            || capabilities.overrides_requires_conditioning_image_embeds
-        );
+        return Boolean(context.controlnetEnabled || context.requiresConditioningDataset);
     },
     get conditioningSupported() {
         return this.conditioningFeaturesActive;
@@ -1069,6 +1054,36 @@ function dataloaderSectionComponent() {
 
         this.markAsUnsaved();
     },
+    openDatasetPathBrowser(dataset, fieldId) {
+        if (!dataset || !fieldId) {
+            return;
+        }
+        const wizard = window.datasetWizardComponentInstance;
+        if (!wizard || typeof wizard.openFileBrowser !== 'function') {
+            if (window.showToast) {
+                window.showToast('File browser is not ready yet. Try again in a moment.', 'warning');
+            } else {
+                console.warn('Dataset file browser unavailable');
+            }
+            return;
+        }
+        const maybePromise = wizard.openFileBrowser(fieldId, {
+            dataset,
+            context: 'manual',
+            initialPath: dataset[fieldId] || null,
+            onConfirm: () => {
+                this.markAsUnsaved();
+            }
+        });
+        if (maybePromise && typeof maybePromise.catch === 'function') {
+            maybePromise.catch((error) => {
+                console.error('Failed to open dataset file browser', error);
+                if (window.showToast) {
+                    window.showToast('Unable to open file browser. Check console for details.', 'error');
+                }
+            });
+        }
+    },
     computeDangerModeEnabled() {
         const toggle = document.getElementById('i_know_what_i_am_doing');
         if (toggle) {
@@ -1657,10 +1672,18 @@ window.dataloaderSectionComponent = dataloaderSectionComponent;
                                     <div class="col-md-6"
                                          x-show="dataset.type === 'local' && dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
                                         <label class="form-label">Instance Data Directory</label>
-                                        <input type="text" class="form-control form-control-sm"
-                                               x-model.lazy="dataset.instance_data_dir"
-                                               @input="markAsUnsaved()"
-                                               placeholder="/path/to/data">
+                                        <div class="input-group input-group-sm">
+                                            <input type="text" class="form-control form-control-sm"
+                                                   x-model.lazy="dataset.instance_data_dir"
+                                                   @input="markAsUnsaved()"
+                                                   placeholder="/path/to/data">
+                                            <button class="btn btn-outline-secondary"
+                                                    type="button"
+                                                    @click.prevent="openDatasetPathBrowser(dataset, 'instance_data_dir')"
+                                                    title="Browse local directories">
+                                                <i class="fas fa-folder-open"></i>
+                                            </button>
+                                        </div>
                                         <div class="form-text">Path to your training images or videos.</div>
                                     </div>
                                     <div class="col-md-6"

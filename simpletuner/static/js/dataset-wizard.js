@@ -90,6 +90,10 @@
             loadingDirectories: false,
             fileBrowserError: null,
             fileBrowserErrorType: null, // 'not_found' | 'permission' | 'other'
+            fileBrowserTargetDataset: null,
+            fileBrowserOnConfirm: null,
+            fileBrowserContext: 'wizard',
+            fileBrowserBodyClassApplied: false,
 
             // Model context (ControlNet detection and video model detection)
             get showConditioningStep() {
@@ -210,6 +214,7 @@
 
             async init() {
                 console.log('[WIZARD] Component initializing...');
+                window.datasetWizardComponentInstance = this;
                 this.currentDataset = this.getDefaultDataset();
                 await this.loadBlueprints();
             },
@@ -1048,43 +1053,101 @@
             },
 
             // File browser methods
-            async openFileBrowser(fieldId) {
+            async openFileBrowser(fieldId, options = {}) {
                 this.fileBrowserFieldId = fieldId;
+                this.fileBrowserTargetDataset = options.dataset || this.currentDataset;
+                this.fileBrowserOnConfirm = typeof options.onConfirm === 'function' ? options.onConfirm : null;
+                this.fileBrowserContext = options.context || 'wizard';
                 this.fileBrowserOpen = true;
 
+                if (!document.body.classList.contains('modal-open')) {
+                    document.body.classList.add('modal-open');
+                    this.fileBrowserBodyClassApplied = true;
+                } else {
+                    this.fileBrowserBodyClassApplied = false;
+                }
+
+                if (typeof this.$nextTick === 'function') {
+                    await new Promise((resolve) => this.$nextTick(resolve));
+                }
+
+                let initialPath = options.initialPath ?? null;
+                if (typeof initialPath === 'string') {
+                    initialPath = initialPath.trim();
+                    if (initialPath.length === 0) {
+                        initialPath = null;
+                    }
+                } else if (initialPath === undefined) {
+                    initialPath = null;
+                }
+
                 // Load initial directory - server will use configured datasets_dir if no path provided
-                await this.loadDirectories(null);
+                const suppressInitialErrors = this.fileBrowserContext === 'manual';
+                const initialResult = await this.loadDirectories(initialPath, { suppressErrors: suppressInitialErrors });
+
+                let usedFallback = false;
+                if (initialPath && (!initialResult || !initialResult.success)) {
+                    // Provide quick feedback so the user understands why we are falling back
+                    if (initialResult?.status === 403) {
+                        this.showToast('Access denied for the configured path. Showing datasets root instead.', 'warning');
+                    } else if (initialResult?.status === 404) {
+                        this.showToast('Directory not found. Showing datasets root instead.', 'warning');
+                    }
+
+                    const fallbackResult = await this.loadDirectories(null);
+                    usedFallback = true;
+                    if (fallbackResult && fallbackResult.success) {
+                        this.selectedPath = null;
+                    }
+                } else if (initialPath && initialResult && initialResult.success) {
+                    this.selectedPath = initialPath;
+                }
+
+                if (usedFallback && typeof this.$nextTick === 'function') {
+                    await new Promise((resolve) => this.$nextTick(resolve));
+                }
             },
 
-            async loadDirectories(path) {
+            async loadDirectories(path, options = {}) {
+                const { suppressErrors = false } = options || {};
                 this.loadingDirectories = true;
                 this.directories = [];
                 this.selectedPath = null;
                 this.selectedDirInfo = null;
-                this.fileBrowserError = null;
-                this.fileBrowserErrorType = null;
+                if (!suppressErrors) {
+                    this.fileBrowserError = null;
+                    this.fileBrowserErrorType = null;
+                } else {
+                    // When suppressing errors, clear them only if they currently match previous state
+                    this.fileBrowserError = null;
+                    this.fileBrowserErrorType = null;
+                }
 
+                let status = null;
                 try {
                     const url = path
                         ? `/api/datasets/browse?path=${encodeURIComponent(path)}`
                         : '/api/datasets/browse';
 
                     const response = await fetch(url);
+                    status = response.status;
                     if (!response.ok) {
-                        const error = await response.json();
+                        const error = await response.json().catch(() => ({}));
 
-                        // Determine error type based on status code
-                        if (response.status === 404) {
-                            this.fileBrowserErrorType = 'not_found';
-                            this.fileBrowserError = error.detail || 'Directory does not exist';
-                        } else if (response.status === 403) {
-                            this.fileBrowserErrorType = 'permission';
-                            this.fileBrowserError = error.detail || 'Access denied';
-                        } else {
-                            this.fileBrowserErrorType = 'other';
-                            this.fileBrowserError = error.detail || 'Failed to load directories';
+                        if (!suppressErrors) {
+                            // Determine error type based on status code
+                            if (response.status === 404) {
+                                this.fileBrowserErrorType = 'not_found';
+                                this.fileBrowserError = error.detail || 'Directory does not exist';
+                            } else if (response.status === 403) {
+                                this.fileBrowserErrorType = 'permission';
+                                this.fileBrowserError = error.detail || 'Access denied';
+                            } else {
+                                this.fileBrowserErrorType = 'other';
+                                this.fileBrowserError = error.detail || 'Failed to load directories';
+                            }
                         }
-                        return;
+                        return { success: false, status: response.status, detail: error.detail };
                     }
 
                     const data = await response.json();
@@ -1092,10 +1155,14 @@
                     this.currentPath = data.currentPath;
                     this.parentPath = data.parentPath;
                     this.canGoUpValue = data.canGoUp;
+                    return { success: true, status: response.status };
                 } catch (error) {
                     console.error('Failed to load directories:', error);
-                    this.fileBrowserErrorType = 'other';
-                    this.fileBrowserError = error.message || 'Failed to load directories';
+                    if (!suppressErrors) {
+                        this.fileBrowserErrorType = 'other';
+                        this.fileBrowserError = error.message || 'Failed to load directories';
+                    }
+                    return { success: false, status: status ?? null, error };
                 } finally {
                     this.loadingDirectories = false;
                 }
@@ -1127,7 +1194,17 @@
 
             confirmDirectory() {
                 if (this.selectedPath && this.fileBrowserFieldId) {
-                    this.currentDataset[this.fileBrowserFieldId] = this.selectedPath;
+                    const targetDataset = this.fileBrowserTargetDataset || this.currentDataset;
+                    if (targetDataset) {
+                        targetDataset[this.fileBrowserFieldId] = this.selectedPath;
+                    }
+                    if (this.fileBrowserOnConfirm) {
+                        try {
+                            this.fileBrowserOnConfirm(this.selectedPath, targetDataset, this.fileBrowserFieldId);
+                        } catch (error) {
+                            console.error('File browser confirm handler failed:', error);
+                        }
+                    }
                     this.closeFileBrowser();
                 }
             },
@@ -1167,6 +1244,13 @@
             closeFileBrowser() {
                 this.fileBrowserOpen = false;
                 this.fileBrowserFieldId = null;
+                this.fileBrowserTargetDataset = null;
+                this.fileBrowserOnConfirm = null;
+                this.fileBrowserContext = 'wizard';
+                if (this.fileBrowserBodyClassApplied) {
+                    document.body.classList.remove('modal-open');
+                    this.fileBrowserBodyClassApplied = false;
+                }
                 this.currentPath = '';
                 this.parentPath = null;
                 this.canGoUpValue = false;
