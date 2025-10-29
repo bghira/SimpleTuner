@@ -87,8 +87,7 @@ class EmbedND(nn.Module):
             [rope(ids[..., i], self.axes_dim[i], self.theta) for i in range(n_axes)],
             dim=-3,
         )
-        emb = emb.unsqueeze(2).flatten(-2)
-        return emb
+        return emb.unsqueeze(2)
 
 
 class PatchEmbed(nn.Module):
@@ -205,11 +204,8 @@ except:
 
 # Copied from https://github.com/black-forest-labs/flux/blob/main/src/flux/math.py
 def apply_rope(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    if freqs_cis.ndim >= 3 and freqs_cis.shape[2] == 1:
-        freqs_cis = freqs_cis.squeeze(2)
-    if freqs_cis.shape[-1] == 4:
-        freqs_cis = freqs_cis.view(*freqs_cis.shape[:-1], 2, 2)
-
+    # Input from EmbedND has shape [B, S, 1, rope_dim, 2, 2]
+    # The '1' at position 2 broadcasts with the 'heads' dimension in xq/xk
     xq_ = xq.float().reshape(*xq.shape[:-1], -1, 1, 2)
     xk_ = xk.float().reshape(*xk.shape[:-1], -1, 1, 2)
     xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
