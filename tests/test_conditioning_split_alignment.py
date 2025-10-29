@@ -1,3 +1,4 @@
+import multiprocessing
 import os
 import unittest
 from copy import deepcopy
@@ -66,6 +67,44 @@ class InMemoryDataBackend:
         raise NotImplementedError("Image reads are not required for this unit test.")
 
 
+class StaleReadDataBackend(InMemoryDataBackend):
+    """Data backend that can simulate stale cache reads returning empty JSON."""
+
+    def __init__(self, backend_id: str):
+        super().__init__(backend_id)
+        self.simulate_stale_read = False
+
+    def read(self, path):
+        if self.simulate_stale_read:
+            return "{}"
+        return super().read(path)
+
+
+class SharedDataBackend:
+    """Process-safe backend that shares storage across processes via a Manager dict."""
+
+    def __init__(self, backend_id: str, storage, flags=None, flag_key: str | None = None):
+        self.id = backend_id
+        self._storage = storage
+        self._flags = flags or {}
+        self._flag_key = flag_key
+
+    def exists(self, path):
+        return str(path) in self._storage
+
+    def read(self, path):
+        key = str(path)
+        if self._flag_key and self._flags.get(self._flag_key, False) and key in self._storage:
+            return "{}"
+        return self._storage[key]
+
+    def write(self, path, data):
+        self._storage[str(path)] = data
+
+    def read_image(self, path):  # pragma: no cover - not exercised in this test
+        raise NotImplementedError("Image reads are not required for this unit test.")
+
+
 class TestConditioningSplitAlignment(unittest.TestCase):
     def setUp(self):
         self._previous_shuffle = os.environ.get("SIMPLETUNER_SHUFFLE_BUCKETS")
@@ -115,6 +154,9 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         conditioning_dir: str,
         source_config_overrides: dict | None = None,
         conditioning_config_overrides: dict | None = None,
+        source_data_backend: InMemoryDataBackend | None = None,
+        conditioning_data_backend: InMemoryDataBackend | None = None,
+        before_copy_callback=None,
     ):
         source_config = {
             "resolution_type": "area",
@@ -130,7 +172,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             source_id,
             source_config,
         )
-        train_backend = InMemoryDataBackend(source_id)
+        train_backend = source_data_backend or InMemoryDataBackend(source_id)
         training_metadata = DiscoveryMetadataBackend(
             id=source_id,
             instance_data_dir=source_dir,
@@ -170,7 +212,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             conditioning_id,
             conditioning_config,
         )
-        conditioning_backend = InMemoryDataBackend(conditioning_id)
+        conditioning_backend = conditioning_data_backend or InMemoryDataBackend(conditioning_id)
         conditioning_metadata = DiscoveryMetadataBackend(
             id=conditioning_id,
             instance_data_dir=conditioning_dir,
@@ -193,7 +235,17 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             }
         )
 
-        DatasetDuplicator.copy_metadata(source_backend=source_entry, target_backend=conditioning_entry)
+        if before_copy_callback:
+            before_copy_callback(
+                training_metadata,
+                conditioning_metadata,
+                train_backend,
+                conditioning_backend,
+                source_entry,
+                conditioning_entry,
+            )
+
+        DatasetDuplicator.copy_metadata(source_entry, conditioning_entry)
         return training_metadata, conditioning_metadata
 
     def test_conditioning_split_matches_training_split(self):
@@ -315,6 +367,145 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         self.assertEqual(conditioning_config["crop_aspect_buckets"], source_config_overrides["crop_aspect_buckets"])
         self.assertGreater(len(cond_meta), 0, "Conditioning metadata should provide batches after duplication.")
 
+    def test_reference_strict_duplication_survives_stale_cache_reload(self):
+        base_images = {"1.0": [f"/datasets/train/img_{i}.png" for i in range(16)]}
+        accelerator = self._init_state(num_processes=4, process_index=1, train_batch_size=8)
+        source_id = "stale_train"
+        conditioning_id = "stale_control"
+        stale_backend = StaleReadDataBackend(source_id)
+
+        def before_copy(train_meta, cond_meta, train_backend, cond_backend, source_entry, conditioning_entry):
+            split_view = {bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()}
+            original_read_only = getattr(train_meta, "read_only", False)
+            train_meta.read_only = False
+            train_meta.aspect_ratio_bucket_indices = deepcopy(base_images)
+            train_meta.save_cache()
+            train_meta.aspect_ratio_bucket_indices = split_view
+            train_meta.read_only = original_read_only
+            stale_backend.simulate_stale_read = True
+
+        _, cond_meta = self._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets=base_images,
+            source_id=source_id,
+            source_dir="/datasets/stale_train",
+            conditioning_id=conditioning_id,
+            conditioning_dir="/datasets/stale_control",
+            source_data_backend=stale_backend,
+            before_copy_callback=before_copy,
+        )
+
+        total_conditioning_images = sum(len(paths) for paths in cond_meta.aspect_ratio_bucket_indices.values())
+        self.assertGreater(
+            total_conditioning_images,
+            0,
+            "Conditioning duplication should retain samples even when cache reload returns empty data.",
+        )
+
+    def test_reference_strict_duplication_multi_process_reload(self):
+        manager = multiprocessing.Manager()
+        shared_storage = manager.dict()
+        conditioning_storage = manager.dict()
+        flags = manager.dict()
+        cache_ready = manager.Event()
+        result_queue = manager.Queue()
+
+        base_images = {"1.0": [f"/datasets/shared/img_{i}.png" for i in range(16)]}
+        num_processes = 2
+
+        processes = [
+            multiprocessing.Process(
+                target=_run_reference_strict_duplication_worker,
+                args=(
+                    index,
+                    num_processes,
+                    base_images,
+                    shared_storage,
+                    conditioning_storage,
+                    flags,
+                    cache_ready,
+                    result_queue,
+                ),
+            )
+            for index in range(num_processes)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join()
+
+        results = []
+        while not result_queue.empty():
+            results.append(result_queue.get())
+
+        self.assertEqual(len(results), num_processes)
+        for rank, train_total, cond_total in results:
+            self.assertGreater(train_total, 0, f"Process {rank} should retain training buckets.")
+            self.assertGreater(cond_total, 0, f"Process {rank} should retain conditioning buckets.")
+
 
 if __name__ == "__main__":  # pragma: no cover - convenience for local debugging
     unittest.main()
+
+
+def _run_reference_strict_duplication_worker(
+    process_index,
+    num_processes,
+    base_images,
+    shared_storage,
+    conditioning_storage,
+    flags,
+    cache_ready,
+    result_queue,
+):
+    test_case = TestConditioningSplitAlignment()
+    test_case.setUp()
+    try:
+        accelerator = test_case._init_state(
+            num_processes=num_processes,
+            process_index=process_index,
+            train_batch_size=8,
+        )
+        flag_key = f"simulate_stale_read_{process_index}"
+        flags[flag_key] = False
+        source_backend = SharedDataBackend("shared_source", shared_storage, flags, flag_key)
+        conditioning_backend = SharedDataBackend(f"shared_control_{process_index}", conditioning_storage)
+
+        def before_copy(
+            train_meta,
+            cond_meta,
+            train_backend,
+            cond_backend,
+            source_entry,
+            conditioning_entry,
+        ):
+            if process_index == 0:
+                split_view = {bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()}
+                original_read_only = getattr(train_meta, "read_only", False)
+                train_meta.read_only = False
+                train_meta.aspect_ratio_bucket_indices = deepcopy(base_images)
+                train_meta.save_cache()
+                train_meta.aspect_ratio_bucket_indices = split_view
+                train_meta.read_only = original_read_only
+                cache_ready.set()
+            else:
+                cache_ready.wait()
+                flags[flag_key] = True
+
+        train_meta, cond_meta = test_case._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets=base_images,
+            source_id="shared_source",
+            source_dir="/datasets/shared_source",
+            conditioning_id=f"shared_control_{process_index}",
+            conditioning_dir=f"/datasets/shared_control_{process_index}",
+            source_data_backend=source_backend,
+            conditioning_data_backend=conditioning_backend,
+            before_copy_callback=before_copy,
+        )
+
+        train_total = sum(len(paths) for paths in train_meta.aspect_ratio_bucket_indices.values())
+        cond_total = sum(len(paths) for paths in cond_meta.aspect_ratio_bucket_indices.values())
+        result_queue.put((process_index, train_total, cond_total))
+    finally:
+        test_case.tearDown()
