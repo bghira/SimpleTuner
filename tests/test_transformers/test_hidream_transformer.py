@@ -173,12 +173,14 @@ class TestRopeFunctions(TransformerBaseTest):
 
     def test_apply_rope_function(self):
         """Test apply_rope function."""
-        batch, heads, seq_len, head_dim = 2, 8, 64, 64
-        xq = torch.randn(batch, heads, seq_len, head_dim)
-        xk = torch.randn(batch, heads, seq_len, head_dim)
+        batch, seq_len, heads, head_dim = 2, 64, 8, 64
+        # Correct shape: [batch, seq_len, heads, head_dim]
+        xq = torch.randn(batch, seq_len, heads, head_dim)
+        xk = torch.randn(batch, seq_len, heads, head_dim)
 
-        # Create freqs_cis with proper shape (batch, heads, seq_len, head_dim//2, 2, 2)
-        freqs_cis = torch.randn(batch, heads, seq_len, head_dim // 2, 2, 2)
+        # Create freqs_cis with shape from EmbedND: [batch, seq_len, 1, rope_dim, 2, 2]
+        rope_dim = head_dim // 2
+        freqs_cis = torch.randn(batch, seq_len, 1, rope_dim, 2, 2)
 
         # Test apply_rope
         xq_out, xk_out = apply_rope(xq, xk, freqs_cis)
@@ -194,9 +196,12 @@ class TestRopeFunctions(TransformerBaseTest):
             if dtype == torch.float16 and not torch.cuda.is_available():
                 continue
 
-            xq = torch.randn(2, 8, 64, 64, dtype=dtype)
-            xk = torch.randn(2, 8, 64, 64, dtype=dtype)
-            freqs_cis = torch.randn(2, 8, 64, 32, 2, 2, dtype=dtype)
+            batch, seq_len, heads, head_dim = 2, 64, 8, 64
+            rope_dim = head_dim // 2
+            # Correct shapes: [batch, seq_len, heads, head_dim] and [batch, seq_len, 1, rope_dim, 2, 2]
+            xq = torch.randn(batch, seq_len, heads, head_dim, dtype=dtype)
+            xk = torch.randn(batch, seq_len, heads, head_dim, dtype=dtype)
+            freqs_cis = torch.randn(batch, seq_len, 1, rope_dim, 2, 2, dtype=dtype)
 
             xq_out, xk_out = apply_rope(xq, xk, freqs_cis)
 
@@ -263,10 +268,9 @@ class TestEmbedND(TransformerBaseTest, EmbeddingTestMixin):
         ids = torch.zeros(2, 64, 2)
         result = embed(ids)
 
-        # Expected output shape: (batch, combined_dim, 1, seq_len, 2, 2)
-        self.assertEqual(len(result.shape), 5)
-        self.assertEqual(result.shape[0], 2)  # batch
-        self.assertEqual(result.shape[2], 1)  # unsqueezed dim
+        # Expected output shape: (batch, seq_len, 1, combined_dim, 2, 2)
+        expected_combined_dim = sum(dim // 2 for dim in [32, 32])
+        self.assertEqual(result.shape, (2, 64, 1, expected_combined_dim, 2, 2))
 
     def test_multiple_axes_handling(self):
         """Test EmbedND with different numbers of axes."""
