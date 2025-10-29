@@ -388,13 +388,16 @@ function environmentsTabComponent() {
                     await trainerStore.updateConfigSelectors();
                 }
             }
-            window.dispatchEvent(new CustomEvent('configs-updated', {
-                detail: {
+            await this.announceConfigChange(
+                {
                     source: 'environment-create',
-                    name: payload && payload.name ? payload.name : null,
+                    name: payload && payload.name
+                        ? payload.name
+                        : (environment && environment.name ? environment.name : null),
                     environment: environment,
-                }
-            }));
+                },
+                { skipTrainerRefresh: true }
+            );
         },
 
         openCreateDataloaderModal(environmentName) {
@@ -474,6 +477,31 @@ function environmentsTabComponent() {
             if (store) {
                 await store.load();
             }
+        },
+
+        async announceConfigChange(detail = {}, { skipTrainerRefresh = false } = {}) {
+            const eventDetail = {
+                source: `${this.configType}-manager`,
+                configType: this.configType,
+                ...detail,
+            };
+
+            if (this.configType === 'model' && !skipTrainerRefresh) {
+                const trainerStore = Alpine.store('trainer');
+                if (trainerStore) {
+                    try {
+                        if (typeof trainerStore.loadEnvironmentConfigs === 'function') {
+                            await trainerStore.loadEnvironmentConfigs();
+                        } else if (typeof trainerStore.updateConfigSelectors === 'function') {
+                            await trainerStore.updateConfigSelectors();
+                        }
+                    } catch (error) {
+                        console.error('Failed to refresh trainer configs after update:', error);
+                    }
+                }
+            }
+
+            window.dispatchEvent(new CustomEvent('configs-updated', { detail: eventDetail }));
         },
 
         get allDataloaderConfigs() {
@@ -593,6 +621,10 @@ function environmentsTabComponent() {
                 if (response.ok) {
                      await this.loadConfigs();
                      window.showToast('Deleted configuration: ' + name, 'success');
+                     await this.announceConfigChange({
+                         source: 'environment-delete',
+                         name: sanitized,
+                     });
                  } else {
                      const error = await response.json();
                      // Show more specific error for active config
@@ -649,6 +681,10 @@ function environmentsTabComponent() {
                 if (response.ok) {
                     await this.loadConfigs();
                     window.showToast('Created duplicate: ' + targetName, 'success');
+                    await this.announceConfigChange({
+                        source: 'environment-duplicate',
+                        name: targetName,
+                    });
                 }
             } catch (error) {
                 console.error('Failed to duplicate config:', error);
@@ -677,6 +713,11 @@ function environmentsTabComponent() {
                 if (response.ok) {
                     await this.loadConfigs();
                     window.showToast('Renamed to ' + targetName, 'success');
+                    await this.announceConfigChange({
+                        source: 'environment-rename',
+                        name: targetName,
+                        previousName: sourceName,
+                    });
                 }
             } catch (error) {
                 console.error('Failed to rename config:', error);
@@ -729,6 +770,10 @@ function environmentsTabComponent() {
                 if (response.ok) {
                     await this.loadConfigs();
                     window.showToast('Created configuration from template: ' + normalizedName, 'success');
+                    await this.announceConfigChange({
+                        source: 'environment-from-template',
+                        name: normalizedName,
+                    });
                 }
             } catch (error) {
                 console.error('Failed to create from template:', error);
@@ -766,6 +811,10 @@ function environmentsTabComponent() {
                 if (response.ok) {
                     await this.loadConfigs();
                     window.showToast('Imported configuration: ' + name, 'success');
+                    await this.announceConfigChange({
+                        source: 'environment-import',
+                        name: name,
+                    });
                 }
              } catch (error) {
                  console.error('Failed to import config:', error);
