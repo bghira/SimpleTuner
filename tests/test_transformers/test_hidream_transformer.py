@@ -268,10 +268,9 @@ class TestEmbedND(TransformerBaseTest, EmbeddingTestMixin):
         ids = torch.zeros(2, 64, 2)
         result = embed(ids)
 
-        # Expected output shape: (batch, combined_dim, 1, seq_len, 2, 2)
-        self.assertEqual(len(result.shape), 5)
-        self.assertEqual(result.shape[0], 2)  # batch
-        self.assertEqual(result.shape[2], 1)  # unsqueezed dim
+        # Expected output shape: (batch, seq_len, 1, combined_dim, 2, 2)
+        expected_combined_dim = sum(dim // 2 for dim in [32, 32])
+        self.assertEqual(result.shape, (2, 64, 1, expected_combined_dim, 2, 2))
 
     def test_multiple_axes_handling(self):
         """Test EmbedND with different numbers of axes."""
