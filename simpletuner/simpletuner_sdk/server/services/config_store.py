@@ -511,6 +511,9 @@ class ConfigStore:
             # But exclude files that are clearly dataloader configs
             if self.config_dir.exists():
                 for config_file in self.config_dir.glob("*.json"):
+                    if config_file.name.endswith(".metadata.json"):
+                        # Skip metadata sidecar files to avoid duplicate pseudo-config entries
+                        continue
                     try:
                         with config_file.open("r", encoding="utf-8") as f:
                             data = json.load(f)
@@ -1155,10 +1158,10 @@ class ConfigStore:
         if not source_path.exists():
             raise FileNotFoundError(f"Configuration '{source}' not found")
 
-        if target_path.exists():
+        if target_path.exists() or self._is_folder_config(target):
             raise FileExistsError(f"Configuration '{target}' already exists")
 
-        # Load source and create new metadata
+        # Load source to obtain config payload and metadata template
         config, old_metadata = self.load_config(source)
         new_metadata = self._create_metadata(target, f"Copy of {old_metadata.description or source}")
         new_metadata.model_family = old_metadata.model_family
@@ -1166,8 +1169,53 @@ class ConfigStore:
         new_metadata.tags = old_metadata.tags.copy()
         new_metadata.parent_template = old_metadata.parent_template
 
-        # Save as new config
-        self.save_config(target, config, new_metadata)
+        def _translate_relative_paths(payload: Any) -> Any:
+            if isinstance(payload, dict):
+                return {key: _translate_relative_paths(value) for key, value in payload.items()}
+            if isinstance(payload, list):
+                return [_translate_relative_paths(item) for item in payload]
+            if isinstance(payload, str):
+                prefixes = ("", "./", ".\\")
+                for prefix in prefixes:
+                    candidate = f"{prefix}{source}"
+                    replacement = f"{prefix}{target}"
+
+                    # Exact match (e.g. 'env' or './env')
+                    if payload == candidate:
+                        return replacement
+
+                    # Match JSON file names (env.json)
+                    candidate_json = f"{candidate}.json"
+                    if payload == candidate_json:
+                        return f"{replacement}.json"
+
+                    for separator in ("/", "\\"):
+                        needle = candidate + separator
+                        if payload.startswith(needle):
+                            return replacement + payload[len(candidate) :]
+
+                return payload
+
+            return payload
+
+        if self._is_folder_config(source):
+            source_dir = source_path.parent
+            target_dir = self.config_dir / target
+
+            if target_dir.exists():
+                raise FileExistsError(f"Configuration '{target}' already exists")
+
+            shutil.copytree(source_dir, target_dir)
+
+            config = _translate_relative_paths(config)
+
+            # Rewrite config and metadata to update timestamps/name while preserving extras in the folder
+            self.save_config(target, config, new_metadata, overwrite=True)
+        else:
+            config = _translate_relative_paths(config)
+
+            # Save as new flat config
+            self.save_config(target, config, new_metadata)
 
         return new_metadata
 

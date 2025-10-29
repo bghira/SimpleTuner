@@ -45,6 +45,7 @@ def test_config_store():
         config_names = [c.get("name") for c in configs]
         assert "default" in config_names
         assert "test_config" in config_names
+        assert not any(isinstance(name, str) and name.endswith(".metadata") for name in config_names)
         print(f"  Found {len(configs)} configs: {', '.join(config_names)}")
 
         # Test 3: Load configuration
@@ -72,6 +73,33 @@ def test_config_store():
         assert copy_config["--model_type"] == config["--model_type"]
         print(f"  Created copy: {copy_metadata.name}")
 
+        # Test 5b: Copy folder-based configuration retains directory layout
+        folder_name = "folder_env"
+        folder_dir = Path(tmpdir) / folder_name
+        folder_dir.mkdir(parents=True, exist_ok=True)
+        # Seed additional assets that should be preserved during copy
+        (folder_dir / "multidatabackend.json").write_text("[]", encoding="utf-8")
+        folder_config = config.copy()
+        folder_config["--model_family"] = "wan"
+        folder_config["--model_type"] = "lora"
+        folder_config["--data_backend_config"] = f"{folder_name}/multidatabackend.json"
+        folder_config["data_backend_config"] = f"{folder_name}/multidatabackend.json"
+        store.save_config(folder_name, folder_config, overwrite=True)
+
+        folder_copy_metadata = store.copy_config(folder_name, "folder_copy")
+        assert folder_copy_metadata.name == "folder_copy"
+
+        copied_dir = Path(tmpdir) / "folder_copy"
+        assert copied_dir.is_dir()
+        assert (copied_dir / "config.json").exists()
+        assert (copied_dir / "multidatabackend.json").exists()
+        assert not (Path(tmpdir) / "folder_copy.metadata.json").exists()
+
+        copied_config, _ = store.load_config("folder_copy")
+        expected_path = "folder_copy/multidatabackend.json"
+        assert copied_config.get("data_backend_config") == expected_path
+        assert copied_config.get("--data_backend_config") == expected_path
+
         # Test 6: Rename configuration
         print("✓ Renaming configuration...")
         rename_metadata = store.rename_config("test_copy", "test_renamed")
@@ -80,6 +108,7 @@ def test_config_store():
         config_names = [c.get("name") for c in configs]
         assert "test_renamed" in config_names
         assert "test_copy" not in config_names
+        assert not any(isinstance(name, str) and name.endswith(".metadata") for name in config_names)
         print(f"  Renamed to: {rename_metadata.name}")
 
         # Test 7: Set active configuration
@@ -104,6 +133,7 @@ def test_config_store():
         configs = store.list_configs()
         config_names = [c.get("name") for c in configs]
         assert "test_renamed" not in config_names
+        assert not any(isinstance(name, str) and name.endswith(".metadata") for name in config_names)
         print(f"  Deleted test_renamed")
 
         # Test 10: Invalid config validation
