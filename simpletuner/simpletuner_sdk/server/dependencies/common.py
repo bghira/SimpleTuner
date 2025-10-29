@@ -57,16 +57,10 @@ def _load_active_config_cached() -> Dict[str, Any]:
         logger.error(f"Invalid config name contains path separator: {active_config}")
         return {}
 
-    # Load config file - active_config is a string (config name)
-    config_path = Path(config_store.config_dir) / active_config / "config.json"
-    if not config_path.exists():
-        logger.warning(f"Active config file not found: {config_path}")
-        return {}
-
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data, _metadata = config_store.load_config(active_config)
 
+        # For backward compatibility, merge nested "config" sections if present.
         if isinstance(data, dict):
             config_section = data.get("config")
             if isinstance(config_section, dict):
@@ -76,10 +70,12 @@ def _load_active_config_cached() -> Dict[str, Any]:
                         continue
                     merged.setdefault(key, value)
                 return merged
-
-        return data
-    except Exception as e:
-        logger.error(f"Error loading config: {e}")
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError as exc:
+        logger.warning(f"Active config '{active_config}' not found: {exc}")
+        return {}
+    except Exception as exc:
+        logger.error(f"Error loading config '{active_config}': {exc}")
         return {}
 
 
