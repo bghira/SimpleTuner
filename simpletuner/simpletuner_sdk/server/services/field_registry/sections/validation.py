@@ -408,6 +408,27 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Validation Multi-GPU Mode
+    registry._add_field(
+        ConfigField(
+            name="validation_multigpu",
+            arg_name="--validation_multigpu",
+            ui_label="Validation Multi-GPU Mode",
+            field_type=FieldType.SELECT,
+            tab="validation",
+            section="validation_options",
+            default_value="batch-parallel",
+            choices=[
+                {"label": "Single GPU (rank 0 only)", "value": "single-gpu"},
+                {"label": "Batch Parallel (all ranks)", "value": "batch-parallel"},
+            ],
+            help_text="Select how validation workloads are distributed across processes.",
+            tooltip="Batch-parallel runs validation on every process and gathers the results. Single-GPU keeps the legacy main-rank behaviour.",
+            importance=ImportanceLevel.ADVANCED,
+            order=7,
+        )
+    )
+
     # Validation Disable
     registry._add_field(
         ConfigField(
