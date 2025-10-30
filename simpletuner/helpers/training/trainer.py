@@ -3826,6 +3826,8 @@ def run_trainer_job(config):
         import time
         from pathlib import Path
 
+        import simpletuner.helpers.log_format  # noqa: F401
+
         launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
 

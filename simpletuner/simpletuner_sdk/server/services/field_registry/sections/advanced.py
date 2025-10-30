@@ -887,6 +887,24 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Allow Dataset Oversubscription
+    registry._add_field(
+        ConfigField(
+            name="allow_dataset_oversubscription",
+            arg_name="--allow_dataset_oversubscription",
+            ui_label="Allow Dataset Oversubscription",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
+            default_value=False,
+            help_text="Automatically adjust repeats to allow training when dataset size is smaller than effective batch size (batch_size × num_gpus × gradient_accumulation_steps). When enabled, SimpleTuner will calculate and apply the minimum repeats needed to make training possible. If you manually set repeats in your config, your value will be respected.",
+            tooltip="Useful for small datasets or high GPU counts. Automatically increases repeats to meet minimum batch requirements. Example: 4 images on 8 GPUs with batch_size=4 requires repeats=7 (4×8=32 samples needed).",
+            importance=ImportanceLevel.ADVANCED,
+            order=46,
+        )
+    )
+
     # Disable Segmented Timestep Sampling
     registry._add_field(
         ConfigField(

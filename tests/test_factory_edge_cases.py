@@ -849,6 +849,120 @@ class TestFactoryEdgeCases(unittest.TestCase):
             if "Dataset configuration will produce zero usable batches" in str(e):
                 self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
 
+    def test_oversubscription_auto_adjustment(self):
+        """Test that --allow_dataset_oversubscription automatically adjusts repeats."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        # Create a mock backend with insufficient images
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_auto_adjust"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
+
+        # Mock accelerator with 8 GPUs
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 8
+        mock_backend.accelerator = mock_accelerator
+
+        # Mock StateTracker to enable oversubscription and NO user-set repeats
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = True
+            mock_get_args.return_value = mock_args
+
+            with patch.object(StateTracker, "get_data_backend_config") as mock_get_config:
+                # Return config WITHOUT 'repeats' key (not user-set)
+                mock_get_config.return_value = {"id": "test_auto_adjust"}
+
+                # Mock the split_between_processes to avoid actual splitting
+                def split_side_effect(images, apply_padding=False):
+                    mock_context = MagicMock()
+                    mock_context.__enter__ = MagicMock(return_value=images)
+                    mock_context.__exit__ = MagicMock(return_value=False)
+                    return mock_context
+
+                mock_accelerator.split_between_processes = MagicMock(side_effect=split_side_effect)
+
+                # Should NOT raise, should auto-adjust repeats
+                try:
+                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
+                    # Check that repeats was adjusted
+                    self.assertEqual(mock_backend.repeats, 7, "Repeats should be auto-adjusted to 7")
+                except ValueError as e:
+                    self.fail(f"Should not raise with oversubscription enabled: {e}")
+
+    def test_oversubscription_respects_manual_repeats(self):
+        """Test that manual repeats settings are respected even with oversubscription enabled."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        # Create a mock backend with manually-set but insufficient repeats
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_manual_repeats"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 2  # User set this, but it's not enough (needs 7)
+        mock_backend.bucket_report = None
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 8
+        mock_backend.accelerator = mock_accelerator
+
+        # Mock StateTracker with oversubscription enabled BUT user set repeats
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = True
+            mock_get_args.return_value = mock_args
+
+            with patch.object(StateTracker, "get_data_backend_config") as mock_get_config:
+                # Return config WITH 'repeats' key (user-set)
+                mock_get_config.return_value = {"id": "test_manual_repeats", "repeats": 2}
+
+                # Should raise because manual repeats are insufficient
+                with self.assertRaises(ValueError) as context:
+                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
+
+                error_msg = str(context.exception)
+                self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
+                self.assertIn("manually set repeats=2", error_msg)
+                self.assertIn("will not override manual repeats", error_msg)
+
+    def test_oversubscription_disabled_raises_error(self):
+        """Test that error is raised when oversubscription is disabled."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_disabled"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 8
+        mock_backend.accelerator = mock_accelerator
+
+        # Mock StateTracker with oversubscription DISABLED
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            with patch.object(StateTracker, "get_data_backend_config") as mock_get_config:
+                mock_get_config.return_value = {"id": "test_disabled"}
+
+                # Should raise error with suggestion to enable flag
+                with self.assertRaises(ValueError) as context:
+                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
+
+                error_msg = str(context.exception)
+                self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
+                self.assertIn("Enable --allow_dataset_oversubscription", error_msg)
+
 
 if __name__ == "__main__":
     unittest.main()
