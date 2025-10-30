@@ -4009,11 +4009,8 @@ def run_trainer_job(config):
                         train_cli_payload[webhook_key] = json.dumps(webhook_value)
                     except Exception:
                         train_cli_payload.pop(webhook_key, None)
-            try:
-                cli_args = mapping_to_cli_args(train_cli_payload)
-            except Exception as exc:
-                launch_logger.warning("Failed to convert config payload to CLI args: %s", exc)
-                cli_args = []
+            from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+            cli_args = mapping_to_cli_args(train_cli_payload)
         if cli_args:
             launch_env.setdefault("CONFIG_BACKEND", "cmd")
             cmd.extend(cli_args)
