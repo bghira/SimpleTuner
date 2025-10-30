@@ -669,6 +669,112 @@ class TestFactoryEdgeCases(unittest.TestCase):
         with patch("simpletuner.helpers.prompts.PromptHandler") as mock_prompt:
             mock_prompt.get_all_captions.return_value = (["caption1"], [])
 
+    def test_empty_dataset_validation_training(self):
+        """Test that training datasets with no usable samples raise an error."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Create a minimal backend config
+        backend_config = {
+            "id": "test_empty_training",
+            "type": "local",
+            "dataset_type": "image",
+            "instance_data_dir": self.temp_dir,
+            "resolution": 512,
+            "resolution_type": "pixel",
+        }
+
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker") as mock_state_tracker:
+            mock_state_tracker.get_data_backends.return_value = {}
+            mock_state_tracker.get_data_backend.return_value = None
+            mock_state_tracker.set_data_backend_config.return_value = None
+            mock_state_tracker.register_data_backend.return_value = None
+
+            with patch("simpletuner.helpers.data_backend.factory.init_backend_config") as mock_init:
+                # Mock metadata backend that returns 0 length (no usable samples)
+                mock_metadata = MagicMock()
+                mock_metadata.__len__.return_value = 0
+                mock_metadata.aspect_ratio_bucket_indices = {"1.0": []}
+
+                mock_init_backend = {
+                    "id": "test_empty_training",
+                    "config": backend_config.copy(),
+                    "dataset_type": "image",
+                    "instance_data_dir": self.temp_dir,
+                    "metadata_backend": mock_metadata,
+                    "bucket_report": MagicMock(),
+                }
+                mock_init_backend["bucket_report"].format_empty_dataset_message.return_value = "Test: No usable samples"
+                mock_init.return_value = mock_init_backend
+
+                factory = FactoryRegistry(
+                    args=self.args,
+                    accelerator=self.accelerator,
+                    text_encoders=self.text_encoders,
+                    tokenizers=self.tokenizers,
+                    model=self.model,
+                )
+
+                # Should raise ValueError for empty training dataset
+                with self.assertRaises(ValueError) as context:
+                    factory._handle_config_versioning(backend_config, mock_init_backend)
+
+                self.assertIn("Dataset produced no usable samples", str(context.exception))
+                self.assertIn("batch_size", str(context.exception))
+                self.assertIn("repeats", str(context.exception))
+
+    def test_empty_dataset_validation_conditioning(self):
+        """Test that conditioning datasets with no usable samples raise an error."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Create a minimal conditioning backend config
+        backend_config = {
+            "id": "test_empty_conditioning",
+            "type": "local",
+            "dataset_type": "conditioning",
+            "conditioning_type": "reference_strict",
+            "instance_data_dir": self.temp_dir,
+            "resolution": 512,
+            "resolution_type": "pixel",
+        }
+
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker") as mock_state_tracker:
+            mock_state_tracker.get_data_backends.return_value = {}
+            mock_state_tracker.get_data_backend.return_value = None
+            mock_state_tracker.set_data_backend_config.return_value = None
+            mock_state_tracker.register_data_backend.return_value = None
+
+            with patch("simpletuner.helpers.data_backend.factory.init_backend_config") as mock_init:
+                # Mock metadata backend that returns 0 length (no usable samples)
+                mock_metadata = MagicMock()
+                mock_metadata.__len__.return_value = 0
+                mock_metadata.aspect_ratio_bucket_indices = {}
+
+                mock_init_backend = {
+                    "id": "test_empty_conditioning",
+                    "config": backend_config.copy(),
+                    "dataset_type": "conditioning",
+                    "instance_data_dir": self.temp_dir,
+                    "metadata_backend": mock_metadata,
+                    "bucket_report": MagicMock(),
+                }
+                mock_init_backend["bucket_report"].format_empty_dataset_message.return_value = "Test: No usable samples"
+                mock_init.return_value = mock_init_backend
+
+                factory = FactoryRegistry(
+                    args=self.args,
+                    accelerator=self.accelerator,
+                    text_encoders=self.text_encoders,
+                    tokenizers=self.tokenizers,
+                    model=self.model,
+                )
+
+                # Should raise ValueError for empty conditioning dataset
+                with self.assertRaises(ValueError) as context:
+                    factory._handle_config_versioning(backend_config, mock_init_backend)
+
+                self.assertIn("Dataset produced no usable samples", str(context.exception))
+                self.assertIn("batch_size", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

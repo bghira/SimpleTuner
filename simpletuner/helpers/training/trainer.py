@@ -4010,6 +4010,7 @@ def run_trainer_job(config):
                     except Exception:
                         train_cli_payload.pop(webhook_key, None)
             from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+
             cli_args = mapping_to_cli_args(train_cli_payload)
         if cli_args:
             launch_env.setdefault("CONFIG_BACKEND", "cmd")
