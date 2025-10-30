@@ -178,6 +178,7 @@ def _collect_package_files(*directories: str):
 base_deps = [
     "diffusers>=0.35.1",
     "transformers>=4.55.0",
+    "hf_transfer>=0.1.0",
     "datasets>=3.0.1",
     "wandb>=0.21.0",
     "requests>=2.32.4",
