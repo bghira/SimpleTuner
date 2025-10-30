@@ -227,6 +227,22 @@ vram use = batch size * resolution + base_requirements
 - Higher resolution = more VRAM = lower batch size
 - If batch size 1 at 128x128 doesn't work, hardware is insufficient
 
+#### Multi-GPU Dataset Requirements
+
+When training with multiple GPUs, your dataset must be large enough for the **effective batch size**:
+```
+effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+```
+
+**Example:** With 4 GPUs and `train_batch_size=4`, you need at least 16 samples per aspect bucket.
+
+**Solutions for small datasets:**
+- Use `--allow_dataset_oversubscription` to auto-adjust repeats
+- Manually set `repeats` in your dataloader config
+- Reduce batch size or GPU count
+
+See [DATALOADER.md](/documentation/DATALOADER.md#multi-gpu-training-and-dataset-sizing) for complete details.
+
 ## Publishing to Hugging Face Hub
 
 To automatically push models to Hub upon completion, add to `config/config.json`:

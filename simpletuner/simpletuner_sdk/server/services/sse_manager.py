@@ -9,6 +9,7 @@ Manages Server-Sent Events connections with:
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from collections import defaultdict

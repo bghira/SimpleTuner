@@ -359,6 +359,44 @@ Images are not resized before cropping **unless** `maximum_image_size` and `targ
 
 > ℹ️ This value behaves differently to the same option in Kohya's scripts, where a value of 1 means no repeats. **For SimpleTuner, a value of 0 means no repeats**. Subtract one from your Kohya config value to obtain the equivalent for SimpleTuner, hence a value of **9** resulting from the calculation `(dataset_length + repeats * dataset_length)` .
 
+#### Multi-GPU Training and Dataset Sizing
+
+When training with multiple GPUs, your dataset must be large enough to accommodate the **effective batch size**, calculated as:
+
+```
+effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+```
+
+For example, with 4 GPUs, `train_batch_size=4`, and `gradient_accumulation_steps=1`, you need at least **16 samples** (after applying repeats) in each aspect bucket.
+
+**Important:** SimpleTuner will raise an error if your dataset configuration produces zero usable batches. The error message will show:
+- Current configuration values (batch size, GPU count, repeats)
+- Which aspect buckets have insufficient samples
+- Exact minimum repeats required for each bucket
+- Suggested solutions
+
+##### Automatic Dataset Oversubscription
+
+To automatically adjust `repeats` when your dataset is smaller than the effective batch size, use the `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#allow_dataset_oversubscription)).
+
+When enabled, SimpleTuner will:
+- Calculate the minimum repeats needed for training
+- Automatically increase `repeats` to meet the requirement
+- Log a warning showing the adjustment
+- **Respect manually-set repeats values** - if you explicitly configure `repeats` in your dataset config, the automatic adjustment will be skipped
+
+This is particularly useful when:
+- Training small datasets (< 100 images)
+- Using high GPU counts with small datasets
+- Experimenting with different batch sizes without reconfiguring datasets
+
+**Example scenario:**
+- Dataset: 25 images
+- Configuration: 8 GPUs, `train_batch_size=4`, `gradient_accumulation_steps=1`
+- Effective batch size: 32 samples needed
+- Without oversubscription: Error raised
+- With `--allow_dataset_oversubscription`: Repeats automatically set to 1 (25 × 2 = 50 samples)
+
 ### `is_regularisation_data`
 
 - Also may be spelt `is_regularization_data`

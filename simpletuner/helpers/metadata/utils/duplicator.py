@@ -19,7 +19,18 @@ class DatasetDuplicator:
             raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
 
         logger.info("Reloading metadata caches...")
+        prior_source_buckets = {
+            bucket: list(paths) for bucket, paths in getattr(source_meta, "aspect_ratio_bucket_indices", {}).items()
+        }
+        prior_source_metadata = dict(source_meta.image_metadata) if getattr(source_meta, "image_metadata", None) else None
         source_meta.reload_cache(set_config=False)
+        if not source_meta.aspect_ratio_bucket_indices and prior_source_buckets:
+            logger.warning(
+                "Source metadata cache reload returned no buckets; restoring in-memory snapshot to avoid data loss."
+            )
+            source_meta.aspect_ratio_bucket_indices = {bucket: list(paths) for bucket, paths in prior_source_buckets.items()}
+            if prior_source_metadata is not None:
+                source_meta.image_metadata = prior_source_metadata
         target_meta.reload_cache(set_config=False)
 
         # Get the instance directories for path translation

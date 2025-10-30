@@ -2264,22 +2264,30 @@ class FactoryRegistry:
 
         if dataset_empty and not missing_instance_dir:
             bucket_report = init_backend.get("bucket_report")
-            if bucket_report and dataset_type in ("image", "video") and backend.get("conditioning_type") is None:
+
+            # Build error message with context
+            if bucket_report and dataset_type in ("image", "video", "conditioning"):
                 message = bucket_report.format_empty_dataset_message()
-                init_backend["empty_dataset_report"] = message
-                try:
-                    setattr(init_backend["metadata_backend"], "empty_dataset_report", message)
-                except Exception:
-                    pass
-                warning_log(f"(id={init_backend['id']}) Dataset produced no usable samples; continuing with empty buckets.")
-                for line in message.splitlines():
-                    logger.warning(line)
+                error_details = f"\n{message}"
             else:
-                if dataset_type == "conditioning":
-                    raise ValueError(
-                        f"(id={init_backend['id']}) Conditioning dataset produced no usable samples. "
-                        "Check that conditioning_data paths are correct and contain images."
-                    )
+                error_details = ""
+
+            # Raise error for all dataset types that should have data
+            if dataset_type in ("image", "video", "conditioning"):
+                raise ValueError(
+                    f"(id={init_backend['id']}) Dataset produced no usable samples. "
+                    f"This typically happens when:\n"
+                    f"  - batch_size * num_gpus * gradient_accumulation_steps is too large for the dataset size\n"
+                    f"  - repeats is too low\n"
+                    f"  - images were filtered out due to resolution/aspect ratio constraints\n"
+                    f"\nSuggestions:\n"
+                    f"  - Reduce batch_size or gradient_accumulation_steps\n"
+                    f"  - Increase repeats\n"
+                    f"  - Use fewer GPUs\n"
+                    f"  - Add more images to the dataset"
+                    f"{error_details}"
+                )
+            else:
                 warning_log(
                     f"(id={init_backend['id']}) No images were discovered by the bucket manager; continuing without bucket information."
                 )
@@ -2765,10 +2773,7 @@ class FactoryRegistry:
             if backend_conditionings:
                 has_conditioning_dataset = True
                 StateTracker.set_conditioning_datasets(backend["id"], backend_conditionings)
-                linked_ids = [cfg.get("id") for cfg in backend_conditionings if isinstance(cfg, dict)]
-                info_log(
-                    f"(id={backend['id']}) Connected conditioning datasets: {linked_ids if linked_ids else '<unknown>'}"
-                )
+                info_log(f"(id={backend['id']}) Connected conditioning datasets: {backend_conditionings}")
 
         return has_conditioning_dataset
 

@@ -353,6 +353,93 @@ class MetadataBackend:
         if self.bucket_report:
             self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
+        # Early validation: check if configuration is mathematically impossible
+        buckets_that_will_fail = []
+        for bucket, images in self.aspect_ratio_bucket_indices.items():
+            total_img_count_incl_repeats = len(images) * (self.repeats + 1)
+            if total_img_count_incl_repeats < effective_batch_size:
+                buckets_that_will_fail.append(
+                    {
+                        "bucket": bucket,
+                        "images": len(images),
+                        "samples_with_repeats": total_img_count_incl_repeats,
+                    }
+                )
+
+        if buckets_that_will_fail:
+            # Calculate what repeats would be needed
+            min_repeats_needed = {}
+            for bucket_info in buckets_that_will_fail:
+                images = bucket_info["images"]
+                needed_repeats = ceil(effective_batch_size / images) - 1
+                min_repeats_needed[bucket_info["bucket"]] = needed_repeats
+
+            max_needed_repeats = max(min_repeats_needed.values())
+
+            # Check if dataset oversubscription is allowed
+            args = StateTracker.get_args()
+            allow_oversubscription = args.allow_dataset_oversubscription
+
+            # Check if user manually configured repeats in their backend config
+            backend_config = StateTracker.get_data_backend_config(self.id) or {}
+            user_set_repeats = "repeats" in backend_config
+
+            if allow_oversubscription and not user_set_repeats:
+                # Automatically adjust repeats to make training possible
+                original_repeats = self.repeats
+                self.repeats = max_needed_repeats
+                logger.warning(
+                    f"(id={self.id}) Dataset oversubscription enabled: automatically increasing repeats from {original_repeats} to {self.repeats}\n"
+                    f"  - This allows training with {total_images} images across {num_processes} GPUs\n"
+                    f"  - Effective batch size: {effective_batch_size}\n"
+                    f"  - Each image will be seen {self.repeats + 1} times per epoch"
+                )
+                # Validation passed with adjustment, continue
+            else:
+                # Build error message
+                error_msg = (
+                    f"Dataset configuration will produce zero usable batches.\n"
+                    f"\nCurrent configuration:\n"
+                    f"  - Dataset ID: {self.id}\n"
+                    f"  - Total images: {total_images}\n"
+                    f"  - Repeats: {self.repeats}\n"
+                    f"  - Batch size: {self.batch_size}\n"
+                    f"  - Number of GPUs: {num_processes}\n"
+                    f"  - Gradient accumulation steps: {gradient_accumulation_steps}\n"
+                    f"  - Effective batch size: {effective_batch_size}\n"
+                    f"\nProblem: {len(buckets_that_will_fail)} bucket(s) have insufficient images:\n"
+                )
+
+                for bucket_info in buckets_that_will_fail:
+                    bucket = bucket_info["bucket"]
+                    images = bucket_info["images"]
+                    samples = bucket_info["samples_with_repeats"]
+                    needed = min_repeats_needed[bucket]
+                    error_msg += (
+                        f"  - Bucket {bucket}: {images} images × {self.repeats + 1} (with repeats) = {samples} samples\n"
+                        f"    Need at least {effective_batch_size} samples to form one batch\n"
+                        f"    Minimum repeats required: {needed}\n"
+                    )
+
+                error_msg += (
+                    f"\nSolutions:\n"
+                    f"  1. Reduce batch_size (current: {self.batch_size})\n"
+                    f"  2. Reduce gradient_accumulation_steps (current: {gradient_accumulation_steps})\n"
+                    f"  3. Use fewer GPUs (current: {num_processes})\n"
+                    f"  4. Increase repeats to at least {max_needed_repeats} (current: {self.repeats})\n"
+                    f"  5. Add more images to the dataset\n"
+                    f"  6. Enable --allow_dataset_oversubscription to automatically adjust repeats\n"
+                )
+
+                if user_set_repeats:
+                    error_msg += (
+                        f"\nNote: You have manually set repeats={self.repeats} in your dataset config.\n"
+                        f"--allow_dataset_oversubscription will not override manual repeats settings.\n"
+                        f"Either increase your repeats value or remove it from the config to allow auto-adjustment.\n"
+                    )
+
+                raise ValueError(error_msg)
+
         should_shuffle_contents = os.environ.get("SIMPLETUNER_SHUFFLE_BUCKETS", "1") == "1"
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             if should_shuffle_contents:
