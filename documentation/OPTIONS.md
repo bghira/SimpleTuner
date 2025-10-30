@@ -404,6 +404,24 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 > Note: Do not enable fused backward pass for any optimizers when using gradient accumulation steps.
 
+### `--allow_dataset_oversubscription`
+
+- **What**: Automatically adjusts dataset `repeats` when the dataset is smaller than the effective batch size.
+- **Why**: Prevents training failures when your dataset size doesn't meet the minimum requirements for your multi-GPU configuration.
+- **How it works**:
+  - Calculates the **effective batch size**: `train_batch_size × num_gpus × gradient_accumulation_steps`
+  - If any aspect bucket has fewer samples than the effective batch size, automatically increases `repeats`
+  - Only applies when `repeats` is not explicitly configured in your dataset config
+  - Logs a warning showing the adjustment and reasoning
+- **Use cases**:
+  - Small datasets (< 100 images) with multiple GPUs
+  - Experimenting with different batch sizes without reconfiguring datasets
+  - Prototyping before collecting a full dataset
+- **Example**: With 25 images, 8 GPUs, and `train_batch_size=4`, the effective batch size is 32. This flag would automatically set `repeats=1` to provide 50 samples (25 × 2).
+- **Note**: This will **not** override manually-set `repeats` values in your dataloader configuration. Similar to `--disable_bucket_pruning`, this flag provides convenience without surprising behavior.
+
+See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide for more details on dataset sizing for multi-GPU training.
+
 ---
 
 ## 🛠 Advanced Optimizations
