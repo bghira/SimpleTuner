@@ -16,6 +16,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
@@ -230,7 +231,50 @@ class TestFactoryEdgeCases(unittest.TestCase):
             with self.assertRaises(ValueError) as context:
                 factory.configure_data_backends(loaded_config)
 
-            self.assertIn("unique 'id' field", str(context.exception))
+        self.assertIn("unique 'id' field", str(context.exception))
+
+    def test_inline_conditioning_auto_generation_for_image_dataset(self):
+        """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        config = [
+            {
+                "id": "primary",
+                "type": "huggingface",
+                "dataset_type": "image",
+                "cache_dir_vae": "/tmp/vae/primary",
+                "conditioning": [
+                    {
+                        "type": "canny",
+                        "conditioning_type": "controlnet",
+                        "params": {},
+                    }
+                ],
+            }
+        ]
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+
+        processed = factory.process_conditioning_datasets(deepcopy(config))
+
+        self.assertEqual(len(processed), 2)
+        primary = processed[0]
+        self.assertNotIn("conditioning", primary)
+        self.assertEqual(primary.get("conditioning_data"), ["primary_conditioning_canny"])
+
+        generated = next(entry for entry in processed if entry["id"] == "primary_conditioning_canny")
+        self.assertEqual(generated.get("dataset_type"), "conditioning")
+        self.assertTrue(generated.get("auto_generated"))
+        self.assertEqual(generated.get("source_dataset_id"), "primary")
+        conditioning_cfg = generated.get("conditioning_config") or {}
+        self.assertEqual(conditioning_cfg.get("type"), "canny")
+        self.assertEqual(conditioning_cfg.get("conditioning_type"), "controlnet")
 
     def test_multiple_default_text_embed_backends(self):
         """Test error when multiple text embed backends are marked as default."""
