@@ -775,6 +775,80 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertIn("Dataset produced no usable samples", str(context.exception))
                 self.assertIn("batch_size", str(context.exception))
 
+    def test_early_validation_impossible_config(self):
+        """Test that impossible configurations are caught early with specific guidance."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        # Create a mock backend with only the necessary attributes for split_buckets
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_impossible"
+        mock_backend.batch_size = 4
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
+
+        # Mock accelerator with 8 GPUs
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 8
+        mock_backend.accelerator = mock_accelerator
+
+        # Call the real split_buckets_between_processes method
+        # This should raise ValueError with specific guidance
+        # 4 images × (0+1) repeats = 4 samples
+        # batch_size=4 × 8 GPUs × 1 grad_accum = 32 effective batch size
+        # 4 samples < 32 effective batch size → should fail
+        with self.assertRaises(ValueError) as context:
+            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
+
+        error_msg = str(context.exception)
+        # Check that error message contains key information
+        self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
+        self.assertIn("Total images: 4", error_msg)
+        self.assertIn("Repeats: 0", error_msg)
+        self.assertIn("Batch size: 4", error_msg)
+        self.assertIn("Number of GPUs: 8", error_msg)
+        self.assertIn("Effective batch size: 32", error_msg)
+        self.assertIn("Minimum repeats required:", error_msg)
+        # Should suggest repeats=7 (4 images × 8 = 32 samples needed, so need repeats=7)
+        self.assertIn("Increase repeats to at least 7", error_msg)
+
+    def test_early_validation_sufficient_repeats(self):
+        """Test that configuration works when repeats are sufficient."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        # Create a mock backend with sufficient repeats
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_sufficient"
+        mock_backend.batch_size = 1
+        mock_backend.repeats = 1  # This should be sufficient
+        mock_backend.bucket_report = None
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg", "img3.jpg", "img4.jpg"]}
+
+        # Mock accelerator with 2 GPUs
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 2
+
+        # Mock split_between_processes to distribute images properly
+        def split_side_effect(images, apply_padding=False):
+            mock_context = MagicMock()
+            # Each GPU gets half the images
+            mock_context.__enter__ = MagicMock(return_value=images[: len(images) // 2])
+            mock_context.__exit__ = MagicMock(return_value=False)
+            return mock_context
+
+        mock_accelerator.split_between_processes = MagicMock(side_effect=split_side_effect)
+        mock_backend.accelerator = mock_accelerator
+
+        # 4 images with repeats=1
+        # 4 images × (1+1) repeats = 8 samples
+        # batch_size=1 × 2 GPUs × 1 grad_accum = 2 effective batch size
+        # 8 samples >= 2 effective batch size → should succeed (not raise during validation)
+        try:
+            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
+        except ValueError as e:
+            if "Dataset configuration will produce zero usable batches" in str(e):
+                self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()
