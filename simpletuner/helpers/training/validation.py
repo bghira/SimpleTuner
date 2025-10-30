@@ -206,6 +206,40 @@ def _normalise_validation_sample(sample):
     return sample
 
 
+def _assert_eval_dataset_exists(eval_dataset_config, available_backends: dict[str, dict], context: str) -> set[str]:
+    """
+    Make sure that every dataset requested via --eval_dataset_id exists among the loaded validation backends.
+
+    Args:
+        eval_dataset_config: The raw value provided via --eval_dataset_id (string, iterable, or None).
+        available_backends: Mapping of backend_id -> backend metadata that represents selectable datasets.
+        context: Short description used to clarify the error message (e.g. "image validation").
+
+    Raises:
+        ValueError: If one or more requested dataset IDs are missing.
+    """
+    if eval_dataset_config is None:
+        return set()
+
+    if isinstance(eval_dataset_config, (list, tuple, set)):
+        requested_ids = {str(item) for item in eval_dataset_config}
+    else:
+        requested_ids = {str(eval_dataset_config)}
+
+    available_ids = {backend_id for backend_id in available_backends.keys()}
+
+    missing_ids = sorted(requested_ids - available_ids)
+    if missing_ids:
+        formatted_missing = ", ".join(missing_ids)
+        formatted_available = ", ".join(sorted(available_ids)) or "none"
+        raise ValueError(
+            f"--eval_dataset_id references unknown {context} dataset(s): {formatted_missing}. "
+            f"Loaded datasets: {formatted_available}. "
+            "Update the configuration or remove --eval_dataset_id."
+        )
+    return requested_ids
+
+
 def retrieve_validation_images():
     """
     From each data backend, collect the top 5 images for validation, such that
@@ -230,7 +264,10 @@ def retrieve_validation_images():
     data_backends = StateTracker.get_data_backends(
         _type=dataset_type, _types=None if requires_cond_input else ["image", "video"]
     )
-    validation_data_backend_id = args.eval_dataset_id
+    dataset_type_name = getattr(dataset_type, "value", str(dataset_type))
+    selected_eval_backend_ids = _assert_eval_dataset_exists(
+        args.eval_dataset_id, data_backends, f"{dataset_type_name} validation"
+    )
     validation_set = []
     logger.info("Collecting validation images")
     for _data_backend in data_backends:
@@ -245,9 +282,7 @@ def retrieve_validation_images():
             logger.debug(f"Skipping data backend: {_data_backend} dataset_type {data_backend.get('dataset_type', None)}")
             continue
         logger.debug(f"Checking data backend: {data_backend['id']}")
-        if (
-            validation_data_backend_id is not None and data_backend["id"] != validation_data_backend_id
-        ) or should_skip_dataset:
+        if (selected_eval_backend_ids and data_backend["id"] not in selected_eval_backend_ids) or should_skip_dataset:
             logger.warning(f"Not collecting images from {data_backend['id']}")
             continue
         if "sampler" in data_backend:
@@ -295,19 +330,19 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
     args = StateTracker.get_args()
     # Respect the user's selected validation dataset via --eval_dataset_id and
     # honour any `disable_validation: true` flags in the backend configuration.
-    validation_data_backend_id = args.eval_dataset_id
     validation_set = []
 
+    image_backends = StateTracker.get_data_backends(_type="image")
+    selected_eval_backend_ids = _assert_eval_dataset_exists(args.eval_dataset_id, image_backends, "image validation")
+
     # ---------- iterate over IMAGE datasets ---------------------------------
-    for backend_id, backend in StateTracker.get_data_backends(_type="image").items():
+    for backend_id, backend in image_backends.items():
         backend_config = backend.get("config", {})
         should_skip_dataset = backend_config.get("disable_validation", False)
 
         # Skip datasets that the user has explicitly disabled for validation or
         # that do not match the requested `--eval_dataset_id`.
-        if (
-            validation_data_backend_id is not None and backend.get("id") != validation_data_backend_id
-        ) or should_skip_dataset:
+        if (selected_eval_backend_ids and backend.get("id") not in selected_eval_backend_ids) or should_skip_dataset:
             logger.debug(f"Not collecting edit-validation images from {backend.get('id', backend_id)}")
             continue
         sampler = backend.get("sampler")
