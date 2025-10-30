@@ -541,15 +541,16 @@ def collate_fn(batch):
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
 
-    # Compute embeddings and handle dropped conditionings
-    debug_log("Extract captions")
-
     # Check if we're in combined mode with multiple conditioning datasets
     sampling_mode = getattr(StateTracker.get_args(), "conditioning_multidataset_sampling")
-    is_combined_mode = sampling_mode == "combined" and len(conditioning_backends) > 1
+    is_combined_mode = sampling_mode == "combined"
+    is_random_mode = sampling_mode == "random" and len(conditioning_backends) > 1
 
-    if has_conditioning_captions and not is_combined_mode:
-        # Only use conditioning captions in random mode or with single conditioning dataset
+    # Compute embeddings and handle dropped conditionings
+    debug_log(f"Extract captions. {is_combined_mode=}, {is_random_mode=}, {has_conditioning_captions=}")
+
+    if has_conditioning_captions and is_random_mode:
+        # Only use conditioning captions in random mode
         captions = [
             example.caption if example.caption else example["instance_prompt_text"] for example in conditioning_examples
         ]
@@ -565,7 +566,7 @@ def collate_fn(batch):
     else:
         # Use training captions (default behavior)
         captions = [example["instance_prompt_text"] for example in examples]
-        debug_log(f"Pull cached text embeds. no conditioning captions found or combined mode: {captions}")
+        debug_log(f"Pull cached text embeds. Using training set captions: {captions}")
         text_embed_cache = StateTracker.get_data_backend(data_backend_id)["text_embed_cache"]
     if not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(captions, text_embed_cache, StateTracker.get_model())
