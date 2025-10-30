@@ -142,6 +142,35 @@ master_ip:/home/ubuntu/simpletuner/output /home/ubuntu/simpletuner/output nfs de
 
 Very-large datasets can be a challenge to efficiently manage. SimpleTuner will automatically shard datasets over each node and distribute pre-processing across every available GPU in the cluster, while using asynchronous queues and threads to maintain throughput.
 
+### Dataset sizing for multi-GPU training
+
+When training across multiple GPUs or nodes, your dataset must contain enough samples to satisfy the **effective batch size**:
+
+```
+effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+```
+
+**Example calculations:**
+
+| Configuration | Calculation | Effective Batch Size |
+|--------------|-------------|---------------------|
+| 1 node, 8 GPUs, batch_size=4, grad_accum=1 | 4 × 8 × 1 | 32 samples |
+| 2 nodes, 16 GPUs, batch_size=8, grad_accum=2 | 8 × 16 × 2 | 256 samples |
+| 4 nodes, 32 GPUs, batch_size=8, grad_accum=1 | 8 × 32 × 1 | 256 samples |
+
+Each aspect ratio bucket in your dataset must contain at least this many samples (accounting for `repeats`) or training will fail with a detailed error message.
+
+#### Solutions for small datasets
+
+If your dataset is smaller than the effective batch size:
+
+1. **Reduce batch size** - Lower `train_batch_size` to reduce memory requirements
+2. **Reduce GPU count** - Train on fewer GPUs (though this slows training)
+3. **Increase repeats** - Set `repeats` in your [dataloader configuration](/documentation/DATALOADER.md#repeats)
+4. **Enable automatic oversubscription** - Use `--allow_dataset_oversubscription` to automatically adjust repeats
+
+The `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](/documentation/OPTIONS.md#allow_dataset_oversubscription)) will automatically calculate and apply the minimum required repeats for your configuration, making it ideal for prototyping or small dataset experiments.
+
 ### Slow image scan / discovery
 
 The **discovery** backend currently restricts aspect bucket data collection to a single node. This can take an **extremely** long time with very-large datasets as each image has to be read from storage to retrieve its geometry.

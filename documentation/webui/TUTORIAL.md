@@ -98,6 +98,8 @@ After configuring the default paths, you'll reach a step where multi-GPU can be 
 
 If you've got multiple GPUs and would like to just use the second one, this is where you can do that.
 
+> **Note for multi-GPU users:** When training with multiple GPUs, your dataset size requirements increase proportionally. The effective batch size is calculated as `train_batch_size × num_gpus × gradient_accumulation_steps`. If your dataset is smaller than this value, you'll need to either increase the `repeats` setting in your dataset configuration or enable the `--allow_dataset_oversubscription` option in the Advanced settings. See the [batch size section](#multi-gpu-batch-size-considerations) below for more details.
+
 #### Creating your first training environment
 
 If you did not have any pre-existing configurations found in your `configs_dir`, you'll be asked to create **your first training environment**:
@@ -218,6 +220,21 @@ Once you complete the dataset wizard (or if you elected to keep your existing da
 These are just starting points that help newcomers make somewhat better choices for their first few training runs - for experienced users, use **Manual configuration** for complete control.
 
 **NOTE**: If you plan on using DeepSpeed later, the optimiser choice doesn't matter much here.
+
+##### Multi-GPU Batch Size Considerations
+
+When training with multiple GPUs, be aware that your dataset must accommodate the **effective batch size**:
+
+```
+effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+```
+
+If your dataset is smaller than this value, SimpleTuner will raise an error with specific guidance. You can:
+- Reduce the batch size
+- Increase the `repeats` value in your dataset configuration
+- Enable **Allow Dataset Oversubscription** in the Advanced settings to automatically adjust repeats
+
+See [DATALOADER.md](/documentation/DATALOADER.md#multi-gpu-training-and-dataset-sizing) for more details on dataset sizing.
 
 <img width="1118" height="1015" alt="image" src="https://github.com/user-attachments/assets/25d5650d-e77b-42fe-b749-06c0ec92b1e2" />
 

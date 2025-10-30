@@ -3817,6 +3817,18 @@ def run_trainer_job(config):
     hf_token = _resolve_hf_token()
 
     def _launch_with_accelerate() -> Optional[int]:
+        import json
+        import logging
+        import os
+        import shlex
+        import subprocess
+        import threading
+        import time
+        from pathlib import Path
+
+        import simpletuner.helpers.log_format  # noqa: F401
+
+        launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
 
         nonlocal accelerate_config_path, main_process_port_value, machine_rank_value
@@ -3851,6 +3863,39 @@ def run_trainer_job(config):
         if selected_device_ids:
             launch_env["CUDA_VISIBLE_DEVICES"] = ",".join(selected_device_ids)
 
+        config_backend_value: Optional[str] = None
+        config_env_value: Optional[str] = None
+        if isinstance(config_payload, dict):
+            config_backend_value = _extract_value(
+                config_payload,
+                "config_backend",
+                "--config_backend",
+                "CONFIG_BACKEND",
+                "SIMPLETUNER_CONFIG_BACKEND",
+            )
+            config_env_value = _extract_value(
+                config_payload,
+                "config_environment",
+                "--config_environment",
+                "config_env",
+                "--config_env",
+                "environment",
+                "--environment",
+                "env",
+                "--env",
+            )
+        if config_backend_value:
+            backend_text = str(config_backend_value).strip()
+            if backend_text:
+                launch_env["SIMPLETUNER_CONFIG_BACKEND"] = backend_text
+                launch_env["CONFIG_BACKEND"] = backend_text
+        if config_env_value:
+            env_text = str(config_env_value).strip()
+            if env_text:
+                launch_env.setdefault("SIMPLETUNER_ENVIRONMENT", env_text)
+                launch_env.setdefault("SIMPLETUNER_ENV", env_text)
+                launch_env.setdefault("ENV", env_text)
+
         # Normalise accelerate config path if provided
         config_file_arg = None
         if isinstance(accelerate_config_path, str) and accelerate_config_path.strip():
@@ -3859,7 +3904,9 @@ def run_trainer_job(config):
             if os.path.isfile(expanded_path):
                 config_file_arg = expanded_path
             else:
-                logger.warning("Accelerate config file not found at %s; falling back to CLI parameters", expanded_path)
+                launch_logger.warning(
+                    "Accelerate config file not found at %s; falling back to CLI parameters", expanded_path
+                )
 
         if mixed_precision_value:
             launch_env["MIXED_PRECISION"] = str(mixed_precision_value)
@@ -3926,7 +3973,7 @@ def run_trainer_job(config):
             try:
                 extra_args = shlex.split(str(accelerate_extra_args))
             except ValueError:
-                logger.warning("Failed to parse accelerate extra args; using raw string")
+                launch_logger.warning("Failed to parse accelerate extra args; using raw string")
                 extra_args = [str(accelerate_extra_args)]
         if extra_args:
             cmd.extend(extra_args)
@@ -3964,16 +4011,14 @@ def run_trainer_job(config):
                         train_cli_payload[webhook_key] = json.dumps(webhook_value)
                     except Exception:
                         train_cli_payload.pop(webhook_key, None)
-            try:
-                cli_args = mapping_to_cli_args(train_cli_payload)
-            except Exception as exc:
-                logger.warning("Failed to convert config payload to CLI args: %s", exc)
-                cli_args = []
+            from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
+
+            cli_args = mapping_to_cli_args(train_cli_payload)
         if cli_args:
             launch_env.setdefault("CONFIG_BACKEND", "cmd")
             cmd.extend(cli_args)
 
-        logging.info("Launching training via accelerate: %s", " ".join(cmd))
+        launch_logger.info("Launching training via accelerate: %s", " ".join(cmd))
 
         popen_kwargs = {
             "env": launch_env,
@@ -3999,7 +4044,7 @@ def run_trainer_job(config):
                         sys.stdout.write(line)
                         sys.stdout.flush()
                     except Exception:
-                        logger.info(line.rstrip())
+                        launch_logger.info(line.rstrip())
 
         reader_thread = threading.Thread(target=_forward_output, daemon=True)
         reader_thread.start()
@@ -4007,17 +4052,17 @@ def run_trainer_job(config):
         try:
             while process.poll() is None:
                 if callable(should_abort_callable) and should_abort_callable():
-                    logger.info("Abort requested; terminating accelerate launcher")
+                    launch_logger.info("Abort requested; terminating accelerate launcher")
                     _terminate_accelerate_process(process)
                     try:
                         process.wait(timeout=15)
                     except subprocess.TimeoutExpired:
-                        logger.warning("Accelerate process unresponsive; forcing kill")
+                        launch_logger.warning("Accelerate process unresponsive; forcing kill")
                         _kill_accelerate_process(process)
                     break
                 time.sleep(0.5)
         except KeyboardInterrupt:
-            logger.info("Keyboard interrupt received; terminating accelerate launcher")
+            launch_logger.info("Keyboard interrupt received; terminating accelerate launcher")
             _terminate_accelerate_process(process)
             raise
         finally:
@@ -4029,7 +4074,7 @@ def run_trainer_job(config):
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
-                    logger.warning("Accelerate process still alive; forcing kill")
+                    launch_logger.warning("Accelerate process still alive; forcing kill")
                     _kill_accelerate_process(process)
 
         returncode = process.wait()
@@ -4144,7 +4189,7 @@ def _terminate_accelerate_process(process: subprocess.Popen) -> None:
                     pass
             process.terminate()
     except Exception as exc:
-        logger.warning("Failed to terminate accelerate process cleanly: %s", exc)
+        logging.getLogger("SimpleTuner").warning("Failed to terminate accelerate process cleanly: %s", exc)
 
 
 def _kill_accelerate_process(process: subprocess.Popen) -> None:
@@ -4158,4 +4203,4 @@ def _kill_accelerate_process(process: subprocess.Popen) -> None:
                     pass
             process.kill()
     except Exception as exc:
-        logger.warning("Failed to kill accelerate process: %s", exc)
+        logging.getLogger("SimpleTuner").warning("Failed to kill accelerate process: %s", exc)
