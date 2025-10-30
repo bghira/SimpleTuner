@@ -3817,6 +3817,13 @@ def run_trainer_job(config):
     hf_token = _resolve_hf_token()
 
     def _launch_with_accelerate() -> Optional[int]:
+        import json
+        import logging
+        import os
+        import shlex
+        import subprocess
+        import threading
+        import time
         from pathlib import Path
 
         launch_logger = logging.getLogger("SimpleTuner")
@@ -3978,7 +3985,7 @@ def run_trainer_job(config):
             launch_env.setdefault("CONFIG_BACKEND", "cmd")
             cmd.extend(cli_args)
 
-        logging.info("Launching training via accelerate: %s", " ".join(cmd))
+        launch_logger.info("Launching training via accelerate: %s", " ".join(cmd))
 
         popen_kwargs = {
             "env": launch_env,
