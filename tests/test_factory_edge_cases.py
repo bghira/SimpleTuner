@@ -378,6 +378,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 "target_downsample_size": 1280,
                 "minimum_image_size": 512,
                 "cache_dir_vae": "/tmp/vae",
+                "repeats": 100,  # High repeats to avoid validation failure with small/no dataset
             },
             {
                 "id": "text_embeds",
@@ -403,15 +404,28 @@ class TestFactoryEdgeCases(unittest.TestCase):
         with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
             self._setup_comprehensive_mocks(mock_state_tracker)
 
-            factory.configure_text_embed_backends(loaded_config)
-            factory.configure_data_backends(loaded_config)
+            # Patch metadata backend to return non-zero length (avoid validation failure)
+            with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_metadata:
+                mock_metadata_instance = MagicMock()
+                mock_metadata_instance.refresh_buckets.return_value = None
+                mock_metadata_instance.split_buckets_between_processes.return_value = None
+                mock_metadata_instance.save_cache.return_value = None
+                mock_metadata_instance.__len__.return_value = 10  # Non-zero to pass validation
+                mock_metadata_instance.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg"]}
+                mock_metadata_instance.config = {}
+                mock_metadata_instance.resolution_type = "area"
+                mock_metadata_instance.resolution = 1024
+                mock_metadata.return_value = mock_metadata_instance
 
-            # Check that resolution_type was converted
-            backend_config = loaded_config[0]
-            self.assertEqual(backend_config["resolution_type"], "area")
-            # Check that resolution was converted from pixel_area to area
-            expected_resolution = (1024 * 1024) / (1000**2)  # Convert to megapixels
-            self.assertAlmostEqual(backend_config["resolution"], expected_resolution, places=6)
+                factory.configure_text_embed_backends(loaded_config)
+                factory.configure_data_backends(loaded_config)
+
+                # Check that resolution_type was converted
+                backend_config = loaded_config[0]
+                self.assertEqual(backend_config["resolution_type"], "area")
+                # Check that resolution was converted from pixel_area to area
+                expected_resolution = (1024 * 1024) / (1000**2)  # Convert to megapixels
+                self.assertAlmostEqual(backend_config["resolution"], expected_resolution, places=6)
 
     def test_csv_backend_invalid_config(self):
         """Test CSV backend with invalid configuration."""

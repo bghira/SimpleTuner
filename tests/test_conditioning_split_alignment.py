@@ -161,7 +161,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         source_config = {
             "resolution_type": "area",
             "resolution": 1.0,
-            "repeats": 0,
+            "repeats": 1,  # Increased from 0 to pass validation (16 images × 2 = 32 samples for effective_batch_size=32)
             "instance_data_dir": source_dir,
         }
         if source_config_overrides:
@@ -200,7 +200,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         conditioning_config = {
             "resolution_type": "area",
             "resolution": 1.0,
-            "repeats": 0,
+            "repeats": 1,  # Increased from 0 to pass validation
             "instance_data_dir": conditioning_dir,
             "source_dataset_id": source_id,
         }
