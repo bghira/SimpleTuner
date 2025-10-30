@@ -792,6 +792,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
     def test_early_validation_impossible_config(self):
         """Test that impossible configurations are caught early with specific guidance."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
 
         # Create a mock backend with only the necessary attributes for split_buckets
         mock_backend = MagicMock(spec=MetadataBackend)
@@ -806,13 +807,21 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_accelerator.num_processes = 8
         mock_backend.accelerator = mock_accelerator
 
-        # Call the real split_buckets_between_processes method
-        # This should raise ValueError with specific guidance
-        # 4 images × (0+1) repeats = 4 samples
-        # batch_size=4 × 8 GPUs × 1 grad_accum = 32 effective batch size
-        # 4 samples < 32 effective batch size → should fail
-        with self.assertRaises(ValueError) as context:
-            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
+        # Mock StateTracker.get_args() to return args with allow_dataset_oversubscription=False
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # Mock StateTracker.get_data_backend_config to return empty config (no manual repeats)
+            with patch.object(StateTracker, "get_data_backend_config", return_value={}):
+                # Call the real split_buckets_between_processes method
+                # This should raise ValueError with specific guidance
+                # 4 images × (0+1) repeats = 4 samples
+                # batch_size=4 × 8 GPUs × 1 grad_accum = 32 effective batch size
+                # 4 samples < 32 effective batch size → should fail
+                with self.assertRaises(ValueError) as context:
+                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
 
         error_msg = str(context.exception)
         # Check that error message contains key information
@@ -829,6 +838,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
     def test_early_validation_sufficient_repeats(self):
         """Test that configuration works when repeats are sufficient."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
 
         # Create a mock backend with sufficient repeats
         mock_backend = MagicMock(spec=MetadataBackend)
@@ -853,15 +863,23 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_accelerator.split_between_processes = MagicMock(side_effect=split_side_effect)
         mock_backend.accelerator = mock_accelerator
 
-        # 4 images with repeats=1
-        # 4 images × (1+1) repeats = 8 samples
-        # batch_size=1 × 2 GPUs × 1 grad_accum = 2 effective batch size
-        # 8 samples >= 2 effective batch size → should succeed (not raise during validation)
-        try:
-            MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-        except ValueError as e:
-            if "Dataset configuration will produce zero usable batches" in str(e):
-                self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
+        # Mock StateTracker.get_args() to return args with allow_dataset_oversubscription=False
+        with patch.object(StateTracker, "get_args") as mock_get_args:
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            # Mock StateTracker.get_data_backend_config to return empty config (no manual repeats)
+            with patch.object(StateTracker, "get_data_backend_config", return_value={}):
+                # 4 images with repeats=1
+                # 4 images × (1+1) repeats = 8 samples
+                # batch_size=1 × 2 GPUs × 1 grad_accum = 2 effective batch size
+                # 8 samples >= 2 effective batch size → should succeed (not raise during validation)
+                try:
+                    MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
+                except ValueError as e:
+                    if "Dataset configuration will produce zero usable batches" in str(e):
+                        self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
 
     def test_oversubscription_auto_adjustment(self):
         """Test that --allow_dataset_oversubscription automatically adjusts repeats."""
