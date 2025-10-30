@@ -3861,6 +3861,39 @@ def run_trainer_job(config):
         if selected_device_ids:
             launch_env["CUDA_VISIBLE_DEVICES"] = ",".join(selected_device_ids)
 
+        config_backend_value: Optional[str] = None
+        config_env_value: Optional[str] = None
+        if isinstance(config_payload, dict):
+            config_backend_value = _extract_value(
+                config_payload,
+                "config_backend",
+                "--config_backend",
+                "CONFIG_BACKEND",
+                "SIMPLETUNER_CONFIG_BACKEND",
+            )
+            config_env_value = _extract_value(
+                config_payload,
+                "config_environment",
+                "--config_environment",
+                "config_env",
+                "--config_env",
+                "environment",
+                "--environment",
+                "env",
+                "--env",
+            )
+        if config_backend_value:
+            backend_text = str(config_backend_value).strip()
+            if backend_text:
+                launch_env["SIMPLETUNER_CONFIG_BACKEND"] = backend_text
+                launch_env["CONFIG_BACKEND"] = backend_text
+        if config_env_value:
+            env_text = str(config_env_value).strip()
+            if env_text:
+                launch_env.setdefault("SIMPLETUNER_ENVIRONMENT", env_text)
+                launch_env.setdefault("SIMPLETUNER_ENV", env_text)
+                launch_env.setdefault("ENV", env_text)
+
         # Normalise accelerate config path if provided
         config_file_arg = None
         if isinstance(accelerate_config_path, str) and accelerate_config_path.strip():
