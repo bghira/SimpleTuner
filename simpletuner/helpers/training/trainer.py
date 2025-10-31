@@ -1928,22 +1928,29 @@ class Trainer:
             return
         # this runs on all processes to ensure shapes are aligned.
         self.model.pre_ema_creation()
-        if self.accelerator.is_main_process:
+        fsdp_version = getattr(self.config, "fsdp_version", 1)
+        fsdp_enabled = getattr(self.config, "fsdp_enable", False)
+        is_fsdp2_run = fsdp_enabled and fsdp_version == 2 and self.accelerator.distributed_type == DistributedType.FSDP
+
+        should_log = self.accelerator.is_main_process
+        instantiate_on_rank = should_log or is_fsdp2_run
+        if should_log:
             logger.info("Using EMA. Creating EMAModel.")
 
-            ema_model_cls = None
-            ema_model_config = None
-            if self.config.controlnet:
-                ema_model_cls = self.controlnet.__class__
-                ema_model_config = self.controlnet.config
-            elif self.model.get_trained_component() is not None:
-                ema_model_cls = self.model.get_trained_component().__class__
-                ema_model_config = self.model.get_trained_component().config
-            else:
-                raise ValueError(
-                    f"Please open a bug report or disable EMA. Unknown EMA model family: {self.config.model_family}"
-                )
+        ema_model_cls = None
+        ema_model_config = None
+        if self.config.controlnet:
+            ema_model_cls = self.controlnet.__class__
+            ema_model_config = self.controlnet.config
+        elif self.model.get_trained_component() is not None:
+            ema_model_cls = self.model.get_trained_component().__class__
+            ema_model_config = self.model.get_trained_component().config
+        else:
+            raise ValueError(
+                f"Please open a bug report or disable EMA. Unknown EMA model family: {self.config.model_family}"
+            )
 
+        if instantiate_on_rank:
             self.ema_model = EMAModel(
                 self.config,
                 self.accelerator,
@@ -1953,7 +1960,8 @@ class Trainer:
                 decay=self.config.ema_decay,
                 foreach=not self.config.ema_foreach_disable,
             )
-            logger.info(f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters")
+            if should_log:
+                logger.info(f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters")
 
         self.accelerator.wait_for_everyone()
         # same about running on all processes to ensure alignment.
