@@ -6,6 +6,8 @@ import shutil
 import types
 from contextlib import contextmanager
 
+import torch
+from accelerate.utils import DistributedType
 from diffusers.training_utils import _collate_lora_metadata
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from diffusers.utils.state_dict_utils import StateDictType
@@ -224,35 +226,75 @@ class SaveHookManager:
 
         logger.info("LyCORIS weights have been saved to disk")
 
-    def _save_full_model(self, models, weights, output_dir):
-        # Create a temporary directory for atomic saves
-        temporary_dir = output_dir.replace("checkpoint", "temporary")
-        os.makedirs(temporary_dir, exist_ok=True)
+    def _resolve_model_state_dict(self, model, weights):
+        """
+        Retrieve a model state dict for saving and consume Accelerate-provided state dicts when present.
+        """
+        if weights and len(weights) > 0:
+            return weights.pop(0)
+        if self.accelerator is not None:
+            return self.accelerator.get_state_dict(model, unwrap=False)
+        return model.state_dict()
 
-        if self.args.use_ema and self.accelerator.is_main_process:
-            # even with deepspeed, EMA should only save on the main process.
-            ema_model_path = os.path.join(temporary_dir, self.ema_model_subdir, "ema_model.pt")
-            logger.info(f"Saving EMA model to {ema_model_path}")
+    def _save_full_model(
+        self,
+        models,
+        weights,
+        output_dir,
+        *,
+        is_main_process: bool,
+        distributed_type: DistributedType,
+    ):
+        temporary_dir = None
+        save_dir = None
+
+        if is_main_process:
+            temporary_dir = output_dir.replace("checkpoint", "temporary")
+            os.makedirs(temporary_dir, exist_ok=True)
+
+            if self.args.use_ema:
+                ema_model_path = os.path.join(temporary_dir, self.ema_model_subdir, "ema_model.pt")
+                logger.info(f"Saving EMA model to {ema_model_path}")
+                try:
+                    self.ema_model.save_state_dict(ema_model_path)
+                except Exception as e:
+                    logger.error(f"Error saving EMA model: {e}")
+                logger.info("Saving EMA safetensors variant.")
+                self.ema_model.save_pretrained(
+                    os.path.join(temporary_dir, self.ema_model_subdir),
+                    max_shard_size="10GB",
+                )
+
+            sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
+            save_dir = os.path.join(temporary_dir, sub_dir)
+            os.makedirs(save_dir, exist_ok=True)
+        else:
+            sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
+
+        for idx, model in enumerate(models):
+            state_dict = self._resolve_model_state_dict(model, weights)
             try:
-                self.ema_model.save_state_dict(ema_model_path)
-            except Exception as e:
-                logger.error(f"Error saving EMA model: {e}")
-            logger.info(f"Saving EMA safetensors variant.")
-            self.ema_model.save_pretrained(
-                os.path.join(temporary_dir, self.ema_model_subdir),
-                max_shard_size="10GB",
-            )
-        sub_dir = self.model.MODEL_SUBFOLDER
-        if self.args.controlnet:
-            sub_dir = "controlnet"
+                if not is_main_process:
+                    continue
+                unwrapped_model = unwrap_model(self.accelerator, model)
+                if distributed_type == DistributedType.FSDP:
+                    fsdp_filename = "pytorch_model_fsdp.bin" if idx == 0 else f"pytorch_model_{idx}_fsdp.bin"
+                    torch.save(state_dict, os.path.join(temporary_dir, fsdp_filename))
+                unwrapped_model.save_pretrained(
+                    save_dir,
+                    max_shard_size="10GB",
+                    state_dict=state_dict,
+                )
+                merge_safetensors_files(save_dir)
+            finally:
+                del state_dict
 
-        for model in models:
-            model.save_pretrained(os.path.join(temporary_dir, sub_dir), max_shard_size="10GB")
-            merge_safetensors_files(os.path.join(temporary_dir, sub_dir))
-            if weights:
-                weights.pop()  # Pop the last weight
+        if self.accelerator is not None and distributed_type is not None and distributed_type != DistributedType.NO:
+            self.accelerator.wait_for_everyone()
 
-        # Copy contents of temporary directory to output directory
+        if not is_main_process:
+            return
+
         for item in os.listdir(temporary_dir):
             s = os.path.join(temporary_dir, item)
             d = os.path.join(output_dir, item)
@@ -261,15 +303,19 @@ class SaveHookManager:
             else:
                 shutil.copy2(s, d)
 
-        # Remove the temporary directory
         shutil.rmtree(temporary_dir, ignore_errors=True)
 
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
         StateTracker.save_training_state(os.path.join(output_dir, self.training_state_path))
-        if not self.accelerator.is_main_process:
-            return
-        if self.args.use_ema:
+
+        distributed_type = DistributedType.NO
+        is_main_process = True
+        if self.accelerator is not None:
+            distributed_type = getattr(self.accelerator, "distributed_type", DistributedType.NO)
+            is_main_process = getattr(self.accelerator, "is_main_process", True)
+
+        if self.args.use_ema and is_main_process:
             # we'll save this EMA checkpoint for restoring the state easier.
             ema_model_path = os.path.join(output_dir, self.ema_model_subdir, "ema_model.pt")
             logger.info(f"Saving EMA model to {ema_model_path}")
@@ -277,14 +323,27 @@ class SaveHookManager:
                 self.ema_model.save_state_dict(ema_model_path)
             except Exception as e:
                 logger.error(f"Error saving EMA model: {e}")
+
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
-            self._save_lora(models=models, weights=weights, output_dir=output_dir)
+            if is_main_process:
+                self._save_lora(models=models, weights=weights, output_dir=output_dir)
+            if self.accelerator is not None and distributed_type != DistributedType.NO:
+                self.accelerator.wait_for_everyone()
             return
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
-            self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
+            if is_main_process:
+                self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
+            if self.accelerator is not None and distributed_type != DistributedType.NO:
+                self.accelerator.wait_for_everyone()
             return
-        else:
-            self._save_full_model(models=models, weights=weights, output_dir=output_dir)
+
+        self._save_full_model(
+            models=models,
+            weights=weights,
+            output_dir=output_dir,
+            is_main_process=is_main_process,
+            distributed_type=distributed_type,
+        )
 
     def _load_lora(self, models, input_dir):
         logger.info(f"Loading LoRA weights from Path: {input_dir}")
