@@ -3377,9 +3377,10 @@ class Trainer:
                             self.accelerator.sync_gradients
                             and self.config.optimizer not in ["optimi-stableadamw", "prodigy"]
                             and self.config.max_grad_norm > 0
+                            and not self.config.fsdp_enable
                         ):
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
-                            if self.config.grad_clip_method == "norm" or self.config.fsdp_enable:
+                            if self.config.grad_clip_method == "norm":
                                 self.grad_norm = self.accelerator.clip_grad_norm_(
                                     self._get_trainable_parameters(),
                                     self.config.max_grad_norm,
