@@ -3535,10 +3535,13 @@ class Trainer:
                             wandb_logs.update(tracker_table)
                         self.mark_optimizer_train()
 
-                    self.accelerator.log(
-                        wandb_logs,
-                        step=self.state["global_step"],
-                    )
+                    try:
+                        self.accelerator.log(
+                            wandb_logs,
+                            step=self.state["global_step"],
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to log to accelerator; ignoring error: {e}")
 
                     # Reset some values for the next go.
                     training_luminance_values = []
