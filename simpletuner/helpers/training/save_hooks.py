@@ -268,14 +268,14 @@ class SaveHookManager:
             sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
             save_dir = os.path.join(temporary_dir, sub_dir)
             os.makedirs(save_dir, exist_ok=True)
-        else:
-            sub_dir = "controlnet" if self.args.controlnet else self.model.MODEL_SUBFOLDER
-
         for idx, model in enumerate(models):
+            if not is_main_process:
+                if weights and len(weights) > 0:
+                    weights.pop(0)
+                continue
+
             state_dict = self._resolve_model_state_dict(model, weights)
             try:
-                if not is_main_process:
-                    continue
                 unwrapped_model = unwrap_model(self.accelerator, model)
                 if distributed_type == DistributedType.FSDP:
                     fsdp_filename = "pytorch_model_fsdp.bin" if idx == 0 else f"pytorch_model_{idx}_fsdp.bin"
