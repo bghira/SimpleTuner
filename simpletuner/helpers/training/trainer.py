@@ -53,6 +53,7 @@ from simpletuner.helpers.training.optimizer_param import (
     is_lr_schedulefree,
     is_lr_scheduler_disabled,
 )
+from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
@@ -1772,6 +1773,33 @@ class Trainer:
                 return self.lycoris_wrapped_network.parameters()
         return [param for param in self.model.get_trained_component(unwrap_model=False).parameters() if param.requires_grad]
 
+    def _ensure_parameter_dtype(self, parameters, target_dtype: torch.dtype, optimizer_name: str | None = None):
+        converted = 0
+        for param_or_group in parameters:
+            if isinstance(param_or_group, dict):
+                cand_params = param_or_group.get("params", [])
+            else:
+                cand_params = [param_or_group]
+
+            for param in cand_params:
+                if not hasattr(param, "data") or getattr(param, "is_meta", False):
+                    continue
+                tensor = param.data
+                if tensor is None or tensor.dtype == target_dtype:
+                    continue
+                param.data = tensor.to(dtype=target_dtype)
+                converted += 1
+
+        if converted > 0:
+            name_fragment = optimizer_name or getattr(self.config, "optimizer", "optimizer")
+            logger.info(
+                "Converted %s parameter%s to %s for %s compatibility.",
+                converted,
+                "" if converted == 1 else "s",
+                target_dtype,
+                name_fragment,
+            )
+
     def _recalculate_training_steps(self):
         # Scheduler and math around the number of training steps.
         if not hasattr(self.config, "overrode_max_train_steps"):
@@ -1837,6 +1865,15 @@ class Trainer:
             lycoris_wrapped_network=self.lycoris_wrapped_network,
         )
         logger.info(f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters")
+
+        if optimizer_class is AdamWBF16:
+            if getattr(self.config, "weight_dtype", None) != torch.bfloat16:
+                logger.warning(
+                    "AdamW_BF16 requires bf16 weights. Adjusting weight dtype from %s to torch.bfloat16.",
+                    getattr(self.config, "weight_dtype", None),
+                )
+                self.config.weight_dtype = torch.bfloat16
+            self._ensure_parameter_dtype(self.params_to_optimize, torch.bfloat16, optimizer_name="adamw_bf16")
 
         if self.config.use_deepspeed_optimizer:
             logger.info(

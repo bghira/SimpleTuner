@@ -109,6 +109,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             section="optimizer_config",
             default_value="adamw_bf16",
             choices=[{"value": opt, "label": opt} for opt in optimizer_choices],
+            dynamic_choices=True,
             validation_rules=[
                 ValidationRule(ValidationRuleType.REQUIRED, message="Optimizer is required"),
                 ValidationRule(ValidationRuleType.CHOICES, value=optimizer_choices),

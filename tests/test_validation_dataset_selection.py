@@ -2,10 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from simpletuner.helpers.training.validation import (
-    retrieve_validation_edit_images,
-    retrieve_validation_images,
-)
+from simpletuner.helpers.training.validation import retrieve_validation_edit_images, retrieve_validation_images
 
 
 class EvalDatasetSelectionTests(unittest.TestCase):
@@ -31,10 +28,10 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         args = self._build_args(eval_dataset_id="missing-dataset")
         available_backends = {"existing": {"id": "existing"}}
 
-        with patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model), patch(
-            "simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args
-        ), patch(
-            "simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=available_backends
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=available_backends),
         ):
             with self.assertRaisesRegex(ValueError, "missing-dataset"):
                 retrieve_validation_images()
@@ -45,10 +42,10 @@ class EvalDatasetSelectionTests(unittest.TestCase):
         args = self._build_args(eval_dataset_id="unknown-edit")
         available_backends = {"present": {"id": "present"}}
 
-        with patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model), patch(
-            "simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args
-        ), patch(
-            "simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=available_backends
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_model", return_value=model),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_data_backends", return_value=available_backends),
         ):
             with self.assertRaisesRegex(ValueError, "unknown-edit"):
                 retrieve_validation_edit_images()
@@ -56,4 +53,3 @@ class EvalDatasetSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
