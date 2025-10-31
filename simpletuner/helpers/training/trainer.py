@@ -646,15 +646,30 @@ class Trainer:
         fsdp_version = getattr(self.config, "fsdp_version", 2) or 2
         reshard_after_forward = getattr(self.config, "fsdp_reshard_after_forward", True)
         cpu_ram_efficient_loading = getattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
+        limit_all_gathers = getattr(self.config, "fsdp_limit_all_gathers", True)
+        cpu_offload = getattr(self.config, "fsdp_cpu_offload", False)
+        activation_checkpointing = getattr(self.config, "fsdp_activation_checkpointing", False)
         state_dict_type = getattr(self.config, "fsdp_state_dict_type", None)
         auto_wrap_policy = getattr(self.config, "fsdp_auto_wrap_policy", None)
         transformer_cls = getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+
+        if activation_checkpointing and getattr(self.config, "gradient_checkpointing", False):
+            logger.info(
+                "FSDP activation checkpointing enabled; disabling model-level gradient checkpointing to avoid conflicts."
+            )
+            setattr(self.config, "gradient_checkpointing", False)
 
         plugin_kwargs = {
             "fsdp_version": fsdp_version,
             "reshard_after_forward": reshard_after_forward,
             "cpu_ram_efficient_loading": cpu_ram_efficient_loading,
+            "limit_all_gathers": bool(limit_all_gathers),
         }
+
+        if cpu_offload is not None:
+            plugin_kwargs["cpu_offload"] = cpu_offload
+        if activation_checkpointing:
+            plugin_kwargs["activation_checkpointing"] = True
 
         resolved_state_dict_display = None
         if state_dict_type:
@@ -673,11 +688,30 @@ class Trainer:
             plugin_kwargs["transformer_cls_names_to_wrap"] = transformer_cls
 
         logger.info(
-            "FSDP v%s configuration detected; enabling FullyShardedDataParallelPlugin%s.",
+            "FSDP v%s configuration detected (%s); enabling FullyShardedDataParallelPlugin%s.",
             fsdp_version,
+            ", ".join(f"{k}={v}" for k, v in plugin_kwargs.items()),
             f" (reshard_after_forward={reshard_after_forward})" if fsdp_version >= 2 else "",
         )
         plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
+
+        if (
+            getattr(plugin, "auto_wrap_policy", None) is not None
+            and getattr(plugin, "transformer_cls_names_to_wrap", None) is None
+        ):
+            component = None
+            try:
+                component = self.model.get_trained_component(unwrap_model=False)
+            except Exception:
+                component = None
+            candidate_names = getattr(component, "_no_split_modules", None) or getattr(
+                self.model, "_no_split_modules", None
+            )
+            if candidate_names:
+                names_list = list(candidate_names)
+                plugin.transformer_cls_names_to_wrap = names_list
+                if not getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None):
+                    setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(names_list))
 
         if resolved_state_dict_display:
             setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
@@ -1761,6 +1795,12 @@ class Trainer:
 
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
+            fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+            if fsdp_plugin and getattr(self.config, "fsdp_activation_checkpointing", False):
+                logger.info(
+                    "Skipping model-level gradient checkpointing because FSDP activation checkpointing is active."
+                )
+                return
             logger.debug("Enabling gradient checkpointing.")
             if hasattr(self.model.get_trained_component(), "enable_gradient_checkpointing"):
                 unwrap_model(self.accelerator, self.model.get_trained_component()).enable_gradient_checkpointing()
@@ -2065,6 +2105,21 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        if getattr(self.config, "use_fsdp", False):
+            moved_param_count = 0
+            for param in primary_model.parameters():
+                if param.device.type != "cpu":
+                    param.data = param.data.to("cpu")
+                    if param.grad is not None:
+                        param.grad = None
+                    moved_param_count += 1
+            if moved_param_count:
+                logger.info("Moved %s parameters back to CPU before Accelerator.prepare for FSDP sharding.", moved_param_count)
+        try:
+            first_param = next(primary_model.parameters())
+            logger.info("Primary model param device before Accelerator.prepare: %s", first_param.device)
+        except StopIteration:
+            logger.warning("Primary model has no parameters when preparing accelerator.")
         self._finalize_deepspeed_config_auto_values(primary_model)
         results = self.accelerator.prepare(primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0])
         self.model.set_prepared_model(results[0])
@@ -2528,18 +2583,40 @@ class Trainer:
             sys.exit(1)
 
     def move_models(self, destination: str = "accelerator"):
-        target_device = "cpu"
-        if destination == "accelerator":
-            target_device = self.accelerator.device
         is_accelerator_target = destination == "accelerator"
+        fsdp_active = bool(getattr(self.config, "use_fsdp", False))
+        fsdp_version = None
+        if self.accelerator and hasattr(self.accelerator, "state"):
+            fsdp_plugin = getattr(self.accelerator.state, "fsdp_plugin", None)
+            if fsdp_plugin is not None:
+                fsdp_active = True
+                fsdp_version = getattr(fsdp_plugin, "fsdp_version", None)
+
+        if is_accelerator_target and fsdp_active:
+            version_note = f" (v{fsdp_version})" if fsdp_version is not None else ""
+            logger.info(
+                "FSDP%s detected; skipping manual model move so Accelerator.prepare can shard from the host device.",
+                version_note,
+            )
+            return
+
+        if is_accelerator_target:
+            if not self.accelerator:
+                raise RuntimeError(
+                    "Accelerator is not initialised but move_models(destination='accelerator') was requested."
+                )
+            target_device = self.accelerator.device
+        else:
+            target_device = destination
+
         group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
         group_offload_configured = getattr(self.model, "group_offload_configured", False)
         logger.info(
-            f"Moving the {str(self.model.get_trained_component().__class__)} to GPU in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
+            f"Moving the {str(self.model.get_trained_component().__class__)} to {target_device} in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
         )
         if self.model.get_trained_component() is not None:
             should_move_trained_component = not (
-                group_offload_requested and group_offload_configured and is_accelerator_target
+                fsdp_active and group_offload_requested and group_offload_configured and is_accelerator_target
             )
             if should_move_trained_component:
                 if self.config.is_quantized:
@@ -3302,7 +3379,7 @@ class Trainer:
                             and self.config.max_grad_norm > 0
                         ):
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
-                            if self.config.grad_clip_method == "norm":
+                            if self.config.grad_clip_method == "norm" or self.config.enable_fsdp:
                                 self.grad_norm = self.accelerator.clip_grad_norm_(
                                     self._get_trainable_parameters(),
                                     self.config.max_grad_norm,

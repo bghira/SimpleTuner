@@ -1348,6 +1348,57 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="fsdp_limit_all_gathers",
+            arg_name="--fsdp_limit_all_gathers",
+            ui_label="Limit All-Gather Concurrency",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            default_value=True,
+            help_text="Throttle concurrent all-gathers to reduce VRAM spikes during sharded parameter broadcasts.",
+            tooltip="Disable only if you have enough memory and want maximum overlap between compute and communication.",
+            importance=ImportanceLevel.ADVANCED,
+            order=18,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_cpu_offload",
+            arg_name="--fsdp_cpu_offload",
+            ui_label="CPU Offload Parameters",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            default_value=False,
+            help_text="Keep sharded parameters on CPU between forward/backward passes to save GPU memory.",
+            tooltip="Enabling reduces GPU VRAM use at the cost of extra CPU↔GPU transfers.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="fsdp_activation_checkpointing",
+            arg_name="--fsdp_activation_checkpointing",
+            ui_label="Checkpoint Wrapped Layers",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            default_value=False,
+            help_text="Tell FSDP to recompute activations inside wrapped modules instead of storing them.",
+            tooltip="Pairs well with FSDP on large transformers to trim activation memory, with extra compute cost.",
+            importance=ImportanceLevel.ADVANCED,
+            order=20,
+            dependencies=[FieldDependency(field="fsdp_enable", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="fsdp_transformer_layer_cls_to_wrap",
             arg_name="--fsdp_transformer_layer_cls_to_wrap",
             ui_label="Transformer Classes to Wrap",
