@@ -3379,7 +3379,7 @@ class Trainer:
                             and self.config.max_grad_norm > 0
                         ):
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
-                            if self.config.grad_clip_method == "norm" or self.config.enable_fsdp:
+                            if self.config.grad_clip_method == "norm" or self.config.fsdp_enable:
                                 self.grad_norm = self.accelerator.clip_grad_norm_(
                                     self._get_trainable_parameters(),
                                     self.config.max_grad_norm,
