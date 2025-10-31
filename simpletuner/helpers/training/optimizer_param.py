@@ -1,3 +1,5 @@
+import copy
+import inspect
 import logging
 import os
 from functools import lru_cache
@@ -294,6 +296,9 @@ optimizer_choices = {
 }
 
 FP8_OPTIMIZER_KEYS = frozenset({"ao-adamfp8", "ao-adamwfp8"})
+FSDP2_INCOMPATIBLE_PREFIXES = ("optimi-", "bnb-")
+FSDP2_INCOMPATIBLE_NAMES = {"soap"}
+FSDP2_FALLBACK_OPTIMIZER = "adamw_schedulefree"
 
 
 def _is_truthy(value: str) -> bool:
@@ -333,16 +338,25 @@ def fp8_optimizers_supported() -> bool:
     return False
 
 
-def available_optimizer_keys() -> list[str]:
+def available_optimizer_keys(fsdp_enabled: bool = False, fsdp_version: int | str = 2) -> list[str]:
     """
     Return optimizer keys appropriate for the current environment.
 
     FP8-only optimizers are excluded unless the environment appears capable of running them.
     """
-    if fp8_optimizers_supported():
-        return list(optimizer_choices.keys())
+    try:
+        fsdp_version_int = int(fsdp_version)
+    except (TypeError, ValueError):
+        fsdp_version_int = 2
 
-    return [key for key in optimizer_choices.keys() if key not in FP8_OPTIMIZER_KEYS]
+    keys = list(optimizer_choices.keys())
+    if not fp8_optimizers_supported():
+        keys = [key for key in keys if key not in FP8_OPTIMIZER_KEYS]
+
+    if fsdp_enabled and fsdp_version_int == 2:
+        keys = [key for key in keys if not _is_optimizer_fsdp2_incompatible(key)]
+
+    return keys
 
 
 if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
@@ -612,12 +626,24 @@ def convert_arg_to_parameters(args):
 def optimizer_parameters(optimizer, args):
     """Return the parameters for the optimizer"""
     if optimizer in optimizer_choices:
-        optimizer_details = optimizer_choices.get(optimizer)
-        optimizer_class = optimizer_choices.get(optimizer).get("class")
-        optimizer_params = optimizer_choices.get(optimizer).get("default_settings")
+        optimizer_choice_entry = optimizer_choices.get(optimizer)
+        optimizer_class = optimizer_choice_entry.get("class")
+        optimizer_params = copy.deepcopy(optimizer_choice_entry.get("default_settings", {}))
         optimizer_params.update(convert_arg_to_parameters(args))
         if args.optimizer_release_gradients and "optimi-" in optimizer:
             optimizer_params["gradient_release"] = True
+
+        optimizer_params, dropped_keys = _sanitize_optimizer_kwargs(optimizer_class, optimizer_params)
+
+        if dropped_keys:
+            logger.warning(
+                "Dropped unsupported optimizer arguments for %s: %s",
+                optimizer,
+                ", ".join(sorted(dropped_keys)),
+            )
+
+        optimizer_details = copy.deepcopy(optimizer_choice_entry)
+        optimizer_details.pop("class", None)
         optimizer_details["default_settings"] = optimizer_params
         if args.optimizer == "prodigy":
             prodigy_steps = args.prodigy_steps
@@ -627,6 +653,65 @@ def optimizer_parameters(optimizer, args):
         return optimizer_class, optimizer_details
     else:
         raise ValueError(f"Optimizer {optimizer} not found.")
+
+
+def _sanitize_optimizer_kwargs(optimizer_cls, optimizer_params: dict) -> tuple[dict, set]:
+    """
+    Remove keyword arguments that are not accepted by the optimizer's constructor.
+
+    Returns:
+        A tuple containing:
+            - The sanitized optimizer parameters dictionary.
+            - A set of removed keyword argument names.
+    """
+    removed = set()
+    try:
+        signature = inspect.signature(optimizer_cls.__init__)
+    except (TypeError, ValueError):
+        # Cannot introspect, assume everything is valid.
+        return optimizer_params, removed
+
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        # Optimizer accepts **kwargs so nothing to sanitize.
+        return optimizer_params, removed
+
+    valid_parameters = {name for name in signature.parameters if name != "self"}
+    sanitized = {}
+    for key, value in optimizer_params.items():
+        if key in valid_parameters:
+            sanitized[key] = value
+        else:
+            removed.add(key)
+
+    return sanitized, removed
+
+
+def _requires_fsdp2_safe_fallback(args, optimizer_name: str | None) -> bool:
+    """
+    Determine if the selected optimizer requires a fallback because FSDP v2 (DTensor) is active.
+    """
+    if optimizer_name is None:
+        return False
+    if not getattr(args, "use_fsdp", False):
+        return False
+    fsdp_version_raw = getattr(args, "fsdp_version", 2)
+    try:
+        fsdp_version = int(fsdp_version_raw)
+    except (TypeError, ValueError):
+        fsdp_version = 2
+    if fsdp_version != 2:
+        return False
+
+    return _is_optimizer_fsdp2_incompatible(optimizer_name)
+
+
+def _is_optimizer_fsdp2_incompatible(optimizer_name: str | None) -> bool:
+    if not optimizer_name:
+        return False
+    normalized = optimizer_name.lower()
+    if normalized in FSDP2_INCOMPATIBLE_NAMES:
+        return True
+    return any(normalized.startswith(prefix) for prefix in FSDP2_INCOMPATIBLE_PREFIXES)
 
 
 def is_lr_scheduler_disabled(optimizer: str):
@@ -707,6 +792,24 @@ def cpu_offload_optimizer(
 
 def determine_optimizer_class_with_config(args, use_deepspeed_optimizer, is_quantized, enable_adamw_bf16) -> tuple:
     extra_optimizer_args = {}
+    requested_optimizer = getattr(args, "optimizer", None)
+    optimizer_name = requested_optimizer
+    if _requires_fsdp2_safe_fallback(args, optimizer_name):
+        fallback_optimizer = getattr(args, "fsdp_fallback_optimizer", FSDP2_FALLBACK_OPTIMIZER)
+        if fallback_optimizer not in optimizer_choices:
+            raise ValueError(
+                f"Fallback optimizer '{fallback_optimizer}' is not recognised. "
+                f"Please choose a fallback available in: {', '.join(sorted(optimizer_choices))}."
+            )
+        logger.warning(
+            "Optimizer '%s' is not currently supported with FSDP v2. Falling back to '%s'.",
+            optimizer_name,
+            fallback_optimizer,
+        )
+        if requested_optimizer is not None:
+            setattr(args, "requested_optimizer", requested_optimizer)
+        setattr(args, "optimizer", fallback_optimizer)
+        optimizer_name = fallback_optimizer
     if use_deepspeed_optimizer:
         optimizer_class = accelerate.utils.DummyOptim
         extra_optimizer_args["lr"] = float(args.learning_rate)
@@ -720,7 +823,7 @@ def determine_optimizer_class_with_config(args, use_deepspeed_optimizer, is_quan
         optimizer_class, optimizer_details = optimizer_parameters("optimi-adamw", args)
         default_settings = optimizer_details.get("default_settings")
     else:
-        optimizer_class, optimizer_details = optimizer_parameters(args.optimizer, args)
+        optimizer_class, optimizer_details = optimizer_parameters(optimizer_name, args)
         default_settings = optimizer_details.get("default_settings")
     if optimizer_details.get("can_warmup", False):
         logger.info(f"Optimizer contains LR scheduler, warmup steps will be set to {args.lr_warmup_steps}.")
