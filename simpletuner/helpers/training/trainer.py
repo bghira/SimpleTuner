@@ -44,6 +44,7 @@ from simpletuner.helpers.training.default_settings.safety_check import safety_ch
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
+from simpletuner.helpers.training.multi_process import broadcast_object_from_main
 from simpletuner.helpers.training.optimizer_param import (
     cpu_offload_optimizer,
     create_optimizer_with_param_groups,
@@ -1474,14 +1475,29 @@ class Trainer:
             logger.warning("Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation.")
             self.config.validation_disable = True
 
-        if self.accelerator.is_main_process and not self.config.validation_disable:
-            self.validation_prompt_metadata = prepare_validation_prompt_list(
+        if self.config.validation_disable:
+            self.validation_prompt_metadata = None
+            self.validation_shortnames = None
+            self.validation_negative_prompt_embeds = None
+            self.validation_negative_pooled_embeds = None
+            StateTracker.set_validation_sample_images([])
+            self.accelerator.wait_for_everyone()
+            return
+
+        validation_metadata = None
+        if self.accelerator.is_main_process:
+            validation_metadata = prepare_validation_prompt_list(
                 args=self.config,
                 embed_cache=StateTracker.get_default_text_embed_cache(),
                 model=self.model,
             )
+        validation_metadata = broadcast_object_from_main(validation_metadata)
+        if validation_metadata is None:
+            StateTracker.set_validation_sample_images([])
         else:
-            self.validation_prompt_metadata = None
+            StateTracker.set_validation_sample_images(validation_metadata.get("validation_sample_images") or [])
+        self.validation_prompt_metadata = validation_metadata
+        if validation_metadata is None:
             self.validation_shortnames = None
             self.validation_negative_prompt_embeds = None
             self.validation_negative_pooled_embeds = None
