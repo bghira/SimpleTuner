@@ -652,6 +652,8 @@ class Trainer:
         state_dict_type = getattr(self.config, "fsdp_state_dict_type", None)
         auto_wrap_policy = getattr(self.config, "fsdp_auto_wrap_policy", None)
         transformer_cls = getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+        if isinstance(transformer_cls, str) and transformer_cls.strip() == "":
+            transformer_cls = None
 
         if activation_checkpointing and getattr(self.config, "gradient_checkpointing", False):
             logger.info(
@@ -684,8 +686,16 @@ class Trainer:
         if auto_wrap_policy:
             plugin_kwargs["auto_wrap_policy"] = auto_wrap_policy
 
+        parsed_transformer_cls = None
         if transformer_cls:
-            plugin_kwargs["transformer_cls_names_to_wrap"] = transformer_cls
+            if isinstance(transformer_cls, str):
+                parsed_transformer_cls = [name.strip() for name in transformer_cls.split(",") if name.strip()]
+            elif isinstance(transformer_cls, (list, tuple, set)):
+                parsed_transformer_cls = [str(name).strip() for name in transformer_cls if str(name).strip()]
+            else:
+                parsed_transformer_cls = [str(transformer_cls).strip()]
+            if parsed_transformer_cls:
+                plugin_kwargs["transformer_cls_names_to_wrap"] = parsed_transformer_cls
 
         logger.info(
             "FSDP v%s configuration detected (%s); enabling FullyShardedDataParallelPlugin%s.",
@@ -695,23 +705,220 @@ class Trainer:
         )
         plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
 
-        if (
-            getattr(plugin, "auto_wrap_policy", None) is not None
-            and getattr(plugin, "transformer_cls_names_to_wrap", None) is None
-        ):
-            component = None
+        def _normalize_candidate_names(raw_names: Any) -> Optional[List[str]]:
+            if not raw_names:
+                return None
+            if isinstance(raw_names, str):
+                raw_names = [raw_names]
             try:
-                component = self.model.get_trained_component(unwrap_model=False)
-            except Exception:
-                component = None
-            candidate_names = getattr(component, "_no_split_modules", None) or getattr(
-                self.model, "_no_split_modules", None
-            )
+                iterator = list(raw_names)
+            except TypeError:
+                iterator = [str(raw_names)]
+            normalized: List[str] = []
+            for name in iterator:
+                candidate = str(name).strip()
+                if candidate and candidate not in normalized:
+                    normalized.append(candidate)
+            return normalized or None
+
+        original_plugin_names = _normalize_candidate_names(getattr(plugin, "transformer_cls_names_to_wrap", None))
+        plugin_names = original_plugin_names
+        plugin_names_origin = "config" if parsed_transformer_cls else None
+
+        model_instance = getattr(self, "model", None)
+        model_family = getattr(self.config, "model_family", None)
+        model_family_cls = ModelRegistry.get(model_family) if model_family else None
+
+        component = None
+        candidate_names: Optional[List[str]] = None
+        candidate_source = None
+
+        if model_instance is not None:
+            component = model_instance.get_trained_component(unwrap_model=False)
+            candidate_names = _normalize_candidate_names(getattr(component, "_no_split_modules", None))
             if candidate_names:
-                names_list = list(candidate_names)
+                candidate_source = "instance"
+            else:
+                candidate_names = _normalize_candidate_names(getattr(model_instance, "_no_split_modules", None))
+                if candidate_names:
+                    candidate_source = "instance"
+
+        if candidate_names is None and model_family_cls is not None:
+            class_level_candidates = _normalize_candidate_names(getattr(model_family_cls, "_no_split_modules", None))
+            if not class_level_candidates:
+                transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+                if transformer_cls is not None:
+                    class_level_candidates = _normalize_candidate_names(getattr(transformer_cls, "_no_split_modules", None))
+                    if class_level_candidates is None:
+                        try:
+                            transformer_instance = transformer_cls()  # type: ignore[call-arg]
+                        except Exception:
+                            transformer_instance = None
+                        else:
+                            class_level_candidates = _normalize_candidate_names(
+                                getattr(transformer_instance, "_no_split_modules", None)
+                            )
+                        finally:
+                            transformer_instance = None
+            if class_level_candidates:
+                candidate_names = class_level_candidates
+                candidate_source = "class"
+
+        def _collect_excluded_candidates() -> List[str]:
+            excluded: List[str] = []
+            sources = [
+                component,
+                model_instance,
+                model_family_cls,
+                getattr(model_family_cls, "MODEL_CLASS", None) if model_family_cls else None,
+            ]
+            for source in sources:
+                if source is None:
+                    continue
+                source_exclusions = _normalize_candidate_names(
+                    getattr(source, "_fsdp_exclude_auto_wrap_modules", None)
+                )
+                if not source_exclusions:
+                    continue
+                for name in source_exclusions:
+                    if name not in excluded:
+                        excluded.append(name)
+            return excluded
+
+        excluded_candidates = _collect_excluded_candidates()
+
+        if excluded_candidates and getattr(plugin, "cpu_ram_efficient_loading", False):
+            logger.warning(
+                "Disabling FSDP cpu_ram_efficient_loading because some modules must remain unsharded: %s",
+                ", ".join(excluded_candidates),
+            )
+            plugin.cpu_ram_efficient_loading = False
+            setattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
+
+        def _apply_exclusions(names: Optional[List[str]], origin: str) -> Optional[List[str]]:
+            if not names or not excluded_candidates:
+                return names
+            filtered = [name for name in names if name not in excluded_candidates]
+            removed = [name for name in names if name in excluded_candidates]
+            if removed:
+                logger.info(
+                    "Removing FSDP auto-wrap candidates excluded by %s: %s",
+                    origin,
+                    ", ".join(removed),
+                )
+            return filtered or None
+
+        candidate_names = _apply_exclusions(candidate_names, "model configuration")
+        plugin_names = _apply_exclusions(plugin_names, "model configuration")
+        plugin.transformer_cls_names_to_wrap = plugin_names
+        if plugin_names:
+            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(plugin_names))
+        else:
+            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+
+        base_component_name = "<uninitialized>"
+        if component is not None:
+            base_component_name = component.__class__.__name__
+        elif model_family_cls is not None:
+            transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+            if transformer_cls is not None:
+                base_component_name = transformer_cls.__name__
+
+        logger.info("FSDP base component: %s", base_component_name)
+
+        if getattr(plugin, "auto_wrap_policy", None) is not None:
+            if candidate_names:
+                source_label = (
+                    f"model family '{model_family}'" if candidate_source == "class" and model_family else "model"
+                )
+                logger.info(
+                    "FSDP auto-wrap candidates from %s: %s",
+                    source_label,
+                    ", ".join(candidate_names),
+                )
+            else:
+                logger.info("FSDP auto-wrap candidates from model: <none>")
+
+            if not candidate_names and component is not None:
+                # As a fallback, scan module types to surface potential block classes.
+                auto_candidates: List[str] = []
+                for module in component.children():
+                    cls_name = module.__class__.__name__
+                    if cls_name not in auto_candidates and sum(p.numel() for p in module.parameters(recurse=False)) > 0:
+                        auto_candidates.append(cls_name)
+                        if len(auto_candidates) >= 8:
+                            break
+                if auto_candidates:
+                    logger.info(
+                        "FSDP auto-detected candidate classes: %s",
+                        ", ".join(auto_candidates),
+                    )
+                    candidate_names = _apply_exclusions(auto_candidates, "auto-detected modules")
+                    candidate_source = "auto"
+                    setattr(component, "_no_split_modules", tuple(auto_candidates))
+
+            if candidate_names and plugin_names:
+                missing_from_plugin = [name for name in candidate_names if name and name not in plugin_names]
+                if missing_from_plugin:
+                    logger.info(
+                        "Extending FSDP transformer classes to wrap with model hints: %s",
+                        ", ".join(missing_from_plugin),
+                    )
+                    plugin_names = plugin_names + missing_from_plugin
+                    plugin.transformer_cls_names_to_wrap = plugin_names
+                    setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(plugin_names))
+
+            if component is not None and plugin_names:
+                try:
+                    from accelerate.utils.dataclasses import get_module_class_from_name
+                except ImportError:
+                    get_module_class_from_name = None  # type: ignore
+                if get_module_class_from_name and plugin_names_origin == "config":
+                    valid_names: List[str] = []
+                    invalid_names: List[str] = []
+                    for name in plugin_names:
+                        if get_module_class_from_name(component, name) is None:
+                            invalid_names.append(name)
+                        else:
+                            valid_names.append(name)
+                    if invalid_names:
+                        logger.warning(
+                            "Removing unknown FSDP transformer classes that are not present in the current model: %s",
+                            ", ".join(invalid_names),
+                        )
+                        plugin_names = valid_names or None
+                        plugin.transformer_cls_names_to_wrap = plugin_names
+                        if plugin_names:
+                            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(plugin_names))
+                        else:
+                            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+
+        if getattr(plugin, "transformer_cls_names_to_wrap", None) is None and candidate_names:
+            names_list = [name for name in candidate_names if name]
+            if names_list:
+                logger.info(
+                    "Using model-provided _no_split_modules for FSDP wrapping: %s",
+                    ", ".join(names_list),
+                )
                 plugin.transformer_cls_names_to_wrap = names_list
-                if not getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None):
+                plugin_names = names_list
+                plugin_names_origin = "model"
+                current_cls_setting = getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+                if current_cls_setting is None:
                     setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(names_list))
+
+        logger.info(
+            "Resolved FSDP transformer classes to wrap: %s",
+            ", ".join(plugin.transformer_cls_names_to_wrap or []) if getattr(plugin, "transformer_cls_names_to_wrap", None) else "<none>",
+        )
+
+        if getattr(plugin, "cpu_ram_efficient_loading", False) and not getattr(plugin, "transformer_cls_names_to_wrap", None):
+            logger.warning(
+                "Disabling FSDP cpu_ram_efficient_loading because no transformer blocks were wrapped. "
+                "CPU RAM efficient loading requires per-layer sharding."
+            )
+            plugin.cpu_ram_efficient_loading = False
+            setattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
 
         if resolved_state_dict_display:
             setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
