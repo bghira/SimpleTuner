@@ -42,7 +42,7 @@ flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chrom
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
-    "sd3": "stabilityai/stable-diffusion-3-large",
+    "sd3": "stabilityai/stable-diffusion-3.5-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
     "chroma": "lodestones/Chroma1-Base",
