@@ -440,5 +440,4 @@ def patch_fsdp2_state_dict_loader() -> None:
     accelerate_fsdp_utils.fsdp2_load_full_state_dict = replacement
 
 
-print("Override FSDP2 state dict loader")
 patch_fsdp2_state_dict_loader()
