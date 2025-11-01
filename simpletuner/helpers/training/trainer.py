@@ -2429,9 +2429,8 @@ class Trainer:
         ):
             logger.warning("Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation.")
             self.config.validation_disable = True
-        if getattr(self.config, "use_fsdp", False) and getattr(self.config, "fsdp_reshard_after_forward", True):
-            logger.warning("Cannot run validations with FSDP reshard-after-forward enabled. Disabling validation.")
-            self.config.validation_disable = True
+        # FSDP validation is now supported - we pass FSDP-wrapped models directly to pipelines
+        # which transparently handle all-gather/reshard on each forward pass
         self.evaluation = None
         if self.config.validation_disable:
             return
@@ -3622,10 +3621,22 @@ class Trainer:
                             self.accelerator.sync_gradients
                             and self.config.optimizer not in ["optimi-stableadamw", "prodigy"]
                             and self.config.max_grad_norm > 0
-                            and not self.config.fsdp_enable
                         ):
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
-                            if self.config.grad_clip_method == "norm":
+                            if self.config.fsdp_enable:
+                                # For FSDP, use the native clip_grad_norm_ method of the FSDP module
+                                if self.config.grad_clip_method == "norm":
+                                    fsdp_model = self.model.get_trained_component(unwrap_model=False)
+                                    self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
+                                elif self.config.grad_clip_method == "value":
+                                    logger.warning(
+                                        "FSDP does not support grad_clip_method='value'. Skipping gradient clipping."
+                                    )
+                                else:
+                                    raise ValueError(
+                                        f"Unknown grad clip method: {self.config.grad_clip_method}. Supported methods: value, norm"
+                                    )
+                            elif self.config.grad_clip_method == "norm":
                                 self.grad_norm = self.accelerator.clip_grad_norm_(
                                     self._get_trainable_parameters(),
                                     self.config.max_grad_norm,
