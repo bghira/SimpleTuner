@@ -92,6 +92,36 @@ file_handler = logging.FileHandler("debug.log")
 file_handler.setLevel(logging.DEBUG)  # Capture debug and above
 file_handler.setFormatter(RankFileFormatter("%(asctime)s [%(levelname)s] (%(name)s) %(message)s"))
 
+_CUSTOM_HANDLERS = {id(console_handler): console_handler, id(file_handler): file_handler}
+
+
+def ensure_custom_handlers() -> None:
+    """
+    Remove any third-party handlers (Accelerate, Deepspeed, etc.) that might prepend their own formatting.
+    We keep only the two handlers defined in this module and make sure they are attached exactly once.
+    """
+    root_logger = logging.getLogger()
+    existing = {id(handler): handler for handler in root_logger.handlers}
+
+    # Remove unknown handlers that would reformat our messages.
+    for handler_id, handler in list(existing.items()):
+        if handler_id not in _CUSTOM_HANDLERS:
+            root_logger.removeHandler(handler)
+
+    # Ensure our handlers are present exactly once.
+    for handler in _CUSTOM_HANDLERS.values():
+        if handler not in root_logger.handlers:
+            root_logger.addHandler(handler)
+
+    # Also deduplicate by type in case handlers were added multiple times.
+    seen_types = set()
+    for handler in list(root_logger.handlers):
+        handler_type = (type(handler), getattr(handler, "stream", None), getattr(handler, "baseFilename", None))
+        if handler_type in seen_types:
+            root_logger.removeHandler(handler)
+        else:
+            seen_types.add(handler_type)
+
 # Remove existing handlers
 for handler in logger.handlers[:]:
     logger.removeHandler(handler)
@@ -99,6 +129,8 @@ for handler in logger.handlers[:]:
 # Add handlers to the logger
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
+
+ensure_custom_handlers()
 
 forward_logger = logging.getLogger("diffusers.models.unet_2d_condition")
 forward_logger.setLevel(logging.WARNING)
@@ -125,6 +157,8 @@ starlette_sse_logger = logging.getLogger("sse_starlette.sse")
 starlette_sse_logger.setLevel("WARNING")
 py_multipart_logger = logging.getLogger("python_multipart.multipart")
 py_multipart_logger.setLevel("WARNING")
+urllib = logging.getLogger("urllib3.connectionpool")
+urllib.setLevel("WARNING")
 
 # Suppress specific PIL warning
 warnings.filterwarnings(
