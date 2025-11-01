@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import huggingface_hub
+from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
+from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
 import wandb
 from simpletuner.helpers import log_format  # noqa
@@ -69,8 +71,6 @@ from simpletuner.helpers.webhooks.events import (
     training_status_event,
 )
 from simpletuner.simpletuner_sdk.api_state import APIState
-from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
-from torch.distributed.fsdp.api import ShardedStateDictConfig, ShardedOptimStateDictConfig
 
 
 def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
@@ -780,9 +780,7 @@ class Trainer:
             for source in sources:
                 if source is None:
                     continue
-                source_exclusions = _normalize_candidate_names(
-                    getattr(source, "_fsdp_exclude_auto_wrap_modules", None)
-                )
+                source_exclusions = _normalize_candidate_names(getattr(source, "_fsdp_exclude_auto_wrap_modules", None))
                 if not source_exclusions:
                     continue
                 for name in source_exclusions:
@@ -833,9 +831,7 @@ class Trainer:
 
         if getattr(plugin, "auto_wrap_policy", None) is not None:
             if candidate_names:
-                source_label = (
-                    f"model family '{model_family}'" if candidate_source == "class" and model_family else "model"
-                )
+                source_label = f"model family '{model_family}'" if candidate_source == "class" and model_family else "model"
                 logger.info(
                     "FSDP auto-wrap candidates from %s: %s",
                     source_label,
@@ -914,10 +910,16 @@ class Trainer:
 
         logger.info(
             "Resolved FSDP transformer classes to wrap: %s",
-            ", ".join(plugin.transformer_cls_names_to_wrap or []) if getattr(plugin, "transformer_cls_names_to_wrap", None) else "<none>",
+            (
+                ", ".join(plugin.transformer_cls_names_to_wrap or [])
+                if getattr(plugin, "transformer_cls_names_to_wrap", None)
+                else "<none>"
+            ),
         )
 
-        if getattr(plugin, "cpu_ram_efficient_loading", False) and not getattr(plugin, "transformer_cls_names_to_wrap", None):
+        if getattr(plugin, "cpu_ram_efficient_loading", False) and not getattr(
+            plugin, "transformer_cls_names_to_wrap", None
+        ):
             logger.warning(
                 "Disabling FSDP cpu_ram_efficient_loading because no transformer blocks were wrapped. "
                 "CPU RAM efficient loading requires per-layer sharding."
@@ -2019,9 +2021,7 @@ class Trainer:
         if self.config.gradient_checkpointing:
             fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
             if fsdp_plugin and getattr(self.config, "fsdp_activation_checkpointing", False):
-                logger.info(
-                    "Skipping model-level gradient checkpointing because FSDP activation checkpointing is active."
-                )
+                logger.info("Skipping model-level gradient checkpointing because FSDP activation checkpointing is active.")
                 return
             logger.debug("Enabling gradient checkpointing.")
             if hasattr(self.model.get_trained_component(), "enable_gradient_checkpointing"):
@@ -2336,7 +2336,9 @@ class Trainer:
                         param.grad = None
                     moved_param_count += 1
             if moved_param_count:
-                logger.info("Moved %s parameters back to CPU before Accelerator.prepare for FSDP sharding.", moved_param_count)
+                logger.info(
+                    "Moved %s parameters back to CPU before Accelerator.prepare for FSDP sharding.", moved_param_count
+                )
         try:
             first_param = next(primary_model.parameters())
             logger.info("Primary model param device before Accelerator.prepare: %s", first_param.device)
@@ -3348,9 +3350,7 @@ class Trainer:
             and getattr(plugin, "fsdp_version", 1) == 2
         )
         if fsdp_v2_run:
-            logger.info(
-                "FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility)."
-            )
+            logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         self.accelerator.save_state(save_path_tmp)
         event = lifecycle_stage_event(
             key="checkpoint_save",

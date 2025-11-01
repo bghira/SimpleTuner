@@ -122,6 +122,7 @@ def ensure_custom_handlers() -> None:
         else:
             seen_types.add(handler_type)
 
+
 # Remove existing handlers
 for handler in logger.handlers[:]:
     logger.removeHandler(handler)

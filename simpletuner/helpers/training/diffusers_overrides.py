@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-from accelerate import Accelerator
-from accelerate.utils import fsdp_utils as accelerate_fsdp_utils
-from diffusers.models.attention import Attention
-
 import logging
+from typing import Dict
 
 import torch
 import torch.nn as nn
-
-from typing import Dict
-
+from accelerate import Accelerator
+from accelerate.utils import fsdp_utils as accelerate_fsdp_utils
+from diffusers.models.attention import Attention
 
 logger = logging.getLogger(__name__)
 
 # SimpleTuner always fuses.
 PERMANENT_FUSION = True
+
 
 @torch.no_grad()
 def fuse_projections_smart(self, fuse=True, permanent=None):
@@ -383,6 +381,7 @@ def enable_reversible_fusion():
 
 patch_attention_flexible()
 
+
 def patch_fsdp2_state_dict_loader() -> None:
     original = getattr(accelerate_fsdp_utils, "fsdp2_load_full_state_dict", None)
     if original is None:
@@ -439,5 +438,7 @@ def patch_fsdp2_state_dict_loader() -> None:
         return model
 
     accelerate_fsdp_utils.fsdp2_load_full_state_dict = replacement
+
+
 print("Override FSDP2 state dict loader")
 patch_fsdp2_state_dict_loader()

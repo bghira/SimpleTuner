@@ -32,6 +32,7 @@ from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+
 class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     The Transformer model introduced in Stable Diffusion 3.
@@ -52,6 +53,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         out_channels (`int`, defaults to 16): Number of output channels.
 
     """
+
     _no_split_modules = [
         "JointTransformerBlock",
         "PatchEmbed",
