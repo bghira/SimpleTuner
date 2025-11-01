@@ -2446,7 +2446,7 @@ class Trainer:
             distiller=self.distiller,
             args=self.config,
             validation_prompt_metadata=self.validation_prompt_metadata,
-            vae_path=self.config.vae_path,
+            vae_path=getattr(self.config, "vae_path", None),
             weight_dtype=self.config.weight_dtype,
             embed_cache=StateTracker.get_default_text_embed_cache(),
             ema_model=self.ema_model,
