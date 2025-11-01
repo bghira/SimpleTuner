@@ -35,13 +35,11 @@ class ModelEvaluator:
         """Instantiate a ModelEvaluator from the training config, if set to do so."""
         if not StateTracker.get_accelerator().is_main_process:
             return None
-        if (
-            args.evaluation_type is not None
-            and args.evaluation_type.lower() != ""
-            and args.evaluation_type.lower() != "none"
-        ):
-            model_evaluator = model_evaluator_map[args.evaluation_type]
-            return globals()[model_evaluator](args.pretrained_evaluation_model_name_or_path)
+        evaluation_type = getattr(args, "evaluation_type", None)
+        if evaluation_type is not None and evaluation_type.lower() != "" and evaluation_type.lower() != "none":
+            model_evaluator = model_evaluator_map[evaluation_type]
+            pretrained_model_path = getattr(args, "pretrained_evaluation_model_name_or_path", None)
+            return globals()[model_evaluator](pretrained_model_path)
 
         return None
 
