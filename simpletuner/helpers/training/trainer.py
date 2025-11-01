@@ -842,12 +842,15 @@ class Trainer:
 
             if not candidate_names and component is not None:
                 # As a fallback, scan module types to surface potential block classes.
+                # The default limit of 8 is chosen to avoid excessive auto-detection in very large models.
+                # You can override this limit by setting 'fsdp_max_auto_detect_candidates' in self.config.
+                max_auto_candidates = getattr(self.config, "fsdp_max_auto_detect_candidates", 8)
                 auto_candidates: List[str] = []
                 for module in component.children():
                     cls_name = module.__class__.__name__
                     if cls_name not in auto_candidates and sum(p.numel() for p in module.parameters(recurse=False)) > 0:
                         auto_candidates.append(cls_name)
-                        if len(auto_candidates) >= 8:
+                        if len(auto_candidates) >= max_auto_candidates:
                             break
                 if auto_candidates:
                     logger.info(
