@@ -1230,8 +1230,8 @@ function trainingWizardComponent() {
                     return;
                 }
 
-                const mirrorBecauseBoolean = typeof value === 'boolean';
-                if (key !== 'enable_validations' && (!uiOnlySet.has(key) || mirrorBecauseBoolean)) {
+                const shouldIncludeBooleanInFormData = typeof value === 'boolean';
+                if (key !== 'enable_validations' && (!uiOnlySet.has(key) || shouldIncludeBooleanInFormData)) {
                     const fieldName = `--${key}`;
                     const storeValue = key === 'deepspeed_config'
                         ? this.getDeepSpeedConfigStoreValue(value)
