@@ -3907,14 +3907,33 @@ function trainerComponent() {
                 }
 
                 switch (descriptor.kind) {
-                    case 'checkbox':
+                    case 'checkbox': {
                         if (descriptor.multi) {
                             (descriptor.value || []).forEach((val) => formData.append(name, val));
-                        } else {
-                            const value = descriptor.value && descriptor.value.length ? descriptor.value[0] : 'false';
-                            formData.append(name, value);
+                            break;
                         }
+
+                        let checkboxValue;
+                        if (Array.isArray(descriptor.value)) {
+                            checkboxValue = descriptor.value.length > 0 ? descriptor.value[0] : 'false';
+                        } else if (typeof descriptor.value === 'boolean') {
+                            checkboxValue = descriptor.value ? 'true' : 'false';
+                        } else if (descriptor.value === null || descriptor.value === undefined) {
+                            checkboxValue = 'false';
+                        } else {
+                            const normalized = String(descriptor.value).trim().toLowerCase();
+                            if (['true', '1', 'yes', 'on'].includes(normalized)) {
+                                checkboxValue = 'true';
+                            } else if (['false', '0', 'no', 'off'].includes(normalized)) {
+                                checkboxValue = 'false';
+                            } else {
+                                checkboxValue = normalized || 'false';
+                            }
+                        }
+
+                        formData.append(name, checkboxValue);
                         break;
+                    }
                     case 'multiple':
                         (descriptor.value || []).forEach((val) => formData.append(name, val));
                         break;
@@ -3983,6 +4002,10 @@ function trainerComponent() {
 
             Object.entries(config).forEach(([key, value]) => {
                 if (!key || key.startsWith('_')) {
+                    return;
+                }
+
+                if (!key.startsWith('--')) {
                     return;
                 }
 

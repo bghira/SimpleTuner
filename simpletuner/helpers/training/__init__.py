@@ -140,6 +140,8 @@ lycoris_defaults = {
     },
 }
 
+from . import diffusers_overrides  # noqa: F401  Ensures FSDP and attention patches are registered on import
+
 
 def steps_remaining_in_epoch(current_step: int, steps_per_epoch: int) -> int:
     """

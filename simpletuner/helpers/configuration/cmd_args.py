@@ -791,6 +791,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 values = [entry.strip() for entry in str(transformer_cls).split(",")]
             filtered_values = [entry for entry in values if entry]
             args.fsdp_transformer_layer_cls_to_wrap = filtered_values or None
+            info_log(f"FSDP transformer layer classes to wrap: {args.fsdp_transformer_layer_cls_to_wrap}")
     else:
         # When FSDP is disabled, normalise auxiliary options so downstream logic can rely on None/False.
         args.fsdp_transformer_layer_cls_to_wrap = None

@@ -22,7 +22,7 @@ FSDP2 is the next iteration of PyTorch’s sharded data-parallel engine. Instead
 - FSDP2 can only be enabled when `model_type` is `full`. PEFT/LoRA style runs continue to use standard single-device paths.
 - DeepSpeed and FSDP are mutually exclusive. Supplying both `--fsdp_enable` and a DeepSpeed config raises an explicit error in CLI and WebUI flows.
 - Context parallelism is limited to CUDA systems and requires `--context_parallel_size > 1` with `--fsdp_version=2`.
-- Validation passes are disabled automatically when `--fsdp_reshard_after_forward` remains true; this mirrors the guard in `trainer.py`.
+- Validation passes now work with `--fsdp_reshard_after_forward=true` - FSDP-wrapped models are passed directly to pipelines, which transparently handle all-gather/reshard.
 - Block detection instantiates the base model locally. Expect a short pause and elevated host memory usage when scanning large checkpoints.
 - FSDP v1 remains for backwards compatibility but is marked deprecated throughout the UI and CLI logs.
 
@@ -89,7 +89,7 @@ Detection results live in `~/.simpletuner/fsdp_block_cache.json` keyed by model 
 - **Sharded state dict** (`SHARDED_STATE_DICT`) saves rank-local shards and scales gracefully to large models.
 - **Full state dict** (`FULL_STATE_DICT`) gathers parameters to rank 0 for compatibility with external tooling; expect higher memory pressure.
 - **CPU RAM Efficient Loading** delays all-rank materialisation during resume to flatten host memory spikes.
-- **Reshard After Forward** keeps parameter shards lean between forward passes but disables validation (matching Accelerate’s limitation).
+- **Reshard After Forward** keeps parameter shards lean between forward passes. Validation now works correctly by passing FSDP-wrapped models directly to diffusers pipelines.
 
 Pick the combination that aligns with your resume cadence and downstream tooling. Sharded checkpoints plus RAM-efficient loading is the safest pairing for very large models.
 
@@ -108,7 +108,6 @@ Both actions show toast notifications and update the maintenance status area so 
 |---------|--------------|-----|
 | `"FSDP and DeepSpeed cannot be enabled simultaneously."` | Both plugins specified (e.g., DeepSpeed JSON plus `--fsdp_enable`). | Remove the DeepSpeed config or disable FSDP. |
 | `"Context parallelism requires FSDP2."` | `context_parallel_size > 1` while FSDP is off or still on v1. | Enable FSDP, keep `--fsdp_version=2`, or drop the size back to `1`. |
-| Validation silently disabled | `fsdp_enable` true with `fsdp_reshard_after_forward` left on. | Either accept disabled evals or toggle resharding off for runs that include validation passes. |
 | Block detection fails with `Unknown model_family` | The form lacks a supported family or flavour. | Pick a model from the dropdown; custom families must register in `model_families`. |
 | Detection shows stale classes | Cached result reused. | Click **Refresh Detection** or clear the cache from WebUI Preferences. |
 | Resume exhausts host RAM | Full state dict gathering during load. | Switch to `SHARDED_STATE_DICT` and/or enable CPU RAM efficient loading. |

@@ -54,7 +54,12 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
 
     """
 
+    _no_split_modules = [
+        "JointTransformerBlock",
+        "PatchEmbed",
+    ]
     _supports_gradient_checkpointing = True
+    _fsdp_exclude_auto_wrap_modules = ["PatchEmbed"]
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 

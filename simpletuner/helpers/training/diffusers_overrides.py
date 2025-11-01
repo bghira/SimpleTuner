@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import logging
+from typing import Dict
 
 import torch
 import torch.nn as nn
+from accelerate import Accelerator
+from accelerate.utils import fsdp_utils as accelerate_fsdp_utils
 from diffusers.models.attention import Attention
 
 logger = logging.getLogger(__name__)
 
-# Configuration flag - set this based on your needs
-PERMANENT_FUSION = True  # Set to False if you need unfuse capability
+# SimpleTuner always fuses.
+PERMANENT_FUSION = True
 
 
 @torch.no_grad()
@@ -375,3 +380,64 @@ def enable_reversible_fusion():
 
 
 patch_attention_flexible()
+
+
+def patch_fsdp2_state_dict_loader() -> None:
+    original = getattr(accelerate_fsdp_utils, "fsdp2_load_full_state_dict", None)
+    if original is None:
+        return
+
+    def replacement(accelerator: Accelerator, model: torch.nn.Module, full_sd: dict):
+        import torch.distributed as dist
+        from torch.distributed.tensor import distribute_tensor
+
+        meta_state = model.state_dict()
+        shards: Dict[str, torch.Tensor] = {}
+
+        def to_contiguous_and_cast(tensor: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+            out = tensor
+            if ref.dtype.is_floating_point and out.dtype != ref.dtype:
+                out = out.to(dtype=ref.dtype)
+            if ref.is_contiguous() and not out.is_contiguous():
+                out = out.contiguous()
+            return out
+
+        if accelerator.is_main_process:
+            for (name, full_param), (meta_name, sharded_param) in zip(full_sd.items(), meta_state.items()):
+                if name != meta_name:
+                    raise RuntimeError(f"State-dict key mismatch: {name} vs {meta_name}")
+
+                if hasattr(sharded_param, "device_mesh"):
+                    mesh = sharded_param.device_mesh
+                    tensor = full_param.detach().to(mesh.device_type)
+                    dist.broadcast(tensor, src=0, group=dist.group.WORLD)
+                    shard = distribute_tensor(tensor, mesh, sharded_param.placements)
+                    shard = to_contiguous_and_cast(shard, sharded_param)
+                else:
+                    device = accelerator.device if accelerator.device.type != "meta" else torch.device("cpu")
+                    shard = full_param.detach().to(device)
+                    dist.broadcast(shard, src=0, group=dist.group.WORLD)
+                    shard = to_contiguous_and_cast(shard, full_param)
+
+                shards[name] = shard
+        else:
+            for name, sharded_param in meta_state.items():
+                if hasattr(sharded_param, "device_mesh"):
+                    mesh = sharded_param.device_mesh
+                    tensor = torch.empty(sharded_param.size(), device=mesh.device_type, dtype=sharded_param.dtype)
+                    dist.broadcast(tensor, src=0, group=dist.group.WORLD)
+                    shard = distribute_tensor(tensor, mesh, sharded_param.placements)
+                    shard = to_contiguous_and_cast(shard, sharded_param)
+                else:
+                    device = accelerator.device if accelerator.device.type != "meta" else torch.device("cpu")
+                    shard = torch.empty(sharded_param.size(), device=device, dtype=sharded_param.dtype)
+                    dist.broadcast(shard, src=0, group=dist.group.WORLD)
+                shards[name] = shard
+
+        model.load_state_dict(shards, assign=True)
+        return model
+
+    accelerate_fsdp_utils.fsdp2_load_full_state_dict = replacement
+
+
+patch_fsdp2_state_dict_loader()

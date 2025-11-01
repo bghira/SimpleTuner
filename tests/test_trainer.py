@@ -590,7 +590,8 @@ class TestTrainer(unittest.TestCase):
         with self.assertRaises(ValueError):
             trainer._load_fsdp_plugin()
 
-    def test_init_validations_disabled_for_fsdp_full_shard(self):
+    def test_init_validations_enabled_for_fsdp_full_shard(self):
+        """Test that FSDP with reshard_after_forward now supports validation"""
         trainer = object.__new__(Trainer)
         trainer.accelerator = SimpleNamespace(
             state=SimpleNamespace(deepspeed_plugin=SimpleNamespace(deepspeed_config={"zero_optimization": {"stage": 2}}))
@@ -612,7 +613,9 @@ class TestTrainer(unittest.TestCase):
 
         trainer.init_validations()
 
-        self.assertTrue(trainer.config.validation_disable)
+        # FSDP validation is now supported - validation_disable should remain False
+        self.assertFalse(trainer.config.validation_disable)
+        # Since eval_steps_interval is None, validation won't be initialized
         self.assertIsNone(trainer.validation)
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())

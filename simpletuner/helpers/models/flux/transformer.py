@@ -393,6 +393,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     """
 
     _supports_gradient_checkpointing = True
+    # Hint FSDP auto wrap policy to shard per transformer block.
+    _no_split_modules = ["FluxTransformerBlock", "FluxSingleTransformerBlock"]
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
 
