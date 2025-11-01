@@ -2439,6 +2439,8 @@ class Trainer:
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
         model_evaluator = ModelEvaluator.from_config(args=self.config)
+        weight_dtype = getattr(self.config, "weight_dtype", torch.float32)
+        use_deepspeed_optimizer = getattr(self.config, "use_deepspeed_optimizer", False)
         self.validation = Validation(
             trainable_parameters=self._get_trainable_parameters,
             accelerator=self.accelerator,
@@ -2447,11 +2449,11 @@ class Trainer:
             args=self.config,
             validation_prompt_metadata=self.validation_prompt_metadata,
             vae_path=getattr(self.config, "vae_path", None),
-            weight_dtype=self.config.weight_dtype,
+            weight_dtype=weight_dtype,
             embed_cache=StateTracker.get_default_text_embed_cache(),
             ema_model=self.ema_model,
             model_evaluator=model_evaluator,
-            is_deepspeed=self.config.use_deepspeed_optimizer,
+            is_deepspeed=use_deepspeed_optimizer,
             is_fsdp=self.config.use_fsdp,
         )
         if not self.config.train_text_encoder and self.validation is not None:
