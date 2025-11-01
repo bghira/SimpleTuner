@@ -69,9 +69,14 @@ from simpletuner.helpers.webhooks.events import (
     training_status_event,
 )
 from simpletuner.simpletuner_sdk.api_state import APIState
+from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
+from torch.distributed.fsdp.api import ShardedStateDictConfig, ShardedOptimStateDictConfig
 
 
 def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
+    if hasattr(log_format, "ensure_custom_handlers"):
+        log_format.ensure_custom_handlers()
+
     level_value = (
         os.environ.get(env_var, os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level))
         if env_var
@@ -919,7 +924,6 @@ class Trainer:
             )
             plugin.cpu_ram_efficient_loading = False
             setattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
-
         if resolved_state_dict_display:
             setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
             setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
@@ -941,6 +945,17 @@ class Trainer:
 
         if hasattr(fsdp_plugin, "_auto_wrap_policy_callable"):
             fsdp_plugin.auto_wrap_policy = getattr(fsdp_plugin, "_auto_wrap_policy_callable")
+
+        state_dict_type = getattr(fsdp_plugin, "state_dict_type", None)
+        if state_dict_type in (StateDictType.SHARDED_STATE_DICT, "sharded_state_dict"):
+            fsdp_plugin.state_dict_config = ShardedStateDictConfig(
+                offload_to_cpu=True,
+                _use_dtensor=False,
+            )
+            fsdp_plugin.optim_state_dict_config = ShardedOptimStateDictConfig(
+                offload_to_cpu=True,
+                _use_dtensor=False,
+            )
 
         return fsdp_plugin
 
@@ -2944,7 +2959,7 @@ class Trainer:
                 self.config.checkpoints_total_limit,
             )
 
-        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
             self.checkpoint_state_save(self.config.output_dir)
 
         if upload_to_hub and self.hub_manager is not None:
@@ -3316,6 +3331,26 @@ class Trainer:
         )
         self._emit_event(event)
         self.mark_optimizer_eval()
+
+        try:
+            model_descriptions = [f"#{idx}:{type(model).__name__}" for idx, model in enumerate(self.accelerator._models)]
+            logger.debug(
+                "[Rank %s] Accelerator models registered for save_state: %s",
+                getattr(self.accelerator, "process_index", "?"),
+                ", ".join(model_descriptions) or "<none>",
+            )
+        except Exception as describe_err:  # pragma: no cover - defensive logging
+            logger.warning("Unable to describe registered models before checkpoint: %s", describe_err)
+
+        plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+        fsdp_v2_run = (
+            getattr(self.accelerator, "distributed_type", DistributedType.NO) == DistributedType.FSDP
+            and getattr(plugin, "fsdp_version", 1) == 2
+        )
+        if fsdp_v2_run:
+            logger.info(
+                "FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility)."
+            )
         self.accelerator.save_state(save_path_tmp)
         event = lifecycle_stage_event(
             key="checkpoint_save",
