@@ -235,17 +235,48 @@ class HTMXBehaviourTestCase(WebUITestCase):
                     status = driver.execute_async_script(
                         """
                         const done = arguments[0];
-                        const payload = arguments[1];
+                        const payload = arguments[1] || {};
                         const params = new URLSearchParams();
-                        Object.entries(payload).forEach(([key, value]) => params.append(key, value));
+                        try {
+                            Object.entries(payload).forEach(([key, value]) => params.append(key, value));
+                        } catch (err) {
+                            done(`payload-error:${String(err)}`);
+                            return;
+                        }
+
+                        let completed = false;
+                        const finish = (value) => {
+                            if (completed) {
+                                return;
+                            }
+                            completed = true;
+                            done(value);
+                        };
+
                         const controller = new AbortController();
-                        setTimeout(() => controller.abort(), 3000);
+                        const timeoutId = setTimeout(() => {
+                            try {
+                                controller.abort();
+                            } catch (abortErr) {
+                                console.debug('Abort controller error:', abortErr);
+                            }
+                            finish('timeout');
+                        }, 10000);
+
                         fetch(window.location.origin + '/api/training/validate', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
                             body: params.toString(),
                             signal: controller.signal
-                        }).then(resp => done(resp.status)).catch(err => done(String(err)));
+                        })
+                        .then(resp => {
+                            clearTimeout(timeoutId);
+                            finish(resp.status);
+                        })
+                        .catch(err => {
+                            clearTimeout(timeoutId);
+                            finish(err && err.name ? `${err.name}:${String(err.message || '')}` : String(err));
+                        });
                         """,
                         {
                             "--model_type": "lora",
@@ -253,12 +284,17 @@ class HTMXBehaviourTestCase(WebUITestCase):
                             "--resolution": "1024",
                         },
                     )
-                except TimeoutException:
-                    self.skipTest("Validation endpoint fetch timed out")
-                    status = None
-                if isinstance(status, str) and "AbortError" in status:
-                    self.skipTest("Validation endpoint fetch aborted")
-                self.assertIsInstance(status, int, f"Validation endpoint returned error: {status}")
+                except TimeoutException as e:
+                    self.fail(f"Validation endpoint fetch timed out: {e}")
+
+                if isinstance(status, str):
+                    if status.startswith("timeout"):
+                        self.fail("Validation endpoint fetch timed out before completion")
+                    if "AbortError" in status:
+                        self.fail("Validation endpoint fetch aborted - exceeded timeout")
+                    self.fail(f"Validation endpoint returned error: {status}")
+
+                self.assertIsInstance(status, int, f"Validation endpoint returned non-integer status: {status}")
                 self.assertLess(status, 500)
 
         self.for_each_browser("test_htmx_interactions_suite", scenario)
