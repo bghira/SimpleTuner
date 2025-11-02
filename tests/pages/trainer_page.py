@@ -751,33 +751,59 @@ class TrainerPage(BasePage):
                     status_message.strip(),
                 )
 
-    def wait_for_training_active(self, timeout: float = 10.0) -> None:
-        """Wait for the trainer to enter an active training state."""
-        WebDriverWait(self.driver, timeout).until(
-            lambda driver: driver.execute_script(
-                "return document && document.body && document.body.dataset.trainingActive === 'true';"
-            )
-        )
+    def wait_for_training_state(self, timeout: float = 10.0) -> str:
+        """Wait until training becomes active or a validation failure is detected."""
 
-        WebDriverWait(self.driver, timeout).until(
-            lambda driver: driver.execute_script(
+        def _check(driver):
+            body_state = driver.execute_script(
+                "if (!document || !document.body) { return 'unknown'; }"
+                "return document.body.dataset.trainingActive || 'false';"
+            )
+            cancel_enabled = driver.execute_script(
                 "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"
             )
-        )
+            status_text = driver.execute_script(
+                "const el = document.getElementById('training-status');"
+                "return el ? (el.textContent || '').toLowerCase() : '';"
+            )
+            if body_state == "true" and cancel_enabled:
+                return "active"
+            if any(
+                keyword in status_text
+                for keyword in (
+                    "validation failed",
+                    "cannot start training",
+                    "model name is required",
+                    "output directory is required",
+                )
+            ):
+                return "validation"
+            return False
+
+        return WebDriverWait(self.driver, timeout).until(_check)
+
+    def wait_for_training_active(self, timeout: float = 10.0) -> None:
+        """Wait for the trainer to enter an active training state."""
+        state = self.wait_for_training_state(timeout=timeout)
+        if state != "active":
+            raise TimeoutException(f"Training did not enter active state (state={state})")
 
     def wait_for_training_inactive(self, timeout: float = 10.0) -> None:
         """Wait for the trainer to exit the active training state."""
-        WebDriverWait(self.driver, timeout).until(
-            lambda driver: driver.execute_script(
-                "return document && document.body && document.body.dataset.trainingActive === 'false';"
-            )
-        )
 
-        WebDriverWait(self.driver, timeout).until(
-            lambda driver: driver.execute_script(
+        def _check_inactive(driver):
+            state = driver.execute_script(
+                "if (!document || !document.body) { return 'unknown'; }"
+                "return document.body.dataset.trainingActive || 'false';"
+            )
+            run_enabled = driver.execute_script(
                 "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && !runBtn.disabled);"
             )
-        )
+            if state == "false" and run_enabled:
+                return True
+            return False
+
+        WebDriverWait(self.driver, timeout).until(_check_inactive)
 
     def stop_training(self):
         """Click the stop training button."""
