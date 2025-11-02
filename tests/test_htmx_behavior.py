@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+import requests
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -232,70 +233,20 @@ class HTMXBehaviourTestCase(WebUITestCase):
 
             with self.subTest("htmx_validation_endpoint"):
                 try:
-                    status = driver.execute_async_script(
-                        """
-                        const done = arguments[0];
-                        const payload = arguments[1] || {};
-                        const params = new URLSearchParams();
-                        try {
-                            Object.entries(payload).forEach(([key, value]) => params.append(key, value));
-                        } catch (err) {
-                            done(`payload-error:${String(err)}`);
-                            return;
-                        }
-
-                        let completed = false;
-                        const finish = (value) => {
-                            if (completed) {
-                                return;
-                            }
-                            completed = true;
-                            done(value);
-                        };
-
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => {
-                            try {
-                                controller.abort();
-                            } catch (abortErr) {
-                                console.debug('Abort controller error:', abortErr);
-                            }
-                            finish('timeout');
-                        }, 10000);
-
-                        fetch(window.location.origin + '/api/training/validate', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                            body: params.toString(),
-                            signal: controller.signal
-                        })
-                        .then(resp => {
-                            clearTimeout(timeoutId);
-                            finish(resp.status);
-                        })
-                        .catch(err => {
-                            clearTimeout(timeoutId);
-                            finish(err && err.name ? `${err.name}:${String(err.message || '')}` : String(err));
-                        });
-                        """,
-                        {
+                    response = requests.post(
+                        f"{self.base_url}/api/training/validate",
+                        data={
                             "--model_type": "lora",
                             "--model_family": "flux",
                             "--resolution": "1024",
                         },
+                        timeout=15,
                     )
-                except TimeoutException as e:
-                    self.fail(f"Validation endpoint fetch timed out: {e}")
+                except requests.RequestException as exc:
+                    self.fail(f"Validation endpoint request failed: {exc}")
 
-                if isinstance(status, str):
-                    if status.startswith("timeout"):
-                        self.fail("Validation endpoint fetch timed out before completion")
-                    if "AbortError" in status:
-                        self.fail("Validation endpoint fetch aborted - exceeded timeout")
-                    self.fail(f"Validation endpoint returned error: {status}")
-
-                self.assertIsInstance(status, int, f"Validation endpoint returned non-integer status: {status}")
-                self.assertLess(status, 500)
+                self.assertEqual(response.status_code, 200, f"Unexpected status code: {response.status_code}")
+                self.assertLess(response.status_code, 500)
 
         self.for_each_browser("test_htmx_interactions_suite", scenario)
 

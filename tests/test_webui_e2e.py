@@ -229,16 +229,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
 
             trainer_page.start_training()
 
-            WebDriverWait(driver, 5).until(
-                lambda d: d.execute_script(
-                    "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && runBtn.disabled);"
-                )
-            )
-            WebDriverWait(driver, 5).until(
-                lambda d: d.execute_script(
-                    "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"
-                )
-            )
+            trainer_page.wait_for_training_active(timeout=10)
 
             WebDriverWait(driver, 5).until(
                 lambda d: bool(d.execute_script("return !!window.__simpletunerTestCallbackHook;"))
@@ -301,6 +292,8 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 "return el ? (el.textContent || '').toLowerCase() : '';"
             )
             self.assertNotIn("running", status_text)
+
+            trainer_page.wait_for_training_inactive(timeout=10)
 
         self.for_each_browser("test_training_failure_updates_ui_state", scenario)
 
