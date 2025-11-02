@@ -1,6 +1,7 @@
 # test_trainer.py
 
 import importlib.machinery as machinery
+import importlib.util as _importlib_util
 import sys
 import time
 import types
@@ -9,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
-import importlib.util as _importlib_util
 
 _OPTIONAL_MODULES = {
     "wandb",
@@ -458,6 +458,7 @@ try:
     import transformers  # type: ignore
 
     if not hasattr(transformers, "AutoImageProcessor"):
+
         class _StubAutoImageProcessor:
             @classmethod
             def from_pretrained(cls, *args, **kwargs):  # pragma: no cover - simple stub
@@ -469,6 +470,7 @@ try:
         transformers.AutoImageProcessor = _StubAutoImageProcessor  # type: ignore[attr-defined]
 
     if not hasattr(transformers, "PreTrainedModel"):
+
         class _StubPreTrainedModel:  # pragma: no cover - simple stub
             pass
 
@@ -478,6 +480,7 @@ try:
         transformers.CLIPImageProcessor = _StubAutoImageProcessor  # type: ignore[attr-defined]
 
     if not hasattr(transformers, "CLIPVisionModelWithProjection"):
+
         class _StubCLIPVisionModelWithProjection:  # pragma: no cover - simple stub
             @classmethod
             def from_pretrained(cls, *args, **kwargs):
@@ -489,6 +492,7 @@ try:
         transformers.SiglipImageProcessor = _StubAutoImageProcessor  # type: ignore[attr-defined]
 
     if not hasattr(transformers, "SiglipVisionModel"):
+
         class _StubSiglipVisionModel:  # pragma: no cover - simple stub
             @classmethod
             def from_pretrained(cls, *args, **kwargs):
@@ -812,6 +816,9 @@ class TestTrainer(unittest.TestCase):
             fsdp_reshard_after_forward=True,
             validation_disable=False,
             eval_steps_interval=None,
+            weight_dtype=torch.float32,
+            use_deepspeed_optimizer=False,
+            vae_path=None,
         )
         trainer.validation = None
         trainer.evaluation = None

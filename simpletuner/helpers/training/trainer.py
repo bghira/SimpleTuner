@@ -2438,6 +2438,10 @@ class Trainer:
             from simpletuner.helpers.training.validation import Evaluation
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
+        else:
+            # No scheduled validations; ensure we leave validation hooks unset.
+            self.validation = None
+            return
         model_evaluator = ModelEvaluator.from_config(args=self.config)
         weight_dtype = getattr(self.config, "weight_dtype", torch.float32)
         use_deepspeed_optimizer = getattr(self.config, "use_deepspeed_optimizer", False)
@@ -2451,7 +2455,7 @@ class Trainer:
             vae_path=getattr(self.config, "vae_path", None),
             weight_dtype=weight_dtype,
             embed_cache=StateTracker.get_default_text_embed_cache(),
-            ema_model=self.ema_model,
+            ema_model=getattr(self, "ema_model", None),
             model_evaluator=model_evaluator,
             is_deepspeed=use_deepspeed_optimizer,
             is_fsdp=self.config.use_fsdp,

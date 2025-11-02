@@ -9,7 +9,11 @@ from typing import Any, BinaryIO, Dict, Optional, Union
 import numpy as np
 import torch
 from PIL import Image
-from torchvision.io.video_reader import VideoReader
+
+try:
+    from torchvision.io.video_reader import VideoReader
+except Exception:  # pragma: no cover - torchvision optional
+    VideoReader = None  # type: ignore[assignment]
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
@@ -219,7 +223,9 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             logger.error("Unable to create temporary video file for metadata extraction: %s", exc)
             return None, None
 
-    def _metadata_from_video_reader(self, video: VideoReader) -> Dict[str, Any]:
+    def _metadata_from_video_reader(self, video: Any) -> Dict[str, Any]:
+        if VideoReader is None or video is None:
+            return {}
         metadata: Dict[str, Any] = {}
         try:
             md = video.get_metadata().get("video", {})
@@ -273,11 +279,12 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         reader = None
         capture = None
         try:
-            try:
-                reader = VideoReader(video_path, "video")
-                metadata.update(self._metadata_from_video_reader(reader))
-            except Exception as exc:
-                logger.debug("Failed to extract metadata with torchvision VideoReader: %s", exc)
+            if VideoReader is not None:
+                try:
+                    reader = VideoReader(video_path, "video")
+                    metadata.update(self._metadata_from_video_reader(reader))
+                except Exception as exc:
+                    logger.debug("Failed to extract metadata with torchvision VideoReader: %s", exc)
 
             import trainingsample as tsr
 
@@ -337,7 +344,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         return metadata
 
     def _extract_video_sample_metadata(self, sample: Any) -> Dict[str, Any]:
-        if isinstance(sample, VideoReader):
+        if VideoReader is not None and isinstance(sample, VideoReader):
             return self._metadata_from_video_reader(sample)
         return self._metadata_with_trainingsample(sample)
 
@@ -537,7 +544,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             elif isinstance(sample, bytes):
                 # Already bytes
                 data = sample
-            elif isinstance(sample, VideoReader):
+            elif VideoReader is not None and isinstance(sample, VideoReader):
                 # VideoReader - encode all frames into a video file in memory
                 import trainingsample as tsr
 
