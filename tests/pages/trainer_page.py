@@ -1,5 +1,6 @@
 """Page object for Trainer page."""
 
+import requests
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
@@ -400,28 +401,49 @@ class TrainerPage(BasePage):
         )
 
         selector = self.TAB_SELECTORS.get(tab_name, f"#tab-content #{tab_name}-tab-content")
+        tab_wait = WebDriverWait(self.driver, 25)
         try:
-            self.wait_for_htmx()
+            self.wait_for_htmx(timeout=15)
         except TimeoutException:
             pass
-        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+        try:
+            tab_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+        except TimeoutException as exc:
+            page_source = ""
+            try:
+                page_source = self.driver.page_source or ""
+            except Exception:
+                page_source = ""
+            if "Loading configuration..." not in page_source:
+                raise
+            try:
+                response = requests.get(f"{self.base_url}/web/trainer/tabs/{tab_name}", timeout=15)
+                response.raise_for_status()
+            except requests.RequestException:
+                raise exc
+            self.driver.execute_script(
+                "const container = document.querySelector('#tab-content');"
+                "if (container) { container.innerHTML = arguments[0]; }",
+                response.text,
+            )
+            tab_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
 
         if tab_name == "datasets":
-            self.wait.until(
+            tab_wait.until(
                 lambda driver: driver.execute_script(
                     "const el = document.querySelector('#tab-content #datasets-tab-content');"
                     "return !!(el && el.offsetParent !== null);"
                 )
             )
         elif tab_name == "environments":
-            self.wait.until(
+            tab_wait.until(
                 lambda driver: driver.execute_script(
                     "const el = document.querySelector('#tab-content #environments-tab-content');"
                     "return !!(el && el.offsetParent !== null);"
                 )
             )
         else:
-            self.wait.until(
+            tab_wait.until(
                 lambda driver: driver.execute_script(
                     "const el = document.querySelector(arguments[0]);" "return !!(el && el.offsetParent !== null);",
                     selector,
@@ -729,6 +751,60 @@ class TrainerPage(BasePage):
                     status_message.strip(),
                 )
 
+    def wait_for_training_state(self, timeout: float = 10.0) -> str:
+        """Wait until training becomes active or a validation failure is detected."""
+
+        def _check(driver):
+            body_state = driver.execute_script(
+                "if (!document || !document.body) { return 'unknown'; }"
+                "return document.body.dataset.trainingActive || 'false';"
+            )
+            cancel_enabled = driver.execute_script(
+                "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"
+            )
+            status_text = driver.execute_script(
+                "const el = document.getElementById('training-status');"
+                "return el ? (el.textContent || '').toLowerCase() : '';"
+            )
+            if body_state == "true" and cancel_enabled:
+                return "active"
+            if any(
+                keyword in status_text
+                for keyword in (
+                    "validation failed",
+                    "cannot start training",
+                    "model name is required",
+                    "output directory is required",
+                )
+            ):
+                return "validation"
+            return False
+
+        return WebDriverWait(self.driver, timeout).until(_check)
+
+    def wait_for_training_active(self, timeout: float = 10.0) -> None:
+        """Wait for the trainer to enter an active training state."""
+        state = self.wait_for_training_state(timeout=timeout)
+        if state != "active":
+            raise TimeoutException(f"Training did not enter active state (state={state})")
+
+    def wait_for_training_inactive(self, timeout: float = 10.0) -> None:
+        """Wait for the trainer to exit the active training state."""
+
+        def _check_inactive(driver):
+            state = driver.execute_script(
+                "if (!document || !document.body) { return 'unknown'; }"
+                "return document.body.dataset.trainingActive || 'false';"
+            )
+            run_enabled = driver.execute_script(
+                "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && !runBtn.disabled);"
+            )
+            if state == "false" and run_enabled:
+                return True
+            return False
+
+        WebDriverWait(self.driver, timeout).until(_check_inactive)
+
     def stop_training(self):
         """Click the stop training button."""
         self.driver.execute_script(
@@ -912,6 +988,8 @@ class BasicConfigTab(BasePage):
                     }
                 }
             }
+            window.__trainerHarnessOverrides = window.__trainerHarnessOverrides || {};
+            window.__trainerHarnessOverrides.modelName = nextValue;
             console.error('[Harness] set_model_name override', nextValue);
             """,
             name,
@@ -956,6 +1034,8 @@ class BasicConfigTab(BasePage):
                     }
                 }
             }
+            window.__trainerHarnessOverrides = window.__trainerHarnessOverrides || {};
+            window.__trainerHarnessOverrides.outputDir = arguments.length ? (arguments[0] ?? '') : '';
             console.error('[Harness] set_output_dir override', arguments.length ? (arguments[0] ?? '') : '');
             """,
             path,

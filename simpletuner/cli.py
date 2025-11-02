@@ -619,6 +619,9 @@ def cmd_server(args) -> int:
     os.environ.setdefault("SIMPLETUNER_CONFIG_DIR", str(config_dir))
     os.environ.setdefault("SIMPLETUNER_SERVER_ROOT_PID", str(os.getpid()))
 
+    # Force strict model imports for server to ensure all models load properly
+    os.environ.setdefault("SIMPLETUNER_STRICT_MODEL_IMPORTS", "1")
+
     try:
         import uvicorn
 

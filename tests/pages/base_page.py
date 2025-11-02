@@ -2,7 +2,7 @@
 
 import time
 
-from selenium.common.exceptions import ElementNotInteractableException, TimeoutException
+from selenium.common.exceptions import ElementNotInteractableException, StaleElementReferenceException, TimeoutException
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -75,25 +75,33 @@ class BasePage:
             text: Text to send
             clear: Whether to clear the field first
         """
+        for attempt in range(3):
+            element = self.find_element(by, value)
+            try:
+                if clear:
+                    element.clear()
+                element.send_keys(text)
+                self.driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));"
+                    "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+                    element,
+                )
+                return
+            except (ElementNotInteractableException, StaleElementReferenceException) as exc:
+                # brief pause gives HTMX time to finish swapping content
+                time.sleep(0.1)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                break
+
+        # Final fallback: set the value via script to avoid stale/interactability issues
         element = self.find_element(by, value)
-        try:
-            if clear:
-                element.clear()
-            element.send_keys(text)
-            self.driver.execute_script(
-                "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));"
-                "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                element,
-            )
-        except ElementNotInteractableException:
-            # Fallback to programmatic value assignment when native interaction fails
-            self.driver.execute_script(
-                "arguments[0].value = arguments[1];"
-                "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));"
-                "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
-                element,
-                text,
-            )
+        self.driver.execute_script(
+            "arguments[0].value = arguments[1];"
+            "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));"
+            "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
+            element,
+            text,
+        )
 
     def get_text(self, by, value):
         """Get text from an element.
