@@ -642,46 +642,59 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_state_tracker.load_aspect_resolution_map.return_value = None
 
         # Mock all the backend classes
-        with patch("simpletuner.helpers.data_backend.factory.LocalDataBackend") as mock_local:
-            mock_local.return_value.list_files.return_value = ["image1.jpg", "image2.jpg"]
+        local_backend_patcher = patch("simpletuner.helpers.data_backend.factory.LocalDataBackend")
+        mock_local = local_backend_patcher.start()
+        self.addCleanup(local_backend_patcher.stop)
+        mock_local.return_value.list_files.return_value = ["image1.jpg", "image2.jpg"]
 
-        with patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache") as mock_text_cache:
-            mock_cache_instance = MagicMock()
-            mock_cache_instance.discover_all_files.return_value = None
-            mock_cache_instance.compute_embeddings_for_prompts.return_value = None
-            mock_cache_instance.set_webhook_handler.return_value = None
-            mock_text_cache.return_value = mock_cache_instance
+        text_cache_patcher = patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache")
+        mock_text_cache = text_cache_patcher.start()
+        self.addCleanup(text_cache_patcher.stop)
+        mock_cache_instance = MagicMock()
+        mock_cache_instance.discover_all_files.return_value = None
+        mock_cache_instance.compute_embeddings_for_prompts.return_value = None
+        mock_cache_instance.set_webhook_handler.return_value = None
+        mock_text_cache.return_value = mock_cache_instance
 
-        with patch("simpletuner.helpers.data_backend.factory.VAECache") as mock_vae_cache:
-            mock_vae_instance = MagicMock()
-            mock_vae_instance.discover_all_files.return_value = None
-            mock_vae_instance.discover_unprocessed_files.return_value = []
-            mock_vae_instance.build_vae_cache_filename_map.return_value = None
-            mock_vae_instance.set_webhook_handler.return_value = None
-            mock_vae_cache.return_value = mock_vae_instance
+        vae_cache_patcher = patch("simpletuner.helpers.data_backend.factory.VAECache")
+        mock_vae_cache = vae_cache_patcher.start()
+        self.addCleanup(vae_cache_patcher.stop)
+        mock_vae_instance = MagicMock()
+        mock_vae_instance.discover_all_files.return_value = None
+        mock_vae_instance.discover_unprocessed_files.return_value = []
+        mock_vae_instance.build_vae_cache_filename_map.return_value = None
+        mock_vae_instance.set_webhook_handler.return_value = None
+        mock_vae_cache.return_value = mock_vae_instance
 
-        with patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend") as mock_metadata:
-            mock_metadata_instance = MagicMock()
-            mock_metadata_instance.refresh_buckets.return_value = None
-            mock_metadata_instance.has_single_underfilled_bucket.return_value = False
-            mock_metadata_instance.split_buckets_between_processes.return_value = None
-            mock_metadata_instance.save_cache.return_value = None
-            mock_metadata_instance.__len__.return_value = 10
-            mock_metadata_instance.config = {}
-            mock_metadata_instance.resolution_type = "area"
-            mock_metadata_instance.resolution = 1024
-            mock_metadata.return_value = mock_metadata_instance
+        metadata_backend_patcher = patch("simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend")
+        mock_metadata = metadata_backend_patcher.start()
+        self.addCleanup(metadata_backend_patcher.stop)
+        mock_metadata_instance = MagicMock()
+        mock_metadata_instance.refresh_buckets.return_value = None
+        mock_metadata_instance.has_single_underfilled_bucket.return_value = False
+        mock_metadata_instance.split_buckets_between_processes.return_value = None
+        mock_metadata_instance.save_cache.return_value = None
+        mock_metadata_instance.__len__.return_value = 10
+        mock_metadata_instance.config = {}
+        mock_metadata_instance.resolution_type = "area"
+        mock_metadata_instance.resolution = 1024
+        mock_metadata.return_value = mock_metadata_instance
 
-        with patch("simpletuner.helpers.multiaspect.dataset.MultiAspectDataset"):
-            pass
+        dataset_patcher = patch("simpletuner.helpers.multiaspect.dataset.MultiAspectDataset")
+        dataset_patcher.start()
+        self.addCleanup(dataset_patcher.stop)
 
-        with patch("simpletuner.helpers.multiaspect.sampler.MultiAspectSampler") as mock_sampler:
-            mock_sampler_instance = MagicMock()
-            mock_sampler_instance.caption_strategy = "filename"
-            mock_sampler.return_value = mock_sampler_instance
+        sampler_patcher = patch("simpletuner.helpers.multiaspect.sampler.MultiAspectSampler")
+        mock_sampler = sampler_patcher.start()
+        self.addCleanup(sampler_patcher.stop)
+        mock_sampler_instance = MagicMock()
+        mock_sampler_instance.caption_strategy = "filename"
+        mock_sampler.return_value = mock_sampler_instance
 
-        with patch("simpletuner.helpers.prompts.PromptHandler") as mock_prompt:
-            mock_prompt.get_all_captions.return_value = (["caption1"], [])
+        prompt_handler_patcher = patch("simpletuner.helpers.prompts.PromptHandler")
+        mock_prompt = prompt_handler_patcher.start()
+        self.addCleanup(prompt_handler_patcher.stop)
+        mock_prompt.get_all_captions.return_value = (["caption1"], [])
 
     def test_empty_dataset_validation_training(self):
         """Test that training datasets with no usable samples raise an error."""

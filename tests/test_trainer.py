@@ -803,7 +803,8 @@ class TestTrainer(unittest.TestCase):
         with self.assertRaises(ValueError):
             trainer._load_fsdp_plugin()
 
-    def test_init_validations_enabled_for_fsdp_full_shard(self):
+    @patch("simpletuner.helpers.training.trainer.Validation")
+    def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
         """Test that FSDP with reshard_after_forward now supports validation"""
         trainer = object.__new__(Trainer)
         trainer.accelerator = SimpleNamespace(
@@ -819,20 +820,40 @@ class TestTrainer(unittest.TestCase):
             weight_dtype=torch.float32,
             use_deepspeed_optimizer=False,
             vae_path=None,
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            model_family="sdxl",
+            model_flavour="base",
+            output_dir="/tmp",
+            use_ema=False,
+            ema_validation="none",
+            num_eval_images=1,
+            eval_dataset_id=None,
+            validation_prompt_library=None,
+            user_prompt_library=None,
+            validation_prompt=None,
+            train_text_encoder=False,
+            disable_benchmark=True,
         )
         trainer.validation = None
         trainer.evaluation = None
-        trainer.model = None
+        trainer.model = MagicMock()
         trainer.validation_prompt_metadata = None
         trainer.distiller = None
         trainer._get_trainable_parameters = None
+        trainer.ema_model = None
+
+        validation_instance = MagicMock()
+        validation_instance.benchmark_exists.return_value = True
+        mock_validation.return_value = validation_instance
+        trainer._emit_event = lambda *_, **__: None
 
         trainer.init_validations()
 
         # FSDP validation is now supported - validation_disable should remain False
         self.assertFalse(trainer.config.validation_disable)
-        # Since eval_steps_interval is None, validation won't be initialized
-        self.assertIsNone(trainer.validation)
+        mock_validation.assert_called_once()
 
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(

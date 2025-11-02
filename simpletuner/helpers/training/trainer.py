@@ -121,7 +121,7 @@ from accelerate.utils import (
 )
 from torch.distributions import Beta
 
-from simpletuner.configure import model_classes
+from simpletuner.configure import model_classes, model_labels
 
 try:
     from lycoris import LycorisNetwork
@@ -1542,7 +1542,10 @@ class Trainer:
 
         model_implementation = ModelRegistry.model_families().get(model_family)
         StateTracker.set_model_family(model_family)
-        self.config.model_type_label = getattr(model_implementation, "NAME", None)
+        label = getattr(model_implementation, "NAME", None)
+        if not label:
+            label = model_labels.get(model_family, model_family.replace("_", " ").title())
+        self.config.model_type_label = label
         if StateTracker.is_sdxl_refiner():
             self.config.model_type_label = "SDXL Refiner"
 
@@ -2438,10 +2441,6 @@ class Trainer:
             from simpletuner.helpers.training.validation import Evaluation
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
-        else:
-            # No scheduled validations; ensure we leave validation hooks unset.
-            self.validation = None
-            return
         model_evaluator = ModelEvaluator.from_config(args=self.config)
         weight_dtype = getattr(self.config, "weight_dtype", torch.float32)
         use_deepspeed_optimizer = getattr(self.config, "use_deepspeed_optimizer", False)
