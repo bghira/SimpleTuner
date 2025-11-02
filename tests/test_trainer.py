@@ -9,6 +9,38 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import torch
+import importlib.util as _importlib_util
+
+_OPTIONAL_MODULES = {
+    "wandb",
+    "torchao",
+    "torchao.optim",
+    "torchao.quantization",
+    "torchao.quantization.quant_primitives",
+    "torchao.dtypes",
+    "torchao.dtypes.floatx",
+    "torchao.dtypes.floatx.float8_layout",
+    "torchao.dtypes.uintx",
+    "torchao.dtypes.uintx.uint4_layout",
+    "torchao.dtypes.uintx.uintx_layout",
+    "optimi",
+    "fastapi",
+    "fastapi.middleware",
+    "fastapi.middleware.cors",
+    "fastapi.responses",
+}
+
+
+_original_find_spec = _importlib_util.find_spec
+
+
+def _patched_find_spec(name, *args, **kwargs):
+    if name in _OPTIONAL_MODULES:
+        return None
+    return _original_find_spec(name, *args, **kwargs)
+
+
+_importlib_util.find_spec = _patched_find_spec
 
 try:
     from accelerate import FullyShardedDataParallelPlugin
@@ -30,10 +62,18 @@ except Exception:  # pragma: no cover - lightweight stub when accelerate is unav
 
 
 def _ensure_torchao_stub():
-    if "torchao.optim" in sys.modules:
+    try:  # Prefer the real library if available in the environment.
+        import importlib
+
+        importlib.import_module("torchao.optim")
         return
+    except Exception:
+        if "torchao.optim" in sys.modules:
+            return
     torchao_module = types.ModuleType("torchao")
+    torchao_module.__spec__ = machinery.ModuleSpec("torchao", loader=None)
     optim_module = types.ModuleType("torchao.optim")
+    optim_module.__spec__ = machinery.ModuleSpec("torchao.optim", loader=None)
     dummy_class = type("DummyOptimizer", (), {})
 
     optim_module.AdamFp8 = dummy_class
@@ -42,15 +82,44 @@ def _ensure_torchao_stub():
     optim_module.AdamWFp8 = dummy_class
     optim_module.CPUOffloadOptimizer = dummy_class
 
+    quant_module = types.ModuleType("torchao.quantization")
+    quant_module.__spec__ = machinery.ModuleSpec("torchao.quantization", loader=None)
+    quant_primitives_module = types.ModuleType("torchao.quantization.quant_primitives")
+    quant_primitives_module.__spec__ = machinery.ModuleSpec("torchao.quantization.quant_primitives", loader=None)
+
+    class _MappingType:
+        pass
+
+    def _quantize_(tensor, *_, **__):
+        return tensor
+
+    quant_primitives_module.MappingType = _MappingType
+    quant_module.quant_primitives = quant_primitives_module
+    quant_module.quantize_ = _quantize_
+
+    dtypes_module = types.ModuleType("torchao.dtypes")
+    dtypes_module.__spec__ = machinery.ModuleSpec("torchao.dtypes", loader=None)
+
+    class _NF4Tensor:
+        pass
+
+    dtypes_module.NF4Tensor = _NF4Tensor
+
     torchao_module.optim = optim_module
+    torchao_module.quantization = quant_module
+    torchao_module.dtypes = dtypes_module
     sys.modules["torchao"] = torchao_module
     sys.modules["torchao.optim"] = optim_module
+    sys.modules["torchao.quantization"] = quant_module
+    sys.modules["torchao.quantization.quant_primitives"] = quant_primitives_module
+    sys.modules["torchao.dtypes"] = dtypes_module
 
 
 def _ensure_optimi_stub():
     if "optimi" in sys.modules:
         return
     optimi_module = types.ModuleType("optimi")
+    optimi_module.__spec__ = machinery.ModuleSpec("optimi", loader=None)
     for cls_name in [
         "StableAdamW",
         "AdamW",
@@ -75,6 +144,7 @@ def _ensure_fastapi_stub():
         return
 
     fastapi_module = types.ModuleType("fastapi")
+    fastapi_module.__spec__ = machinery.ModuleSpec("fastapi", loader=None)
 
     class FastAPI:
         def __init__(self, *_, **__):
@@ -99,9 +169,11 @@ def _ensure_fastapi_stub():
     sys.modules["fastapi"] = fastapi_module
 
     middleware_module = types.ModuleType("fastapi.middleware")
+    middleware_module.__spec__ = machinery.ModuleSpec("fastapi.middleware", loader=None)
     sys.modules["fastapi.middleware"] = middleware_module
 
     cors_module = types.ModuleType("fastapi.middleware.cors")
+    cors_module.__spec__ = machinery.ModuleSpec("fastapi.middleware.cors", loader=None)
 
     class CORSMiddleware:
         def __init__(self, *_, **__):
@@ -111,6 +183,7 @@ def _ensure_fastapi_stub():
     sys.modules["fastapi.middleware.cors"] = cors_module
 
     responses_module = types.ModuleType("fastapi.responses")
+    responses_module.__spec__ = machinery.ModuleSpec("fastapi.responses", loader=None)
 
     class FileResponse:
         def __init__(self, *_, **__):
@@ -244,6 +317,16 @@ def _ensure_torchvision_stub():
     transforms_module.Normalize = _normalize
     transforms_module.functional = types.SimpleNamespace(to_tensor=_to_tensor)
 
+    class _InterpolationMode:
+        NEAREST = "nearest"
+        BILINEAR = "bilinear"
+        BICUBIC = "bicubic"
+        LANCZOS = "lanczos"
+        HAMMING = "hamming"
+        BOX = "box"
+
+    transforms_module.InterpolationMode = _InterpolationMode
+
     torchvision_module.transforms = transforms_module
     sys.modules["torchvision"] = torchvision_module
     sys.modules["torchvision.transforms"] = transforms_module
@@ -346,14 +429,140 @@ _ensure_peft_stub()
 _ensure_torchvision_stub()
 _ensure_accelerate_stub()
 
-wandb_stub = types.SimpleNamespace(
-    init=lambda *_, **__: None,
-    login=lambda *_, **__: None,
-    finish=lambda *_, **__: None,
-    log=lambda *_, **__: None,
-    config={},
-)
-sys.modules.setdefault("wandb", wandb_stub)
+
+def _ensure_model_registry_stub():
+    module_name = "simpletuner.helpers.models.registry"
+    if module_name in sys.modules:
+        return
+
+    models_registry_module = types.ModuleType(module_name)
+    models_registry_module.__spec__ = machinery.ModuleSpec(module_name, loader=None)
+
+    class _StubModelRegistry:
+        @staticmethod
+        def model_families():
+            return {}
+
+        @staticmethod
+        def get(_name):
+            raise KeyError(_name)
+
+    models_registry_module.ModelRegistry = _StubModelRegistry
+    sys.modules[module_name] = models_registry_module
+
+
+_ensure_model_registry_stub()
+
+
+try:
+    import transformers  # type: ignore
+
+    if not hasattr(transformers, "AutoImageProcessor"):
+        class _StubAutoImageProcessor:
+            @classmethod
+            def from_pretrained(cls, *args, **kwargs):  # pragma: no cover - simple stub
+                return cls()
+
+            def __call__(self, *args, **kwargs):  # pragma: no cover - simple stub
+                return {}
+
+        transformers.AutoImageProcessor = _StubAutoImageProcessor  # type: ignore[attr-defined]
+
+    if not hasattr(transformers, "PreTrainedModel"):
+        class _StubPreTrainedModel:  # pragma: no cover - simple stub
+            pass
+
+        transformers.PreTrainedModel = _StubPreTrainedModel  # type: ignore[attr-defined]
+
+    if not hasattr(transformers, "CLIPImageProcessor"):
+        transformers.CLIPImageProcessor = _StubAutoImageProcessor  # type: ignore[attr-defined]
+
+    if not hasattr(transformers, "CLIPVisionModelWithProjection"):
+        class _StubCLIPVisionModelWithProjection:  # pragma: no cover - simple stub
+            @classmethod
+            def from_pretrained(cls, *args, **kwargs):
+                return cls()
+
+        transformers.CLIPVisionModelWithProjection = _StubCLIPVisionModelWithProjection  # type: ignore[attr-defined]
+
+    if not hasattr(transformers, "SiglipImageProcessor"):
+        transformers.SiglipImageProcessor = _StubAutoImageProcessor  # type: ignore[attr-defined]
+
+    if not hasattr(transformers, "SiglipVisionModel"):
+        class _StubSiglipVisionModel:  # pragma: no cover - simple stub
+            @classmethod
+            def from_pretrained(cls, *args, **kwargs):
+                return cls()
+
+        transformers.SiglipVisionModel = _StubSiglipVisionModel  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+
+def _ensure_models_common_stub():
+    module_name = "simpletuner.helpers.models.common"
+    if module_name in sys.modules:
+        return
+
+    common_module = types.ModuleType(module_name)
+    common_module.__spec__ = machinery.ModuleSpec(module_name, loader=None)
+
+    class _BaseModelFoundation:
+        def __init__(self, *args, **kwargs):  # pragma: no cover - stub
+            pass
+
+    class ImageModelFoundation(_BaseModelFoundation):
+        pass
+
+    class VideoModelFoundation(_BaseModelFoundation):
+        pass
+
+    class ModelFoundation(_BaseModelFoundation):
+        pass
+
+    class _PredictionTypes:
+        EPSILON = "epsilon"
+        SAMPLE = "sample"
+        V_PREDICTION = "v_prediction"
+        FLOW_MATCHING = "flow_matching"
+
+        @staticmethod
+        def from_str(_label):
+            return _PredictionTypes.EPSILON
+
+    class _PipelineTypes:
+        IMG2IMG = "img2img"
+        TEXT2IMG = "text2img"
+        IMG2VIDEO = "img2video"
+        CONTROLNET = "controlnet"
+        CONTROL = "control"
+
+    class _ModelTypes:
+        UNET = "unet"
+        TRANSFORMER = "transformer"
+        VAE = "vae"
+        TEXT_ENCODER = "text_encoder"
+
+    common_module.ImageModelFoundation = ImageModelFoundation
+    common_module.VideoModelFoundation = VideoModelFoundation
+    common_module.ModelFoundation = ModelFoundation
+    common_module.PredictionTypes = _PredictionTypes
+    common_module.PipelineTypes = _PipelineTypes
+    common_module.ModelTypes = _ModelTypes
+
+    sys.modules[module_name] = common_module
+
+
+_ensure_models_common_stub()
+
+wandb_module = types.ModuleType("wandb")
+wandb_module.__spec__ = machinery.ModuleSpec("wandb", loader=None)
+wandb_module.init = lambda *_, **__: None
+wandb_module.login = lambda *_, **__: None
+wandb_module.finish = lambda *_, **__: None
+wandb_module.log = lambda *_, **__: None
+wandb_module.config = {}
+sys.modules.setdefault("wandb", wandb_module)
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.training.trainer import Trainer
