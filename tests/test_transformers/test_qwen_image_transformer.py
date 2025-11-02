@@ -15,6 +15,11 @@ Focus areas:
 - Architecture-specific features (double stream attention, rope embeddings)
 - Performance benchmarking
 - TREAD router integration
+
+Note on running tests:
+- Recommended: python -m unittest tests.test_transformers.test_qwen_image_transformer.TestQwenImageTransformer2DModel -v
+- Also works: python -m unittest discover -s tests/test_transformers -p "*qwen*.py" -v
+- The `-k` pattern flag has test discovery issues and should be avoided for this test file
 """
 
 import os
@@ -25,12 +30,23 @@ import unittest
 from typing import Any, Dict, List, Optional, Tuple, Union
 from unittest.mock import MagicMock, Mock, create_autospec, patch
 
+# CRITICAL: Import real diffusers modules FIRST to prevent test_distillation_cache.py
+# from replacing them with stubs. That test file runs at module import time:
+#   if "diffusers" not in sys.modules:
+#       diffusers.configuration_utils.ConfigMixin = _DummyConfigMixin
+# By importing the real modules here, we ensure QwenImageTransformer2DModel
+# uses the actual ConfigMixin, not the stub.
+import diffusers
+import diffusers.configuration_utils
+import diffusers.models.modeling_utils
 import numpy as np
 import torch
 import torch.nn as nn
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", "utils"))
+# Add utils to path only if not already there - use insert to prioritize our path
+_utils_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "utils"))
+if _utils_path not in sys.path:
+    sys.path.insert(0, _utils_path)
 
 from diffusers.utils.testing_utils import CaptureLogger
 from transformer_base_test import (
@@ -991,18 +1007,8 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        try:
-            QwenImageTransformer2DModel(
-                patch_size=1,
-                in_channels=4,
-                out_channels=4,
-                num_layers=1,
-                attention_head_dim=8,
-                num_attention_heads=2,
-                joint_attention_dim=16,
-            )
-        except Exception as exc:
-            raise RuntimeError("Failed to instantiate QwenImageTransformer2DModel during test setup.") from exc
+        # The diffusers imports at the top of this file prevent test_distillation_cache.py
+        # from replacing ConfigMixin with a stub, ensuring tests work with unittest -k
 
     def setUp(self):
         super().setUp()
