@@ -408,6 +408,7 @@ class LTXVideoTransformer3DModel(
 
     _supports_gradient_checkpointing = True
     _skip_layerwise_casting_patterns = ["norm"]
+    _no_split_modules = ["LTXVideoTransformerBlock"]
     _repeated_blocks = ["LTXVideoTransformerBlock"]
 
     def __init__(

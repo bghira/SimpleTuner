@@ -18,6 +18,13 @@ from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundat
 from simpletuner.helpers.training.wrappers import unwrap_model
 
 try:
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    FSDP_AVAILABLE = True
+except ImportError:
+    FSDP_AVAILABLE = False
+
+try:
     import pillow_jxl
 except ModuleNotFoundError:
     pass
@@ -1381,7 +1388,16 @@ class Validation:
             te = getattr(self.model.pipeline, attr, None)
             if getattr(te, "device", None) and te.device.type == "meta":
                 setattr(self.model.pipeline, attr, None)
-        self.model.pipeline.to(self.accelerator.device)
+
+        # For FSDP models, skip .to() call - DTensor parameters are already device-aware
+        # and calling .to() causes: "RuntimeError: Attempted to set the storage of a tensor
+        # on device 'cpu' to a storage on different device 'cuda:0'"
+        pipeline_model = getattr(self.model.pipeline, self.model.MODEL_TYPE.value, None)
+        is_fsdp = FSDP_AVAILABLE and pipeline_model is not None and isinstance(pipeline_model, FSDP)
+
+        if not is_fsdp:
+            self.model.pipeline.to(self.accelerator.device)
+
         self.model.pipeline.set_progress_bar_config(disable=True)
 
     def clean_pipeline(self):

@@ -155,8 +155,11 @@ def mapping_to_cli_args(
             continue
 
         if isinstance(value, bool):
+            prefixed = _ensure_prefixed(key)
             if value:
-                cli_args.append(_ensure_prefixed(key))
+                cli_args.append(prefixed)
+            else:
+                cli_args.append(f"{prefixed}=false")
             continue
 
         if isinstance(value, str):

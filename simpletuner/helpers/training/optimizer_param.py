@@ -82,6 +82,120 @@ except:
 
 
 optimizer_choices = {
+    "torch-adam": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 0.0,
+            "eps": 1e-8,
+            "amsgrad": False,
+        },
+        "class": torch.optim.Adam,
+    },
+    "torch-adamw": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 1e-2,
+            "eps": 1e-8,
+            "amsgrad": False,
+        },
+        "class": torch.optim.AdamW,
+    },
+    "torch-sgd": {
+        "precision": "any",
+        "default_settings": {
+            "momentum": 0.0,
+            "weight_decay": 0.0,
+            "dampening": 0.0,
+            "nesterov": False,
+        },
+        "class": torch.optim.SGD,
+    },
+    "torch-radam": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 0.0,
+            "eps": 1e-8,
+        },
+        "class": torch.optim.RAdam,
+    },
+    "torch-nadam": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 0.0,
+            "eps": 1e-8,
+            "momentum_decay": 4e-3,
+        },
+        "class": torch.optim.NAdam,
+    },
+    "torch-rmsprop": {
+        "precision": "any",
+        "default_settings": {
+            "alpha": 0.99,
+            "weight_decay": 0.0,
+            "eps": 1e-8,
+            "momentum": 0.0,
+        },
+        "class": torch.optim.RMSprop,
+    },
+    "torch-adagrad": {
+        "precision": "any",
+        "default_settings": {
+            "lr_decay": 0.0,
+            "weight_decay": 0.0,
+            "eps": 1e-10,
+        },
+        "class": torch.optim.Adagrad,
+    },
+    "torch-adadelta": {
+        "precision": "any",
+        "default_settings": {
+            "rho": 0.9,
+            "weight_decay": 0.0,
+            "eps": 1e-6,
+        },
+        "class": torch.optim.Adadelta,
+    },
+    "torch-adafactor": {
+        "precision": "any",
+        "default_settings": {
+            "beta2_decay": -0.8,
+            "eps": (None, 1e-3),
+            "d": 1.0,
+            "weight_decay": 0.0,
+        },
+        "class": torch.optim.Adafactor,
+    },
+    "torch-adamax": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "weight_decay": 0.0,
+            "eps": 1e-8,
+        },
+        "class": torch.optim.Adamax,
+    },
+    "torch-asgd": {
+        "precision": "any",
+        "default_settings": {
+            "lambd": 1e-4,
+            "alpha": 0.75,
+            "t0": 1e6,
+            "weight_decay": 0.0,
+        },
+        "class": torch.optim.ASGD,
+    },
+    "torch-sparseadam": {
+        "precision": "any",
+        "default_settings": {
+            "betas": (0.9, 0.999),
+            "eps": 1e-8,
+        },
+        "class": torch.optim.SparseAdam,
+    },
     "adamw_bf16": {
         "precision": "bf16",
         "default_settings": {

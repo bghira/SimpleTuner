@@ -5,8 +5,22 @@ from functools import partial
 import numpy as np
 import torch
 from PIL import Image
-from torchmetrics.functional.multimodal import clip_score
-from torchvision import transforms
+
+try:
+    from torchmetrics.functional.multimodal import clip_score
+
+    _clip_available = True
+except Exception:  # pragma: no cover - optional dependency
+    clip_score = None  # type: ignore[assignment]
+    _clip_available = False
+
+try:
+    from torchvision import transforms
+
+    _transforms_available = True
+except Exception:  # pragma: no cover - optional dependency
+    transforms = None  # type: ignore[assignment]
+    _transforms_available = False
 
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -33,21 +47,24 @@ class ModelEvaluator:
     @staticmethod
     def from_config(args):
         """Instantiate a ModelEvaluator from the training config, if set to do so."""
-        if not StateTracker.get_accelerator().is_main_process:
+        accelerator = StateTracker.get_accelerator()
+        if accelerator is None or not getattr(accelerator, "is_main_process", True):
             return None
-        if (
-            args.evaluation_type is not None
-            and args.evaluation_type.lower() != ""
-            and args.evaluation_type.lower() != "none"
-        ):
-            model_evaluator = model_evaluator_map[args.evaluation_type]
-            return globals()[model_evaluator](args.pretrained_evaluation_model_name_or_path)
+        evaluation_type = getattr(args, "evaluation_type", None)
+        if evaluation_type is not None and evaluation_type.lower() != "" and evaluation_type.lower() != "none":
+            if not (_clip_available and _transforms_available):
+                raise RuntimeError("CLIP evaluation requires torchmetrics[vision] and torchvision to be installed.")
+            model_evaluator = model_evaluator_map[evaluation_type]
+            pretrained_model_path = getattr(args, "pretrained_evaluation_model_name_or_path", None)
+            return globals()[model_evaluator](pretrained_model_path)
 
         return None
 
 
 class CLIPModelEvaluator(ModelEvaluator):
     def __init__(self, pretrained_model_name_or_path="openai/clip-vit-large-patch14-336"):
+        if not (_clip_available and _transforms_available):
+            raise RuntimeError("CLIP evaluation requires torchmetrics[vision] and torchvision to be installed.")
         self.clip_score_fn = partial(clip_score, model_name_or_path=pretrained_model_name_or_path)
         self.preprocess = transforms.Compose([transforms.ToTensor()])
 

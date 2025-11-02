@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import huggingface_hub
+from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
+from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
 import wandb
 from simpletuner.helpers import log_format  # noqa
@@ -72,6 +74,9 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 
 
 def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
+    if hasattr(log_format, "ensure_custom_handlers"):
+        log_format.ensure_custom_handlers()
+
     level_value = (
         os.environ.get(env_var, os.environ.get("SIMPLETUNER_LOG_LEVEL", default_level))
         if env_var
@@ -116,7 +121,7 @@ from accelerate.utils import (
 )
 from torch.distributions import Beta
 
-from simpletuner.configure import model_classes
+from simpletuner.configure import model_classes, model_labels
 
 try:
     from lycoris import LycorisNetwork
@@ -646,15 +651,32 @@ class Trainer:
         fsdp_version = getattr(self.config, "fsdp_version", 2) or 2
         reshard_after_forward = getattr(self.config, "fsdp_reshard_after_forward", True)
         cpu_ram_efficient_loading = getattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
+        limit_all_gathers = getattr(self.config, "fsdp_limit_all_gathers", True)
+        cpu_offload = getattr(self.config, "fsdp_cpu_offload", False)
+        activation_checkpointing = getattr(self.config, "fsdp_activation_checkpointing", False)
         state_dict_type = getattr(self.config, "fsdp_state_dict_type", None)
         auto_wrap_policy = getattr(self.config, "fsdp_auto_wrap_policy", None)
         transformer_cls = getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+        if isinstance(transformer_cls, str) and transformer_cls.strip() == "":
+            transformer_cls = None
+
+        if activation_checkpointing and getattr(self.config, "gradient_checkpointing", False):
+            logger.info(
+                "FSDP activation checkpointing enabled; disabling model-level gradient checkpointing to avoid conflicts."
+            )
+            setattr(self.config, "gradient_checkpointing", False)
 
         plugin_kwargs = {
             "fsdp_version": fsdp_version,
             "reshard_after_forward": reshard_after_forward,
             "cpu_ram_efficient_loading": cpu_ram_efficient_loading,
+            "limit_all_gathers": bool(limit_all_gathers),
         }
+
+        if cpu_offload is not None:
+            plugin_kwargs["cpu_offload"] = cpu_offload
+        if activation_checkpointing:
+            plugin_kwargs["activation_checkpointing"] = True
 
         resolved_state_dict_display = None
         if state_dict_type:
@@ -669,16 +691,244 @@ class Trainer:
         if auto_wrap_policy:
             plugin_kwargs["auto_wrap_policy"] = auto_wrap_policy
 
+        parsed_transformer_cls = None
         if transformer_cls:
-            plugin_kwargs["transformer_cls_names_to_wrap"] = transformer_cls
+            if isinstance(transformer_cls, str):
+                parsed_transformer_cls = [name.strip() for name in transformer_cls.split(",") if name.strip()]
+            elif isinstance(transformer_cls, (list, tuple, set)):
+                parsed_transformer_cls = [str(name).strip() for name in transformer_cls if str(name).strip()]
+            else:
+                parsed_transformer_cls = [str(transformer_cls).strip()]
+            if parsed_transformer_cls:
+                plugin_kwargs["transformer_cls_names_to_wrap"] = parsed_transformer_cls
 
         logger.info(
-            "FSDP v%s configuration detected; enabling FullyShardedDataParallelPlugin%s.",
+            "FSDP v%s configuration detected (%s); enabling FullyShardedDataParallelPlugin%s.",
             fsdp_version,
+            ", ".join(f"{k}={v}" for k, v in plugin_kwargs.items()),
             f" (reshard_after_forward={reshard_after_forward})" if fsdp_version >= 2 else "",
         )
         plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
 
+        def _normalize_candidate_names(raw_names: Any) -> Optional[List[str]]:
+            if not raw_names:
+                return None
+            if isinstance(raw_names, str):
+                raw_names = [raw_names]
+            try:
+                iterator = list(raw_names)
+            except TypeError:
+                iterator = [str(raw_names)]
+            normalized: List[str] = []
+            for name in iterator:
+                candidate = str(name).strip()
+                if candidate and candidate not in normalized:
+                    normalized.append(candidate)
+            return normalized or None
+
+        original_plugin_names = _normalize_candidate_names(getattr(plugin, "transformer_cls_names_to_wrap", None))
+        plugin_names = original_plugin_names
+        plugin_names_origin = "config" if parsed_transformer_cls else None
+
+        model_instance = getattr(self, "model", None)
+        model_family = getattr(self.config, "model_family", None)
+        model_family_cls = ModelRegistry.get(model_family) if model_family else None
+
+        component = None
+        candidate_names: Optional[List[str]] = None
+        candidate_source = None
+
+        if model_instance is not None:
+            component = model_instance.get_trained_component(unwrap_model=False)
+            candidate_names = _normalize_candidate_names(getattr(component, "_no_split_modules", None))
+            if candidate_names:
+                candidate_source = "instance"
+            else:
+                candidate_names = _normalize_candidate_names(getattr(model_instance, "_no_split_modules", None))
+                if candidate_names:
+                    candidate_source = "instance"
+
+        if candidate_names is None and model_family_cls is not None:
+            class_level_candidates = _normalize_candidate_names(getattr(model_family_cls, "_no_split_modules", None))
+            if not class_level_candidates:
+                transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+                if transformer_cls is not None:
+                    class_level_candidates = _normalize_candidate_names(getattr(transformer_cls, "_no_split_modules", None))
+                    if class_level_candidates is None:
+                        try:
+                            transformer_instance = transformer_cls()  # type: ignore[call-arg]
+                        except Exception:
+                            transformer_instance = None
+                        else:
+                            class_level_candidates = _normalize_candidate_names(
+                                getattr(transformer_instance, "_no_split_modules", None)
+                            )
+                        finally:
+                            transformer_instance = None
+            if class_level_candidates:
+                candidate_names = class_level_candidates
+                candidate_source = "class"
+
+        def _collect_excluded_candidates() -> List[str]:
+            excluded: List[str] = []
+            sources = [
+                component,
+                model_instance,
+                model_family_cls,
+                getattr(model_family_cls, "MODEL_CLASS", None) if model_family_cls else None,
+            ]
+            for source in sources:
+                if source is None:
+                    continue
+                source_exclusions = _normalize_candidate_names(getattr(source, "_fsdp_exclude_auto_wrap_modules", None))
+                if not source_exclusions:
+                    continue
+                for name in source_exclusions:
+                    if name not in excluded:
+                        excluded.append(name)
+            return excluded
+
+        excluded_candidates = _collect_excluded_candidates()
+
+        if excluded_candidates and getattr(plugin, "cpu_ram_efficient_loading", False):
+            logger.warning(
+                "Disabling FSDP cpu_ram_efficient_loading because some modules must remain unsharded: %s",
+                ", ".join(excluded_candidates),
+            )
+            plugin.cpu_ram_efficient_loading = False
+            setattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
+
+        def _apply_exclusions(names: Optional[List[str]], origin: str) -> Optional[List[str]]:
+            if not names or not excluded_candidates:
+                return names
+            filtered = [name for name in names if name not in excluded_candidates]
+            removed = [name for name in names if name in excluded_candidates]
+            if removed:
+                logger.info(
+                    "Removing FSDP auto-wrap candidates excluded by %s: %s",
+                    origin,
+                    ", ".join(removed),
+                )
+            return filtered or None
+
+        candidate_names = _apply_exclusions(candidate_names, "model configuration")
+        plugin_names = _apply_exclusions(plugin_names, "model configuration")
+        plugin.transformer_cls_names_to_wrap = plugin_names
+        if plugin_names:
+            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(plugin_names))
+        else:
+            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+
+        base_component_name = "<uninitialized>"
+        if component is not None:
+            base_component_name = component.__class__.__name__
+        elif model_family_cls is not None:
+            transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+            if transformer_cls is not None:
+                base_component_name = transformer_cls.__name__
+
+        logger.info("FSDP base component: %s", base_component_name)
+
+        if getattr(plugin, "auto_wrap_policy", None) is not None:
+            if candidate_names:
+                source_label = f"model family '{model_family}'" if candidate_source == "class" and model_family else "model"
+                logger.info(
+                    "FSDP auto-wrap candidates from %s: %s",
+                    source_label,
+                    ", ".join(candidate_names),
+                )
+            else:
+                logger.info("FSDP auto-wrap candidates from model: <none>")
+
+            if not candidate_names and component is not None:
+                # As a fallback, scan module types to surface potential block classes.
+                # The default limit of 8 is chosen to avoid excessive auto-detection in very large models.
+                # You can override this limit by setting 'fsdp_max_auto_detect_candidates' in self.config.
+                max_auto_candidates = getattr(self.config, "fsdp_max_auto_detect_candidates", 8)
+                auto_candidates: List[str] = []
+                for module in component.children():
+                    cls_name = module.__class__.__name__
+                    if cls_name not in auto_candidates and sum(p.numel() for p in module.parameters(recurse=False)) > 0:
+                        auto_candidates.append(cls_name)
+                        if len(auto_candidates) >= max_auto_candidates:
+                            break
+                if auto_candidates:
+                    logger.info(
+                        "FSDP auto-detected candidate classes: %s",
+                        ", ".join(auto_candidates),
+                    )
+                    candidate_names = _apply_exclusions(auto_candidates, "auto-detected modules")
+                    candidate_source = "auto"
+                    setattr(component, "_no_split_modules", tuple(auto_candidates))
+
+            if candidate_names and plugin_names:
+                missing_from_plugin = [name for name in candidate_names if name and name not in plugin_names]
+                if missing_from_plugin:
+                    logger.info(
+                        "Extending FSDP transformer classes to wrap with model hints: %s",
+                        ", ".join(missing_from_plugin),
+                    )
+                    plugin_names = plugin_names + missing_from_plugin
+                    plugin.transformer_cls_names_to_wrap = plugin_names
+                    setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(plugin_names))
+
+            if component is not None and plugin_names:
+                try:
+                    from accelerate.utils.dataclasses import get_module_class_from_name
+                except ImportError:
+                    get_module_class_from_name = None  # type: ignore
+                if get_module_class_from_name and plugin_names_origin == "config":
+                    valid_names: List[str] = []
+                    invalid_names: List[str] = []
+                    for name in plugin_names:
+                        if get_module_class_from_name(component, name) is None:
+                            invalid_names.append(name)
+                        else:
+                            valid_names.append(name)
+                    if invalid_names:
+                        logger.warning(
+                            "Removing unknown FSDP transformer classes that are not present in the current model: %s",
+                            ", ".join(invalid_names),
+                        )
+                        plugin_names = valid_names or None
+                        plugin.transformer_cls_names_to_wrap = plugin_names
+                        if plugin_names:
+                            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(plugin_names))
+                        else:
+                            setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+
+        if getattr(plugin, "transformer_cls_names_to_wrap", None) is None and candidate_names:
+            names_list = [name for name in candidate_names if name]
+            if names_list:
+                logger.info(
+                    "Using model-provided _no_split_modules for FSDP wrapping: %s",
+                    ", ".join(names_list),
+                )
+                plugin.transformer_cls_names_to_wrap = names_list
+                plugin_names = names_list
+                plugin_names_origin = "model"
+                current_cls_setting = getattr(self.config, "fsdp_transformer_layer_cls_to_wrap", None)
+                if current_cls_setting is None:
+                    setattr(self.config, "fsdp_transformer_layer_cls_to_wrap", ",".join(names_list))
+
+        logger.info(
+            "Resolved FSDP transformer classes to wrap: %s",
+            (
+                ", ".join(plugin.transformer_cls_names_to_wrap or [])
+                if getattr(plugin, "transformer_cls_names_to_wrap", None)
+                else "<none>"
+            ),
+        )
+
+        if getattr(plugin, "cpu_ram_efficient_loading", False) and not getattr(
+            plugin, "transformer_cls_names_to_wrap", None
+        ):
+            logger.warning(
+                "Disabling FSDP cpu_ram_efficient_loading because no transformer blocks were wrapped. "
+                "CPU RAM efficient loading requires per-layer sharding."
+            )
+            plugin.cpu_ram_efficient_loading = False
+            setattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
         if resolved_state_dict_display:
             setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
             setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
@@ -700,6 +950,17 @@ class Trainer:
 
         if hasattr(fsdp_plugin, "_auto_wrap_policy_callable"):
             fsdp_plugin.auto_wrap_policy = getattr(fsdp_plugin, "_auto_wrap_policy_callable")
+
+        state_dict_type = getattr(fsdp_plugin, "state_dict_type", None)
+        if state_dict_type in (StateDictType.SHARDED_STATE_DICT, "sharded_state_dict"):
+            fsdp_plugin.state_dict_config = ShardedStateDictConfig(
+                offload_to_cpu=True,
+                _use_dtensor=False,
+            )
+            fsdp_plugin.optim_state_dict_config = ShardedOptimStateDictConfig(
+                offload_to_cpu=True,
+                _use_dtensor=False,
+            )
 
         return fsdp_plugin
 
@@ -1281,7 +1542,10 @@ class Trainer:
 
         model_implementation = ModelRegistry.model_families().get(model_family)
         StateTracker.set_model_family(model_family)
-        self.config.model_type_label = getattr(model_implementation, "NAME", None)
+        label = getattr(model_implementation, "NAME", None)
+        if not label:
+            label = model_labels.get(model_family, model_family.replace("_", " ").title())
+        self.config.model_type_label = label
         if StateTracker.is_sdxl_refiner():
             self.config.model_type_label = "SDXL Refiner"
 
@@ -1761,6 +2025,10 @@ class Trainer:
 
     def enable_gradient_checkpointing(self):
         if self.config.gradient_checkpointing:
+            fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+            if fsdp_plugin and getattr(self.config, "fsdp_activation_checkpointing", False):
+                logger.info("Skipping model-level gradient checkpointing because FSDP activation checkpointing is active.")
+                return
             logger.debug("Enabling gradient checkpointing.")
             if hasattr(self.model.get_trained_component(), "enable_gradient_checkpointing"):
                 unwrap_model(self.accelerator, self.model.get_trained_component()).enable_gradient_checkpointing()
@@ -2065,6 +2333,23 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        if getattr(self.config, "use_fsdp", False):
+            moved_param_count = 0
+            for param in primary_model.parameters():
+                if param.device.type != "cpu":
+                    param.data = param.data.to("cpu")
+                    if param.grad is not None:
+                        param.grad = None
+                    moved_param_count += 1
+            if moved_param_count:
+                logger.info(
+                    "Moved %s parameters back to CPU before Accelerator.prepare for FSDP sharding.", moved_param_count
+                )
+        try:
+            first_param = next(primary_model.parameters())
+            logger.info("Primary model param device before Accelerator.prepare: %s", first_param.device)
+        except StopIteration:
+            logger.warning("Primary model has no parameters when preparing accelerator.")
         self._finalize_deepspeed_config_auto_values(primary_model)
         results = self.accelerator.prepare(primary_model, lr_scheduler, self.optimizer, self.train_dataloaders[0])
         self.model.set_prepared_model(results[0])
@@ -2147,9 +2432,8 @@ class Trainer:
         ):
             logger.warning("Cannot run validations with DeepSpeed ZeRO stage 3. Disabling validation.")
             self.config.validation_disable = True
-        if getattr(self.config, "use_fsdp", False) and getattr(self.config, "fsdp_reshard_after_forward", True):
-            logger.warning("Cannot run validations with FSDP reshard-after-forward enabled. Disabling validation.")
-            self.config.validation_disable = True
+        # FSDP validation is now supported - we pass FSDP-wrapped models directly to pipelines
+        # which transparently handle all-gather/reshard on each forward pass
         self.evaluation = None
         if self.config.validation_disable:
             return
@@ -2158,6 +2442,8 @@ class Trainer:
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
         model_evaluator = ModelEvaluator.from_config(args=self.config)
+        weight_dtype = getattr(self.config, "weight_dtype", torch.float32)
+        use_deepspeed_optimizer = getattr(self.config, "use_deepspeed_optimizer", False)
         self.validation = Validation(
             trainable_parameters=self._get_trainable_parameters,
             accelerator=self.accelerator,
@@ -2165,12 +2451,12 @@ class Trainer:
             distiller=self.distiller,
             args=self.config,
             validation_prompt_metadata=self.validation_prompt_metadata,
-            vae_path=self.config.vae_path,
-            weight_dtype=self.config.weight_dtype,
+            vae_path=getattr(self.config, "vae_path", None),
+            weight_dtype=weight_dtype,
             embed_cache=StateTracker.get_default_text_embed_cache(),
-            ema_model=self.ema_model,
+            ema_model=getattr(self, "ema_model", None),
             model_evaluator=model_evaluator,
-            is_deepspeed=self.config.use_deepspeed_optimizer,
+            is_deepspeed=use_deepspeed_optimizer,
             is_fsdp=self.config.use_fsdp,
         )
         if not self.config.train_text_encoder and self.validation is not None:
@@ -2528,18 +2814,40 @@ class Trainer:
             sys.exit(1)
 
     def move_models(self, destination: str = "accelerator"):
-        target_device = "cpu"
-        if destination == "accelerator":
-            target_device = self.accelerator.device
         is_accelerator_target = destination == "accelerator"
+        fsdp_active = bool(getattr(self.config, "use_fsdp", False))
+        fsdp_version = None
+        if self.accelerator and hasattr(self.accelerator, "state"):
+            fsdp_plugin = getattr(self.accelerator.state, "fsdp_plugin", None)
+            if fsdp_plugin is not None:
+                fsdp_active = True
+                fsdp_version = getattr(fsdp_plugin, "fsdp_version", None)
+
+        if is_accelerator_target and fsdp_active:
+            version_note = f" (v{fsdp_version})" if fsdp_version is not None else ""
+            logger.info(
+                "FSDP%s detected; skipping manual model move so Accelerator.prepare can shard from the host device.",
+                version_note,
+            )
+            return
+
+        if is_accelerator_target:
+            if not self.accelerator:
+                raise RuntimeError(
+                    "Accelerator is not initialised but move_models(destination='accelerator') was requested."
+                )
+            target_device = self.accelerator.device
+        else:
+            target_device = destination
+
         group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
         group_offload_configured = getattr(self.model, "group_offload_configured", False)
         logger.info(
-            f"Moving the {str(self.model.get_trained_component().__class__)} to GPU in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
+            f"Moving the {str(self.model.get_trained_component().__class__)} to {target_device} in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
         )
         if self.model.get_trained_component() is not None:
             should_move_trained_component = not (
-                group_offload_requested and group_offload_configured and is_accelerator_target
+                fsdp_active and group_offload_requested and group_offload_configured and is_accelerator_target
             )
             if should_move_trained_component:
                 if self.config.is_quantized:
@@ -2660,7 +2968,7 @@ class Trainer:
                 self.config.checkpoints_total_limit,
             )
 
-        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
             self.checkpoint_state_save(self.config.output_dir)
 
         if upload_to_hub and self.hub_manager is not None:
@@ -3032,6 +3340,24 @@ class Trainer:
         )
         self._emit_event(event)
         self.mark_optimizer_eval()
+
+        try:
+            model_descriptions = [f"#{idx}:{type(model).__name__}" for idx, model in enumerate(self.accelerator._models)]
+            logger.debug(
+                "[Rank %s] Accelerator models registered for save_state: %s",
+                getattr(self.accelerator, "process_index", "?"),
+                ", ".join(model_descriptions) or "<none>",
+            )
+        except Exception as describe_err:  # pragma: no cover - defensive logging
+            logger.warning("Unable to describe registered models before checkpoint: %s", describe_err)
+
+        plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+        fsdp_v2_run = (
+            getattr(self.accelerator, "distributed_type", DistributedType.NO) == DistributedType.FSDP
+            and getattr(plugin, "fsdp_version", 1) == 2
+        )
+        if fsdp_v2_run:
+            logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         self.accelerator.save_state(save_path_tmp)
         event = lifecycle_stage_event(
             key="checkpoint_save",
@@ -3302,7 +3628,20 @@ class Trainer:
                             and self.config.max_grad_norm > 0
                         ):
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
-                            if self.config.grad_clip_method == "norm":
+                            if self.config.fsdp_enable:
+                                # For FSDP, use the native clip_grad_norm_ method of the FSDP module
+                                if self.config.grad_clip_method == "norm":
+                                    fsdp_model = self.model.get_trained_component(unwrap_model=False)
+                                    self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
+                                elif self.config.grad_clip_method == "value":
+                                    logger.warning(
+                                        "FSDP does not support grad_clip_method='value'. Skipping gradient clipping."
+                                    )
+                                else:
+                                    raise ValueError(
+                                        f"Unknown grad clip method: {self.config.grad_clip_method}. Supported methods: value, norm"
+                                    )
+                            elif self.config.grad_clip_method == "norm":
                                 self.grad_norm = self.accelerator.clip_grad_norm_(
                                     self._get_trainable_parameters(),
                                     self.config.max_grad_norm,

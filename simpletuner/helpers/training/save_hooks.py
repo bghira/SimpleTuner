@@ -324,6 +324,17 @@ class SaveHookManager:
             except Exception as e:
                 logger.error(f"Error saving EMA model: {e}")
 
+        # For Accelerate-managed FSDP v2 checkpoints, rely on Accelerate's native sharded save.
+        if (
+            distributed_type == DistributedType.FSDP
+            and getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None) is not None
+            and getattr(self.accelerator.state.fsdp_plugin, "fsdp_version", 1) == 2
+        ):
+            logger.info("Detected FSDP v2; skipping custom full-model save and relying on Accelerate shards.")
+            if self.accelerator is not None and distributed_type != DistributedType.NO:
+                self.accelerator.wait_for_everyone()
+            return
+
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             if is_main_process:
                 self._save_lora(models=models, weights=weights, output_dir=output_dir)
@@ -411,9 +422,15 @@ class SaveHookManager:
                 # self.ema_model.to(self.accelerator.device)
             except Exception as e:
                 logger.error(f"Could not load EMA model: {e}")
+        fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+        is_fsdp2_run = (
+            getattr(self.accelerator, "distributed_type", DistributedType.NO) == DistributedType.FSDP
+            and getattr(fsdp_plugin, "fsdp_version", 1) == 2
+        )
+
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
             self._load_lycoris(models=models, input_dir=input_dir)
-        else:
+        elif not is_fsdp2_run:
             self._load_full_model(models=models, input_dir=input_dir)
