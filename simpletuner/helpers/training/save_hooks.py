@@ -334,27 +334,23 @@ class SaveHookManager:
             if self.accelerator is not None and distributed_type != DistributedType.NO:
                 self.accelerator.wait_for_everyone()
             return
+        if not is_main_process:
+            return
 
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
-            if is_main_process:
-                self._save_lora(models=models, weights=weights, output_dir=output_dir)
-            if self.accelerator is not None and distributed_type != DistributedType.NO:
-                self.accelerator.wait_for_everyone()
+            self._save_lora(models=models, weights=weights, output_dir=output_dir)
             return
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
-            if is_main_process:
-                self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
-            if self.accelerator is not None and distributed_type != DistributedType.NO:
-                self.accelerator.wait_for_everyone()
+            self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
             return
-
-        self._save_full_model(
-            models=models,
-            weights=weights,
-            output_dir=output_dir,
-            is_main_process=is_main_process,
-            distributed_type=distributed_type,
-        )
+        else:
+            self._save_full_model(
+                models=models,
+                weights=weights,
+                output_dir=output_dir,
+                is_main_process=is_main_process,
+                distributed_type=distributed_type,
+            )
 
     def _load_lora(self, models, input_dir):
         logger.info(f"Loading LoRA weights from Path: {input_dir}")
