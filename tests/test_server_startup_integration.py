@@ -39,8 +39,7 @@ class ServerStartupIntegrationTest(unittest.TestCase):
             data = response.json()
             self.assertIn("families", data)
             # Should have at least some model families loaded
-            self.assertGreater(len(data["families"]), 0,
-                             "No model families loaded - check SIMPLETUNER_STRICT_MODEL_IMPORTS")
+            self.assertGreater(len(data["families"]), 0, "No model families loaded - check SIMPLETUNER_STRICT_MODEL_IMPORTS")
 
     def test_unified_mode_starts_with_models(self) -> None:
         """Verify unified mode can start and models load."""
@@ -62,8 +61,7 @@ class ServerStartupIntegrationTest(unittest.TestCase):
             response = client.get("/models")
             self.assertEqual(response.status_code, 200)
             data = response.json()
-            self.assertGreater(len(data["families"]), 0,
-                             "No model families loaded in unified mode")
+            self.assertGreater(len(data["families"]), 0, "No model families loaded in unified mode")
 
 
 if __name__ == "__main__":
