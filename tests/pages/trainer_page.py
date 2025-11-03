@@ -764,6 +764,10 @@ class TrainerPage(BasePage):
                 "if (!document || !document.body) { return 'unknown'; }"
                 "return document.body.dataset.trainingActive || 'false';"
             )
+            run_disabled = driver.execute_script(
+                "const runBtn=document.getElementById('runBtn');"
+                "return !!(runBtn && runBtn.disabled);"
+            )
             cancel_enabled = driver.execute_script(
                 "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"
             )
@@ -771,7 +775,9 @@ class TrainerPage(BasePage):
                 "const el = document.getElementById('training-status');"
                 "return el ? (el.textContent || '').toLowerCase() : '';"
             )
-            if body_state == "true" and cancel_enabled:
+            if "training starting" in status_text or "training started" in status_text:
+                return "active"
+            if (body_state == "true" or run_disabled) and cancel_enabled:
                 return "active"
             if any(
                 keyword in status_text
