@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -273,6 +274,28 @@ def find_accelerate_config() -> Optional[str]:
     return None
 
 
+def _terminate_process_group(process: subprocess.Popen) -> None:
+    """Terminate process group with SIGTERM."""
+    if os.name != "nt" and getattr(process, "pid", None):
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    process.terminate()
+
+
+def _kill_process_group(process: subprocess.Popen) -> None:
+    """Force kill process group with SIGKILL."""
+    if os.name != "nt" and getattr(process, "pid", None):
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    process.kill()
+
+
 def run_training(example: Optional[str] = None, env: Optional[str] = None, extra_args: Optional[list] = None) -> int:
     """Run training with specified example or environment."""
     extra_args = list(extra_args or [])
@@ -459,16 +482,50 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
 
     print(f"Running: {' '.join(cmd)}")
 
-    # Run the training
+    # Run the training with proper process group handling
+    process = None
     try:
-        result = subprocess.run(cmd, env=training_env)
-        return result.returncode
+        # Create subprocess with process group for proper signal handling
+        if os.name != "nt":
+            # Unix: create new process group with setsid
+            process = subprocess.Popen(cmd, env=training_env, preexec_fn=os.setsid)
+        else:
+            # Windows: create new process group
+            process = subprocess.Popen(cmd, env=training_env, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+
+        # Wait for process to complete
+        returncode = process.wait()
+        return returncode
+
     except KeyboardInterrupt:
         print("\nTraining interrupted by user.")
+        if process and process.poll() is None:
+            print("Terminating training processes...")
+            _terminate_process_group(process)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                print("Force killing training processes...")
+                _kill_process_group(process)
+                process.wait()
         return 130
     except Exception as e:
         print(f"Error running training: {e}")
+        if process and process.poll() is None:
+            _terminate_process_group(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _kill_process_group(process)
         return 1
+    finally:
+        # Ensure cleanup
+        if process and process.poll() is None:
+            _terminate_process_group(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _kill_process_group(process)
 
 
 def cmd_train(args) -> int:
