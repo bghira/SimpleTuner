@@ -89,7 +89,7 @@ def _normalise_accelerate_overrides(raw: Any) -> Dict[str, Any]:
             if normalized_key == "mode":
                 if isinstance(value, str):
                     normalized_value = value.strip().lower()
-                    if normalized_value in {"auto", "manual", "disabled"}:
+                    if normalized_value in {"auto", "manual", "disabled", "hardware"}:
                         cleaned[normalized_key] = normalized_value
                 continue
 
@@ -125,6 +125,9 @@ def _normalise_accelerate_overrides(raw: Any) -> Dict[str, Any]:
                         ordered.append(device_id)
                     cleaned[normalized_key] = ordered
                 continue
+
+    if cleaned.get("mode") == "hardware":
+        cleaned.pop("--num_processes", None)
 
     return cleaned
 
