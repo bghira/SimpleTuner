@@ -540,6 +540,11 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             else:
                 normalized_mode = "manual"
 
+        if normalized_mode in {"auto", "manual", "disabled"}:
+            for key in ("--num_processes", "num_processes"):
+                existing_config_cli.pop(key, None)
+                config_dict.pop(key, None)
+
         if write_process_count:
             cleaned_onboarding["--num_processes"] = max(int(process_count or 1), 1)
         else:
@@ -708,13 +713,20 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         arg_lookup = key if key.startswith("--") else f"--{clean_key}"
         is_required_field = _is_required_field(arg_lookup)
 
-        explicit_override = (
-            arg_lookup in config_dict
-            or clean_key in config_dict
-            or arg_lookup.lstrip("-") in config_dict
-            or clean_key in form_dict
-            or arg_lookup in form_dict
-        )
+        # explicit_override means the user explicitly CHANGED this field in the current form submission.
+        # The frontend sends all fields (via appendConfigValuesToFormData), including unchanged ones,
+        # so we need to compare the form value with the saved config value to detect actual changes.
+        # Only fields that were actually modified should be saved even if they match defaults.
+        explicit_override = False
+        if clean_key in form_dict or arg_lookup in form_dict:
+            # Field is in form submission - check if it was actually changed
+            form_value = form_dict.get(clean_key) or form_dict.get(arg_lookup)
+            saved_value = existing_config_cli.get(clean_key) or existing_config_cli.get(arg_lookup)
+
+            # If there's no saved value, this is a new field being added (explicit)
+            # If the form value differs from the saved value, it was changed (explicit)
+            if saved_value is None or form_value != saved_value:
+                explicit_override = True
 
         if save_options.get("preserve_defaults", False) and not is_required_field:
             default_value = all_defaults.get(arg_lookup, all_defaults.get(key))

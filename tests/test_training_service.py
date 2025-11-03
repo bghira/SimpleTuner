@@ -194,21 +194,20 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertNotIn("accelerate_strategy", bundle.save_config)
         self.assertNotIn("accelerate_visible_devices", bundle.complete_config)
 
-    def test_build_config_bundle_prefers_config_over_onboarding(self) -> None:
+    def test_config_num_processes_ignored_when_strategy_selected(self) -> None:
         bundle = self._build_bundle({}, stored_config={"num_processes": 3})
 
         value = bundle.complete_config.get("--num_processes")
         self.assertIsNotNone(value)
-        self.assertEqual(int(value), 3)
-        saved = bundle.save_config.get("num_processes")
-        self.assertIsNotNone(saved)
-        self.assertEqual(int(saved), 3)
+        self.assertEqual(int(value), 2)
+        self.assertNotIn("num_processes", bundle.save_config)
         self.assertEqual(bundle.complete_config.get("accelerate_strategy"), "auto")
 
-    def test_build_config_bundle_prefers_form_over_config(self) -> None:
+    def test_form_num_processes_respected_in_hardware_mode(self) -> None:
         bundle = self._build_bundle(
             {"--num_processes": "5"},
             stored_config={"num_processes": 3},
+            defaults=WebUIDefaults(accelerate_overrides={"mode": "hardware"}),
         )
 
         value = bundle.complete_config.get("--num_processes")
@@ -218,7 +217,7 @@ class TrainingServiceTests(unittest.TestCase):
         saved = bundle.save_config.get("num_processes")
         self.assertIsNotNone(saved)
         self.assertEqual(int(saved), 5)
-        self.assertEqual(bundle.complete_config.get("accelerate_strategy"), "auto")
+        self.assertEqual(bundle.complete_config.get("accelerate_strategy"), "hardware")
 
     def test_onboarding_defaults_skip_when_accelerate_config_present(self) -> None:
         bundle = self._build_bundle(
@@ -382,6 +381,113 @@ class TrainingServiceTests(unittest.TestCase):
         # Regular trainer fields should still be present
         self.assertIn("--learning_rate", bundle.complete_config)
         self.assertIn("--output_dir", bundle.complete_config)
+
+    def test_preserve_defaults_excludes_default_values(self) -> None:
+        """
+        Regression test: preserve_defaults should exclude fields matching default values from saved configs.
+
+        Bug: The webUI frontend sends ALL fields in form submission (via appendConfigValuesToFormData),
+        including fields the user didn't touch. This made preserve_defaults ineffective because every
+        field looked "explicitly set" even though it was just carried forward from the saved config.
+
+        Fix: Compare form values with saved config values to detect actual changes. Only fields that
+        were actually modified should bypass preserve_defaults filtering.
+
+        Expected: Fields matching defaults should be excluded unless explicitly changed by user.
+        """
+        # Set up field defaults that match what we'll put in stored_config
+        field_defaults = {
+            "--output_dir": "/base/output",
+            "--learning_rate": 1e-4,  # Default learning rate
+            "--model_family": "flux",  # Default model family
+        }
+
+        # Simulate a saved config where some fields match their defaults
+        stored_config = {
+            "learning_rate": 1e-4,  # Matches default
+            "model_family": "flux",  # Matches default
+            "output_dir": "/custom/output",  # Different from default - should be saved
+        }
+
+        # Enable preserve_defaults via WebUIDefaults
+        defaults = WebUIDefaults(
+            accelerate_overrides={"mode": "disabled"},
+            auto_preserve_defaults=True,
+        )
+
+        # Simulate the real webUI behavior: form submission contains ALL fields (unchanged ones too)
+        # This is what appendConfigValuesToFormData() does in production
+        form_data = {
+            "--learning_rate": 1e-4,  # In form, but unchanged from saved config
+            "--model_family": "flux",  # In form, but unchanged from saved config
+            "--output_dir": "/custom/output",  # In form, unchanged from saved config
+        }
+
+        # Build bundle with form containing all fields (like production)
+        bundle = self._build_bundle(
+            form_data,  # Form contains all fields, simulating webUI behavior
+            stored_config=stored_config,
+            defaults=defaults,
+            field_defaults=field_defaults,
+        )
+
+        # Fields matching defaults AND unchanged from saved config should NOT be in save_config
+        self.assertNotIn(
+            "learning_rate", bundle.save_config, "learning_rate matches default and wasn't changed, should be excluded"
+        )
+        self.assertNotIn(
+            "model_family", bundle.save_config, "model_family matches default and wasn't changed, should be excluded"
+        )
+
+        # Field with non-default value SHOULD be in save_config (even if unchanged)
+        self.assertIn("output_dir", bundle.save_config, "output_dir differs from default and should be in save_config")
+        self.assertEqual(bundle.save_config["output_dir"], "/custom/output")
+
+        # All fields should still be in complete_config (for runtime use)
+        self.assertIn("--learning_rate", bundle.complete_config)
+        self.assertIn("--model_family", bundle.complete_config)
+        self.assertIn("--output_dir", bundle.complete_config)
+
+    def test_preserve_defaults_saves_changed_fields_even_if_default(self) -> None:
+        """
+        Test that fields explicitly changed to their default value ARE saved.
+
+        If a user changes a field FROM a non-default value TO the default value,
+        that's an explicit change and should be saved even with preserve_defaults=True.
+        """
+        field_defaults = {
+            "--learning_rate": 1e-4,  # Default learning rate
+        }
+
+        # Config has non-default learning rate
+        stored_config = {
+            "learning_rate": 5e-5,  # Non-default value
+        }
+
+        defaults = WebUIDefaults(
+            accelerate_overrides={"mode": "disabled"},
+            auto_preserve_defaults=True,
+        )
+
+        # User changes learning_rate back to default value
+        form_data = {
+            "--learning_rate": 1e-4,  # Changed from 5e-5 to 1e-4 (the default)
+        }
+
+        bundle = self._build_bundle(
+            form_data,
+            stored_config=stored_config,
+            defaults=defaults,
+            field_defaults=field_defaults,
+        )
+
+        # Should be saved because user explicitly changed it (even though it's now the default)
+        self.assertIn(
+            "learning_rate",
+            bundle.save_config,
+            "learning_rate was explicitly changed and should be saved even though it matches default",
+        )
+        self.assertEqual(bundle.save_config["learning_rate"], 1e-4)
 
 
 if __name__ == "__main__":
