@@ -2229,12 +2229,14 @@ class FactoryRegistry:
                 if key not in excluded_keys:
                     if key in backend and prev_config[key] != backend[key]:
                         if not self.args.override_dataset_config:
-                            raise Exception(
+                            logger.error(
                                 f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
                                 f"\n-> Expected value {key}={prev_config.get(key)} differs from current value={backend.get(key)}."
                                 f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
                                 f"\n{prev_config}"
                             )
+                            # we'll just restore the original value instead of erroring.
+                            backend[key] = prev_config[key]
                         else:
                             warning_log(f"Overriding config value {key}={prev_config[key]} with {backend[key]}")
                             prev_config[key] = backend[key]
