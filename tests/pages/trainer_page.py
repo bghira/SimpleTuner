@@ -41,6 +41,11 @@ class TrainerPage(BasePage):
     DATASETS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='datasets']")
     ENVIRONMENTS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='environments']")
 
+    CONFIG_JSON_BUTTON = (By.CSS_SELECTOR, "button[title='View and edit the composed training JSON']")
+    CONFIG_JSON_MODAL = (By.CSS_SELECTOR, ".config-json-modal")
+    CONFIG_JSON_TEXTAREA = (By.CSS_SELECTOR, ".config-json-modal textarea")
+    CONFIG_JSON_CLOSE_BUTTON = (By.CSS_SELECTOR, ".config-json-modal button[title='Close']")
+
     # Status indicators
     TRAINING_STATUS_CONTAINER = (By.ID, "training-status")
 
@@ -828,6 +833,38 @@ class TrainerPage(BasePage):
         except TimeoutException:
             pass
 
+    def open_config_json_modal(self):
+        """Open the configuration JSON modal."""
+
+        self.click_element(*self.CONFIG_JSON_BUTTON)
+        self.wait.until(EC.visibility_of_element_located(self.CONFIG_JSON_MODAL))
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const textarea = document.querySelector('.config-json-modal textarea');" "return !!textarea;",
+            )
+        )
+
+    def get_config_json_text(self) -> str:
+        """Return the JSON payload displayed in the modal."""
+
+        textarea = self.wait.until(EC.visibility_of_element_located(self.CONFIG_JSON_TEXTAREA))
+        value = textarea.get_attribute("value")
+        if value is None:
+            value = textarea.get_attribute("textContent")
+        return value or ""
+
+    def close_config_json_modal(self):
+        """Close the configuration JSON modal."""
+
+        try:
+            self.click_element(*self.CONFIG_JSON_CLOSE_BUTTON)
+        except TimeoutException:
+            self.driver.execute_script(
+                "const overlay = document.querySelector('.save-dataset-overlay');"
+                "if (overlay) { overlay.style.display = 'none'; }"
+            )
+        self.wait.until(EC.invisibility_of_element_located(self.CONFIG_JSON_MODAL))
+
     def is_config_valid(self):
         """Check if configuration is valid.
 
@@ -1050,8 +1087,14 @@ class BasicConfigTab(BasePage):
         self.driver.execute_script(
             "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
             "if (!store) { return; }"
+            "const nextValue = arguments.length ? (arguments[0] ?? '') : '';"
             "store.formValueStore = store.formValueStore || {};"
-            "store.formValueStore['--pretrained_model_name_or_path'] = { kind: 'single', value: arguments[0] };"
+            "store.formValueStore['--pretrained_model_name_or_path'] = { kind: 'single', value: nextValue };"
+            "store.formValueStore['pretrained_model_name_or_path'] = { kind: 'single', value: nextValue };"
+            "store.activeEnvironmentConfig = store.activeEnvironmentConfig || {};"
+            "store.activeEnvironmentConfig['--pretrained_model_name_or_path'] = nextValue;"
+            "store.activeEnvironmentConfig['pretrained_model_name_or_path'] = nextValue;"
+            "if (typeof store.captureFormValues === 'function') { store.captureFormValues(); }"
             "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
             model,
         )
