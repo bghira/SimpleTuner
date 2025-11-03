@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_mapping
@@ -23,7 +23,7 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
-from simpletuner.simpletuner_sdk.server.services.field_registry.types import ValidationRuleType
+from simpletuner.simpletuner_sdk.server.services.field_registry.types import FieldType, ValidationRuleType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
 from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_gpu_inventory
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
@@ -400,6 +400,37 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             return raw_value.strip() == ""
         return raw_value in (None, [], {})
 
+    cleared_text_fields: Set[str] = set()
+
+    text_field_types = {FieldType.TEXT, FieldType.TEXTAREA, FieldType.FILE, FieldType.PASSWORD}
+    blankable_field_args: Set[str] = set()
+    for registry_field in lazy_field_registry.get_all_fields():
+        field_type = getattr(registry_field, "field_type", None)
+        if field_type not in text_field_types:
+            continue
+        default_value = getattr(registry_field, "default_value", None)
+        if default_value is not None and not (isinstance(default_value, str) and default_value.strip() == ""):
+            continue
+        arg_name = getattr(registry_field, "arg_name", None) or getattr(registry_field, "name", None)
+        if not arg_name:
+            continue
+        canonical_arg = arg_name if arg_name.startswith("--") else f"--{arg_name}"
+        blankable_field_args.add(canonical_arg)
+
+    manual_blankable_fields = {
+        "--validation_negative_prompt",
+    }
+    blankable_field_args.update(manual_blankable_fields)
+
+    def _register_cleared_field(arg_name: str) -> None:
+        canonical = arg_name if arg_name.startswith("--") else f"--{arg_name.lstrip('-')}"
+        alias = canonical.lstrip("-")
+        cleared_text_fields.add(canonical)
+        variants = {canonical, alias}
+        for key in variants:
+            existing_config_cli.pop(key, None)
+            config_dict.pop(key, None)
+
     if _field_was_cleared("--deepspeed_config"):
         logger.debug("User cleared --deepspeed_config; removing from existing config merge.")
         for variant in ("--deepspeed_config", "deepspeed_config"):
@@ -417,6 +448,11 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         for key in cleared_keys:
             existing_config_cli.pop(key, None)
             config_dict.pop(key, None)
+
+    for canonical_field in blankable_field_args:
+        if _field_was_cleared(canonical_field):
+            logger.debug("User cleared %s; removing from existing config merge.", canonical_field)
+            _register_cleared_field(canonical_field)
 
     all_defaults = get_all_field_defaults()
 
@@ -509,6 +545,12 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     else:
         logger.debug("Skipping merge of active environment defaults at user request")
         base_config = dict(all_defaults)
+
+    if cleared_text_fields:
+        for canonical in cleared_text_fields:
+            alias = canonical.lstrip("-")
+            base_config.pop(canonical, None)
+            base_config.pop(alias, None)
 
     selected_family = (
         config_dict.get("--model_family")
