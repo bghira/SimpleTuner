@@ -2616,9 +2616,9 @@ class Trainer:
 
         if self.optimizer is not None and self.config.optimizer == "prodigy":
             # fix the device assignment for the prodigy optimizer parameters
-            for group in (
-                self.optimizer.param_groups if self.optimizer.optimizer.split_groups else self.optimizer.param_groups[:1]
-            ):
+            # use getattr with default False to handle optimizers without split_groups attribute
+            split_groups = getattr(self.optimizer.optimizer, "split_groups", False)
+            for group in self.optimizer.param_groups if split_groups else self.optimizer.param_groups[:1]:
                 p = group["params"][0]
                 group["running_d_numerator"] = group["running_d_numerator"].to(p.device)
                 group["running_d_denom"] = group["running_d_denom"].to(p.device)
