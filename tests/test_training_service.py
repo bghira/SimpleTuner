@@ -137,6 +137,8 @@ class TrainingServiceTests(unittest.TestCase):
                 MockField("output_dir", "--output_dir"),
                 MockField("learning_rate", "--learning_rate"),
                 MockField("model_family", "--model_family"),
+                MockField("adam_beta1", "--adam_beta1"),
+                MockField("adam_beta2", "--adam_beta2"),
             ]
             stack.enter_context(
                 patch.object(training_service.lazy_field_registry, "get_all_fields", return_value=mock_fields)
@@ -488,6 +490,55 @@ class TrainingServiceTests(unittest.TestCase):
             "learning_rate was explicitly changed and should be saved even though it matches default",
         )
         self.assertEqual(bundle.save_config["learning_rate"], 1e-4)
+
+    def test_preserve_defaults_excludes_new_fields_with_default_values(self) -> None:
+        """
+        Test that new fields sent by frontend with default values are excluded.
+
+        The frontend sends ALL fields (via appendConfigValuesToFormData), including fields
+        that weren't in the original saved config. If these new fields have default values,
+        they should be excluded (not treated as "newly added" fields).
+        """
+        field_defaults = {
+            "--learning_rate": 1e-4,
+            "--adam_beta1": 0.9,  # Default adam_beta1
+            "--adam_beta2": 0.999,  # Default adam_beta2
+        }
+
+        # Minimal saved config - doesn't have adam_beta1 or adam_beta2
+        stored_config = {
+            "learning_rate": 5e-5,  # Non-default value
+        }
+
+        defaults = WebUIDefaults(
+            accelerate_overrides={"mode": "disabled"},
+            auto_preserve_defaults=True,
+        )
+
+        # Frontend sends ALL fields including ones not in saved config
+        form_data = {
+            "--learning_rate": 5e-5,  # Unchanged from saved config
+            "--adam_beta1": 0.9,  # NOT in saved config, matches default
+            "--adam_beta2": 0.999,  # NOT in saved config, matches default
+        }
+
+        bundle = self._build_bundle(
+            form_data,
+            stored_config=stored_config,
+            defaults=defaults,
+            field_defaults=field_defaults,
+        )
+
+        # learning_rate differs from default, should be saved
+        self.assertIn("learning_rate", bundle.save_config)
+
+        # adam_beta1 and adam_beta2 were NOT in saved config and match defaults, should be excluded
+        self.assertNotIn(
+            "adam_beta1", bundle.save_config, "adam_beta1 wasn't in saved config and matches default, should be excluded"
+        )
+        self.assertNotIn(
+            "adam_beta2", bundle.save_config, "adam_beta2 wasn't in saved config and matches default, should be excluded"
+        )
 
 
 if __name__ == "__main__":

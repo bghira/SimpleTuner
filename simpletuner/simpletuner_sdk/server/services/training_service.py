@@ -723,9 +723,14 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             form_value = form_dict.get(clean_key) or form_dict.get(arg_lookup)
             saved_value = existing_config_cli.get(clean_key) or existing_config_cli.get(arg_lookup)
 
-            # If there's no saved value, this is a new field being added (explicit)
-            # If the form value differs from the saved value, it was changed (explicit)
-            if saved_value is None or form_value != saved_value:
+            if saved_value is None:
+                # Field wasn't in saved config - check if it differs from default
+                # Only treat as explicit if the user set it to a non-default value
+                default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
+                if form_value != default_value:
+                    explicit_override = True
+            elif form_value != saved_value:
+                # Field was in saved config and user changed it
                 explicit_override = True
 
         if save_options.get("preserve_defaults", False) and not is_required_field:
