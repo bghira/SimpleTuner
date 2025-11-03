@@ -1209,6 +1209,117 @@ class TestTrainer(unittest.TestCase):
                 mock_logger.info.assert_called()
                 trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-200")
 
+    def test_init_resume_checkpoint_prodigy_without_split_groups(self):
+        """Test that prodigy optimizer works with optimizers that don't have split_groups attribute"""
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.config = Mock(
+            output_dir="/path/to/output",
+            resume_from_checkpoint="checkpoint-100",
+            num_train_epochs=1,
+            ignore_final_epochs=False,
+            optimizer="prodigy",
+            lr_scheduler="constant",
+            is_schedulefree=False,
+            learning_rate=0.001,
+        )
+        trainer.accelerator = Mock(num_processes=1)
+        trainer.accelerator.wait_for_everyone = Mock()
+        trainer.accelerator.load_state = Mock()
+        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1, "global_resume_step": 0}
+        trainer.distiller = None
+
+        # Create a mock optimizer that simulates ProdigyPlusScheduleFree (no split_groups attribute)
+        mock_inner_optimizer = Mock(spec=[])  # Empty spec means no attributes
+        # Explicitly ensure split_groups doesn't exist
+        if hasattr(mock_inner_optimizer, "split_groups"):
+            delattr(mock_inner_optimizer, "split_groups")
+
+        mock_optimizer = Mock()
+        mock_optimizer.optimizer = mock_inner_optimizer
+
+        # Create mock parameter group with device-movable tensors
+        mock_param = torch.randn(10, 10)
+        param_group = {
+            "params": [mock_param],
+            "running_d_numerator": torch.tensor(1.0),
+            "running_d_denom": torch.tensor(1.0),
+        }
+        mock_optimizer.param_groups = [param_group]
+
+        trainer.optimizer = mock_optimizer
+        trainer._emit_event = Mock()
+        trainer.job_id = "test-job"
+
+        # Mock StateTracker methods
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=0):
+                with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
+                    with patch(
+                        "simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}
+                    ):
+                        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1):
+                            with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"):
+                                # This should not raise AttributeError
+                                result = trainer.init_resume_checkpoint(lr_scheduler=None)
+
+        # Verify the tensors were moved to the correct device
+        self.assertEqual(param_group["running_d_numerator"].device, mock_param.device)
+        self.assertEqual(param_group["running_d_denom"].device, mock_param.device)
+        self.assertFalse(param_group["use_focus"])
+
+    def test_init_resume_checkpoint_prodigy_with_split_groups(self):
+        """Test that prodigy optimizer works correctly when split_groups=True"""
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.config = Mock(
+            output_dir="/path/to/output",
+            resume_from_checkpoint=None,
+            num_train_epochs=1,
+            ignore_final_epochs=False,
+            optimizer="prodigy",
+        )
+        trainer.accelerator = Mock(num_processes=1)
+        trainer.accelerator.wait_for_everyone = Mock()
+        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
+
+        # Create a mock optimizer with split_groups=True
+        mock_inner_optimizer = Mock()
+        mock_inner_optimizer.split_groups = True
+
+        mock_optimizer = Mock()
+        mock_optimizer.optimizer = mock_inner_optimizer
+
+        # Create multiple mock parameter groups
+        mock_param1 = torch.randn(10, 10)
+        mock_param2 = torch.randn(5, 5)
+        param_groups = [
+            {
+                "params": [mock_param1],
+                "running_d_numerator": torch.tensor(1.0),
+                "running_d_denom": torch.tensor(1.0),
+            },
+            {
+                "params": [mock_param2],
+                "running_d_numerator": torch.tensor(2.0),
+                "running_d_denom": torch.tensor(2.0),
+            },
+        ]
+        mock_optimizer.param_groups = param_groups
+
+        trainer.optimizer = mock_optimizer
+        trainer._emit_event = Mock()
+        trainer.job_id = "test-job"
+
+        # This should process all parameter groups when split_groups=True
+        result = trainer.init_resume_checkpoint(lr_scheduler=None)
+
+        # Verify all parameter groups were processed
+        for i, group in enumerate(param_groups):
+            self.assertEqual(group["running_d_numerator"].device, group["params"][0].device)
+            self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
+            self.assertFalse(group["use_focus"])
+
     # Additional tests can be added for other methods as needed
 
 
