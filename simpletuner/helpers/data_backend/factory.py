@@ -2214,13 +2214,13 @@ class FactoryRegistry:
             "conditioning_data",
             "conditioning",
         ]
-        latest_config_version = latest_config_version()
-        current_config_version = latest_config_version
+        _latest_config_version = latest_config_version()
+        current_config_version = _latest_config_version
         if init_backend["metadata_backend"].config != {}:
             prev_config = init_backend["metadata_backend"].config
             current_config_version = prev_config.get("config_version", None)
             if current_config_version is None:
-                current_config_version = latest_config_version
+                current_config_version = _latest_config_version
 
             logger.debug(f"Found existing config (version={current_config_version}): {prev_config}")
             logger.debug(f"Comparing against new config: {init_backend['config']}")
