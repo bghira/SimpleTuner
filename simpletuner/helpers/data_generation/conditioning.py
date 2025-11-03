@@ -163,7 +163,7 @@ class DataGenerator:
         max_workers: int = 32,
         num_transform_workers: int = None,
         delete_problematic_images: bool = False,
-        hash_filenames: bool = False,
+        hash_filenames: bool = True,
         conditioning_type: str = None,
     ):
         self.id = id

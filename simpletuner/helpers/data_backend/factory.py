@@ -887,7 +887,7 @@ def get_csv_backend(
     url_column: str,
     caption_column: str,
     compress_cache: bool = False,
-    hash_filenames: bool = False,
+    hash_filenames: bool = True,
     shorten_filenames: bool = False,
 ) -> CSVDataBackend:
     from pathlib import Path

@@ -114,7 +114,7 @@ class VAECache(WebhookMixin):
         vae_batch_size: int = 4,
         max_workers: int = 32,
         vae_cache_ondemand: bool = False,
-        hash_filenames: bool = False,
+        hash_filenames: bool = True,
         dataset_type: str = None,
     ):
         self.id = id

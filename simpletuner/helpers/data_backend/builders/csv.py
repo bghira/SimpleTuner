@@ -34,7 +34,7 @@ class CsvBackendBuilder(BaseBackendBuilder):
         caption_column = getattr(config, "csv_caption_column", None)
 
         compress_cache = self._get_compression_setting(config)
-        hash_filenames = self._resolve_bool(config, "hash_filenames", default=False)
+        hash_filenames = self._resolve_bool(config, "hash_filenames", default=True)
         shorten_filenames = self._resolve_bool(config, "shorten_filenames", default=False)
 
         csv_file_value = csv_file if is_mock_backend else Path(csv_file)
