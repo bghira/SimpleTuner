@@ -4318,6 +4318,15 @@ function trainerComponent() {
 
                         // Dispatch event for other components (e.g., publishing tab)
                         window.dispatchEvent(new CustomEvent('config-saved'));
+
+                        try {
+                            await this.fetchActiveEnvironmentConfig();
+                            if (this.showConfigJsonModal) {
+                                this.resetConfigJsonDraft();
+                            }
+                        } catch (refreshError) {
+                            console.error('Failed to refresh configuration after save:', refreshError);
+                        }
                     } else {
                         let detail = null;
                         try {
