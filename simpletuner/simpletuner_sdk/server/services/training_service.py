@@ -357,6 +357,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     existing_config_cli = ConfigsService._migrate_legacy_keys(existing_config_cli)
 
+    # Normalize existing config values using the same type coercion applied to complete_config.
+    # This ensures comparisons for preserve_defaults work correctly (comparing apples-to-apples).
+    existing_config_cli = ConfigsService.coerce_config_values_by_field(existing_config_cli)
+
     fallback_existing = sanitize_optimizer_mapping(existing_config_cli)
     if fallback_existing:
         logger.warning(
@@ -540,6 +544,11 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             else:
                 normalized_mode = "manual"
 
+        if normalized_mode in {"auto", "manual", "disabled"}:
+            for key in ("--num_processes", "num_processes"):
+                existing_config_cli.pop(key, None)
+                config_dict.pop(key, None)
+
         if write_process_count:
             cleaned_onboarding["--num_processes"] = max(int(process_count or 1), 1)
         else:
@@ -708,13 +717,28 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         arg_lookup = key if key.startswith("--") else f"--{clean_key}"
         is_required_field = _is_required_field(arg_lookup)
 
-        explicit_override = (
-            arg_lookup in config_dict
-            or clean_key in config_dict
-            or arg_lookup.lstrip("-") in config_dict
-            or clean_key in form_dict
-            or arg_lookup in form_dict
-        )
+        # explicit_override means the user explicitly CHANGED this field in the current form submission.
+        # The frontend sends all fields (via appendConfigValuesToFormData), including unchanged ones,
+        # so we need to compare the normalized value with the saved config value to detect actual changes.
+        # Only fields that were actually modified should be saved even if they match defaults.
+        #
+        # IMPORTANT: Use `value` from complete_config (which is normalized) for comparisons, not raw form_dict,
+        # to ensure we're comparing apples-to-apples after type coercion.
+        explicit_override = False
+        if clean_key in form_dict or arg_lookup in form_dict:
+            # Field is in form submission - check if it was actually changed
+            # Use normalized value from complete_config for comparison
+            saved_value = existing_config_cli.get(arg_lookup) or existing_config_cli.get(key)
+
+            if saved_value is None:
+                # Field wasn't in saved config - check if it differs from default
+                # Only treat as explicit if the user set it to a non-default value
+                default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
+                if value != default_value:
+                    explicit_override = True
+            elif value != saved_value:
+                # Field was in saved config and user changed it
+                explicit_override = True
 
         if save_options.get("preserve_defaults", False) and not is_required_field:
             default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
