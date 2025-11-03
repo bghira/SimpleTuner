@@ -765,8 +765,7 @@ class TrainerPage(BasePage):
                 "return document.body.dataset.trainingActive || 'false';"
             )
             run_disabled = driver.execute_script(
-                "const runBtn=document.getElementById('runBtn');"
-                "return !!(runBtn && runBtn.disabled);"
+                "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && runBtn.disabled);"
             )
             cancel_enabled = driver.execute_script(
                 "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"

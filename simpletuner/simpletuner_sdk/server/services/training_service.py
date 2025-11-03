@@ -506,9 +506,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             process_count = None
 
         normalized_mode = str(accelerate_mode).strip().lower() if accelerate_mode else None
-        if normalized_mode not in {"auto", "manual", "disabled"}:
+        if normalized_mode not in {"auto", "manual", "disabled", "hardware"}:
             normalized_mode = None
 
+        write_process_count = True
         if normalized_mode == "auto":
             gpu_inventory = detect_gpu_inventory()
             process_count = gpu_inventory.get("optimal_processes") or gpu_inventory.get("count") or 1
@@ -526,6 +527,9 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         elif normalized_mode == "disabled":
             process_count = 1
             accelerate_visible_devices = []
+        elif normalized_mode == "hardware":
+            cleaned_onboarding.pop("--num_processes", None)
+            write_process_count = False
         else:
             # Fallback to previously stored value or default to auto-detect count if available
             if not isinstance(process_count, int) or process_count <= 0:
@@ -536,7 +540,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             else:
                 normalized_mode = "manual"
 
-        cleaned_onboarding["--num_processes"] = max(int(process_count or 1), 1)
+        if write_process_count:
+            cleaned_onboarding["--num_processes"] = max(int(process_count or 1), 1)
+        else:
+            cleaned_onboarding.pop("--num_processes", None)
         accelerate_mode = normalized_mode
 
         all_defaults.update({k: v for k, v in cleaned_onboarding.items() if k.startswith("--")})

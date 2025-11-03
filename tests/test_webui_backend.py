@@ -170,6 +170,22 @@ class WebUIStateStoreTests(unittest.TestCase):
         self.assertEqual(loaded.accelerate_overrides.get("manual_count"), 3)
         self.assertEqual(loaded.accelerate_overrides.get("device_ids"), [0, 1, 3])
 
+    def test_accelerate_hardware_mode_discards_num_processes(self) -> None:
+        defaults = WebUIDefaults()
+        defaults.accelerate_overrides = {
+            "mode": "hardware",
+            "--num_processes": "6",
+            "manual_count": "4",
+        }
+
+        self.store.save_defaults(defaults)
+        loaded = self.store.load_defaults()
+
+        self.assertEqual(loaded.accelerate_overrides.get("mode"), "hardware")
+        self.assertNotIn("--num_processes", loaded.accelerate_overrides)
+        # Manual metadata remains so users can switch back without losing previous input
+        self.assertEqual(loaded.accelerate_overrides.get("manual_count"), 4)
+
 
 class WebUIDefaultsUpdateTests(WebUIStateStoreTests):
     def test_update_configs_dir_only_preserves_other_fields(self) -> None:

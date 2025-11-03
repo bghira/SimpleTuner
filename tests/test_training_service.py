@@ -67,6 +67,7 @@ class TrainingServiceTests(unittest.TestCase):
         *,
         stored_config: Optional[Dict[str, Any]] = None,
         defaults: Optional[WebUIDefaults] = None,
+        field_defaults: Optional[Dict[str, Any]] = None,
     ):
         effective_defaults = defaults or WebUIDefaults(accelerate_overrides={"mode": "auto"})
         store = DummyConfigStore(stored_config)
@@ -77,7 +78,7 @@ class TrainingServiceTests(unittest.TestCase):
                 patch.object(
                     training_service,
                     "get_all_field_defaults",
-                    return_value={"--num_processes": 1, "--output_dir": "/base/output"},
+                    return_value=field_defaults or {"--num_processes": 1, "--output_dir": "/base/output"},
                 )
             )
             stack.enter_context(
@@ -229,6 +230,18 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertIsNotNone(value)
         self.assertEqual(int(value), 1)
         self.assertNotIn("accelerate_strategy", bundle.complete_config)
+
+    def test_hardware_mode_delegates_to_field_default(self) -> None:
+        defaults = WebUIDefaults(accelerate_overrides={"mode": "hardware"})
+        bundle = self._build_bundle(
+            {}, defaults=defaults, field_defaults={"--num_processes": 4, "--output_dir": "/base/output"}
+        )
+
+        value = bundle.complete_config.get("--num_processes")
+        self.assertIsNotNone(value)
+        self.assertEqual(int(value), 4)
+        self.assertEqual(bundle.complete_config.get("accelerate_strategy"), "hardware")
+        self.assertNotIn("num_processes", bundle.save_config)
 
     def test_manual_device_selection_sets_visible_devices(self) -> None:
         defaults = WebUIDefaults(
