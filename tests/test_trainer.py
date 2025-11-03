@@ -1274,14 +1274,19 @@ class TestTrainer(unittest.TestCase):
         trainer.model = Mock()
         trainer.config = Mock(
             output_dir="/path/to/output",
-            resume_from_checkpoint=None,
+            resume_from_checkpoint="checkpoint-100",
             num_train_epochs=1,
             ignore_final_epochs=False,
             optimizer="prodigy",
+            lr_scheduler="constant",
+            is_schedulefree=False,
+            learning_rate=0.001,
         )
         trainer.accelerator = Mock(num_processes=1)
         trainer.accelerator.wait_for_everyone = Mock()
-        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
+        trainer.accelerator.load_state = Mock()
+        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1, "global_resume_step": 0}
+        trainer.distiller = None
 
         # Create a mock optimizer with split_groups=True
         mock_inner_optimizer = Mock()
@@ -1311,8 +1316,15 @@ class TestTrainer(unittest.TestCase):
         trainer._emit_event = Mock()
         trainer.job_id = "test-job"
 
-        # This should process all parameter groups when split_groups=True
-        result = trainer.init_resume_checkpoint(lr_scheduler=None)
+        # Mock StateTracker methods
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
+            with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=0):
+                with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
+                    with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}):
+                        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1):
+                            with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"):
+                                # This should process all parameter groups when split_groups=True
+                                result = trainer.init_resume_checkpoint(lr_scheduler=None)
 
         # Verify all parameter groups were processed
         for i, group in enumerate(param_groups):
