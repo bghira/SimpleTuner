@@ -406,32 +406,18 @@ class TrainerPage(BasePage):
         )
 
         selector = self.TAB_SELECTORS.get(tab_name, f"#tab-content #{tab_name}-tab-content")
-        tab_wait = WebDriverWait(self.driver, 25)
+        tab_wait = WebDriverWait(self.driver, 6)
+
         try:
-            self.wait_for_htmx(timeout=15)
+            self.wait_for_htmx(timeout=3)
         except TimeoutException:
             pass
+
         try:
             tab_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
-        except TimeoutException as exc:
-            page_source = ""
-            try:
-                page_source = self.driver.page_source or ""
-            except Exception:
-                page_source = ""
-            if "Loading configuration..." not in page_source:
+        except TimeoutException:
+            if not self._reload_tab_content(tab_name, selector, timeout=6):
                 raise
-            try:
-                response = requests.get(f"{self.base_url}/web/trainer/tabs/{tab_name}", timeout=15)
-                response.raise_for_status()
-            except requests.RequestException:
-                raise exc
-            self.driver.execute_script(
-                "const container = document.querySelector('#tab-content');"
-                "if (container) { container.innerHTML = arguments[0]; }",
-                response.text,
-            )
-            tab_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
 
         if tab_name == "datasets":
             tab_wait.until(
@@ -460,6 +446,34 @@ class TrainerPage(BasePage):
             "const el = document.getElementById('event-list');"
             "if (el) { el.removeAttribute('hx-get'); el.removeAttribute('hx-trigger'); }"
         )
+
+    def _reload_tab_content(self, tab_name: str, selector: str, timeout: float) -> bool:
+        """Force-load tab content if it failed to appear within the fast timeout."""
+        try:
+            page_source = self.driver.page_source or ""
+        except Exception:
+            page_source = ""
+        if "Loading configuration..." not in page_source:
+            return False
+
+        try:
+            response = requests.get(f"{self.base_url}/web/trainer/tabs/{tab_name}", timeout=5)
+            response.raise_for_status()
+        except requests.RequestException:
+            return False
+
+        self.driver.execute_script(
+            "const container = document.querySelector('#tab-content');"
+            "if (container) { container.innerHTML = arguments[0]; }",
+            response.text,
+        )
+
+        WebDriverWait(self.driver, timeout).until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+        try:
+            self.wait_for_htmx(timeout=2)
+        except TimeoutException:
+            pass
+        return True
 
     def _wait_for_trainer_ready(self, tab_name: str = "basic") -> None:
         # Wait for Alpine store to initialise and HTMX to populate the requested tab
@@ -1169,10 +1183,16 @@ class BasicConfigTab(BasePage):
 
     def get_model_name(self):
         """Get the current model name value."""
-        # Wait a moment for the DOM to be ready after tab switches
-        import time
-
-        time.sleep(0.5)
+        # Wait briefly for the field to be attached to the DOM after tab switches
+        try:
+            WebDriverWait(self.driver, 3).until(
+                lambda driver: driver.execute_script(
+                    "const el = document.querySelector(\"input[name='tracker_project_name']\");"
+                    "return !!(el && el.offsetParent !== null);"
+                )
+            )
+        except TimeoutException:
+            pass
 
         # First try to get the value directly from the DOM element
         try:
