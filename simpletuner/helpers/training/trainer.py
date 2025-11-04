@@ -14,8 +14,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import huggingface_hub
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
@@ -71,6 +72,66 @@ from simpletuner.helpers.webhooks.events import (
     training_status_event,
 )
 from simpletuner.simpletuner_sdk.api_state import APIState
+
+
+def _summarize_accelerate_failure(exit_code: int, lines: Sequence[str]) -> tuple[str, Optional[str]]:
+    """Derive a concise failure summary and optional log excerpt from accelerate output."""
+
+    cleaned: List[str] = [line.rstrip("\n") for line in lines]
+    non_empty = [line.strip() for line in cleaned if line and line.strip()]
+
+    best_index: Optional[int] = None
+    best_line: Optional[str] = None
+
+    for idx in range(len(cleaned) - 1, -1, -1):
+        candidate_raw = cleaned[idx].strip()
+        if not candidate_raw:
+            continue
+        lowered = candidate_raw.lower()
+        if "cuda out of memory" in lowered:
+            best_index = idx
+            best_line = candidate_raw
+            break
+        if "runtimeerror" in lowered and "cuda" in lowered:
+            if best_line is None:
+                best_index = idx
+                best_line = candidate_raw
+        if "childfailederror" in lowered:
+            if best_line is None:
+                best_index = idx
+                best_line = candidate_raw
+        if "error" in lowered and ("[error]" in lowered or lowered.startswith("error")):
+            if best_line is None:
+                best_index = idx
+                best_line = candidate_raw
+
+    if best_line is None:
+        for idx in range(len(cleaned) - 1, -1, -1):
+            candidate = cleaned[idx].strip()
+            if candidate:
+                best_index = idx
+                best_line = candidate
+                break
+
+    summary = f"Accelerate launch exited with status {exit_code}"
+    if best_line:
+        summary = f"{summary}: {best_line.strip()}"
+    summary = summary[:512]
+
+    excerpt: Optional[str] = None
+    if best_index is not None:
+        start = max(0, best_index - 5)
+        end = min(len(cleaned), best_index + 6)
+        snippet_lines = [line.strip() for line in cleaned[start:end] if line.strip()]
+        if snippet_lines:
+            excerpt = "\n".join(snippet_lines)
+    elif non_empty:
+        excerpt = "\n".join(non_empty[-10:])
+
+    if excerpt and len(excerpt) > 4000:
+        excerpt = excerpt[-4000:]
+
+    return summary, excerpt
 
 
 def _setup_logger(name: str, *, env_var: str | None = None, default_level: str = "INFO") -> logging.Logger:
@@ -4483,6 +4544,9 @@ def run_trainer_job(config):
         process = subprocess.Popen(cmd, **popen_kwargs)
 
         output_lock = threading.Lock()
+        from collections import deque as _deque
+
+        recent_lines = _deque(maxlen=400)
 
         def _forward_output():
             if not process.stdout:
@@ -4490,6 +4554,7 @@ def run_trainer_job(config):
             for line in iter(process.stdout.readline, ""):
                 if not line:
                     break
+                recent_lines.append(line.rstrip("\n"))
                 with output_lock:
                     try:
                         sys.stdout.write(line)
@@ -4530,7 +4595,25 @@ def run_trainer_job(config):
 
         returncode = process.wait()
         if returncode != 0:
-            raise RuntimeError(f"Accelerate launch exited with status {returncode}")
+            helper = globals().get("_summarize_accelerate_failure")
+            if helper is None:
+
+                def helper(exit_code, lines):
+                    cleaned = [line.rstrip("\n") for line in lines]
+                    excerpt_lines = [line.strip() for line in cleaned[-10:] if line.strip()]
+                    excerpt_text = "\n".join(excerpt_lines) if excerpt_lines else None
+                    summary_text = f"Accelerate launch exited with status {exit_code}"
+                    if excerpt_lines:
+                        summary_text = f"{summary_text}: {excerpt_lines[-1]}"
+                    return summary_text[:512], excerpt_text
+
+            summary, excerpt = helper(returncode, list(recent_lines))
+            launch_error = RuntimeError(summary)
+            if excerpt:
+                setattr(launch_error, "_simpletuner_log_excerpt", excerpt)
+            if recent_lines:
+                setattr(launch_error, "_simpletuner_recent_log_lines", list(recent_lines))
+            raise launch_error
         return returncode
 
     try:
@@ -4545,6 +4628,9 @@ def run_trainer_job(config):
                 message_level="error",
             )
             payload = {"status": "training_failed", "error": str(exc)}
+            excerpt = getattr(exc, "_simpletuner_log_excerpt", None)
+            if excerpt:
+                payload["log_excerpt"] = excerpt
             try:
                 import traceback
 
