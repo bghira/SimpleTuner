@@ -6,10 +6,11 @@ Handles webhook callbacks and event broadcasting.
 import asyncio
 import json
 import logging
+import os
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 try:  # pragma: no cover - optional dependency
@@ -42,6 +43,9 @@ from ..services.sse_manager import get_sse_manager
 logger = logging.getLogger("EventRoutes")
 
 router = APIRouter(prefix="")
+
+BROADCAST_TIMEOUT_ENV_VAR = "SIMPLETUNER_BROADCAST_TIMEOUT_SECONDS"
+DEFAULT_BROADCAST_TIMEOUT = 30.0
 
 
 def _truncate_long_strings(
@@ -107,6 +111,35 @@ def _get_callback_service(request: Request) -> CallbackService:
     return get_default_callback_service()
 
 
+def _resolve_broadcast_timeout(timeout_param: float | None) -> float:
+    """Return timeout value using query parameter or environment override."""
+    if timeout_param is not None:
+        return timeout_param
+
+    env_value = os.environ.get(BROADCAST_TIMEOUT_ENV_VAR)
+    if env_value is not None:
+        try:
+            parsed = float(env_value)
+        except ValueError:
+            logger.warning(
+                "Invalid %s value '%s'; falling back to default %.1f",
+                BROADCAST_TIMEOUT_ENV_VAR,
+                env_value,
+                DEFAULT_BROADCAST_TIMEOUT,
+            )
+        else:
+            if parsed > 0:
+                return parsed
+            logger.warning(
+                "%s must be positive; received '%s'. Using default %.1f",
+                BROADCAST_TIMEOUT_ENV_VAR,
+                env_value,
+                DEFAULT_BROADCAST_TIMEOUT,
+            )
+
+    return DEFAULT_BROADCAST_TIMEOUT
+
+
 @router.post("/callback")
 async def handle_callback(request: Request):
     """
@@ -128,7 +161,14 @@ async def handle_callback(request: Request):
 
 
 @router.get("/broadcast")
-async def broadcast(request: Request, last_event_index: int = 0):
+async def broadcast(
+    request: Request,
+    last_event_index: int = 0,
+    timeout: Annotated[
+        float | None,
+        Query(gt=0.0, description="Maximum time in seconds to wait for new events."),
+    ] = None,
+):
     """
     Endpoint for long polling, where the client requests events newer than the last received index.
     """
@@ -136,7 +176,7 @@ async def broadcast(request: Request, last_event_index: int = 0):
 
     try:
         # Long polling with timeout
-        timeout = 30  # seconds
+        timeout_limit = _resolve_broadcast_timeout(timeout)
         start_time = asyncio.get_event_loop().time()
 
         while True:
@@ -148,12 +188,14 @@ async def broadcast(request: Request, last_event_index: int = 0):
                 return JSONResponse(content={"events": payloads, "next_index": latest_index})
 
             # Check timeout
-            if asyncio.get_event_loop().time() - start_time > timeout:
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > timeout_limit:
                 # Return empty response on timeout
                 return JSONResponse(content={"events": [], "next_index": last_event_index})
 
             # Wait before checking again
-            await asyncio.sleep(1)
+            remaining = max(timeout_limit - elapsed, 0.0)
+            await asyncio.sleep(min(1.0, remaining))
 
     except asyncio.CancelledError:
         # Handle client disconnect
@@ -202,6 +244,27 @@ async def events_stream(request: Request):
                         events = callback_service.stream_since(last_index)
 
                         for event in events:
+                            # Skip events that are already directly broadcast via SSE
+                            # to prevent duplicate delivery to clients
+                            from simpletuner.simpletuner_sdk.server.services.callback_events import EventType
+
+                            should_skip = False
+
+                            # Skip training progress events (broadcast via _broadcast_training_progress)
+                            if event.type == EventType.TRAINING_PROGRESS:
+                                should_skip = True
+
+                            # Skip lifecycle stage events (broadcast via _broadcast_startup_stage)
+                            if event.stage is not None:
+                                should_skip = True
+
+                            if should_skip:
+                                # Update last_index but don't send to client
+                                if event.index is not None:
+                                    last_index = event.index
+                                continue
+
+                            # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
                             await sse_manager.send_to_connection(
                                 connection.connection_id,

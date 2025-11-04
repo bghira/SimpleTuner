@@ -71,6 +71,15 @@ class FieldDependency:
     target_value: Any = None
 
 
+class ParserType(Enum):
+    """Explicit parser type overrides when inference is insufficient."""
+
+    STRING = "string"
+    INTEGER = "integer"
+    FLOAT = "float"
+    BOOLEAN = "boolean"
+
+
 @dataclass
 class ConfigField:
     """Primary configuration field representation."""
@@ -104,3 +113,5 @@ class ConfigField:
     webui_only: bool = False  # True if this field is WebUI-specific and should not be passed to the trainer
     disabled: bool = False
     aliases: Optional[List[str]] = None
+    parser_type: Optional[ParserType] = None
+    allow_empty: bool = False  # True if empty strings should be preserved instead of replaced with default_value

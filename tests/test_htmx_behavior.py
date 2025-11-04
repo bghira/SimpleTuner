@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+import requests
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -232,34 +233,20 @@ class HTMXBehaviourTestCase(WebUITestCase):
 
             with self.subTest("htmx_validation_endpoint"):
                 try:
-                    status = driver.execute_async_script(
-                        """
-                        const done = arguments[0];
-                        const payload = arguments[1];
-                        const params = new URLSearchParams();
-                        Object.entries(payload).forEach(([key, value]) => params.append(key, value));
-                        const controller = new AbortController();
-                        setTimeout(() => controller.abort(), 3000);
-                        fetch(window.location.origin + '/api/training/validate', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                            body: params.toString(),
-                            signal: controller.signal
-                        }).then(resp => done(resp.status)).catch(err => done(String(err)));
-                        """,
-                        {
+                    response = requests.post(
+                        f"{self.base_url}/api/training/validate",
+                        data={
                             "--model_type": "lora",
                             "--model_family": "flux",
                             "--resolution": "1024",
                         },
+                        timeout=15,
                     )
-                except TimeoutException:
-                    self.skipTest("Validation endpoint fetch timed out")
-                    status = None
-                if isinstance(status, str) and "AbortError" in status:
-                    self.skipTest("Validation endpoint fetch aborted")
-                self.assertIsInstance(status, int, f"Validation endpoint returned error: {status}")
-                self.assertLess(status, 500)
+                except requests.RequestException as exc:
+                    self.fail(f"Validation endpoint request failed: {exc}")
+
+                self.assertEqual(response.status_code, 200, f"Unexpected status code: {response.status_code}")
+                self.assertLess(response.status_code, 500)
 
         self.for_each_browser("test_htmx_interactions_suite", scenario)
 

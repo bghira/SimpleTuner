@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_mapping
@@ -23,7 +23,7 @@ from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
-from simpletuner.simpletuner_sdk.server.services.field_registry.types import ValidationRuleType
+from simpletuner.simpletuner_sdk.server.services.field_registry.types import FieldType, ValidationRuleType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
 from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_gpu_inventory
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
@@ -357,6 +357,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     existing_config_cli = ConfigsService._migrate_legacy_keys(existing_config_cli)
 
+    # Normalize existing config values using the same type coercion applied to complete_config.
+    # This ensures comparisons for preserve_defaults work correctly (comparing apples-to-apples).
+    existing_config_cli = ConfigsService.coerce_config_values_by_field(existing_config_cli)
+
     fallback_existing = sanitize_optimizer_mapping(existing_config_cli)
     if fallback_existing:
         logger.warning(
@@ -400,6 +404,44 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             return raw_value.strip() == ""
         return raw_value in (None, [], {})
 
+    cleared_text_fields: Set[str] = set()
+
+    text_field_types = {FieldType.TEXT, FieldType.TEXTAREA, FieldType.FILE, FieldType.PASSWORD}
+    blankable_field_args: Set[str] = set()
+    allow_empty_field_args: Set[str] = set()
+    for registry_field in lazy_field_registry.get_all_fields():
+        field_type = getattr(registry_field, "field_type", None)
+        if field_type not in text_field_types:
+            continue
+        default_value = getattr(registry_field, "default_value", None)
+        allow_empty = getattr(registry_field, "allow_empty", False)
+        arg_name = getattr(registry_field, "arg_name", None) or getattr(registry_field, "name", None)
+        if not arg_name:
+            continue
+        canonical_arg = arg_name if arg_name.startswith("--") else f"--{arg_name}"
+
+        # Fields with allow_empty should preserve empty strings, not be removed
+        if allow_empty:
+            allow_empty_field_args.add(canonical_arg)
+        # Only blankable if no default value OR if default is empty string
+        elif default_value is None or (isinstance(default_value, str) and default_value.strip() == ""):
+            blankable_field_args.add(canonical_arg)
+
+    # These fields are removed completely when cleared (legacy behavior)
+    manual_blankable_fields = {
+        # validation_negative_prompt removed from here - now uses allow_empty=True
+    }
+    blankable_field_args.update(manual_blankable_fields)
+
+    def _register_cleared_field(arg_name: str) -> None:
+        canonical = arg_name if arg_name.startswith("--") else f"--{arg_name.lstrip('-')}"
+        alias = canonical.lstrip("-")
+        cleared_text_fields.add(canonical)
+        variants = {canonical, alias}
+        for key in variants:
+            existing_config_cli.pop(key, None)
+            config_dict.pop(key, None)
+
     if _field_was_cleared("--deepspeed_config"):
         logger.debug("User cleared --deepspeed_config; removing from existing config merge.")
         for variant in ("--deepspeed_config", "deepspeed_config"):
@@ -417,6 +459,26 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         for key in cleared_keys:
             existing_config_cli.pop(key, None)
             config_dict.pop(key, None)
+
+    # Handle fields with allow_empty - preserve as empty string, don't remove
+    for canonical_field in allow_empty_field_args:
+        if _field_was_cleared(canonical_field):
+            logger.debug("User cleared %s (allow_empty field); preserving as empty string.", canonical_field)
+            # Remove from existing config to avoid merge, but keep empty string in config_dict
+            canonical = canonical_field if canonical_field.startswith("--") else f"--{canonical_field.lstrip('-')}"
+            alias = canonical.lstrip("-")
+            variants = {canonical, alias}
+            for key in variants:
+                existing_config_cli.pop(key, None)
+            # Ensure empty string is in config_dict
+            if canonical not in config_dict:
+                config_dict[canonical] = ""
+
+    # Handle regular blankable fields - remove completely
+    for canonical_field in blankable_field_args:
+        if _field_was_cleared(canonical_field):
+            logger.debug("User cleared %s; removing from existing config merge.", canonical_field)
+            _register_cleared_field(canonical_field)
 
     all_defaults = get_all_field_defaults()
 
@@ -470,9 +532,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             process_count = None
 
         normalized_mode = str(accelerate_mode).strip().lower() if accelerate_mode else None
-        if normalized_mode not in {"auto", "manual", "disabled"}:
+        if normalized_mode not in {"auto", "manual", "disabled", "hardware"}:
             normalized_mode = None
 
+        write_process_count = True
         if normalized_mode == "auto":
             gpu_inventory = detect_gpu_inventory()
             process_count = gpu_inventory.get("optimal_processes") or gpu_inventory.get("count") or 1
@@ -490,6 +553,9 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         elif normalized_mode == "disabled":
             process_count = 1
             accelerate_visible_devices = []
+        elif normalized_mode == "hardware":
+            cleaned_onboarding.pop("--num_processes", None)
+            write_process_count = False
         else:
             # Fallback to previously stored value or default to auto-detect count if available
             if not isinstance(process_count, int) or process_count <= 0:
@@ -500,7 +566,15 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             else:
                 normalized_mode = "manual"
 
-        cleaned_onboarding["--num_processes"] = max(int(process_count or 1), 1)
+        if normalized_mode in {"auto", "manual", "disabled"}:
+            for key in ("--num_processes", "num_processes"):
+                existing_config_cli.pop(key, None)
+                config_dict.pop(key, None)
+
+        if write_process_count:
+            cleaned_onboarding["--num_processes"] = max(int(process_count or 1), 1)
+        else:
+            cleaned_onboarding.pop("--num_processes", None)
         accelerate_mode = normalized_mode
 
         all_defaults.update({k: v for k, v in cleaned_onboarding.items() if k.startswith("--")})
@@ -509,6 +583,12 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     else:
         logger.debug("Skipping merge of active environment defaults at user request")
         base_config = dict(all_defaults)
+
+    if cleared_text_fields:
+        for canonical in cleared_text_fields:
+            alias = canonical.lstrip("-")
+            base_config.pop(canonical, None)
+            base_config.pop(alias, None)
 
     selected_family = (
         config_dict.get("--model_family")
@@ -659,13 +739,28 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         arg_lookup = key if key.startswith("--") else f"--{clean_key}"
         is_required_field = _is_required_field(arg_lookup)
 
-        explicit_override = (
-            arg_lookup in config_dict
-            or clean_key in config_dict
-            or arg_lookup.lstrip("-") in config_dict
-            or clean_key in form_dict
-            or arg_lookup in form_dict
-        )
+        # explicit_override means the user explicitly CHANGED this field in the current form submission.
+        # The frontend sends all fields (via appendConfigValuesToFormData), including unchanged ones,
+        # so we need to compare the normalized value with the saved config value to detect actual changes.
+        # Only fields that were actually modified should be saved even if they match defaults.
+        #
+        # IMPORTANT: Use `value` from complete_config (which is normalized) for comparisons, not raw form_dict,
+        # to ensure we're comparing apples-to-apples after type coercion.
+        explicit_override = False
+        if clean_key in form_dict or arg_lookup in form_dict:
+            # Field is in form submission - check if it was actually changed
+            # Use normalized value from complete_config for comparison
+            saved_value = existing_config_cli.get(arg_lookup) or existing_config_cli.get(key)
+
+            if saved_value is None:
+                # Field wasn't in saved config - check if it differs from default
+                # Only treat as explicit if the user set it to a non-default value
+                default_value = all_defaults.get(arg_lookup, all_defaults.get(key))
+                if value != default_value:
+                    explicit_override = True
+            elif value != saved_value:
+                # Field was in saved config and user changed it
+                explicit_override = True
 
         if save_options.get("preserve_defaults", False) and not is_required_field:
             default_value = all_defaults.get(arg_lookup, all_defaults.get(key))

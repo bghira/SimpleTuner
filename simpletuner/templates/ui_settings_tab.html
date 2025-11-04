@@ -82,8 +82,9 @@ if (!window.uiSettingsTabComponent) {
                 const numProcesses = typeof clone['--num_processes'] === 'number'
                     ? clone['--num_processes']
                     : parseInt(clone['--num_processes'], 10);
+                const validModes = ['auto', 'manual', 'disabled', 'hardware'];
                 let mode = typeof clone.mode === 'string' ? clone.mode.trim().toLowerCase() : undefined;
-                if (!['auto', 'manual', 'disabled'].includes(mode || '')) {
+                if (!validModes.includes(mode || '')) {
                     if (deviceIds.length > 1) {
                         mode = 'manual';
                     } else if (Number.isFinite(numProcesses) && numProcesses > 1) {
@@ -94,11 +95,20 @@ if (!window.uiSettingsTabComponent) {
                         mode = 'auto';
                     }
                 }
+                const normalizedMode = validModes.includes(mode || '') ? mode : 'auto';
                 return {
-                    mode: mode || 'auto',
-                    manual_count: Number.isFinite(manualCount) && manualCount > 0 ? manualCount : null,
+                    mode: normalizedMode || 'auto',
+                    manual_count:
+                        normalizedMode === 'manual' && Number.isFinite(manualCount) && manualCount > 0
+                            ? manualCount
+                            : null,
                     device_ids: deviceIds,
-                    '--num_processes': Number.isFinite(numProcesses) && numProcesses > 0 ? numProcesses : null,
+                    '--num_processes':
+                        normalizedMode === 'hardware'
+                            ? null
+                            : Number.isFinite(numProcesses) && numProcesses > 0
+                                ? numProcesses
+                                : null,
                 };
             },
             prepareAccelerateState(rawValue) {
@@ -330,6 +340,8 @@ if (!window.uiSettingsTabComponent) {
                 if (mode === 'disabled') {
                     this.settings.accelerate.deviceIds = [];
                     this.settings.accelerate.manualCount = 1;
+                } else if (mode === 'hardware') {
+                    this.settings.accelerate.deviceIds = [];
                 } else {
                     this.ensureGpuInventory();
                 }
@@ -358,6 +370,9 @@ if (!window.uiSettingsTabComponent) {
                 if (mode === 'manual') {
                     return `Will launch ${accelerateState.manualCount} process${accelerateState.manualCount === 1 ? '' : 'es'} by default.`;
                 }
+                if (mode === 'hardware') {
+                    return 'Hardware tab controls the Accelerate process count.';
+                }
                 if (mode === 'disabled') {
                     return 'SimpleTuner will restrict Accelerate to a single GPU.';
                 }
@@ -367,6 +382,8 @@ if (!window.uiSettingsTabComponent) {
             serializeAccelerateSettings() {
                 const state = this.settings.accelerate || {};
                 const mode = (state.mode || 'auto').toLowerCase();
+                const validModes = ['auto', 'manual', 'disabled', 'hardware'];
+                const normalizedMode = validModes.includes(mode) ? mode : 'auto';
                 const uniqueDeviceIds = Array.isArray(state.deviceIds)
                     ? Array.from(new Set(
                         state.deviceIds
@@ -381,12 +398,16 @@ if (!window.uiSettingsTabComponent) {
                 const hasManualCount = Number.isFinite(manualCountParsed) && manualCountParsed > 0;
                 const manualCount = hasManualCount ? manualCountParsed : null;
 
+                if (normalizedMode === 'hardware') {
+                    return { mode: 'hardware' };
+                }
+
                 let numProcesses;
-                if (mode === 'disabled') {
+                if (normalizedMode === 'disabled') {
                     numProcesses = 1;
-                } else if (mode === 'auto') {
+                } else if (normalizedMode === 'auto') {
                     numProcesses = this.gpuInventory.optimalProcesses || this.gpuInventory.count || manualCount || 1;
-                } else if (mode === 'manual') {
+                } else if (normalizedMode === 'manual') {
                     if (uniqueDeviceIds.length > 0) {
                         numProcesses = uniqueDeviceIds.length;
                     } else if (manualCount) {
@@ -401,12 +422,12 @@ if (!window.uiSettingsTabComponent) {
 
                 const normalizedProcesses = Math.max(1, parseInt(numProcesses, 10) || 1);
                 const payload = {
-                    mode: mode === 'manual' ? 'manual' : mode === 'disabled' ? 'disabled' : 'auto',
+                    mode: normalizedMode === 'manual' ? 'manual' : normalizedMode === 'disabled' ? 'disabled' : 'auto',
                     '--num_processes': normalizedProcesses,
                 };
-                if (mode === 'manual' && uniqueDeviceIds.length > 0) {
+                if (normalizedMode === 'manual' && uniqueDeviceIds.length > 0) {
                     payload.device_ids = uniqueDeviceIds;
-                } else if (mode === 'manual' && manualCount) {
+                } else if (normalizedMode === 'manual' && manualCount) {
                     payload.manual_count = Math.max(1, manualCount);
                 }
                 return payload;
@@ -685,6 +706,19 @@ if (!window.uiSettingsTabComponent) {
                                        @change="setAccelerateMode('manual')">
                                 <label class="form-check-label" for="ui-accelerate-mode-manual">
                                     Choose GPUs manually
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input"
+                                       type="radio"
+                                       id="ui-accelerate-mode-hardware"
+                                       value="hardware"
+                                       name="ui-accelerate-mode"
+                                       :checked="settings.accelerate.mode === 'hardware'"
+                                       @change="setAccelerateMode('hardware')">
+                                <label class="form-check-label" for="ui-accelerate-mode-hardware">
+                                    Use num_processes from Hardware tab
+                                    <span class="text-muted d-block small">Trainer Hardware > Accelerate settings control the launch count.</span>
                                 </label>
                             </div>
                         </div>

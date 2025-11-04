@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import time
 import unittest
 
+import requests
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -46,8 +49,28 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertIsNotNone(toast_message)
             self.assertTrue("saved" in toast_message.lower() or "success" in toast_message.lower())
 
-            driver.refresh()
             trainer_page.wait_for_htmx()
+
+            active_env = (
+                driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "return store && store.activeEnvironment ? store.activeEnvironment : 'default';"
+                )
+                or "default"
+            )
+
+            config_response = requests.get(f"{self.base_url}/api/configs/{active_env}", timeout=5)
+            config_response.raise_for_status()
+            config_payload = config_response.json()
+            config_body = config_payload.get("config") if isinstance(config_payload, dict) else {}
+            self.assertEqual(config_body.get("--output_dir"), "/test/output")
+
+            state_response = requests.get(f"{self.base_url}/api/webui/state", timeout=5)
+            state_response.raise_for_status()
+            state_payload = state_response.json()
+            defaults = state_payload.get("defaults") if isinstance(state_payload, dict) else {}
+            self.assertEqual(defaults.get("configs_dir"), str(self.config_dir))
+            self.assertEqual(defaults.get("output_dir"), "/test/output")
 
             self.assertEqual(basic_tab.get_configs_dir(), str(self.config_dir))
             self.assertEqual(basic_tab.get_output_dir(), "/test/output")
@@ -169,6 +192,106 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_form_fields_maintain_independent_values", scenario)
 
+    def test_config_json_modal_reflects_blank_fields(self) -> None:
+        """Ensure the Config JSON modal reflects cleared text fields after saving."""
+
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            basic_tab = BasicConfigTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.wait_for_tab("basic")
+
+            def refresh_active_config() -> bool:
+                return driver.execute_async_script(
+                    "const done = arguments[0];"
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (!store || typeof store.fetchActiveEnvironmentConfig !== 'function') { done(false); return; }"
+                    "try {"
+                    "  const result = store.fetchActiveEnvironmentConfig();"
+                    "  if (result && typeof result.then === 'function') {"
+                    "    result.then(() => done(true)).catch(() => done(false));"
+                    "  } else {"
+                    "    done(true);"
+                    "  }"
+                    "} catch (err) {"
+                    "  console.error('refresh_active_config failed', err);"
+                    "  done(false);"
+                    "}"
+                )
+
+            config_path = self.config_dir / "test-config" / "config.json"
+            disk_payload_initial = json.loads(config_path.read_text(encoding="utf-8"))
+
+            trainer_page.open_config_json_modal()
+            try:
+                driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "if (store && typeof store.resetConfigJsonDraft === 'function') {"
+                    "  store.resetConfigJsonDraft();"
+                    "}"
+                )
+                time.sleep(0.05)
+                modal_initial = json.loads(trainer_page.get_config_json_text() or "{}")
+            finally:
+                trainer_page.close_config_json_modal()
+
+            self.assertTrue(
+                "pretrained_model_name_or_path" in disk_payload_initial
+                or "--pretrained_model_name_or_path" in disk_payload_initial
+            )
+            self.assertIn("pretrained_model_name_or_path", modal_initial)
+
+            def read_modal_payload():
+                trainer_page.open_config_json_modal()
+                try:
+                    driver.execute_script(
+                        "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                        "if (store && typeof store.resetConfigJsonDraft === 'function') {"
+                        "  store.resetConfigJsonDraft();"
+                        "}"
+                    )
+                    time.sleep(0.05)
+                    text = trainer_page.get_config_json_text()
+                finally:
+                    trainer_page.close_config_json_modal()
+                return json.loads(text or "{}")
+
+            first_payload = read_modal_payload()
+            self.assertIn("pretrained_model_name_or_path", first_payload)
+
+            basic_tab.set_base_model("")
+            basic_tab.save_changes()
+            trainer_page.wait_for_htmx()
+            self.assertTrue(refresh_active_config(), "Failed to refresh active environment config after clearing field")
+
+            disk_payload = {}
+            for _ in range(12):
+                disk_payload = json.loads(config_path.read_text(encoding="utf-8"))
+                if (
+                    "pretrained_model_name_or_path" not in disk_payload
+                    and "--pretrained_model_name_or_path" not in disk_payload
+                ):
+                    break
+                time.sleep(0.5)
+            self.assertFalse(
+                "pretrained_model_name_or_path" in disk_payload or "--pretrained_model_name_or_path" in disk_payload,
+            )
+
+            second_payload = {}
+            for _ in range(12):
+                second_payload = read_modal_payload()
+                if "pretrained_model_name_or_path" not in second_payload:
+                    break
+                time.sleep(0.5)
+
+            self.assertNotIn("pretrained_model_name_or_path", second_payload)
+
+        self.for_each_browser("test_config_json_modal_reflects_blank_fields", scenario)
+
 
 class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test configuring and starting training."""
@@ -229,16 +352,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
 
             trainer_page.start_training()
 
-            WebDriverWait(driver, 5).until(
-                lambda d: d.execute_script(
-                    "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && runBtn.disabled);"
-                )
-            )
-            WebDriverWait(driver, 5).until(
-                lambda d: d.execute_script(
-                    "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"
-                )
-            )
+            trainer_page.wait_for_training_active(timeout=10)
 
             WebDriverWait(driver, 5).until(
                 lambda d: bool(d.execute_script("return !!window.__simpletunerTestCallbackHook;"))
@@ -301,6 +415,8 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 "return el ? (el.textContent || '').toLowerCase() : '';"
             )
             self.assertNotIn("running", status_text)
+
+            trainer_page.wait_for_training_inactive(timeout=10)
 
         self.for_each_browser("test_training_failure_updates_ui_state", scenario)
 

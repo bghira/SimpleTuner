@@ -34,6 +34,17 @@ def install_peft_stub():
 
 
 def install_diffusers_stub():
+    # If real diffusers is already loaded, don't replace it with stubs
+    if (
+        "diffusers" in sys.modules
+        and hasattr(sys.modules.get("diffusers"), "__file__")
+        and "diffusers.configuration_utils" in sys.modules
+        and hasattr(sys.modules.get("diffusers.configuration_utils", object()), "ConfigMixin")
+        and hasattr(sys.modules["diffusers.configuration_utils"].ConfigMixin, "register_to_config")
+    ):
+        # Real diffusers is loaded, don't install stubs
+        return
+
     diffusers_module = _ensure_module("diffusers")
 
     class _StubPipeline:

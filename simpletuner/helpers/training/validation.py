@@ -4,8 +4,9 @@ import logging
 import os
 import sys
 from contextlib import contextmanager
+from dataclasses import dataclass
 from io import BytesIO
-from typing import Union
+from typing import Any, Union
 
 import diffusers
 import numpy as np
@@ -15,6 +16,13 @@ from tqdm import tqdm
 import wandb
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.wrappers import unwrap_model
+
+try:
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    FSDP_AVAILABLE = True
+except ImportError:
+    FSDP_AVAILABLE = False
 
 try:
     import pillow_jxl
@@ -47,7 +55,7 @@ from simpletuner.helpers.training.validation_adapters import (
 )
 
 logger = logging.getLogger("Validation")
-from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.multi_process import gather_across_processes, should_log, split_across_processes
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -731,6 +739,14 @@ def _stitch_single_pair(left_image, right_image, separator_width=5, labels=None)
     return new_image
 
 
+@dataclass(frozen=True)
+class _ValidationWorkItem:
+    index: int
+    shortname: str
+    prompt: str
+    conditioning: Any
+
+
 class Validation:
     def __init__(
         self,
@@ -775,7 +791,14 @@ class Validation:
         self.ema_enabled = False
         self.deepfloyd = True if "deepfloyd" in self.config.model_family else False
         self.deepfloyd_stage2 = True if str(self.config.model_flavour).startswith("ii-") else False
-        self._discover_validation_input_samples()
+        preset_validation_inputs = None
+        if isinstance(self.validation_prompt_metadata, dict):
+            preset_validation_inputs = self.validation_prompt_metadata.get("validation_sample_images")
+        if preset_validation_inputs:
+            self.validation_image_inputs = [_normalise_validation_sample(sample) for sample in preset_validation_inputs]
+            logger.debug(f"Loaded {len(self.validation_image_inputs)} validation image inputs from metadata.")
+        else:
+            self._discover_validation_input_samples()
         self.validation_resolutions = get_validation_resolutions() if not self.deepfloyd_stage2 else [(256, 256)]
         self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.deepspeed = is_deepspeed
@@ -804,6 +827,21 @@ class Validation:
             adapter_mode=getattr(args, "validation_adapter_mode", None),
         )
         self._active_adapter_run: ValidationAdapterRun | None = None
+
+    def _validation_multigpu_mode(self) -> str:
+        """
+        Return the requested validation multi-GPU behaviour while accounting for single-process runs.
+        """
+        raw_mode = getattr(self.config, "validation_multigpu", "batch-parallel")
+        mode = str(raw_mode).strip().lower() if raw_mode is not None else "batch-parallel"
+        if mode not in {"single-gpu", "batch-parallel"}:
+            mode = "single-gpu"
+        if getattr(self.accelerator, "num_processes", 1) <= 1:
+            return "single-gpu"
+        return mode
+
+    def _use_distributed_validation(self) -> bool:
+        return self._validation_multigpu_mode() == "batch-parallel"
 
     def _validation_seed_source(self):
         if self.config.validation_seed_source == "gpu":
@@ -1159,19 +1197,21 @@ class Validation:
             # This is useful at the end of training so we don't validate 2x.
             logger.debug("Not running validation because intermediary might have already fired off.")
             return self
-        if StateTracker.get_webhook_handler() is not None:
-            StateTracker.get_webhook_handler().send(
+        webhook_handler = StateTracker.get_webhook_handler()
+        if webhook_handler is not None and (self.accelerator.is_main_process or not self._use_distributed_validation()):
+            webhook_handler.send(
                 message="Validations are generating.. this might take a minute! 🖼️",
                 message_level="info",
             )
-            StateTracker.get_webhook_handler().send_lifecycle_stage(
+            webhook_handler.send_lifecycle_stage(
                 stage_key="validation",
                 stage_label="Running Validation",
                 stage_status="running",
                 message="Validation is starting.",
             )
 
-        if self.accelerator.is_main_process or self.deepspeed:
+        should_execute_locally = self.accelerator.is_main_process or self.deepspeed or self._use_distributed_validation()
+        if should_execute_locally:
             logger.debug("Starting validation process...")
             diffusers.utils.logging._tqdm_active = False
             self.setup_pipeline(validation_type)
@@ -1197,8 +1237,8 @@ class Validation:
             if self.evaluation_result is not None:
                 logger.info(f"Evaluation result: {self.evaluation_result}")
             logger.debug("Validation process completed.")
-            if StateTracker.get_webhook_handler() is not None:
-                StateTracker.get_webhook_handler().send_lifecycle_stage(
+            if webhook_handler is not None and (self.accelerator.is_main_process or not self._use_distributed_validation()):
+                webhook_handler.send_lifecycle_stage(
                     stage_key="validation",
                     stage_label="Running Validation",
                     stage_status="completed",
@@ -1284,6 +1324,8 @@ class Validation:
         if self.model.PREDICTION_TYPE.value == "flow_matching":
             # some flow-matching adjustments should be made for euler and unipc video model generations.
             if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
+                if self.config.validation_noise_scheduler == "euler":
+                    self.config.validation_noise_scheduler = "flow_matching"
                 # The Beta schedule looks WAY better...
                 if not self.model.pipeline.scheduler.config.get("use_karras_sigmas", False):
                     scheduler_args["use_beta_sigmas"] = True
@@ -1348,7 +1390,16 @@ class Validation:
             te = getattr(self.model.pipeline, attr, None)
             if getattr(te, "device", None) and te.device.type == "meta":
                 setattr(self.model.pipeline, attr, None)
-        self.model.pipeline.to(self.accelerator.device)
+
+        # For FSDP models, skip .to() call - DTensor parameters are already device-aware
+        # and calling .to() causes: "RuntimeError: Attempted to set the storage of a tensor
+        # on device 'cpu' to a storage on different device 'cuda:0'"
+        pipeline_model = getattr(self.model.pipeline, self.model.MODEL_TYPE.value, None)
+        is_fsdp = FSDP_AVAILABLE and pipeline_model is not None and isinstance(pipeline_model, FSDP)
+
+        if not is_fsdp:
+            self.model.pipeline.to(self.accelerator.device)
+
         self.model.pipeline.set_progress_bar_config(disable=True)
 
     def clean_pipeline(self):
@@ -1484,6 +1535,143 @@ class Validation:
                 "Please ensure your pipeline supports adapter removal."
             )
 
+    def _prepare_validation_work_items(self, content: list[Any] | None) -> list[_ValidationWorkItem]:
+        if content is None:
+            return []
+        metadata_shortnames = []
+        if isinstance(self.validation_prompt_metadata, dict):
+            metadata_shortnames = self.validation_prompt_metadata.get("validation_shortnames", []) or []
+        work_items: list[_ValidationWorkItem] = []
+        for idx, entry in enumerate(content):
+            prompt_text: Any = entry
+            conditioning: Any = None
+            shortname: str | None = None
+            if isinstance(entry, tuple):
+                if len(entry) == 3 and isinstance(entry[2], list):
+                    shortname, prompt_text, conditioning = entry
+                    if isinstance(conditioning, list) and len(conditioning) == 1:
+                        conditioning = conditioning[0]
+                elif len(entry) == 3 and isinstance(entry[2], Image.Image):
+                    shortname, prompt_text, conditioning = entry
+                elif len(entry) == 4 and isinstance(entry[3], Image.Image):
+                    shortname, prompt_text, _, conditioning = entry
+                else:
+                    candidate_shortname = entry[0] if len(entry) > 0 else None
+                    candidate_prompt = entry[1] if len(entry) > 1 else prompt_text
+                    shortname = candidate_shortname if isinstance(candidate_shortname, str) else None
+                    prompt_text = candidate_prompt
+            if shortname is None:
+                if idx < len(metadata_shortnames):
+                    shortname = metadata_shortnames[idx]
+                else:
+                    shortname = f"validation_{idx}"
+            if not isinstance(prompt_text, str):
+                prompt_text = str(prompt_text)
+            work_items.append(
+                _ValidationWorkItem(
+                    index=idx,
+                    shortname=shortname,
+                    prompt=prompt_text,
+                    conditioning=conditioning,
+                )
+            )
+        return work_items
+
+    @staticmethod
+    def _serialise_media(media: Any):
+        if media is None:
+            return {"type": "none"}
+        if isinstance(media, list):
+            return {
+                "type": "sequence",
+                "items": [Validation._serialise_media(item) for item in media],
+            }
+        if not isinstance(media, Image.Image):
+            coerced = _coerce_validation_image_input(media)
+            if isinstance(coerced, Image.Image):
+                media = coerced
+            else:
+                raise TypeError(f"Unsupported media type for validation serialisation: {type(media)}")
+        buffer = BytesIO()
+        media.save(buffer, format="PNG")
+        return {
+            "type": "image",
+            "data": buffer.getvalue(),
+        }
+
+    @staticmethod
+    def _serialise_media_list(media_list: list[Any]) -> list[Any]:
+        return [Validation._serialise_media(item) for item in media_list or []]
+
+    @staticmethod
+    def _deserialise_media(serialised: Any):
+        if serialised is None:
+            return None
+        media_type = serialised.get("type")
+        if media_type == "none":
+            return None
+        if media_type == "sequence":
+            return [Validation._deserialise_media(item) for item in serialised.get("items", [])]
+        if media_type == "image":
+            data = serialised.get("data", b"")
+            with BytesIO(data) as buffer:
+                with Image.open(buffer) as image:
+                    image.load()
+                    return image.copy()
+        raise ValueError(f"Unknown media type '{media_type}' in serialised validation payload.")
+
+    @staticmethod
+    def _deserialise_media_list(serialised_list: list[Any]) -> list[Any]:
+        return [Validation._deserialise_media(item) for item in serialised_list or []]
+
+    def _execute_validation_work_item(
+        self,
+        item: _ValidationWorkItem,
+        *,
+        decorated_shortname: str,
+        validation_type: str | None,
+    ) -> dict[str, Any]:
+        (
+            stitched_validation_images,
+            checkpoint_validation_images,
+            _ema_validation_images,
+        ) = self.validate_prompt(
+            item.prompt,
+            decorated_shortname,
+            item.conditioning,
+            validation_type,
+        )
+        return {
+            "index": item.index,
+            "shortname": item.shortname,
+            "decorated_shortname": decorated_shortname,
+            "prompt": item.prompt,
+            "stitched": self._serialise_media_list(stitched_validation_images.get(decorated_shortname, [])),
+            "checkpoint": self._serialise_media_list(checkpoint_validation_images.get(decorated_shortname, [])),
+        }
+
+    def _apply_serialised_validation_result(
+        self,
+        *,
+        payload: dict[str, Any],
+        validation_images: dict,
+        validation_type: str | None,
+    ) -> None:
+        decorated_shortname: str = payload["decorated_shortname"]
+        prompt: str = payload["prompt"]
+        stitched_results = self._deserialise_media_list(payload.get("stitched", []))
+        checkpoint_results = self._deserialise_media_list(payload.get("checkpoint", []))
+        self.validation_prompt_dict[decorated_shortname] = prompt
+        logger.debug(f"Completed generating image: {prompt}")
+        validation_images.setdefault(decorated_shortname, []).extend(stitched_results)
+        if isinstance(self.model, VideoModelFoundation):
+            self._save_videos(validation_images, decorated_shortname, prompt)
+        else:
+            self._save_images(validation_images, decorated_shortname, prompt)
+        checkpoint_payload = {decorated_shortname: checkpoint_results}
+        self.evaluation_result = self.evaluate_images(checkpoint_payload)
+        self._log_validations_to_webhook(validation_images, decorated_shortname, prompt)
+
     def process_prompts(
         self,
         validation_type: str = None,
@@ -1495,7 +1683,7 @@ class Validation:
         if self.validation_prompt_dict is None:
             self.validation_prompt_dict = {}
         validation_images = image_accumulator if image_accumulator is not None else {}
-        _content = self.validation_prompt_metadata["validation_prompts"]
+        _content = self.validation_prompt_metadata.get("validation_prompts", []) if self.validation_prompt_metadata else []
         total_samples = len(_content) if _content is not None else 0
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
@@ -1507,59 +1695,64 @@ class Validation:
             total_samples = len(_content) if _content is not None else 0
 
         logger.debug(f"Processing content: {_content}")
-        idx = 0
-        for prompt in tqdm(
-            _content if _content else [],
+        if total_samples == 0:
+            logger.debug("No validation prompts to process.")
+            return
+
+        work_items = self._prepare_validation_work_items(_content)
+        use_distributed = self._use_distributed_validation()
+        local_work_items = split_across_processes(self.accelerator, work_items) if use_distributed else work_items
+        logger.debug(
+            f"Processing {len(local_work_items)} local validation work items "
+            f"(distributed_mode={use_distributed}, total={len(work_items)})"
+        )
+        progress_disable = use_distributed and not self.accelerator.is_main_process
+        local_payloads: list[dict[str, Any]] = []
+        for item in tqdm(
+            local_work_items,
             desc="Processing validation prompts",
-            total=total_samples,
+            total=len(local_work_items),
             leave=False,
             position=1,
+            disable=progress_disable,
         ):
-            validation_input_image = None
-            if len(prompt) == 3 and isinstance(prompt[2], list):
-                # list of conditioning inputs
-                shortname, prompt, validation_input_image = prompt
-                if len(validation_input_image) == 1:
-                    # for simplicity, we'll assume pipelines appreciate singletons.
-                    validation_input_image = validation_input_image[0]
-            elif len(prompt) == 3 and isinstance(prompt[2], Image.Image):
-                # DeepFloyd stage II inputs.
-                shortname, prompt, validation_input_image = prompt
-            elif len(prompt) == 4 and isinstance(prompt[3], Image.Image):
-                (
-                    shortname,
-                    prompt,
-                    validation_input_image_path,
-                    validation_input_image,
-                ) = prompt
-            else:
-                shortname = self.validation_prompt_metadata["validation_shortnames"][idx]
-            decorated_shortname = self._decorate_shortname(shortname, adapter_run)
-            logger.debug(f"validation prompt (shortname={decorated_shortname}): '{prompt}'")
-            self.validation_prompt_dict[decorated_shortname] = prompt
-            logger.debug(f"Processing validation for prompt: {prompt}")
-            (
-                stitched_validation_images,
-                checkpoint_validation_images,
-                ema_validation_images,
-            ) = self.validate_prompt(prompt, decorated_shortname, validation_input_image, validation_type)
-            validation_images.update(stitched_validation_images)
-            if isinstance(self.model, VideoModelFoundation):
-                self._save_videos(validation_images, decorated_shortname, prompt)
-            else:
-                self._save_images(validation_images, decorated_shortname, prompt)
-            logger.debug(f"Completed generating image: {prompt}")
-            self.validation_images = validation_images
-            self.evaluation_result = self.evaluate_images(checkpoint_validation_images)
-            self._log_validations_to_webhook(validation_images, decorated_shortname, prompt)
-            idx += 1
-        try:
-            self._log_validations_to_trackers(validation_images)
-        except Exception as e:
-            logger.error(f"Error logging validation images: {e}")
-            import traceback
+            decorated_shortname = self._decorate_shortname(item.shortname, adapter_run)
+            self.validation_prompt_dict[decorated_shortname] = item.prompt
+            logger.debug(f"validation prompt (shortname={decorated_shortname}): '{item.prompt}'")
+            logger.debug(f"Processing validation for prompt: {item.prompt}")
+            payload = self._execute_validation_work_item(
+                item=item,
+                decorated_shortname=decorated_shortname,
+                validation_type=validation_type,
+            )
+            local_payloads.append(payload)
 
-            logger.error(traceback.format_exc())
+        if use_distributed:
+            gathered_payloads = gather_across_processes(local_payloads)
+            if not self.accelerator.is_main_process:
+                return
+            aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
+        else:
+            aggregated_payloads = local_payloads
+
+        aggregated_payloads.sort(key=lambda payload: payload["index"])
+        for payload in aggregated_payloads:
+            self._apply_serialised_validation_result(
+                payload=payload,
+                validation_images=validation_images,
+                validation_type=validation_type,
+            )
+        self.validation_images = validation_images
+        if not use_distributed or self.accelerator.is_main_process:
+            try:
+                self._log_validations_to_trackers(validation_images)
+            except Exception as e:
+                logger.error(f"Error logging validation images: {e}")
+                import traceback
+
+                logger.error(traceback.format_exc())
+            else:
+                logger.debug("Validation tracker update complete.")
 
     def get_eval_result(self):
         return self.evaluation_result or {}

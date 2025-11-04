@@ -1,5 +1,6 @@
 """Page object for Trainer page."""
 
+import requests
 from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
@@ -39,6 +40,11 @@ class TrainerPage(BasePage):
     ADVANCED_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='advanced']")
     DATASETS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='datasets']")
     ENVIRONMENTS_TAB = (By.CSS_SELECTOR, ".tab-btn[data-tab='environments']")
+
+    CONFIG_JSON_BUTTON = (By.CSS_SELECTOR, "button[title='View and edit the composed training JSON']")
+    CONFIG_JSON_MODAL = (By.CSS_SELECTOR, ".config-json-modal")
+    CONFIG_JSON_TEXTAREA = (By.CSS_SELECTOR, ".config-json-modal textarea")
+    CONFIG_JSON_CLOSE_BUTTON = (By.CSS_SELECTOR, ".config-json-modal button[title='Close']")
 
     # Status indicators
     TRAINING_STATUS_CONTAINER = (By.ID, "training-status")
@@ -400,28 +406,35 @@ class TrainerPage(BasePage):
         )
 
         selector = self.TAB_SELECTORS.get(tab_name, f"#tab-content #{tab_name}-tab-content")
+        tab_wait = WebDriverWait(self.driver, 6)
+
         try:
-            self.wait_for_htmx()
+            self.wait_for_htmx(timeout=3)
         except TimeoutException:
             pass
-        self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+
+        try:
+            tab_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+        except TimeoutException:
+            if not self._reload_tab_content(tab_name, selector, timeout=6):
+                raise
 
         if tab_name == "datasets":
-            self.wait.until(
+            tab_wait.until(
                 lambda driver: driver.execute_script(
                     "const el = document.querySelector('#tab-content #datasets-tab-content');"
                     "return !!(el && el.offsetParent !== null);"
                 )
             )
         elif tab_name == "environments":
-            self.wait.until(
+            tab_wait.until(
                 lambda driver: driver.execute_script(
                     "const el = document.querySelector('#tab-content #environments-tab-content');"
                     "return !!(el && el.offsetParent !== null);"
                 )
             )
         else:
-            self.wait.until(
+            tab_wait.until(
                 lambda driver: driver.execute_script(
                     "const el = document.querySelector(arguments[0]);" "return !!(el && el.offsetParent !== null);",
                     selector,
@@ -433,6 +446,34 @@ class TrainerPage(BasePage):
             "const el = document.getElementById('event-list');"
             "if (el) { el.removeAttribute('hx-get'); el.removeAttribute('hx-trigger'); }"
         )
+
+    def _reload_tab_content(self, tab_name: str, selector: str, timeout: float) -> bool:
+        """Force-load tab content if it failed to appear within the fast timeout."""
+        try:
+            page_source = self.driver.page_source or ""
+        except Exception:
+            page_source = ""
+        if "Loading configuration..." not in page_source:
+            return False
+
+        try:
+            response = requests.get(f"{self.base_url}/web/trainer/tabs/{tab_name}", timeout=5)
+            response.raise_for_status()
+        except requests.RequestException:
+            return False
+
+        self.driver.execute_script(
+            "const container = document.querySelector('#tab-content');"
+            "if (container) { container.innerHTML = arguments[0]; }",
+            response.text,
+        )
+
+        WebDriverWait(self.driver, timeout).until(EC.presence_of_element_located((By.CSS_SELECTOR, selector)))
+        try:
+            self.wait_for_htmx(timeout=2)
+        except TimeoutException:
+            pass
+        return True
 
     def _wait_for_trainer_ready(self, tab_name: str = "basic") -> None:
         # Wait for Alpine store to initialise and HTMX to populate the requested tab
@@ -729,6 +770,82 @@ class TrainerPage(BasePage):
                     status_message.strip(),
                 )
 
+    def wait_for_training_state(self, timeout: float = 10.0) -> str:
+        """Wait until training becomes active or a validation failure is detected."""
+
+        def _check(driver):
+            body_state = driver.execute_script(
+                "if (!document || !document.body) { return 'unknown'; }"
+                "return document.body.dataset.trainingActive || 'false';"
+            )
+            trainer_store_training = driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (!store || typeof store.isTraining === 'undefined') { return null; }"
+                "return !!store.isTraining;"
+            )
+            run_disabled = driver.execute_script(
+                "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && runBtn.disabled);"
+            )
+            cancel_enabled = driver.execute_script(
+                "const cancelBtn=document.getElementById('cancelBtn');" "return !!(cancelBtn && !cancelBtn.disabled);"
+            )
+            status_text = driver.execute_script(
+                "const el = document.getElementById('training-status');"
+                "return el ? (el.textContent || '').toLowerCase() : '';"
+            )
+            if any(
+                keyword in status_text
+                for keyword in (
+                    "training starting",
+                    "training started",
+                    "training is starting",
+                    "training has started",
+                )
+            ):
+                return "active"
+            if body_state == "true":
+                return "active"
+            if trainer_store_training:
+                return "active"
+            if run_disabled and cancel_enabled:
+                return "active"
+            if any(
+                keyword in status_text
+                for keyword in (
+                    "validation failed",
+                    "cannot start training",
+                    "model name is required",
+                    "output directory is required",
+                )
+            ):
+                return "validation"
+            return False
+
+        return WebDriverWait(self.driver, timeout).until(_check)
+
+    def wait_for_training_active(self, timeout: float = 10.0) -> None:
+        """Wait for the trainer to enter an active training state."""
+        state = self.wait_for_training_state(timeout=timeout)
+        if state != "active":
+            raise TimeoutException(f"Training did not enter active state (state={state})")
+
+    def wait_for_training_inactive(self, timeout: float = 10.0) -> None:
+        """Wait for the trainer to exit the active training state."""
+
+        def _check_inactive(driver):
+            state = driver.execute_script(
+                "if (!document || !document.body) { return 'unknown'; }"
+                "return document.body.dataset.trainingActive || 'false';"
+            )
+            run_enabled = driver.execute_script(
+                "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && !runBtn.disabled);"
+            )
+            if state == "false" and run_enabled:
+                return True
+            return False
+
+        WebDriverWait(self.driver, timeout).until(_check_inactive)
+
     def stop_training(self):
         """Click the stop training button."""
         self.driver.execute_script(
@@ -751,6 +868,38 @@ class TrainerPage(BasePage):
             self.wait_for_htmx()
         except TimeoutException:
             pass
+
+    def open_config_json_modal(self):
+        """Open the configuration JSON modal."""
+
+        self.click_element(*self.CONFIG_JSON_BUTTON)
+        self.wait.until(EC.visibility_of_element_located(self.CONFIG_JSON_MODAL))
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const textarea = document.querySelector('.config-json-modal textarea');" "return !!textarea;",
+            )
+        )
+
+    def get_config_json_text(self) -> str:
+        """Return the JSON payload displayed in the modal."""
+
+        textarea = self.wait.until(EC.visibility_of_element_located(self.CONFIG_JSON_TEXTAREA))
+        value = textarea.get_attribute("value")
+        if value is None:
+            value = textarea.get_attribute("textContent")
+        return value or ""
+
+    def close_config_json_modal(self):
+        """Close the configuration JSON modal."""
+
+        try:
+            self.click_element(*self.CONFIG_JSON_CLOSE_BUTTON)
+        except TimeoutException:
+            self.driver.execute_script(
+                "const overlay = document.querySelector('.save-dataset-overlay');"
+                "if (overlay) { overlay.style.display = 'none'; }"
+            )
+        self.wait.until(EC.invisibility_of_element_located(self.CONFIG_JSON_MODAL))
 
     def is_config_valid(self):
         """Check if configuration is valid.
@@ -912,6 +1061,8 @@ class BasicConfigTab(BasePage):
                     }
                 }
             }
+            window.__trainerHarnessOverrides = window.__trainerHarnessOverrides || {};
+            window.__trainerHarnessOverrides.modelName = nextValue;
             console.error('[Harness] set_model_name override', nextValue);
             """,
             name,
@@ -956,6 +1107,8 @@ class BasicConfigTab(BasePage):
                     }
                 }
             }
+            window.__trainerHarnessOverrides = window.__trainerHarnessOverrides || {};
+            window.__trainerHarnessOverrides.outputDir = arguments.length ? (arguments[0] ?? '') : '';
             console.error('[Harness] set_output_dir override', arguments.length ? (arguments[0] ?? '') : '');
             """,
             path,
@@ -970,8 +1123,14 @@ class BasicConfigTab(BasePage):
         self.driver.execute_script(
             "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
             "if (!store) { return; }"
+            "const nextValue = arguments.length ? (arguments[0] ?? '') : '';"
             "store.formValueStore = store.formValueStore || {};"
-            "store.formValueStore['--pretrained_model_name_or_path'] = { kind: 'single', value: arguments[0] };"
+            "store.formValueStore['--pretrained_model_name_or_path'] = { kind: 'single', value: nextValue };"
+            "store.formValueStore['pretrained_model_name_or_path'] = { kind: 'single', value: nextValue };"
+            "store.activeEnvironmentConfig = store.activeEnvironmentConfig || {};"
+            "store.activeEnvironmentConfig['--pretrained_model_name_or_path'] = nextValue;"
+            "store.activeEnvironmentConfig['pretrained_model_name_or_path'] = nextValue;"
+            "if (typeof store.captureFormValues === 'function') { store.captureFormValues(); }"
             "if (typeof store.checkFormDirty === 'function') { store.checkFormDirty(); }",
             model,
         )
@@ -1024,10 +1183,16 @@ class BasicConfigTab(BasePage):
 
     def get_model_name(self):
         """Get the current model name value."""
-        # Wait a moment for the DOM to be ready after tab switches
-        import time
-
-        time.sleep(0.5)
+        # Wait briefly for the field to be attached to the DOM after tab switches
+        try:
+            WebDriverWait(self.driver, 3).until(
+                lambda driver: driver.execute_script(
+                    "const el = document.querySelector(\"input[name='tracker_project_name']\");"
+                    "return !!(el && el.offsetParent !== null);"
+                )
+            )
+        except TimeoutException:
+            pass
 
         # First try to get the value directly from the DOM element
         try:

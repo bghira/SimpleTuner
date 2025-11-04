@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from simpletuner.helpers.models.common import PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.optimizer_param import available_optimizer_keys
 
 from ..services.field_registry_wrapper import lazy_field_registry
 from ..utils.paths import resolve_config_path
@@ -1392,6 +1393,28 @@ class FieldService:
                         )
                         if "field-external-selection" not in extra_classes:
                             extra_classes.append("field-external-selection")
+                elif field.name == "optimizer":
+                    fsdp_enabled = self._coerce_bool(self._get_config_value(config_values, "fsdp_enable"))
+                    fsdp_version_raw = self._get_config_value(config_values, "fsdp_version")
+                    fsdp_version = self._coerce_int(fsdp_version_raw, default=2)
+                    optimizer_keys = available_optimizer_keys(
+                        fsdp_enabled=fsdp_enabled,
+                        fsdp_version=fsdp_version,
+                    )
+                    field_dict["options"] = [{"value": opt, "label": opt} for opt in optimizer_keys]
+
+                    if fsdp_enabled and fsdp_version == 2:
+                        _append_hint("Optimizers incompatible with FSDP v2 are hidden while sharding is enabled.")
+
+                    if optimizer_keys:
+                        current_value = field_value if isinstance(field_value, str) else str(field_value or "")
+                        if current_value not in optimizer_keys:
+                            field_dict["value"] = optimizer_keys[0]
+                    else:
+                        field_dict["value"] = ""
+                        field_dict["disabled"] = True
+                        _append_hint("No optimizers available for the current environment and FSDP settings.")
+
                 elif field.name == "model_flavour":
                     flavour_options = self._build_model_flavour_options(config_values)
                     selected_family_raw = self._get_config_value(config_values, "model_family")
@@ -2035,7 +2058,11 @@ class FieldService:
                             if not has_explicit_none_choice:
                                 continue
 
-                    if candidate_value not in (None, ""):
+                    # Accept non-empty values or empty strings for fields that allow_empty
+                    if candidate_value is not None:
+                        if candidate_value == "" and not field.allow_empty:
+                            # Empty string on field that doesn't allow empty - skip it
+                            continue
                         value = candidate_value
                         break
 

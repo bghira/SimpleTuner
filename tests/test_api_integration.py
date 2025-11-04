@@ -250,12 +250,20 @@ class EventEndpointTests(APITestCase, unittest.TestCase):
         self.assertEqual(response.status_code, 200)
 
     def test_broadcast_long_polling_timeout(self) -> None:
-        with self.client_session(ServerMode.CALLBACK) as client:
-            start_time = time.time()
-            response = client.get("/broadcast?last_event_index=999")
-        elapsed = time.time() - start_time
+        previous_timeout = os.environ.get("SIMPLETUNER_BROADCAST_TIMEOUT_SECONDS")
+        os.environ["SIMPLETUNER_BROADCAST_TIMEOUT_SECONDS"] = "1"
+        try:
+            with self.client_session(ServerMode.CALLBACK) as client:
+                start_time = time.time()
+                response = client.get("/broadcast?last_event_index=999&timeout=1")
+            elapsed = time.time() - start_time
+        finally:
+            if previous_timeout is not None:
+                os.environ["SIMPLETUNER_BROADCAST_TIMEOUT_SECONDS"] = previous_timeout
+            else:
+                os.environ.pop("SIMPLETUNER_BROADCAST_TIMEOUT_SECONDS", None)
 
-        self.assertLess(elapsed, 35)
+        self.assertLess(elapsed, 5)
         self.assertIn(response.status_code, {200, 204})
 
     def test_broadcast_returns_new_events(self) -> None:

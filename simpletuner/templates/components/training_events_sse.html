@@ -55,6 +55,32 @@
     let lastResetJobId = null;
     let suppressAnonymousProgress = false;
     const TERMINAL_STAGE_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'stopped']);
+    const seenToastIndices = new Set(); // Track event indices that have triggered toasts
+
+    /**
+     * Check if a toast should be shown for this event.
+     * Returns true if the event is new (not seen before), false if it's a duplicate.
+     * @param {Object} payload - The event payload
+     * @returns {boolean} - True if toast should be shown
+     */
+    function shouldShowToast(payload) {
+        if (!payload) {
+            return true; // Show toast if no payload (shouldn't happen but be safe)
+        }
+
+        // If event has an index, use it for deduplication
+        const eventIndex = payload.index;
+        if (eventIndex != null && eventIndex !== undefined) {
+            if (seenToastIndices.has(eventIndex)) {
+                console.log('[TOAST-DEDUP] Skipping duplicate toast for event index:', eventIndex);
+                return false;
+            }
+            // Mark this index as seen
+            seenToastIndices.add(eventIndex);
+        }
+
+        return true;
+    }
 
     function isStageActive(stage) {
         if (!stage) {
@@ -138,6 +164,9 @@
             completedJobIds.delete(payload.job_id);
             lastResetJobId = null;
             suppressAnonymousProgress = false;
+            // Clear toast deduplication tracking when a new job starts
+            // to allow notifications for the new job
+            seenToastIndices.clear();
         }
 
         if (!isActive) {
@@ -1057,13 +1086,16 @@
                 if (toastLevel === 'danger') {
                     setStatus('Error', payload.severity);
                     setTrainingState('error', { job_id: jobId });
-                    showTrainingStatusAlert({
-                        severity: 'danger',
-                        title: payload.title || 'Training Error',
-                        message: extractPrimaryMessage(payload) || 'Training service reported an error.',
-                        items: extractMessageList(payload),
-                        jobId
-                    });
+                    // Only show alert for new events
+                    if (shouldShowToast(payload)) {
+                        showTrainingStatusAlert({
+                            severity: 'danger',
+                            title: payload.title || 'Training Error',
+                            message: extractPrimaryMessage(payload) || 'Training service reported an error.',
+                            items: extractMessageList(payload),
+                            jobId
+                        });
+                    }
                 }
                 break;
             }
@@ -1107,15 +1139,18 @@
                         resetTrainingProgressUI('failed', jobId);
                         const errorMessage = extractPrimaryMessage(payload) || 'Training failed. Check the event log for more details.';
                         const errorDetails = extractMessageList(payload);
-                        showTrainingStatusAlert({
-                            severity: 'danger',
-                            title: payload.title || 'Training Error',
-                            message: errorMessage,
-                            items: errorDetails,
-                            jobId
-                        });
-                        if (errorMessage && window.showToast) {
-                            window.showToast(`Training failed: ${errorMessage}`, 'error');
+                        // Only show alerts/toasts for new events to prevent duplicates on reconnect
+                        if (shouldShowToast(payload)) {
+                            showTrainingStatusAlert({
+                                severity: 'danger',
+                                title: payload.title || 'Training Error',
+                                message: errorMessage,
+                                items: errorDetails,
+                                jobId
+                            });
+                            if (errorMessage && window.showToast) {
+                                window.showToast(`Training failed: ${errorMessage}`, 'error');
+                            }
                         }
                     } else if (['cancelled', 'stopped', 'completed', 'complete'].includes(derivedStatus)) {
                         const displayStatus = derivedStatus === 'completed' || derivedStatus === 'complete' ? 'Completed' : 'Stopped';
@@ -1289,13 +1324,16 @@
             setTrainingState('error', { job_id: activeJobId });
             const errorMessage = extractPrimaryMessage(data) || 'Training service reported an error.';
             const errorDetails = extractMessageList(data);
-            showTrainingStatusAlert({
-                severity: 'danger',
-                title: data?.title || 'Training Error',
-                message: errorMessage,
-                items: errorDetails,
-                jobId: data?.job_id || activeJobId
-            });
+            // Only show alerts for new events to prevent duplicates on reconnect
+            if (shouldShowToast(data)) {
+                showTrainingStatusAlert({
+                    severity: 'danger',
+                    title: data?.title || 'Training Error',
+                    message: errorMessage,
+                    items: errorDetails,
+                    jobId: data?.job_id || activeJobId
+                });
+            }
         };
         trackListener('error', errorHandler);
 

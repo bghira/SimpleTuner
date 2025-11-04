@@ -2764,7 +2764,7 @@ function trainerComponent() {
                     crop_aspect_buckets: [],
                     _cropAspectBucketsText: '',
                     skip_file_discovery: '',
-                    hash_filenames: false,
+                    hash_filenames: true,
                     preserve_data_backend_cache: false,
                     is_regularisation_data: false,
                     prepend_instance_prompt: false,
@@ -3111,8 +3111,9 @@ function trainerComponent() {
             const numProcesses = typeof clone['--num_processes'] === 'number'
                 ? clone['--num_processes']
                 : parseInt(clone['--num_processes'], 10);
+            const validModes = ['auto', 'manual', 'disabled', 'hardware'];
             let mode = typeof clone.mode === 'string' ? clone.mode.trim().toLowerCase() : undefined;
-            if (!['auto', 'manual', 'disabled'].includes(mode || '')) {
+            if (!validModes.includes(mode || '')) {
                 if (deviceIds.length > 1) {
                     mode = 'manual';
                 } else if (Number.isFinite(numProcesses) && numProcesses > 1) {
@@ -3123,11 +3124,20 @@ function trainerComponent() {
                     mode = 'auto';
                 }
             }
+            const normalizedMode = validModes.includes(mode || '') ? mode : 'auto';
             return {
-                mode: mode || 'auto',
-                manual_count: Number.isFinite(manualCount) && manualCount > 0 ? manualCount : null,
+                mode: normalizedMode || 'auto',
+                manual_count:
+                    normalizedMode === 'manual' && Number.isFinite(manualCount) && manualCount > 0
+                        ? manualCount
+                        : null,
                 device_ids: deviceIds,
-                '--num_processes': Number.isFinite(numProcesses) && numProcesses > 0 ? numProcesses : null,
+                '--num_processes':
+                    normalizedMode === 'hardware'
+                        ? null
+                        : Number.isFinite(numProcesses) && numProcesses > 0
+                            ? numProcesses
+                            : null,
             };
         },
         async prepareAccelerateOnboarding(rawValue) {
@@ -3148,6 +3158,8 @@ function trainerComponent() {
         },
         serializeAccelerateOnboardingValue() {
             const mode = (this.onboardingAccelerate.mode || 'auto').toLowerCase();
+            const validModes = ['auto', 'manual', 'disabled', 'hardware'];
+            const normalizedMode = validModes.includes(mode) ? mode : 'auto';
             const uniqueDeviceIds = Array.isArray(this.onboardingAccelerate.deviceIds)
                 ? Array.from(new Set(this.onboardingAccelerate.deviceIds
                     .map((value) => {
@@ -3158,12 +3170,15 @@ function trainerComponent() {
                 : [];
             const manualCount = parseInt(this.onboardingAccelerate.manualCount, 10);
             const hasManualCount = Number.isFinite(manualCount) && manualCount > 0;
+            if (normalizedMode === 'hardware') {
+                return { mode: 'hardware' };
+            }
             let numProcesses;
-            if (mode === 'disabled') {
+            if (normalizedMode === 'disabled') {
                 numProcesses = 1;
-            } else if (mode === 'auto') {
+            } else if (normalizedMode === 'auto') {
                 numProcesses = this.gpuInventory.optimalProcesses || this.gpuInventory.count || 1;
-            } else if (mode === 'manual') {
+            } else if (normalizedMode === 'manual') {
                 if (uniqueDeviceIds.length > 0) {
                     numProcesses = uniqueDeviceIds.length;
                 } else if (hasManualCount) {
@@ -3178,13 +3193,13 @@ function trainerComponent() {
 
             const normalizedProcesses = Math.max(1, parseInt(numProcesses, 10) || 1);
             const payload = {
-                mode: mode === 'manual' ? 'manual' : mode === 'disabled' ? 'disabled' : 'auto',
+                mode: normalizedMode === 'manual' ? 'manual' : normalizedMode === 'disabled' ? 'disabled' : 'auto',
                 '--num_processes': normalizedProcesses,
             };
 
-            if (mode === 'manual' && uniqueDeviceIds.length > 0) {
+            if (normalizedMode === 'manual' && uniqueDeviceIds.length > 0) {
                 payload.device_ids = uniqueDeviceIds;
-            } else if (mode === 'manual' && hasManualCount) {
+            } else if (normalizedMode === 'manual' && hasManualCount) {
                 payload.manual_count = Math.max(1, manualCount);
             }
 
@@ -3907,14 +3922,33 @@ function trainerComponent() {
                 }
 
                 switch (descriptor.kind) {
-                    case 'checkbox':
+                    case 'checkbox': {
                         if (descriptor.multi) {
                             (descriptor.value || []).forEach((val) => formData.append(name, val));
-                        } else {
-                            const value = descriptor.value && descriptor.value.length ? descriptor.value[0] : 'false';
-                            formData.append(name, value);
+                            break;
                         }
+
+                        let checkboxValue;
+                        if (Array.isArray(descriptor.value)) {
+                            checkboxValue = descriptor.value.length > 0 ? descriptor.value[0] : 'false';
+                        } else if (typeof descriptor.value === 'boolean') {
+                            checkboxValue = descriptor.value ? 'true' : 'false';
+                        } else if (descriptor.value === null || descriptor.value === undefined) {
+                            checkboxValue = 'false';
+                        } else {
+                            const normalized = String(descriptor.value).trim().toLowerCase();
+                            if (['true', '1', 'yes', 'on'].includes(normalized)) {
+                                checkboxValue = 'true';
+                            } else if (['false', '0', 'no', 'off'].includes(normalized)) {
+                                checkboxValue = 'false';
+                            } else {
+                                checkboxValue = normalized || 'false';
+                            }
+                        }
+
+                        formData.append(name, checkboxValue);
                         break;
+                    }
                     case 'multiple':
                         (descriptor.value || []).forEach((val) => formData.append(name, val));
                         break;
@@ -3983,6 +4017,10 @@ function trainerComponent() {
 
             Object.entries(config).forEach(([key, value]) => {
                 if (!key || key.startsWith('_')) {
+                    return;
+                }
+
+                if (!key.startsWith('--')) {
                     return;
                 }
 
@@ -4295,6 +4333,15 @@ function trainerComponent() {
 
                         // Dispatch event for other components (e.g., publishing tab)
                         window.dispatchEvent(new CustomEvent('config-saved'));
+
+                        try {
+                            await this.fetchActiveEnvironmentConfig();
+                            if (this.showConfigJsonModal) {
+                                this.resetConfigJsonDraft();
+                            }
+                        } catch (refreshError) {
+                            console.error('Failed to refresh configuration after save:', refreshError);
+                        }
                     } else {
                         let detail = null;
                         try {
@@ -4602,6 +4649,17 @@ function trainerComponent() {
                                 Choose GPUs manually
                             </label>
                         </div>
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="radio"
+                                   id="accelerate-mode-hardware"
+                                   value="hardware"
+                                   x-model="onboardingAccelerate.mode"
+                                   name="accelerate_mode">
+                            <label class="form-check-label" for="accelerate-mode-hardware">
+                                Use num_processes from Hardware tab
+                            </label>
+                        </div>
 
                         <template x-if="gpuInventory.loading">
                             <div class="alert alert-info mt-3 py-2">
@@ -4652,6 +4710,9 @@ function trainerComponent() {
                             </template>
                             <template x-if="onboardingAccelerate.mode === 'disabled'">
                                 <span>SimpleTuner will restrict Accelerate to a single GPU.</span>
+                            </template>
+                            <template x-if="onboardingAccelerate.mode === 'hardware'">
+                                <span>Hardware tab controls the Accelerate process count.</span>
                             </template>
                         </div>
                         <div x-effect="if (onboardingAccelerate.mode === 'manual' && gpuInventory.devices.length) { const selected = (onboardingAccelerate.deviceIds || []).length; if (selected > 0 && onboardingAccelerate.manualCount !== selected) { onboardingAccelerate.manualCount = selected; } }"></div>

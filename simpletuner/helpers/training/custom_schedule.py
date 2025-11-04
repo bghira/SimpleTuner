@@ -433,7 +433,10 @@ class Sine(LRScheduler):
 
 from diffusers.optimization import get_scheduler
 
-from simpletuner.helpers.models.flux import calculate_shift_flux
+try:
+    from simpletuner.helpers.models.flux import calculate_shift_flux
+except Exception:  # pragma: no cover - optional dependency
+    calculate_shift_flux = None  # type: ignore[assignment]
 
 
 def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
@@ -445,6 +448,8 @@ def apply_flow_schedule_shift(args, noise_scheduler, sigmas, noise):
     elif args.flow_schedule_auto_shift:
         # Resolution-dependent shift value calculation used by official Flux inference implementation
         image_seq_len = (noise.shape[-1] * noise.shape[-2]) // 4
+        if calculate_shift_flux is None:
+            raise RuntimeError("Flux flow schedule shift requires flux models and their dependencies.")
         mu = calculate_shift_flux(
             (noise.shape[-1] * noise.shape[-2]) // 4,
             noise_scheduler.config.base_image_seq_len,

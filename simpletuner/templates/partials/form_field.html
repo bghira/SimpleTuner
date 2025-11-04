@@ -3,7 +3,7 @@
 {% set field_name = field.name or field_id %}
 {% set field_type = field.type or type or 'text' %}
 {% set field_label = field.label or label %}
-{% set field_value = field.value or value or '' %}
+{% set field_value = field.value if field.value is defined else (value if value is defined else '') %}
 {% set field_required = field.required or required or false %}
 {% set field_placeholder = field.placeholder or placeholder or '' %}
 {% set field_description = field.description or description or '' %}

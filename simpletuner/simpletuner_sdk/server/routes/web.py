@@ -131,53 +131,190 @@ async def tab_list(request: Request):
     return templates.TemplateResponse(request=request, name="fragments/tab_list.html", context=context)
 
 
-# Backward compatibility redirects
+# Backward compatibility redirects - these duplicate the unified handler logic
+# to properly support dependency injection
 @router.get("/trainer/tabs/basic", response_class=HTMLResponse)
-async def basic_tab_redirect(request: Request):
-    """Redirect old basic tab URL to new unified handler."""
-    return await render_tab(request, "basic")
+async def basic_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for basic tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="basic",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering basic tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/tabs/model", response_class=HTMLResponse)
-async def model_tab_redirect(request: Request):
-    """Redirect old model tab URL to new unified handler."""
-    return await render_tab(request, "model")
+async def model_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for model tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="model",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering model tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/tabs/training", response_class=HTMLResponse)
-async def training_tab_redirect(request: Request):
-    """Redirect old training tab URL to new unified handler."""
-    return await render_tab(request, "training")
+async def training_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for training tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="training",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering training tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/tabs/advanced", response_class=HTMLResponse)
-async def advanced_tab_redirect(request: Request):
-    """Redirect old advanced tab URL to new unified handler."""
-    return await render_tab(request, "basic")
+async def advanced_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for advanced tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="advanced",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering advanced tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/tabs/datasets", response_class=HTMLResponse)
-async def datasets_tab_redirect(request: Request):
-    """Redirect old datasets tab URL to new unified handler."""
-    return await render_tab(request, "datasets")
+async def datasets_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for datasets tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="datasets",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering datasets tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/tabs/environments", response_class=HTMLResponse)
-async def environments_tab_redirect(request: Request):
-    """Redirect old environments tab URL to new unified handler."""
-    return await render_tab(request, "environments")
+async def environments_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for environments tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="environments",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering environments tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/tabs/validation", response_class=HTMLResponse)
-async def validation_tab_redirect(request: Request):
-    """Redirect old validation tab URL to new unified handler."""
-    return await render_tab(request, "validation")
+async def validation_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for validation tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="validation",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering validation tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/tabs/publishing", response_class=HTMLResponse)
-async def publishing_tab_redirect(request: Request):
-    """Redirect old publishing tab URL to new unified handler."""
-    return await render_tab(request, "publishing")
+async def publishing_tab_compat(
+    request: Request,
+    tab_data: TabRenderData = Depends(get_tab_render_data),
+):
+    """Backward compatibility endpoint for publishing tab."""
+    try:
+        return await tab_service.render_tab(
+            request=request,
+            tab_name="publishing",
+            fields=tab_data.fields,
+            config_values=tab_data.config_values,
+            sections=tab_data.sections,
+            raw_config=tab_data.raw_config,
+            webui_defaults=tab_data.webui_defaults,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering publishing tab: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to render tab: {str(e)}")
 
 
 @router.get("/trainer/search")

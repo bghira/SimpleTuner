@@ -20,7 +20,12 @@ from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.simpletuner_sdk.server.services.field_registry.types import ConfigField, FieldType, ValidationRuleType
+from simpletuner.simpletuner_sdk.server.services.field_registry.types import (
+    ConfigField,
+    FieldType,
+    ParserType,
+    ValidationRuleType,
+)
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 logger = get_logger("ArgsParser")
@@ -143,6 +148,23 @@ def _infer_numeric_type(field: ConfigField, choice_values: List[Any]):
     return int
 
 
+def _determine_cli_type(field: ConfigField, choice_values: List[Any]):
+    if field.parser_type is not None:
+        parser_type_map = {
+            ParserType.STRING: str,
+            ParserType.INTEGER: int,
+            ParserType.FLOAT: float,
+            ParserType.BOOLEAN: _parse_bool_flag,
+        }
+        try:
+            return parser_type_map[field.parser_type]
+        except KeyError as exc:
+            raise ValueError(f"Unsupported parser type override: {field.parser_type}") from exc
+    if field.field_type == FieldType.NUMBER:
+        return _infer_numeric_type(field, choice_values)
+    return str
+
+
 def _is_required(field: ConfigField) -> bool:
     return any(rule.rule_type == ValidationRuleType.REQUIRED for rule in field.validation_rules)
 
@@ -199,10 +221,7 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
         default = str(default)
     if default is not None:
         kwargs["default"] = default
-    if field.field_type == FieldType.NUMBER:
-        kwargs["type"] = _infer_numeric_type(field, cli_choices)
-    else:
-        kwargs.setdefault("type", str)
+    kwargs["type"] = _determine_cli_type(field, cli_choices)
     parser.add_argument(*option_strings, **kwargs)
 
 
@@ -791,6 +810,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 values = [entry.strip() for entry in str(transformer_cls).split(",")]
             filtered_values = [entry for entry in values if entry]
             args.fsdp_transformer_layer_cls_to_wrap = filtered_values or None
+            info_log(f"FSDP transformer layer classes to wrap: {args.fsdp_transformer_layer_cls_to_wrap}")
     else:
         # When FSDP is disabled, normalise auxiliary options so downstream logic can rely on None/False.
         args.fsdp_transformer_layer_cls_to_wrap = None

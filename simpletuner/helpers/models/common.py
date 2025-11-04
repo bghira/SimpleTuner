@@ -17,6 +17,13 @@ from torch.distributions import Beta
 from torchvision import transforms
 from transformers.utils import ContextManagers
 
+try:
+    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+    FSDP_AVAILABLE = True
+except ImportError:
+    FSDP_AVAILABLE = False
+
 from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
@@ -42,7 +49,7 @@ flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chrom
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
-    "sd3": "stabilityai/stable-diffusion-3-large",
+    "sd3": "stabilityai/stable-diffusion-3.5-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
     "chroma": "lodestones/Chroma1-Base",
@@ -1224,10 +1231,17 @@ class ModelFoundation(ABC):
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
         if self.model is not None and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None:
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
+            # For FSDP models, we should NOT unwrap them - FSDP implements __call__ transparently
+            # and unwrapping breaks validation with reshard_after_forward=True
+            if FSDP_AVAILABLE and isinstance(self.model, FSDP):
+                model_for_pipeline = self.model  # Keep FSDP wrapper
+            else:
+                model_for_pipeline = self.unwrap_model(model=self.model)
+
             setattr(
                 possibly_cached_pipeline,
                 self.MODEL_TYPE.value,
-                self.unwrap_model(model=self.model),
+                model_for_pipeline,
             )
         # attach the vae to the cached pipeline.
         setattr(possibly_cached_pipeline, "vae", self.get_vae())

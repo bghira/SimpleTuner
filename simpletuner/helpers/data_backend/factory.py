@@ -887,7 +887,7 @@ def get_csv_backend(
     url_column: str,
     caption_column: str,
     compress_cache: bool = False,
-    hash_filenames: bool = False,
+    hash_filenames: bool = True,
     shorten_filenames: bool = False,
 ) -> CSVDataBackend:
     from pathlib import Path
@@ -2214,12 +2214,13 @@ class FactoryRegistry:
             "conditioning_data",
             "conditioning",
         ]
-        current_config_version = latest_config_version()
+        _latest_config_version = latest_config_version()
+        current_config_version = _latest_config_version
         if init_backend["metadata_backend"].config != {}:
             prev_config = init_backend["metadata_backend"].config
             current_config_version = prev_config.get("config_version", None)
             if current_config_version is None:
-                current_config_version = 1
+                current_config_version = _latest_config_version
 
             logger.debug(f"Found existing config (version={current_config_version}): {prev_config}")
             logger.debug(f"Comparing against new config: {init_backend['config']}")
@@ -2228,12 +2229,14 @@ class FactoryRegistry:
                 if key not in excluded_keys:
                     if key in backend and prev_config[key] != backend[key]:
                         if not self.args.override_dataset_config:
-                            raise Exception(
+                            logger.error(
                                 f"Dataset {init_backend['id']} has inconsistent config, and --override_dataset_config was not provided."
                                 f"\n-> Expected value {key}={prev_config.get(key)} differs from current value={backend.get(key)}."
                                 f"\n-> Recommended action is to correct the current config values to match the values that were used to create this dataset:"
                                 f"\n{prev_config}"
                             )
+                            # we'll just restore the original value instead of erroring.
+                            backend[key] = prev_config[key]
                         else:
                             warning_log(f"Overriding config value {key}={prev_config[key]} with {backend[key]}")
                             prev_config[key] = backend[key]

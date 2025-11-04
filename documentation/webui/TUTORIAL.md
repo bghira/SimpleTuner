@@ -17,6 +17,15 @@ apt -y install libopenmpi-dev openmpi-bin cuda-toolkit-12-8 libaio-dev # if you'
 
 A workspace contains your configurations, output models, validation images, and potentially your datasets.
 
+On Vast or similar providers, you can use the `/workspace/simpletuner` directory:
+
+```bash
+mkdir -p /workspace/simpletuner
+export SIMPLETUNER_WORKSPACE=/workspace/simpletuner
+cd $SIMPLETUNER_WORKSPACE
+```
+
+If you'd like to make it in your home directory instead:
 ```bash
 mkdir ~/simpletuner-workspace
 export SIMPLETUNER_WORKSPACE=~/simpletuner-workspace
@@ -37,7 +46,9 @@ python3.12 -m venv .venv
 NVIDIA users will have to use the CUDA extras to pull in all the right dependencies:
 
 ```bash
-pip install -e '.[cuda]'
+pip install -e 'simpletuner[cuda]'
+# or, if you've cloned via git:
+# pip install -e '.[cuda]'
 ```
 
 There are other extras for users on apple and rocm hardware, see the [installation instructions](../INSTALL.md).

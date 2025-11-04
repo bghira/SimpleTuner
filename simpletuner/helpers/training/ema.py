@@ -9,6 +9,12 @@ import transformers
 from diffusers.utils import is_transformers_available
 from diffusers.utils.deprecation_utils import deprecate
 
+try:
+    from torch.distributed.tensor import DTensor, Replicate
+except ImportError:
+    DTensor = None  # type: ignore[assignment]
+    Replicate = None  # type: ignore[assignment]
+
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("EMAModel")
@@ -35,6 +41,19 @@ class EMAModel:
     """
     Exponential Moving Average of models weights
     """
+
+    @staticmethod
+    def _is_dtensor(tensor: torch.Tensor) -> bool:
+        return DTensor is not None and isinstance(tensor, DTensor)
+
+    @staticmethod
+    def _gather_dtensor(tensor: torch.Tensor) -> torch.Tensor:
+        if not EMAModel._is_dtensor(tensor):
+            return tensor
+        if Replicate is None:
+            raise RuntimeError("DTensor support requires torch.distributed.tensor.Replicate")
+        replicated = tensor.redistribute(tensor.device_mesh, placements=[Replicate()])
+        return replicated.to_local()
 
     def __init__(
         self,
@@ -245,6 +264,8 @@ class EMAModel:
             parameters = parameters.parameters()
 
         parameters = list(parameters)
+        has_dtensor_params = any(self._is_dtensor(param) for param in parameters)
+        use_foreach = self.foreach and not has_dtensor_params
 
         if global_step is not None:
             # When we're updating the EMA periodically, we can't trust the counter.
@@ -261,7 +282,7 @@ class EMAModel:
         if is_transformers_available() and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled():
             import deepspeed
 
-        if self.foreach:
+        if use_foreach:
             if is_transformers_available() and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled():
                 context_manager = deepspeed.zero.GatheredParameters(parameters, modifier_rank=None)
 
@@ -289,9 +310,19 @@ class EMAModel:
 
                 with context_manager():
                     if param.requires_grad:
-                        s_param.sub_(one_minus_decay * (s_param - param.to(s_param.device)))
+                        target = param
+                        if target.dtype != s_param.dtype:
+                            target = target.to(dtype=s_param.dtype)
+                        if not self._is_dtensor(s_param):
+                            target = target.to(device=s_param.device)
+                        s_param.sub_(one_minus_decay * (s_param - target))
                     else:
-                        s_param.copy_(param)
+                        target = param
+                        if not self._is_dtensor(s_param):
+                            target = target.to(device=s_param.device)
+                        if target.dtype != s_param.dtype:
+                            target = target.to(dtype=s_param.dtype)
+                        s_param.copy_(target)
         if self.args.ema_device == "cpu" and not self.args.ema_cpu_only:
             # Move back to CPU for safe-keeping.
             self.to(device=self.args.ema_device, non_blocking=True)
@@ -306,14 +337,34 @@ class EMAModel:
                 `ExponentialMovingAverage` was initialized will be used.
         """
         parameters = list(parameters)
-        if self.foreach:
+        use_foreach = self.foreach and all(
+            not self._is_dtensor(param) and not self._is_dtensor(s_param)
+            for s_param, param in zip(self.shadow_params, parameters)
+        )
+
+        if use_foreach:
             torch._foreach_copy_(
                 [param.data for param in parameters],
                 [s_param.to(param.device).data for s_param, param in zip(self.shadow_params, parameters)],
             )
-        else:
-            for s_param, param in zip(self.shadow_params, parameters):
-                param.data.copy_(s_param.to(param.device).data)
+            return
+
+        for s_param, param in zip(self.shadow_params, parameters):
+            source = s_param
+            if self._is_dtensor(param):
+                if not self._is_dtensor(source):
+                    raise RuntimeError("EMA shadow parameter does not match distributed layout.")
+                if source.dtype != param.dtype:
+                    source = source.to(dtype=param.dtype)
+                param.copy_(source)
+                continue
+
+            if self._is_dtensor(source):
+                source_tensor = self._gather_dtensor(source)
+            else:
+                source_tensor = source
+
+            param.data.copy_(source_tensor.to(device=param.device, dtype=param.dtype))
 
     def pin_memory(self) -> None:
         r"""
@@ -357,14 +408,24 @@ class EMAModel:
         if exclude_params:
             return state_dict
         for idx, param in enumerate(self.shadow_params):
-            state_dict[f"{prefix}shadow_params.{idx}"] = param if keep_vars else param.detach()
+            value = param if keep_vars else param.detach()
+            if self._is_dtensor(value):
+                value = self._gather_dtensor(value)
+            state_dict[f"{prefix}shadow_params.{idx}"] = value
         return state_dict
 
     def store(self, parameters: Iterable[torch.nn.Parameter]) -> None:
         r"""
         Save the current parameters for restoring later.
         """
-        self.temp_stored_params = [param.detach().cpu().clone() for param in parameters]
+        parameters = list(parameters)
+        clones = []
+        for param in parameters:
+            if self._is_dtensor(param):
+                clones.append(param.detach().clone())
+            else:
+                clones.append(param.detach().cpu().clone())
+        self.temp_stored_params = clones
 
     def restore(self, parameters: Iterable[torch.nn.Parameter]) -> None:
         r"""
@@ -372,14 +433,33 @@ class EMAModel:
         """
         if self.temp_stored_params is None:
             raise RuntimeError("This ExponentialMovingAverage has no `store()`ed weights " "to `restore()`")
-        if self.foreach:
+        parameters = list(parameters)
+        use_foreach = (
+            self.foreach
+            and all(not self._is_dtensor(param) for param in parameters)
+            and all(not self._is_dtensor(c_param) for c_param in self.temp_stored_params)
+        )
+
+        if use_foreach:
             torch._foreach_copy_(
                 [param.data for param in parameters],
                 [c_param.data for c_param in self.temp_stored_params],
             )
         else:
             for c_param, param in zip(self.temp_stored_params, parameters):
-                param.data.copy_(c_param.data)
+                source = c_param
+                if self._is_dtensor(param):
+                    if not self._is_dtensor(source):
+                        raise RuntimeError("Stored EMA parameter is missing distributed layout information.")
+                    if source.dtype != param.dtype:
+                        source = source.to(dtype=param.dtype)
+                    param.copy_(source)
+                else:
+                    if self._is_dtensor(source):
+                        source_tensor = self._gather_dtensor(source)
+                    else:
+                        source_tensor = source
+                    param.data.copy_(source_tensor.to(device=param.device, dtype=param.dtype))
 
         # Better memory-wise.
         self.temp_stored_params = None

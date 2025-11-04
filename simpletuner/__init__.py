@@ -70,6 +70,8 @@ def _suppress_swigvarlink(message, *args, **kwargs):
         return None
     if "MPS autocast" in text:
         return None
+    if "remove second argument of ws_handler" in text:
+        return None
 
     return _original_warn(message, *args, **kwargs)
 
@@ -77,4 +79,4 @@ def _suppress_swigvarlink(message, *args, **kwargs):
 warnings.warn = _suppress_swigvarlink
 
 
-__version__ = "3.0.6"
+__version__ = "3.0.7"

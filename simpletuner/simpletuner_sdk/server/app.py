@@ -122,6 +122,9 @@ def create_app(
     Returns:
         Configured FastAPI application
     """
+    # Force strict model imports to ensure models load properly
+    # This must be set BEFORE any model loading happens
+    os.environ.setdefault("SIMPLETUNER_STRICT_MODEL_IMPORTS", "1")
 
     # Create base app with lifespan handler
     title = f"SimpleTuner {mode.value.capitalize()} Server"

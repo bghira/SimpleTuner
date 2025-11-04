@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ParserType, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -85,6 +85,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             section="optimizer_config",
             subsection="advanced",
             default_value=None,
+            parser_type=ParserType.FLOAT,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Beta1 must be between 0 and 1"),
                 ValidationRule(ValidationRuleType.MAX, value=1, message="Beta1 must be between 0 and 1"),
@@ -107,6 +108,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             section="optimizer_config",
             subsection="advanced",
             default_value=None,
+            parser_type=ParserType.FLOAT,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Beta2 must be between 0 and 1"),
                 ValidationRule(ValidationRuleType.MAX, value=1, message="Beta2 must be between 0 and 1"),

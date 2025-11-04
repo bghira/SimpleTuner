@@ -49,11 +49,11 @@ class PatchableModule(nn.Module):
       the original module registered.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *args, **kwargs) -> None:
         # ``nn.Module.__init__`` queries a few attributes during construction.
         # The overrides dictionary must therefore exist before calling ``super``.
         object.__setattr__(self, "_module_overrides", {})
-        super().__init__()
+        super().__init__(*args, **kwargs)
 
     # ------------------------------------------------------------------
     # Attribute helpers

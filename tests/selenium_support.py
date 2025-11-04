@@ -186,7 +186,7 @@ def create_driver(browser: str) -> webdriver.Remote:
         driver = webdriver.Firefox(options=_firefox_options())
     else:
         raise ValueError(f"Unsupported browser: {browser}")
-    driver.implicitly_wait(10)
+    driver.implicitly_wait(2)
     return driver
 
 
