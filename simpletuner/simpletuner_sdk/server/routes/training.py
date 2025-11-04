@@ -226,6 +226,7 @@ async def get_training_status():
     status = APIState.get_state("training_status") or "idle"
     config = APIState.get_state("training_config") or {}
     job_id = APIState.get_state("current_job_id")
+    active_job_id = job_id
     progress = APIState.get_state("training_progress") or None
 
     # Get detailed job status if available
@@ -240,7 +241,7 @@ async def get_training_status():
                 normalized_status = job_status.lower()
                 mapped_status = None
 
-                if normalized_status in {"failed", "crashed"}:
+                if normalized_status in {"failed", "error", "fatal", "crashed"}:
                     mapped_status = "error"
                 elif normalized_status == "completed":
                     mapped_status = "completed"
@@ -271,6 +272,37 @@ async def get_training_status():
         except Exception:
             # Process keeper might not have this job
             pass
+
+        if job_info and status == "error":
+            try:
+                events = process_keeper.get_process_events(active_job_id) if active_job_id else []
+            except Exception:
+                events = []
+
+            latest_error: dict | None = None
+            for event in reversed(events):
+                if not isinstance(event, Mapping):
+                    continue
+                event_type = str(event.get("type") or "").lower()
+                if event_type == "error":
+                    latest_error = event
+                    break
+                if event_type == "state":
+                    data = event.get("data") or {}
+                    state_text = str(data.get("status") or "").lower()
+                    if state_text in {"failed", "error", "fatal"}:
+                        latest_error = {"data": data}
+                        break
+
+            if latest_error and isinstance(latest_error, Mapping):
+                error_payload = latest_error.get("data") if isinstance(latest_error.get("data"), Mapping) else {}
+                message = str(error_payload.get("message") or error_payload.get("error") or "").strip()
+                job_info["status_detail"] = "error_with_details"
+                job_info["error"] = dict(error_payload)
+                if message:
+                    job_info["message"] = message
+            else:
+                job_info["status_detail"] = "crashed_without_details"
 
     raw_startup_stages = APIState.get_state("training_startup_stages") or {}
     startup_stages = (

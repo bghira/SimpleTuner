@@ -54,6 +54,7 @@ class TrainerProcess:
         self.command_file: Optional[str] = None
         self.event_file: Optional[str] = None
         self.func_file: Optional[str] = None
+        self.log_file: Optional[str] = None
 
     def _build_callable_payload(self, target_func) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -141,12 +142,16 @@ class TrainerProcess:
         self.command_file = os.path.join(self.ipc_dir, "commands.json")
         self.event_file = os.path.join(self.ipc_dir, "events.json")
         self.func_file = os.path.join(self.ipc_dir, "func.pkl")
+        self.log_file = os.path.join(self.ipc_dir, "stdout.log")
 
         # Initialize command and event files
         with open(self.command_file, "w") as f:
             json.dump([], f)
         with open(self.event_file, "w") as f:
             json.dump([], f)
+        if self.log_file:
+            with open(self.log_file, "w", encoding="utf-8") as f:
+                f.write("")
 
     def start(self, target_func, config: Dict[str, Any]):
         """Start the trainer subprocess."""
@@ -222,6 +227,11 @@ def send_event(event_type, data=None):
     try:
         with open(event_file, 'w') as f:
             json.dump(events, f)
+            try:
+                f.flush()
+                os.fsync(f.fileno())
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Failed to write event: {{e}}")
 
@@ -234,6 +244,7 @@ except Exception as e:
     payload_error = f"Payload error: {{e}}"
     send_event("error", {{"message": payload_error}})
     send_event("state", {{"status": "failed", "message": payload_error}})
+    time.sleep(0.2)
     sys.exit(1)
 
 mode = func_payload.get("mode")
@@ -261,6 +272,7 @@ if mode == "callable":
         import_error = f"Import error: {{e}}"
         send_event("error", {{"message": import_error}})
         send_event("state", {{"status": "failed", "message": import_error}})
+        time.sleep(0.2)
         sys.exit(1)
 else:
     try:
@@ -274,6 +286,7 @@ else:
         import_error = f"Import error: {{e}}"
         send_event("error", {{"message": import_error}})
         send_event("state", {{"status": "failed", "message": import_error}})
+        time.sleep(0.2)
         sys.exit(1)
 
 # Load config from JSON string
@@ -366,6 +379,7 @@ except SystemExit as exc:
     state_event = {{"status": "failed", "message": exit_message}}
     state_event.update(payload)
     send_event("state", state_event)
+    time.sleep(0.2)
     raise
 except Exception as e:
     error_message = str(e)
@@ -379,6 +393,7 @@ except Exception as e:
         logger.error(traceback_str)
     send_event("error", {{"message": error_message, "traceback": traceback_str}})
     send_event("state", {{"status": "failed", "message": error_message}})
+    time.sleep(0.2)
 
 logger.info("Subprocess exiting")
 '''
@@ -422,63 +437,186 @@ logger.info("Subprocess exiting")
             try:
                 # Check if process is still alive
                 if self.process and self.process.poll() is not None:
-                    # Process has exited - do one final check for events
-                    try:
-                        with open(self.event_file, "r") as f:
-                            all_events = json.load(f)
-
-                        # Process any remaining events
-                        if len(all_events) > len(self.events):
-                            new_events = all_events[len(self.events) :]
-                            with self.events_lock:
-                                self.events.extend(new_events)
-
-                            # Handle each new event
-                            for event in new_events:
-                                self._handle_event(event)
-                    except Exception as e:
-                        logger.debug(f"Final event read error: {e}")
-
+                    # Process has exited - drain any remaining events
+                    self._drain_remaining_events(timeout=1.0, max_attempts=5)
+                    self._emit_fallback_error_if_needed()
                     if self.status == "running":
                         # Only update if no status was set via events
                         self.status = "completed" if self.process.returncode == 0 else "failed"
                     break
 
-                # Read events file
-                try:
-                    with open(self.event_file, "r") as f:
-                        all_events = json.load(f)
-
-                    # Process new events
-                    if len(all_events) > len(self.events):
-                        new_events = all_events[len(self.events) :]
-                        with self.events_lock:
-                            self.events.extend(new_events)
-
-                        # Handle each new event
-                        for event in new_events:
-                            self._handle_event(event)
-
-                except Exception as e:
-                    if not self.stop_event.is_set():
-                        logger.debug(f"Event read error: {e}")
-
-                time.sleep(0.1)  # Poll every 100ms
+                has_new_events = self._process_event_file()
+                if not has_new_events:
+                    time.sleep(0.1)  # Poll every 100ms
 
             except Exception as e:
                 if not self.stop_event.is_set():
                     logger.error(f"Event listener error: {e}")
                 break
 
+    def _process_event_file(self) -> bool:
+        if not self.event_file:
+            return False
+        try:
+            with open(self.event_file, "r") as f:
+                all_events = json.load(f)
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                logger.debug(f"Event read error: {exc}")
+            return False
+
+        if len(all_events) <= len(self.events):
+            return False
+
+        new_events = all_events[len(self.events) :]
+        with self.events_lock:
+            self.events.extend(new_events)
+
+        for event in new_events:
+            self._handle_event(event)
+
+        return True
+
+    def _drain_remaining_events(self, *, timeout: float, max_attempts: int) -> None:
+        attempts = max(max_attempts, 1)
+        interval = timeout / attempts if timeout > 0 else 0.0
+
+        while attempts > 0 and not self.stop_event.is_set():
+            if self._process_event_file():
+                attempts = max(max_attempts, 1)
+                continue
+
+            attempts -= 1
+            if attempts <= 0 or interval <= 0:
+                break
+
+            time.sleep(interval)
+
+    def _emit_fallback_error_if_needed(self) -> None:
+        if self._relayed_failure:
+            return
+
+        exit_code = self.process.returncode if self.process else None
+        if exit_code in (None, 0):
+            return
+
+        synthesized = self._extract_error_from_logs(exit_code)
+        if synthesized is None:
+            message = f"Training failed with exit code {exit_code}."
+            synthesized = {"message": message, "exit_code": exit_code, "source": "process"}
+        else:
+            synthesized.setdefault("exit_code", exit_code)
+
+        synthetic_event = {
+            "type": "error",
+            "timestamp": time.time(),
+            "data": synthesized,
+        }
+
+        with self.events_lock:
+            self.events.append(synthetic_event)
+
+        self._handle_event(synthetic_event)
+        self._append_event("error", synthesized)
+
+    def _extract_error_from_logs(self, exit_code: Optional[int]) -> Optional[Dict[str, Any]]:
+        log_path = self.log_file
+        if not log_path or not os.path.exists(log_path):
+            return None
+
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+                lines = handle.readlines()
+        except Exception as exc:
+            logger.debug(f"Failed to read log file for {self.job_id}: {exc}")
+            return None
+
+        if not lines:
+            return None
+
+        tail_lines = [line.rstrip("\n") for line in lines[-200:]]
+        meaningful_lines = [line.strip() for line in tail_lines if line.strip()]
+
+        preferred_message: Optional[str] = None
+        for line in reversed(tail_lines):
+            lowered = line.lower().strip()
+            if "cuda out of memory" in lowered:
+                preferred_message = line.strip()
+                break
+            if "childfailederror" in lowered:
+                preferred_message = line.strip()
+                break
+            if "nccl" in lowered and "warning" in lowered:
+                # Skip NCCL warnings as final result unless nothing better is found
+                preferred_message = preferred_message or line.strip()
+
+        if not preferred_message and meaningful_lines:
+            preferred_message = meaningful_lines[-1]
+
+        if not preferred_message:
+            preferred_message = f"Training failed with exit code {exit_code}."
+
+        message = preferred_message[:512]
+
+        traceback_marker = "Traceback (most recent call last):"
+        traceback_start = None
+        for idx, line in enumerate(tail_lines):
+            if line.strip().startswith(traceback_marker):
+                traceback_start = idx
+
+        if traceback_start is not None:
+            traceback_lines = tail_lines[traceback_start:]
+        else:
+            traceback_lines = tail_lines[-40:]
+
+        traceback_text = "\n".join(traceback_lines).strip()
+        if len(traceback_text) > 4000:
+            traceback_text = traceback_text[-4000:]
+
+        log_excerpt = "\n".join(tail_lines[-60:]).strip()
+        if len(log_excerpt) > 4000:
+            log_excerpt = log_excerpt[-4000:]
+
+        payload: Dict[str, Any] = {
+            "message": message,
+            "source": "stdout",
+        }
+
+        if traceback_text:
+            payload["traceback"] = traceback_text
+        if log_excerpt:
+            payload["log_excerpt"] = log_excerpt
+
+        return payload
+
     def _stream_output(self):
         """Continuously read subprocess stdout to prevent pipe backpressure."""
         if not self.process or self.process.stdout is None:
             return
 
+        log_handle = None
+        if self.log_file:
+            try:
+                log_handle = open(self.log_file, "a", encoding="utf-8")
+            except Exception as exc:
+                logger.debug(f"Unable to open log file for {self.job_id}: {exc}")
+                log_handle = None
+
         try:
             for line in iter(self.process.stdout.readline, ""):
                 if line == "":
                     break
+                if log_handle is not None:
+                    try:
+                        log_handle.write(line)
+                        log_handle.flush()
+                    except Exception as log_exc:
+                        logger.debug(f"Failed to persist stdout for {self.job_id}: {log_exc}")
+                        try:
+                            log_handle.close()
+                        except Exception:
+                            pass
+                        log_handle = None
                 try:
                     sys.stdout.write(line)
                     sys.stdout.flush()
@@ -488,6 +626,12 @@ logger.info("Subprocess exiting")
         except Exception as exc:
             if not self.stop_event.is_set():
                 logger.debug(f"stdout streaming error for {self.job_id}: {exc}")
+        finally:
+            if log_handle is not None:
+                try:
+                    log_handle.close()
+                except Exception:
+                    pass
 
     def _handle_event(self, event: Dict[str, Any]):
         """Handle an event from the trainer subprocess."""
@@ -564,6 +708,11 @@ logger.info("Subprocess exiting")
         try:
             with open(self.event_file, "w") as f:
                 json.dump(events, f)
+                try:
+                    f.flush()
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
         except Exception as exc:
             logger.debug(f"Failed to append event for {self.job_id}: {exc}")
 
@@ -603,25 +752,43 @@ logger.info("Subprocess exiting")
         return False
 
     def _relay_failure_event(self, data: Dict[str, Any]) -> None:
-        if self._relayed_failure:
-            return
-        self._relayed_failure = True
-
-        message = str(data.get("message") or data.get("error") or "").strip()
+        payload_data = dict(data or {})
+        message = str(payload_data.get("message") or payload_data.get("error") or "").strip()
         if not message:
             message = "Training failed due to a fatal error."
+
+        first_failure = not self._relayed_failure
+        if first_failure:
+            self._relayed_failure = True
+
+        payload_data.setdefault("status", "failed")
+        normalized_status = str(payload_data.get("status") or "failed").strip().lower() or "failed"
+        if not first_failure:
+            payload_data["update"] = True
+
+        public_status = normalized_status if normalized_status in {"failed", "error", "fatal"} else "failed"
+
+        self.status = "failed"
+        payload_data["status"] = public_status
+        if first_failure and self.end_time is None:
+            self.end_time = datetime.now().isoformat()
+
+        with lock:
+            if self.job_id in process_registry:
+                process_registry[self.job_id]["status"] = self.status
 
         payload = {
             "type": "error",
             "severity": "error",
             "message": message,
             "job_id": self.job_id,
-            "data": (data or {}) | {"status": "failed"},
+            "data": payload_data,
         }
 
-        self._update_training_state_from_subprocess(status="error")
+        if first_failure:
+            self._update_training_state_from_subprocess(status="error")
         self._dispatch_callback_event(payload)
-        self._dispatch_training_status_event(status="failed", data=data, message=message)
+        self._dispatch_training_status_event(status="failed", data=payload_data, message=message)
 
     def _relay_completion_event(self, data: Dict[str, Any]) -> None:
         if self._relayed_completion:
@@ -785,6 +952,7 @@ logger.info("Subprocess exiting")
 
         # Clear process reference
         self.process = None
+        self.log_file = None
 
     def _safe_close_pipes(self):
         """Safely close subprocess pipes without hanging."""
@@ -898,7 +1066,10 @@ def get_process_status(job_id: str) -> str:
                     event_thread = process.event_thread
                     lock.release()
                     try:
-                        event_thread.join(timeout=0.3)
+                        deadline = time.time() + 1.0
+                        while event_thread.is_alive() and time.time() < deadline:
+                            remaining = deadline - time.time()
+                            event_thread.join(timeout=min(0.2, max(0.0, remaining)))
                     finally:
                         lock.acquire()
 
