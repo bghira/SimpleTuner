@@ -6,6 +6,7 @@ import json
 import time
 import unittest
 
+import requests
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -48,8 +49,28 @@ class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertIsNotNone(toast_message)
             self.assertTrue("saved" in toast_message.lower() or "success" in toast_message.lower())
 
-            driver.refresh()
             trainer_page.wait_for_htmx()
+
+            active_env = (
+                driver.execute_script(
+                    "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                    "return store && store.activeEnvironment ? store.activeEnvironment : 'default';"
+                )
+                or "default"
+            )
+
+            config_response = requests.get(f"{self.base_url}/api/configs/{active_env}", timeout=5)
+            config_response.raise_for_status()
+            config_payload = config_response.json()
+            config_body = config_payload.get("config") if isinstance(config_payload, dict) else {}
+            self.assertEqual(config_body.get("--output_dir"), "/test/output")
+
+            state_response = requests.get(f"{self.base_url}/api/webui/state", timeout=5)
+            state_response.raise_for_status()
+            state_payload = state_response.json()
+            defaults = state_payload.get("defaults") if isinstance(state_payload, dict) else {}
+            self.assertEqual(defaults.get("configs_dir"), str(self.config_dir))
+            self.assertEqual(defaults.get("output_dir"), "/test/output")
 
             self.assertEqual(basic_tab.get_configs_dir(), str(self.config_dir))
             self.assertEqual(basic_tab.get_output_dir(), "/test/output")
