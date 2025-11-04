@@ -726,6 +726,15 @@ class TestTrainer(unittest.TestCase):
             self.fail("Expected excerpt to be populated")
         self.assertIn("CUDA out of memory", excerpt)
 
+    def test_launch_with_accelerate_fallback_imports(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        helper = getattr(trainer_module, "_summarize_accelerate_failure", None)
+        self.assertIsNotNone(helper)
+
+        returned = helper(1, ["foo", "bar"])
+        self.assertIsInstance(returned, tuple)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",

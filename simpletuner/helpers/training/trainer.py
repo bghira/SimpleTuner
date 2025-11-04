@@ -4598,7 +4598,7 @@ def run_trainer_job(config):
             helper = globals().get("_summarize_accelerate_failure")
             if helper is None:
 
-                def helper(exit_code: int, lines: Sequence[str]) -> tuple[str, Optional[str]]:
+                def helper(exit_code, lines):
                     cleaned = [line.rstrip("\n") for line in lines]
                     excerpt_lines = [line.strip() for line in cleaned[-10:] if line.strip()]
                     excerpt_text = "\n".join(excerpt_lines) if excerpt_lines else None
