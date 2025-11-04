@@ -4595,7 +4595,19 @@ def run_trainer_job(config):
 
         returncode = process.wait()
         if returncode != 0:
-            summary, excerpt = _summarize_accelerate_failure(returncode, list(recent_lines))
+            helper = globals().get("_summarize_accelerate_failure")
+            if helper is None:
+
+                def helper(exit_code: int, lines: Sequence[str]) -> tuple[str, Optional[str]]:
+                    cleaned = [line.rstrip("\n") for line in lines]
+                    excerpt_lines = [line.strip() for line in cleaned[-10:] if line.strip()]
+                    excerpt_text = "\n".join(excerpt_lines) if excerpt_lines else None
+                    summary_text = f"Accelerate launch exited with status {exit_code}"
+                    if excerpt_lines:
+                        summary_text = f"{summary_text}: {excerpt_lines[-1]}"
+                    return summary_text[:512], excerpt_text
+
+            summary, excerpt = helper(returncode, list(recent_lines))
             launch_error = RuntimeError(summary)
             if excerpt:
                 setattr(launch_error, "_simpletuner_log_excerpt", excerpt)
