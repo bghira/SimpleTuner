@@ -7,6 +7,7 @@ import queue
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -192,6 +193,28 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         events = get_process_events(job_id)
         error_events = [event for event in events if (event.get("type") or "").lower() == "error"]
         self.assertTrue(error_events, f"Expected error event, received: {events}")
+
+    def test_log_extraction_prefers_cuda_oom_message(self):
+        """Synthetic log extraction should highlight CUDA OOM failures."""
+        job_id = "test_log_extraction"
+        process = TrainerProcess(job_id)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "stdout.log")
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("some info\n")
+                handle.write(
+                    "2025-11-04 16:21:12,847 - SimpleTuner - INFO - [RANK 0] 2025-11-04 16:21:12,846 [ERROR] Error encoding images ['16.jpg']: CUDA out of memory. Tried to allocate 256.00 MiB.\n"
+                )
+                handle.write("RuntimeError: Accelerate launch exited with status 1\n")
+
+            process.log_file = log_path
+            payload = process._extract_error_from_logs(exit_code=1)
+
+        self.assertIsNotNone(payload)
+        if payload is None:  # Pragmatic guard for static checkers
+            self.fail("Expected payload from log extraction")
+        self.assertIn("CUDA out of memory", payload.get("message", ""))
 
     @unittest.skip("Requires process fixes")
     def test_force_kill_unresponsive_process(self):

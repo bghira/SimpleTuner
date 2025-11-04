@@ -536,10 +536,27 @@ logger.info("Subprocess exiting")
 
         tail_lines = [line.rstrip("\n") for line in lines[-200:]]
         meaningful_lines = [line.strip() for line in tail_lines if line.strip()]
-        message = meaningful_lines[-1] if meaningful_lines else None
-        if not message:
-            message = f"Training failed with exit code {exit_code}."
-        message = message[:512]
+
+        preferred_message: Optional[str] = None
+        for line in reversed(tail_lines):
+            lowered = line.lower().strip()
+            if "cuda out of memory" in lowered:
+                preferred_message = line.strip()
+                break
+            if "childfailederror" in lowered:
+                preferred_message = line.strip()
+                break
+            if "nccl" in lowered and "warning" in lowered:
+                # Skip NCCL warnings as final result unless nothing better is found
+                preferred_message = preferred_message or line.strip()
+
+        if not preferred_message and meaningful_lines:
+            preferred_message = meaningful_lines[-1]
+
+        if not preferred_message:
+            preferred_message = f"Training failed with exit code {exit_code}."
+
+        message = preferred_message[:512]
 
         traceback_marker = "Traceback (most recent call last):"
         traceback_start = None

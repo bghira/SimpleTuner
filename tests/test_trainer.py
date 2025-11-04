@@ -709,6 +709,23 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(instance.abort_called)
         self.assertTrue(instance.should_abort)
 
+    def test_accelerate_failure_summary_highlights_oom(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        lines = [
+            "2025-11-04 16:21:12,847 - SimpleTuner - INFO - starting...",
+            "2025-11-04 16:21:12,846 [ERROR] Error encoding images ['16.jpg']: CUDA out of memory. Tried to allocate 256.00 MiB.",
+            "RuntimeError: Accelerate launch exited with status 1",
+        ]
+
+        summary, excerpt = trainer_module._summarize_accelerate_failure(1, lines)
+
+        self.assertIn("CUDA out of memory", summary)
+        self.assertIsNotNone(excerpt)
+        if excerpt is None:  # pragma: no cover - defensive guard
+            self.fail("Expected excerpt to be populated")
+        self.assertIn("CUDA out of memory", excerpt)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
