@@ -114,3 +114,4 @@ class ConfigField:
     disabled: bool = False
     aliases: Optional[List[str]] = None
     parser_type: Optional[ParserType] = None
+    allow_empty: bool = False  # True if empty strings should be preserved instead of replaced with default_value

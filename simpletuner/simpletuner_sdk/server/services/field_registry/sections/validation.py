@@ -77,11 +77,12 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.TEXTAREA,
             tab="validation",
             section="prompt_management",
-            placeholder="a photo of a cat, highly detailed, 4k",
+            placeholder="e.g. a photo of a cat, highly detailed, 4k (leave empty to skip)",
             help_text="Prompt to use for validation images",
-            tooltip="This prompt will be used to generate images during training to monitor progress",
+            tooltip="This prompt will be used to generate images during training to monitor progress. Leave empty to skip prompt-based validation.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+            allow_empty=True,
         )
     )
 
@@ -365,10 +366,12 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="prompt_management",
             default_value="blurry, cropped, ugly",
+            placeholder="e.g. blurry, cropped, ugly (leave empty to disable)",
             help_text="Negative prompt for validation images",
             tooltip="What to avoid in generated images. Set to empty string to disable.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+            allow_empty=True,
         )
     )
 

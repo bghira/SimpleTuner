@@ -997,7 +997,9 @@ class ConfigsService:
     # Shared helpers for config normalization
     # ------------------------------------------------------------------
     @staticmethod
-    def convert_value_by_type(value: Any, field_type: FieldType, default_value: Any = None) -> Any:
+    def convert_value_by_type(
+        value: Any, field_type: FieldType, default_value: Any = None, allow_empty: bool = False
+    ) -> Any:
         """Convert a raw value into the appropriate Python type."""
 
         if value is None:
@@ -1077,7 +1079,9 @@ class ConfigsService:
                     except ValueError:
                         pass
                 return cleaned
-            # Empty string – defer to the defined default, otherwise treat as unset
+            # Empty string – if allow_empty is True, return empty string; otherwise defer to default
+            if allow_empty:
+                return ""
             if default_value is not None:
                 return default_value
             return None
@@ -1175,7 +1179,11 @@ class ConfigsService:
                 if value in (None, ""):
                     value = ""
             elif value in (None, "") or (isinstance(value, (list, tuple)) and not value):
-                continue
+                # Check if the field allows empty values
+                lookup_name = config_key[2:] if config_key.startswith("--") else config_key
+                field = lazy_field_registry.get_field(lookup_name)
+                if not (field and field.allow_empty):
+                    continue
 
             if config_key in directory_fields and value:
                 base_dir = output_root if config_key == "--output_dir" else None
@@ -1189,10 +1197,11 @@ class ConfigsService:
             lookup_name = config_key[2:] if config_key.startswith("--") else config_key
             field = lazy_field_registry.get_field(lookup_name)
             default_value = field.default_value if field else None
+            allow_empty = field.allow_empty if field else False
 
             if isinstance(value, list):
                 if field_type == FieldType.CHECKBOX or field_type == FieldType.MULTI_SELECT:
-                    converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value)
+                    converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value, allow_empty)
                     config_dict[config_key] = converted_value
                     continue
                 # webhook_config should preserve list structure (can contain multiple webhook configs)
@@ -1203,14 +1212,16 @@ class ConfigsService:
                 non_empty = [v for v in value if v not in (None, "")]
                 value = non_empty[-1] if non_empty else ""
 
-            converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value)
+            converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value, allow_empty)
             if config_key in always_include_fields and value in (None, ""):
                 converted_value = "" if value in (None, "") else converted_value
 
-            # Skip if the final converted value is empty (unless it's a field that must always be included)
+            # Skip if the final converted value is empty (unless it's a field that must always be included or allows empty)
             if config_key not in always_include_fields and config_key not in numeric_fields:
                 if converted_value in (None, ""):
-                    continue
+                    # Don't skip if the field explicitly allows empty values
+                    if not allow_empty:
+                        continue
 
             if isinstance(converted_value, str) and converted_value and converted_value.lower().endswith(".json"):
                 if config_key in json_path_fields:
@@ -1255,7 +1266,9 @@ class ConfigsService:
                 coerced[key] = value
                 continue
 
-            coerced[key] = ConfigsService.convert_value_by_type(value, field.field_type, field.default_value)
+            coerced[key] = ConfigsService.convert_value_by_type(
+                value, field.field_type, field.default_value, field.allow_empty
+            )
 
         return coerced
 
