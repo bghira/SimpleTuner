@@ -2517,7 +2517,7 @@ class Trainer:
             # if we've disabled it or the benchmark exists, we will not do it again.
             # deepspeed zero3 can't do validations at all.
             return
-        if not self.accelerator.is_main_process:
+        if self.config.validation_multigpu != "batch-parallel" and not self.accelerator.is_main_process:
             return
         logger.info("Benchmarking base model for comparison. Supply `--disable_benchmark: true` to disable this behaviour.")
         self._emit_event(
