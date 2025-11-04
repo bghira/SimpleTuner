@@ -105,12 +105,15 @@ class TestAllowEmptyFields(unittest.TestCase):
             MagicMock(),
         )
 
-        with patch(
-            "simpletuner.simpletuner_sdk.server.services.training_service.get_webui_state",
-            return_value=(mock_state_store, mock_defaults),
-        ), patch(
-            "simpletuner.simpletuner_sdk.server.services.training_service.get_config_store",
-            return_value=mock_store,
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service.get_webui_state",
+                return_value=(mock_state_store, mock_defaults),
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service.get_config_store",
+                return_value=mock_store,
+            ),
         ):
             # Simulate form submission where user cleared the negative prompt
             form_data = {
