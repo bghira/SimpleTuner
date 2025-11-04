@@ -4544,7 +4544,9 @@ def run_trainer_job(config):
         process = subprocess.Popen(cmd, **popen_kwargs)
 
         output_lock = threading.Lock()
-        recent_lines: deque[str] = deque(maxlen=400)
+        from collections import deque as _deque
+
+        recent_lines = _deque(maxlen=400)
 
         def _forward_output():
             if not process.stdout:
