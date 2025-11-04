@@ -202,6 +202,27 @@ async def events_stream(request: Request):
                         events = callback_service.stream_since(last_index)
 
                         for event in events:
+                            # Skip events that are already directly broadcast via SSE
+                            # to prevent duplicate delivery to clients
+                            from simpletuner.simpletuner_sdk.server.services.callback_events import EventType
+
+                            should_skip = False
+
+                            # Skip training progress events (broadcast via _broadcast_training_progress)
+                            if event.type == EventType.TRAINING_PROGRESS:
+                                should_skip = True
+
+                            # Skip lifecycle stage events (broadcast via _broadcast_startup_stage)
+                            if event.stage is not None:
+                                should_skip = True
+
+                            if should_skip:
+                                # Update last_index but don't send to client
+                                if event.index is not None:
+                                    last_index = event.index
+                                continue
+
+                            # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
                             await sse_manager.send_to_connection(
                                 connection.connection_id,

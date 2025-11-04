@@ -288,6 +288,7 @@ class CallbackService:
             previous_progress = {}
         merged = self._merge_progress_state(previous_progress, event.progress, event.data)
         APIState.set_state("training_progress", merged)
+        self._broadcast_training_progress(job_id, merged)
 
     def _handle_status_event(self, event: CallbackEvent, job_id: str | None) -> None:
         raw_status = None
@@ -464,6 +465,43 @@ class CallbackService:
         async def _broadcast():
             manager = get_sse_manager()
             await manager.broadcast(payload, event_type="training_progress")
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            loop.create_task(_broadcast())
+        else:
+            asyncio.run(_broadcast())
+
+    def _broadcast_training_progress(self, job_id: str | None, progress_state: Mapping[str, Any]) -> None:
+        """Broadcast real-time training progress updates via SSE."""
+        payload = {
+            "type": "training.progress",
+            "job_id": job_id,
+            "percent": progress_state.get("percent", 0),
+            "step": progress_state.get("step", 0),
+            "total_steps": progress_state.get("total_steps", 0),
+            "epoch": progress_state.get("epoch", 0),
+            "total_epochs": progress_state.get("total_epochs", 0),
+            "loss": progress_state.get("loss"),
+            "learning_rate": progress_state.get("learning_rate"),
+        }
+
+        # Include any additional metrics if present
+        if "metrics" in progress_state and isinstance(progress_state["metrics"], Mapping):
+            payload["metrics"] = progress_state["metrics"]
+
+        logger.debug(
+            f"Broadcasting training progress: step {payload['step']}/{payload['total_steps']} "
+            f"({payload['percent']:.1f}%) for job {job_id}"
+        )
+
+        async def _broadcast():
+            manager = get_sse_manager()
+            await manager.broadcast(payload, event_type="training.progress")
 
         try:
             loop = asyncio.get_running_loop()
