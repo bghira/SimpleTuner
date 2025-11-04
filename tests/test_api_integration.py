@@ -252,10 +252,10 @@ class EventEndpointTests(APITestCase, unittest.TestCase):
     def test_broadcast_long_polling_timeout(self) -> None:
         with self.client_session(ServerMode.CALLBACK) as client:
             start_time = time.time()
-            response = client.get("/broadcast?last_event_index=999")
+            response = client.get("/broadcast?last_event_index=999&timeout=1")
         elapsed = time.time() - start_time
 
-        self.assertLess(elapsed, 35)
+        self.assertLess(elapsed, 5)
         self.assertIn(response.status_code, {200, 204})
 
     def test_broadcast_returns_new_events(self) -> None:

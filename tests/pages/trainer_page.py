@@ -764,6 +764,11 @@ class TrainerPage(BasePage):
                 "if (!document || !document.body) { return 'unknown'; }"
                 "return document.body.dataset.trainingActive || 'false';"
             )
+            trainer_store_training = driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (!store || typeof store.isTraining === 'undefined') { return null; }"
+                "return !!store.isTraining;"
+            )
             run_disabled = driver.execute_script(
                 "const runBtn=document.getElementById('runBtn');" "return !!(runBtn && runBtn.disabled);"
             )
@@ -774,9 +779,21 @@ class TrainerPage(BasePage):
                 "const el = document.getElementById('training-status');"
                 "return el ? (el.textContent || '').toLowerCase() : '';"
             )
-            if "training starting" in status_text or "training started" in status_text:
+            if any(
+                keyword in status_text
+                for keyword in (
+                    "training starting",
+                    "training started",
+                    "training is starting",
+                    "training has started",
+                )
+            ):
                 return "active"
-            if (body_state == "true" or run_disabled) and cancel_enabled:
+            if body_state == "true":
+                return "active"
+            if trainer_store_training:
+                return "active"
+            if run_disabled and cancel_enabled:
                 return "active"
             if any(
                 keyword in status_text
