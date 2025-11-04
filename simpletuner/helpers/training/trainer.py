@@ -1389,6 +1389,54 @@ class Trainer:
             webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
         if webhook_config is None:
             return
+
+        # Handle string webhook_config (file path or JSON string)
+        if isinstance(webhook_config, str):
+            import json
+            import os
+
+            if webhook_config.startswith("{") or webhook_config.startswith("["):
+                # Parse as JSON string
+                try:
+                    parsed_config = json.loads(webhook_config)
+                    # Normalize single dict to list for consistency
+                    if isinstance(parsed_config, dict):
+                        webhook_config = [parsed_config]
+                    elif isinstance(parsed_config, list):
+                        webhook_config = parsed_config
+                    else:
+                        logging.error(f"webhook_config must be dict or list, got {type(parsed_config)}")
+                        raise ValueError(f"Invalid webhook_config type: {type(parsed_config)}")
+                    logging.info("Parsed webhook config from JSON string")
+                except json.JSONDecodeError as e:
+                    logging.error(f"Could not load webhook_config (invalid JSON): {e}")
+                    raise
+            else:
+                # Try to load from file
+                if os.path.isfile(webhook_config):
+                    try:
+                        with open(webhook_config, "r") as f:
+                            loaded_config = json.load(f)
+                            # Normalize single dict to list for consistency
+                            if isinstance(loaded_config, dict):
+                                webhook_config = [loaded_config]
+                            elif isinstance(loaded_config, list):
+                                webhook_config = loaded_config
+                            else:
+                                logging.error(f"webhook_config must be dict or list, got {type(loaded_config)}")
+                                raise ValueError(f"Invalid webhook_config type: {type(loaded_config)}")
+                        logging.info(f"Loaded webhook config from file: {webhook_config}")
+                    except Exception as e:
+                        logging.error(f"Could not load webhook_config from file: {e}")
+                        raise
+                else:
+                    logging.error(f"Could not find webhook_config file: {webhook_config}")
+                    raise ValueError(f"webhook_config file not found: {webhook_config}")
+        elif isinstance(webhook_config, dict):
+            # Normalize single dict to list for consistency
+            webhook_config = [webhook_config]
+        # list is already in the correct format
+
         from simpletuner.helpers.webhooks.handler import WebhookHandler
 
         send_video_flag = self._infer_send_video_flag(raw_config)
