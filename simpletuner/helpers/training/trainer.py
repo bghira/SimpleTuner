@@ -1,4 +1,5 @@
 import ast
+import collections
 import copy
 import glob
 import hashlib
@@ -14,7 +15,6 @@ import subprocess
 import sys
 import threading
 import time
-from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -4544,7 +4544,7 @@ def run_trainer_job(config):
         process = subprocess.Popen(cmd, **popen_kwargs)
 
         output_lock = threading.Lock()
-        recent_lines: deque[str] = deque(maxlen=400)
+        recent_lines: collections.deque[str] = collections.deque(maxlen=400)
 
         def _forward_output():
             if not process.stdout:
