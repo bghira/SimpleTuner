@@ -1324,6 +1324,8 @@ class Validation:
         if self.model.PREDICTION_TYPE.value == "flow_matching":
             # some flow-matching adjustments should be made for euler and unipc video model generations.
             if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
+                if self.config.validation_noise_scheduler == "euler":
+                    self.config.validation_noise_scheduler = "flow_matching"
                 # The Beta schedule looks WAY better...
                 if not self.model.pipeline.scheduler.config.get("use_karras_sigmas", False):
                     scheduler_args["use_beta_sigmas"] = True
