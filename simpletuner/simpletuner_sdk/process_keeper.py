@@ -745,9 +745,20 @@ logger.info("Subprocess exiting")
             self._relayed_failure = True
 
         payload_data.setdefault("status", "failed")
-        payload_data["status"] = str(payload_data.get("status") or "failed").strip() or "failed"
+        normalized_status = str(payload_data.get("status") or "failed").strip().lower() or "failed"
         if not first_failure:
             payload_data["update"] = True
+
+        public_status = normalized_status if normalized_status in {"failed", "error", "fatal"} else "failed"
+
+        self.status = "failed"
+        payload_data["status"] = public_status
+        if first_failure and self.end_time is None:
+            self.end_time = datetime.now().isoformat()
+
+        with lock:
+            if self.job_id in process_registry:
+                process_registry[self.job_id]["status"] = self.status
 
         payload = {
             "type": "error",

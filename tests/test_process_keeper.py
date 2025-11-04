@@ -168,6 +168,31 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         self.assertNotEqual(status, "running")
         self.assertIn(status, ["completed", "failed"])
 
+    def test_failure_event_updates_status_and_events(self):
+        """A raised exception should surface as a failed status with error event."""
+        job_id = "test_failure_status"
+        self.test_jobs.append(job_id)
+
+        def failing_task(config):
+            raise RuntimeError("simulated failure")
+
+        submit_job(job_id, failing_task, {})
+
+        # Wait until process transitions out of running
+        deadline = time.time() + 5
+        status = None
+        while time.time() < deadline:
+            status = get_process_status(job_id)
+            if status not in {"pending", "running"}:
+                break
+            time.sleep(0.1)
+
+        self.assertEqual(status, "failed")
+
+        events = get_process_events(job_id)
+        error_events = [event for event in events if (event.get("type") or "").lower() == "error"]
+        self.assertTrue(error_events, f"Expected error event, received: {events}")
+
     @unittest.skip("Requires process fixes")
     def test_force_kill_unresponsive_process(self):
         """Test force killing a process that ignores SIGTERM."""
