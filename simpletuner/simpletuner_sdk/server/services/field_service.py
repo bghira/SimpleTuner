@@ -2058,7 +2058,11 @@ class FieldService:
                             if not has_explicit_none_choice:
                                 continue
 
-                    if candidate_value not in (None, ""):
+                    # Accept non-empty values or empty strings for fields that allow_empty
+                    if candidate_value is not None:
+                        if candidate_value == "" and not field.allow_empty:
+                            # Empty string on field that doesn't allow empty - skip it
+                            continue
                         value = candidate_value
                         break
 

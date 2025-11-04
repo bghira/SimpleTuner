@@ -408,21 +408,28 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     text_field_types = {FieldType.TEXT, FieldType.TEXTAREA, FieldType.FILE, FieldType.PASSWORD}
     blankable_field_args: Set[str] = set()
+    allow_empty_field_args: Set[str] = set()
     for registry_field in lazy_field_registry.get_all_fields():
         field_type = getattr(registry_field, "field_type", None)
         if field_type not in text_field_types:
             continue
         default_value = getattr(registry_field, "default_value", None)
-        if default_value is not None and not (isinstance(default_value, str) and default_value.strip() == ""):
-            continue
+        allow_empty = getattr(registry_field, "allow_empty", False)
         arg_name = getattr(registry_field, "arg_name", None) or getattr(registry_field, "name", None)
         if not arg_name:
             continue
         canonical_arg = arg_name if arg_name.startswith("--") else f"--{arg_name}"
-        blankable_field_args.add(canonical_arg)
 
+        # Fields with allow_empty should preserve empty strings, not be removed
+        if allow_empty:
+            allow_empty_field_args.add(canonical_arg)
+        # Only blankable if no default value OR if default is empty string
+        elif default_value is None or (isinstance(default_value, str) and default_value.strip() == ""):
+            blankable_field_args.add(canonical_arg)
+
+    # These fields are removed completely when cleared (legacy behavior)
     manual_blankable_fields = {
-        "--validation_negative_prompt",
+        # validation_negative_prompt removed from here - now uses allow_empty=True
     }
     blankable_field_args.update(manual_blankable_fields)
 
@@ -453,6 +460,21 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             existing_config_cli.pop(key, None)
             config_dict.pop(key, None)
 
+    # Handle fields with allow_empty - preserve as empty string, don't remove
+    for canonical_field in allow_empty_field_args:
+        if _field_was_cleared(canonical_field):
+            logger.debug("User cleared %s (allow_empty field); preserving as empty string.", canonical_field)
+            # Remove from existing config to avoid merge, but keep empty string in config_dict
+            canonical = canonical_field if canonical_field.startswith("--") else f"--{canonical_field.lstrip('-')}"
+            alias = canonical.lstrip("-")
+            variants = {canonical, alias}
+            for key in variants:
+                existing_config_cli.pop(key, None)
+            # Ensure empty string is in config_dict
+            if canonical not in config_dict:
+                config_dict[canonical] = ""
+
+    # Handle regular blankable fields - remove completely
     for canonical_field in blankable_field_args:
         if _field_was_cleared(canonical_field):
             logger.debug("User cleared %s; removing from existing config merge.", canonical_field)
