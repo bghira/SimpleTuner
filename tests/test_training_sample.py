@@ -636,6 +636,75 @@ class TestTrainingSample(unittest.TestCase):
                 f"Image {i} aspect ratio {ar} doesn't match first image {first_aspect}",
             )
 
+    def test_max_upscale_threshold_config(self):
+        """Test that max_upscale_threshold configuration works correctly."""
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
+        StateTracker.set_resolution_by_aspect = MagicMock()
+        StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
+
+        # Create a small 256x256 image
+        small_img = Image.new("RGB", (256, 256), "white")
+        small_metadata = {"original_size": (256, 256)}
+
+        # Test 1: No threshold (None) - should allow upscaling
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.0, 0.5, 2.0],
+                "resolution": 1024,
+                "resolution_type": "pixel",
+                "max_upscale_threshold": None,
+            }
+        )
+        sample1 = TrainingSample(small_img, self.data_backend_id, small_metadata)
+        available_buckets1 = sample1._trim_aspect_bucket_list()
+        # With no threshold, all buckets should be available
+        self.assertEqual(len(available_buckets1), 3, "All buckets should be available when threshold is None")
+
+        # Test 2: With threshold of 0.2 (20%) - should filter out buckets requiring >20% upscale
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.0, 0.5, 2.0],
+                "resolution": 1024,
+                "resolution_type": "pixel",
+                "max_upscale_threshold": 0.2,
+            }
+        )
+        sample2 = TrainingSample(small_img, self.data_backend_id, small_metadata)
+        available_buckets2 = sample2._trim_aspect_bucket_list()
+        # With 0.2 threshold, buckets requiring >20% upscale should be filtered
+        # Since we're going from 256 to 1024, that's 4x scaling (300% upscale), so all buckets should be filtered
+        self.assertEqual(len(available_buckets2), 0, "Buckets requiring >20% upscale should be filtered with threshold=0.2")
+
+        # Test 3: With threshold of 4.0 (400%) - should allow upscaling up to 5x
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.0, 0.5, 2.0],
+                "resolution": 1024,
+                "resolution_type": "pixel",
+                "max_upscale_threshold": 4.0,
+            }
+        )
+        sample3 = TrainingSample(small_img, self.data_backend_id, small_metadata)
+        available_buckets3 = sample3._trim_aspect_bucket_list()
+        # With 4.0 threshold, 4x scaling (300%) should be allowed
+        # This should allow all the buckets since we're going from 256 to 1024 (4x = 300% < 400%)
+        self.assertGreater(
+            len(available_buckets3),
+            0,
+            "Buckets requiring <400% upscale should be available with threshold=4.0",
+        )
+
 
 # Helper mock classes and functions
 class MockCropper:

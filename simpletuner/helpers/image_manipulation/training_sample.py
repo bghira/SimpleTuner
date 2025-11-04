@@ -100,6 +100,7 @@ class TrainingSample:
         self._set_resolution()
         self.target_downsample_size = self.data_backend_config.get("target_downsample_size", None)
         self.maximum_image_size = self.data_backend_config.get("maximum_image_size", None)
+        self.max_upscale_threshold = self.data_backend_config.get("max_upscale_threshold", None)
         self._image_path = image_path
         # RGB/EXIF conversion
         self.correct_image()
@@ -225,20 +226,30 @@ class TrainingSample:
             raise Exception(f"Unknown resolution type: {self.resolution_type}")
 
     def _trim_aspect_bucket_list(self):
-        """filter buckets to avoid upscaling >20%"""
+        """filter buckets based on upscale threshold if configured"""
         available_buckets = []
         for bucket in self.crop_aspect_buckets:
-            # skip buckets that would upscale >20%
             if type(bucket) is dict:
                 aspect = bucket["aspect_ratio"]
             elif type(bucket) is float or type(bucket) is int:
                 aspect = bucket
             else:
                 raise ValueError("Aspect buckets must be a list of floats or dictionaries.")
+
+            # If no threshold configured, allow all buckets
+            if self.max_upscale_threshold is None:
+                available_buckets.append(aspect)
+                continue
+
             # Calculate new size
             target_size, _, _ = self.target_size_calculator(aspect, self.resolution, self.original_size)
-            # check 20% upscale threshold
-            if target_size[0] * 1.2 < self.original_size[0] and target_size[1] * 1.2 < self.original_size[1]:
+            # Apply upscale threshold filter: keep buckets where target <= original * (1 + threshold)
+            # This allows downscaling and upscaling within the threshold
+            threshold_multiplier = 1 + self.max_upscale_threshold
+            if (
+                target_size[0] <= self.original_size[0] * threshold_multiplier
+                and target_size[1] <= self.original_size[1] * threshold_multiplier
+            ):
                 available_buckets.append(aspect)
         return available_buckets
 
