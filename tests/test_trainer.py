@@ -1320,7 +1320,9 @@ class TestTrainer(unittest.TestCase):
         with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}):
             with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=0):
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"):
-                    with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}):
+                    with patch(
+                        "simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}
+                    ):
                         with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1):
                             with patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"):
                                 # This should process all parameter groups when split_groups=True
