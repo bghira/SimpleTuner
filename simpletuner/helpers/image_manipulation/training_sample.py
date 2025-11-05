@@ -108,7 +108,7 @@ class TrainingSample:
 
     def save_debug_image(self, path: str):
         if self.image is not None:
-            if os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
+            if os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "").lower() == "true":
                 if hasattr(self.image, "save"):
                     self.image.save(path)
                 else:
