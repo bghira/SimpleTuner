@@ -23,8 +23,6 @@ CONFIG_FILENAMES = {
     "env": "config.env",
 }
 
-CONFIG_SUFFIX_TO_BACKEND = {".json": "json", ".toml": "toml", ".env": "env"}
-
 
 def find_config_file() -> Optional[str]:
     """Find config file in current directory or config/ subdirectory."""
@@ -318,75 +316,56 @@ def _extract_cli_override(arguments: List[str], option_names: tuple[str, ...]) -
     return None
 
 
-def _collect_env_roots(env: str) -> List[Path]:
-    """Collect root directories or files to inspect for the requested environment."""
+def _candidate_config_paths(env: str, backend_override: Optional[str], config_path_override: Optional[str]) -> List[Path]:
+    """List possible configuration files for an explicit environment."""
 
-    env_path = Path(env).expanduser()
-    roots: List[Path] = []
-    seen: set[Path] = set()
-
-    def _add(path: Path) -> None:
-        if path in seen:
-            return
-        seen.add(path)
-        roots.append(path)
-
-    _add(env_path)
-
-    if env_path.is_absolute():
-        return roots
-
-    parts = env_path.parts
-    if parts and parts[0] != "config":
-        _add(Path("config") / env_path)
-
-    if parts and parts[0] == "examples":
-        package_root = Path(__file__).resolve().parent
-        _add(package_root / env_path)
-
-    return roots
-
-
-def _expand_root_to_candidates(root: Path, backend_override: Optional[str], allow_nested: bool) -> List[Path]:
-    """Expand a root entry to candidate configuration file paths."""
-
-    backend = backend_override.lower() if backend_override else None
-    candidates: set[Path] = set()
-
-    suffix_backend = CONFIG_SUFFIX_TO_BACKEND.get(root.suffix.lower())
-    if suffix_backend:
-        if backend is None or backend == suffix_backend:
-            candidates.add(root)
-        return list(candidates)
-
+    backend = (backend_override or "").lower() or None
     if backend and backend not in CONFIG_FILENAMES:
         return []
 
-    targets = [backend] if backend else list(CONFIG_FILENAMES.keys())
-    for target in targets:
-        filename = CONFIG_FILENAMES[target]
-        candidates.add(root / filename)
-        if allow_nested:
-            candidates.add(root / "config" / filename)
+    filenames = [CONFIG_FILENAMES[backend]] if backend else list(CONFIG_FILENAMES.values())
 
-    return list(candidates)
+    candidates: list[Path] = []
 
-
-def _candidate_config_files(env: str, config_path_override: Optional[str], backend_override: Optional[str]) -> List[Path]:
-    """Compute potential configuration file paths for the requested environment."""
-
-    candidates: set[Path] = set()
+    def _add(path: Path) -> None:
+        expanded = path.expanduser()
+        if expanded not in candidates:
+            candidates.append(expanded)
 
     if config_path_override:
-        override_root = Path(config_path_override).expanduser()
-        for path in _expand_root_to_candidates(override_root, backend_override, allow_nested=False):
-            candidates.add(path)
+        override = Path(config_path_override).expanduser()
+        if override.suffix:
+            _add(override)
+            return candidates
+        for name in filenames:
+            _add(override / name)
+            suffix = Path(name).suffix
+            if suffix:
+                _add(override.with_suffix(suffix))
+        return candidates
 
-    for env_root in _collect_env_roots(env):
-        for path in _expand_root_to_candidates(env_root, backend_override, allow_nested=True):
-            candidates.add(path)
+    env_path = Path(env).expanduser()
+    if env_path.suffix:
+        _add(env_path)
+        if not env_path.is_absolute():
+            _add(Path.cwd() / env_path)
+        return candidates
 
-    return sorted(candidates, key=lambda path: str(path))
+    search_roots: List[Path] = []
+    if env_path.is_absolute():
+        search_roots.append(env_path)
+    else:
+        search_roots.append(env_path)
+        search_roots.append(Path("config") / env_path)
+        if env_path.parts and env_path.parts[0] == "examples":
+            package_root = Path(__file__).resolve().parent
+            search_roots.append(package_root / env_path)
+
+    for root in search_roots:
+        for name in filenames:
+            _add(root / name)
+
+    return candidates
 
 
 def _validate_environment_config(env: str, backend_override: Optional[str], config_path_override: Optional[str]) -> None:
@@ -399,7 +378,7 @@ def _validate_environment_config(env: str, backend_override: Optional[str], conf
     if backend == "cmd":
         return
 
-    candidate_paths = _candidate_config_files(env, config_path_override, backend)
+    candidate_paths = _candidate_config_paths(env, backend, config_path_override)
     existing = [path for path in candidate_paths if path.is_file()]
 
     if existing:
@@ -408,7 +387,7 @@ def _validate_environment_config(env: str, backend_override: Optional[str], conf
     if not candidate_paths:
         raise FileNotFoundError(f"No configuration candidates were produced for environment '{env}'.")
 
-    checked = "\n  - ".join(sorted({str(path) for path in candidate_paths}))
+    checked = "\n  - ".join(str(path) for path in candidate_paths)
     raise FileNotFoundError(f"Configuration for environment '{env}' not found. Checked:\n  - {checked}")
 
 
