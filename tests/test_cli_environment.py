@@ -1,5 +1,7 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from simpletuner.cli import _validate_environment_config, run_training
 from simpletuner.helpers.configuration.json_file import load_json_config
@@ -18,10 +20,12 @@ class TestCliEnvironmentValidation(unittest.TestCase):
             _validate_environment_config("this-env-should-not-exist", None, None)
 
     def test_validate_environment_config_existing_env(self) -> None:
-        try:
-            _validate_environment_config("sdxl", None, None)
-        except FileNotFoundError as error:
-            self.fail(f"Expected environment to be valid but raised: {error}")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "config.json").write_text("{}", encoding="utf-8")
+            try:
+                _validate_environment_config(tmpdir, None, None)
+            except FileNotFoundError as error:
+                self.fail(f"Expected environment to be valid but raised: {error}")
 
     def test_run_training_returns_error_for_missing_env(self) -> None:
         result = run_training(env="this-env-should-not-exist", extra_args=[])
