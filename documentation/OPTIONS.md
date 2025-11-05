@@ -702,6 +702,7 @@ usage: train.py [-h] --model_family
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
                 [--maximum_image_size MAXIMUM_IMAGE_SIZE]
                 [--target_downsample_size TARGET_DOWNSAMPLE_SIZE]
+                [--max_upscale_threshold MAX_UPSCALE_THRESHOLD]
                 [--metadata_update_interval METADATA_UPDATE_INTERVAL]
                 [--debug_aspect_buckets [DEBUG_ASPECT_BUCKETS]]
                 [--debug_dataset_loader [DEBUG_DATASET_LOADER]]
@@ -1282,6 +1283,13 @@ options:
                         When using --maximum_image_size, very-large images
                         exceeding that value will be downsampled to this
                         target size before cropping
+  --max_upscale_threshold MAX_UPSCALE_THRESHOLD
+                        Limit upscaling of small images to prevent quality
+                        degradation (opt-in). When set, filters out aspect
+                        buckets requiring upscaling beyond this threshold.
+                        For example, 0.2 allows up to 20% upscaling. Default
+                        (None) allows unlimited upscaling. Must be between 0
+                        and 1.
   --metadata_update_interval METADATA_UPDATE_INTERVAL
                         When generating the aspect bucket indicies, we want to
                         save it every X seconds
