@@ -290,7 +290,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error("No webhook handler available to send error message.")
 
     if args is None and exit_on_error:
-        sys.exit(1)
+        raise ValueError("Could not parse command line arguments. Check the logs above for details.")
 
     if args is None:
         return None
@@ -434,12 +434,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
-            logging.error("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")
-            sys.exit(1)
+            raise ValueError("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")
 
     if args.mixed_precision == "fp8" and not torch.cuda.is_available():
-        logging.error("You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead.")
-        sys.exit(1)
+        raise ValueError("You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead.")
 
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
@@ -514,12 +512,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         if args.model_family.lower() not in ["sd3", "flux", "legacy"] and not args.unet_attention_slice:
             warning_log("MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed.")
         if args.train_batch_size > 16:
-            error_log(
+            raise ValueError(
                 "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
                 " Any higher values will result in NDArray size errors or other unstable training results and crashes."
                 "\nPlease reduce the batch size to 12 or lower."
             )
-            sys.exit(1)
 
         if args.quantize_via == "accelerator":
             error_log(
@@ -528,8 +525,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             args.quantize_via = "cpu"
 
     if args.max_train_steps is not None and args.max_train_steps > 0 and args.num_train_epochs > 0:
-        error_log("When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0.")
-        sys.exit(1)
+        raise ValueError("When using --max_train_steps (MAX_NUM_STEPS), you must set --num_train_epochs (NUM_EPOCHS) to 0.")
 
     if (
         args.pretrained_vae_model_name_or_path is not None
@@ -611,8 +607,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if (args.optimizer_beta1 is not None and args.optimizer_beta2 is None) or (
         args.optimizer_beta1 is None and args.optimizer_beta2 is not None
     ):
-        error_log("Both --optimizer_beta1 and --optimizer_beta2 should be provided.")
-        sys.exit(1)
+        raise ValueError("Both --optimizer_beta1 and --optimizer_beta2 should be provided.")
 
     if args.gradient_checkpointing:
         # enable torch compile w/ activation checkpointing :[ slows us down.
@@ -915,9 +910,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             warning_log(f"The option --{deprecated_option} has been replaced with --{replacement_option}.")
             setattr(args, replacement_option, getattr(args, deprecated_option))
         elif getattr(args, deprecated_option) is not None:
-            error_log(
+            raise ValueError(
                 f"The option {deprecated_option} has been deprecated without a replacement option. Please remove it from your configuration."
             )
-            sys.exit(1)
 
     return args
