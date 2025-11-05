@@ -141,37 +141,43 @@ class MultiaspectImage:
             raise ValueError(f"Resolution must be an int, not {type(resolution)}")
 
         W_original, H_original = original_size
+        # Reject invalid images with extreme dimensions
+        if W_original <= 0 or H_original <= 0:
+            raise ValueError(f"Invalid image dimensions: {original_size}")
 
-        # Start by determining the potential initial sizes
+        # Use raw (unrounded) aspect ratio for calculations to avoid division by zero
+        original_aspect_ratio_raw = W_original / H_original
+
+        # Calculate target size based on TARGET aspect for final crop
         if W_original < H_original:  # Portrait or square orientation
-            W_initial = resolution
-            H_initial = int(W_initial / aspect_ratio)
+            W_target = resolution
+            H_target = int(W_target / aspect_ratio)
         else:  # Landscape orientation
-            H_initial = resolution
-            W_initial = int(H_initial * aspect_ratio)
+            H_target = resolution
+            W_target = int(H_target * aspect_ratio)
 
-        # Round down to ensure we do not exceed original dimensions
-        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_initial)
-        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_initial)
+        # Round to nearest multiple
+        W_adjusted = MultiaspectImage._round_to_nearest_multiple(W_target)
+        H_adjusted = MultiaspectImage._round_to_nearest_multiple(H_target)
 
-        # Intermediary size might be less than the reformed size.
-        # This situation is difficult.
-        # If the original image is roughly the size of the reformed image, and the intermediary is too small,
-        #  we can't really just boost the size of the reformed image willy-nilly. The intermediary size needs to be larger.
-        # We can't increase the intermediary size larger than the original size.
-        if W_initial < W_adjusted or H_initial < H_adjusted:
-            logger.debug(
-                f"Intermediary size {W_initial}x{H_initial} would be smaller than {W_adjusted}x{H_adjusted} (original size: {original_size}, aspect ratio: {aspect_ratio})."
-            )
-            # How much leeway to we have between the intermediary size and the reformed size?
-            reformed_W_diff = W_adjusted - W_initial
-            reformed_H_diff = H_adjusted - H_initial
-            bigger_difference = max(reformed_W_diff, reformed_H_diff)
-            logger.debug(
-                f"We have {reformed_W_diff}x{reformed_H_diff} leeway to the reformed image {W_adjusted}x{H_adjusted} from {W_initial}x{H_initial}, adjusting by {bigger_difference}px to both sides: {W_initial + bigger_difference}x{H_initial + bigger_difference}."
-            )
-            W_initial += bigger_difference
-            H_initial += bigger_difference
+        # Calculate intermediary size that maintains ORIGINAL aspect ratio
+        # and is large enough to crop to target size
+        if original_aspect_ratio_raw >= 1.0:  # Landscape or square original
+            # Make height match the target's height requirement, width follows original aspect
+            H_initial = max(H_adjusted, H_target)
+            W_initial = int(H_initial * original_aspect_ratio_raw)
+            # Ensure width is also large enough
+            if W_initial < W_adjusted:
+                W_initial = W_adjusted
+                H_initial = int(W_initial / original_aspect_ratio_raw)
+        else:  # Portrait original
+            # Make width match the target's width requirement, height follows original aspect
+            W_initial = max(W_adjusted, W_target)
+            H_initial = int(W_initial / original_aspect_ratio_raw)
+            # Ensure height is also large enough
+            if H_initial < H_adjusted:
+                H_initial = H_adjusted
+                W_initial = int(H_initial * original_aspect_ratio_raw)
 
         adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_adjusted, H_adjusted))
 
@@ -188,21 +194,18 @@ class MultiaspectImage:
         )
 
         W_initial, H_initial = original_size
-        if aspect_ratio == 1.0:
-            # If the aspect ratio is 1.0, we can just use the square edge as the target size.
+        # Reject invalid images with extreme dimensions
+        if W_initial <= 0 or H_initial <= 0:
+            raise ValueError(f"Invalid image dimensions: {original_size}")
+
+        if aspect_ratio == 1.0 and W_initial == H_initial:
+            # If the aspect ratio is 1.0 and original is square, resize straight to target.
             logger.debug(
-                f"Returning the square edge {target_pixel_edge}x{target_pixel_edge} as the target size and original size as intermediary."
+                f"Returning the square edge {target_pixel_edge}x{target_pixel_edge} as both target and intermediary for square input."
             )
-            if W_initial == H_initial:
-                # if we have squares, resizing straight to the target is alright.
-                return (
-                    (target_pixel_edge, target_pixel_edge),
-                    (target_pixel_edge, target_pixel_edge),
-                    aspect_ratio,
-                )
             return (
                 (target_pixel_edge, target_pixel_edge),
-                (W_initial, H_initial),
+                (target_pixel_edge, target_pixel_edge),
                 aspect_ratio,
             )
 
@@ -217,13 +220,15 @@ class MultiaspectImage:
                 f"-!- This image will not have the correct target megapixel size: {calculated_resulting_megapixels}"
             )
 
-        # Calculate the intermediary size. This will maintain aspect ratio and be resized-to.
+        # Calculate the intermediary size. This will maintain ORIGINAL aspect ratio and be resized-to.
+        # Use raw (unrounded) aspect ratio for calculations to avoid division by zero
+        original_aspect_ratio_raw = W_initial / H_initial
         if W_target < H_target:  # Portrait or square orientation
             W_intermediary = W_target
-            H_intermediary = int(W_intermediary / aspect_ratio)
+            H_intermediary = int(W_intermediary / original_aspect_ratio_raw)
         else:  # Landscape orientation
             H_intermediary = H_target
-            W_intermediary = int(H_intermediary * aspect_ratio)
+            W_intermediary = int(H_intermediary * original_aspect_ratio_raw)
 
         # retrieve the static mapping.
         adjusted_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio((W_target, H_target))
@@ -244,15 +249,15 @@ class MultiaspectImage:
             _W_intermediary, _H_intermediary = W_intermediary, H_intermediary
             if W_target > W_intermediary:
                 W_diff = W_target - W_intermediary
-                H_diff = int(W_diff / aspect_ratio)
+                H_diff = int(W_diff / original_aspect_ratio_raw)
             else:
                 H_diff = H_target - H_intermediary
-                W_diff = int(H_diff * aspect_ratio)
+                W_diff = int(H_diff * original_aspect_ratio_raw)
             H_intermediary += H_diff
             W_intermediary += W_diff
             logger.debug(
                 f"Intermediary size {_W_intermediary}x{_H_intermediary} would be smaller than {W_target}x{H_target} with a difference in size of {W_diff}x{H_diff}."
-                f" The size will be adjusted to maintain the aspect ratio: {W_intermediary}x{H_intermediary}."
+                f" The size will be adjusted to maintain the original aspect ratio: {W_intermediary}x{H_intermediary}."
             )
             calculated_resulting_megapixels = (W_intermediary * H_intermediary) / 1e6
 

@@ -526,15 +526,20 @@ class TrainingSample:
 
     def _downsample_before_crop(self):
         """
-        Downsample the image before cropping, to preserve scene details and maintain aspect ratio.
+        Resize the image to intermediary size before cropping, handling both upsampling and downsampling.
 
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
+        # First check if we need to downsample very large images
         if self._should_resize_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
-            logger.debug(f"Calculated target_downsample_size, resizing to {target_downsample_size}")
+            logger.debug(f"Calculated target_downsample_size for large image, resizing to {target_downsample_size}")
             self.resize(target_downsample_size)
+        # Then resize to intermediary size if needed (for both upsampling and downsampling)
+        elif self.intermediary_size and self.current_size != self.intermediary_size:
+            logger.debug(f"Resizing to intermediary size {self.intermediary_size} from {self.current_size}")
+            self.resize(self.intermediary_size)
         return self
 
     def correct_intermediary_square_size(self):
@@ -578,9 +583,8 @@ class TrainingSample:
                     min_dim = min(self.target_size[0], self.target_size[1])
                     self.target_size = (min_dim, min_dim)
 
-                _, self.intermediary_size, _ = self.target_size_calculator(
-                    self.aspect_ratio, self.resolution, self.original_size
-                )
+                # Calculate intermediary for square crop (aspect 1.0)
+                _, self.intermediary_size, _ = self.target_size_calculator(1.0, self.resolution, self.original_size)
                 self.aspect_ratio = 1.0
                 self.correct_intermediary_square_size()
                 square_crop_metadata = (
@@ -789,7 +793,10 @@ class TrainingSample:
                     logger.debug(f"Trainingsample resize failed, falling back to PIL: {e}")
                     self.image = self.image.resize(size, Image.Resampling.LANCZOS)
 
-                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.image.size)
+                # Only recalculate aspect ratio at final size or when cropping is disabled
+                # During intermediary resize (before crop), aspect_ratio must represent the target post-crop geometry
+                if size == self.target_size or not self.crop_enabled:
+                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.image.size)
             elif isinstance(self.image, np.ndarray):
                 # we have a video to resize - use trainingsample for videos
                 logger.debug(f"Resizing {self.image.shape} to {size}, ")
@@ -811,7 +818,10 @@ class TrainingSample:
 
                 width, height = self.image.shape[2], self.image.shape[1]
                 self.current_size = (width, height)
-                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
+                # Only recalculate aspect ratio at final size or when cropping is disabled
+                # During intermediary resize (before crop), aspect_ratio must represent the target post-crop geometry
+                if size == self.target_size or not self.crop_enabled:
+                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
                 logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
         return self
