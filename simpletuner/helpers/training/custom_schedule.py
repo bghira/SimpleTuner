@@ -221,9 +221,10 @@ class Cosine(LRScheduler):
         verbose=False,
     ):
         if T_0 <= 0 or not isinstance(T_0, int):
-            raise ValueError(
-                f"Cosine learning rate expects to use warmup steps as its interval. Expected positive integer T_0, but got {T_0}"
+            logger.warning(
+                f"Cosine learning rate expects to use warmup steps as its interval. Expected positive integer T_0, but got {T_0}. Defaulting to 1000."
             )
+            T_0 = 1000
         if T_mult < 1 or not isinstance(T_mult, int):
             raise ValueError(f"Expected integer T_mult >= 1, but got {T_mult}")
         if last_epoch != -1 and last_step != -1:
