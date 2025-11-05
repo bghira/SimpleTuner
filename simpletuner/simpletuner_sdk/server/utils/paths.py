@@ -73,11 +73,11 @@ def get_template_directory() -> Path:
     Returns:
         Path to the templates directory (always in package, not project root)
     """
-    import simpletuner
 
-    # Templates are always in the package directory, not project root
     simpletuner_package = get_simpletuner_root()
-    return simpletuner_package / "templates"
+    is_dev = (simpletuner_package / "pyproject.toml").exists()
+    subpath = "simpletuner/templates" if is_dev else "templates"
+    return simpletuner_package / subpath
 
 
 def get_static_directory() -> Path:
@@ -86,11 +86,12 @@ def get_static_directory() -> Path:
     Returns:
         Path to the static directory (always in package, not project root)
     """
-    import simpletuner
 
     # Static files are always in the package directory, not project root
     simpletuner_package = get_simpletuner_root()
-    return simpletuner_package / "static"
+    is_dev = (simpletuner_package / "pyproject.toml").exists()
+    subpath = "simpletuner/static" if is_dev else "static"
+    return simpletuner_package / subpath
 
 
 def resolve_config_path(
