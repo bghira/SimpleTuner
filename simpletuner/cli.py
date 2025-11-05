@@ -17,6 +17,14 @@ from typing import List, Optional
 
 from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_template_directory
 
+CONFIG_FILENAMES = {
+    "json": "config.json",
+    "toml": "config.toml",
+    "env": "config.env",
+}
+
+CONFIG_SUFFIX_TO_BACKEND = {".json": "json", ".toml": "toml", ".env": "env"}
+
 
 def find_config_file() -> Optional[str]:
     """Find config file in current directory or config/ subdirectory."""
@@ -296,6 +304,114 @@ def _kill_process_group(process: subprocess.Popen) -> None:
     process.kill()
 
 
+def _extract_cli_override(arguments: List[str], option_names: tuple[str, ...]) -> Optional[str]:
+    """Extract the value for a CLI override like --config_backend=value."""
+
+    for arg in arguments:
+        for name in option_names:
+            prefix = f"--{name}"
+            if arg.startswith(prefix):
+                if len(arg) == len(prefix):
+                    return None
+                if arg[len(prefix)] == "=":
+                    return arg[len(prefix) + 1 :]
+    return None
+
+
+def _collect_env_roots(env: str) -> List[Path]:
+    """Collect root directories or files to inspect for the requested environment."""
+
+    env_path = Path(env).expanduser()
+    roots: List[Path] = []
+    seen: set[Path] = set()
+
+    def _add(path: Path) -> None:
+        if path in seen:
+            return
+        seen.add(path)
+        roots.append(path)
+
+    _add(env_path)
+
+    if env_path.is_absolute():
+        return roots
+
+    parts = env_path.parts
+    if parts and parts[0] != "config":
+        _add(Path("config") / env_path)
+
+    if parts and parts[0] == "examples":
+        package_root = Path(__file__).resolve().parent
+        _add(package_root / env_path)
+
+    return roots
+
+
+def _expand_root_to_candidates(root: Path, backend_override: Optional[str], allow_nested: bool) -> List[Path]:
+    """Expand a root entry to candidate configuration file paths."""
+
+    backend = backend_override.lower() if backend_override else None
+    candidates: set[Path] = set()
+
+    suffix_backend = CONFIG_SUFFIX_TO_BACKEND.get(root.suffix.lower())
+    if suffix_backend:
+        if backend is None or backend == suffix_backend:
+            candidates.add(root)
+        return list(candidates)
+
+    if backend and backend not in CONFIG_FILENAMES:
+        return []
+
+    targets = [backend] if backend else list(CONFIG_FILENAMES.keys())
+    for target in targets:
+        filename = CONFIG_FILENAMES[target]
+        candidates.add(root / filename)
+        if allow_nested:
+            candidates.add(root / "config" / filename)
+
+    return list(candidates)
+
+
+def _candidate_config_files(env: str, config_path_override: Optional[str], backend_override: Optional[str]) -> List[Path]:
+    """Compute potential configuration file paths for the requested environment."""
+
+    candidates: set[Path] = set()
+
+    if config_path_override:
+        override_root = Path(config_path_override).expanduser()
+        for path in _expand_root_to_candidates(override_root, backend_override, allow_nested=False):
+            candidates.add(path)
+
+    for env_root in _collect_env_roots(env):
+        for path in _expand_root_to_candidates(env_root, backend_override, allow_nested=True):
+            candidates.add(path)
+
+    return sorted(candidates, key=lambda path: str(path))
+
+
+def _validate_environment_config(env: str, backend_override: Optional[str], config_path_override: Optional[str]) -> None:
+    """Ensure an explicit environment points to an existing configuration file."""
+
+    if not env or env == "default":
+        return
+
+    backend = backend_override.lower() if backend_override else None
+    if backend == "cmd":
+        return
+
+    candidate_paths = _candidate_config_files(env, config_path_override, backend)
+    existing = [path for path in candidate_paths if path.is_file()]
+
+    if existing:
+        return
+
+    if not candidate_paths:
+        raise FileNotFoundError(f"No configuration candidates were produced for environment '{env}'.")
+
+    checked = "\n  - ".join(sorted({str(path) for path in candidate_paths}))
+    raise FileNotFoundError(f"Configuration for environment '{env}' not found. Checked:\n  - {checked}")
+
+
 def run_training(example: Optional[str] = None, env: Optional[str] = None, extra_args: Optional[list] = None) -> int:
     """Run training with specified example or environment."""
     extra_args = list(extra_args or [])
@@ -366,6 +482,23 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
         idx += 1
 
     extra_args = cleaned_extra_args
+
+    config_backend_cli = _extract_cli_override(extra_args, ("config_backend", "config-backend"))
+    config_backend_env = training_env.get(
+        "SIMPLETUNER_CONFIG_BACKEND",
+        training_env.get("CONFIG_BACKEND", training_env.get("CONFIG_TYPE")),
+    )
+    config_backend_override = config_backend_cli or config_backend_env
+
+    config_path_cli = _extract_cli_override(extra_args, ("config_path", "config-path"))
+    config_path_override = config_path_cli or training_env.get("CONFIG_PATH")
+
+    if env:
+        try:
+            _validate_environment_config(env, config_backend_override, config_path_override)
+        except FileNotFoundError as validation_error:
+            print(f"Error: {validation_error}")
+            return 1
 
     if overrides["accelerate_config"]:
         training_env["ACCELERATE_CONFIG_PATH"] = os.path.expanduser(str(overrides["accelerate_config"]))
