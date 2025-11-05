@@ -636,6 +636,251 @@ class TestTrainingSample(unittest.TestCase):
                 f"Image {i} aspect ratio {ar} doesn't match first image {first_aspect}",
             )
 
+    def test_small_image_upscaling_works(self):
+        """Test that small images are properly upscaled to target resolution."""
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
+        StateTracker.set_resolution_by_aspect = MagicMock()
+        StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
+
+        # Test 1: Small non-square image with area resolution type, square crop
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "square",
+                "resolution": 1.0,
+                "resolution_type": "area",
+            }
+        )
+        small_img = Image.new("RGB", (256, 128), "white")
+        sample1 = TrainingSample(small_img, self.data_backend_id, {"original_size": (256, 128)})
+        sample1.prepare()
+        # Should be upscaled to square
+        self.assertEqual(sample1.image.size[0], sample1.image.size[1], "Should result in square image")
+        self.assertGreater(sample1.image.size[0], 256, "Small image should be upscaled from original 256x128")
+
+        # Test 2: Small square image with pixel resolution type
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": False,
+                "resolution": 512,
+                "resolution_type": "pixel",
+            }
+        )
+        small_square = Image.new("RGB", (128, 128), "white")
+        sample2 = TrainingSample(small_square, self.data_backend_id, {"original_size": (128, 128)})
+        sample2.prepare()
+        # Should be upscaled maintaining square aspect
+        self.assertEqual(sample2.image.size[0], sample2.image.size[1], "Square image should remain square after upscaling")
+        self.assertGreaterEqual(min(sample2.image.size), 512, "Image should be upscaled to at least 512 on shortest edge")
+
+        # Test 3: Small non-square image with pixel resolution type, no crop
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": False,
+                "resolution": 1024,
+                "resolution_type": "pixel",
+            }
+        )
+        small_rect = Image.new("RGB", (200, 100), "white")  # 2:1 aspect
+        sample3 = TrainingSample(small_rect, self.data_backend_id, {"original_size": (200, 100)})
+        sample3.prepare()
+        # Should be upscaled while maintaining 2:1 aspect
+        aspect_ratio = sample3.image.size[0] / sample3.image.size[1]
+        self.assertAlmostEqual(aspect_ratio, 2.0, places=1, msg="Aspect ratio should be preserved during upscaling")
+        self.assertGreaterEqual(min(sample3.image.size), 1024, "Image should be upscaled to at least 1024 on shortest edge")
+
+    def test_max_upscale_threshold_config(self):
+        """Test that max_upscale_threshold configuration works correctly."""
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
+        StateTracker.set_resolution_by_aspect = MagicMock()
+        StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
+
+        # Create a small 256x256 image
+        small_img = Image.new("RGB", (256, 256), "white")
+        small_metadata = {"original_size": (256, 256)}
+
+        # Test 1: No threshold (None) - should allow upscaling
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.0, 0.5, 2.0],
+                "resolution": 1024,
+                "resolution_type": "pixel",
+                "max_upscale_threshold": None,
+            }
+        )
+        sample1 = TrainingSample(small_img, self.data_backend_id, small_metadata)
+        available_buckets1 = sample1._trim_aspect_bucket_list()
+        # With no threshold, all buckets should be available
+        self.assertEqual(len(available_buckets1), 3, "All buckets should be available when threshold is None")
+
+        # Test 2: With threshold of 0.2 (20%) - should filter out buckets requiring >20% upscale
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.0, 0.5, 2.0],
+                "resolution": 1024,
+                "resolution_type": "pixel",
+                "max_upscale_threshold": 0.2,
+            }
+        )
+        sample2 = TrainingSample(small_img, self.data_backend_id, small_metadata)
+        available_buckets2 = sample2._trim_aspect_bucket_list()
+        # With 0.2 threshold, buckets requiring >20% upscale should be filtered
+        # Since we're going from 256 to 1024, that's 4x scaling (300% upscale), so all buckets should be filtered
+        self.assertEqual(len(available_buckets2), 0, "Buckets requiring >20% upscale should be filtered with threshold=0.2")
+
+        # Test 3: With threshold of 4.0 (400%) - should allow upscaling up to 5x
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.0, 0.5, 2.0],
+                "resolution": 1024,
+                "resolution_type": "pixel",
+                "max_upscale_threshold": 4.0,
+            }
+        )
+        sample3 = TrainingSample(small_img, self.data_backend_id, small_metadata)
+        available_buckets3 = sample3._trim_aspect_bucket_list()
+        # With 4.0 threshold, 4x scaling (300%) should be allowed
+        # This should allow all the buckets since we're going from 256 to 1024 (4x = 300% < 400%)
+        self.assertGreater(
+            len(available_buckets3),
+            0,
+            "Buckets requiring <400% upscale should be available with threshold=4.0",
+        )
+
+    def test_non_square_crop_aspect_ratio_consistency(self):
+        """Regression test: aspect_ratio must match target_size geometry after non-square crop."""
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
+        StateTracker.set_resolution_by_aspect = MagicMock()
+        StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
+
+        # Test with a small image that requires upscaling, cropping to a non-square aspect (e.g., 1.5 = 3:2)
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.5],  # 3:2 aspect ratio
+                "resolution": 1.0,
+                "resolution_type": "area",
+            }
+        )
+
+        # Small 2:1 image that needs upscaling to 3:2 target
+        small_img = Image.new("RGB", (200, 100), "white")
+        sample = TrainingSample(small_img, self.data_backend_id, {"original_size": (200, 100)})
+        sample.prepare()
+
+        # Verify aspect_ratio matches the target_size geometry, NOT the intermediary size
+        target_aspect = round(sample.target_size[0] / sample.target_size[1], 2)
+        reported_aspect = sample.aspect_ratio
+
+        self.assertEqual(
+            reported_aspect,
+            target_aspect,
+            f"aspect_ratio {reported_aspect} must match target_size aspect {target_aspect} "
+            f"(target={sample.target_size}, intermediary={sample.intermediary_size})",
+        )
+
+        # Also verify the image was actually cropped to the target size
+        self.assertEqual(
+            sample.image.size,
+            sample.target_size,
+            f"Final image size must match target_size (got {sample.image.size}, expected {sample.target_size})",
+        )
+
+    def test_video_non_square_crop_aspect_ratio_consistency(self):
+        """Regression test: aspect_ratio must match target_size geometry for video after non-square crop."""
+        StateTracker.get_args = MagicMock(
+            return_value=MagicMock(aspect_bucket_alignment=64, aspect_bucket_rounding=2, output_dir="/tmp")
+        )
+        StateTracker.set_resolution_by_aspect = MagicMock()
+        StateTracker.get_resolution_by_aspect = MagicMock(return_value=None)
+
+        # Test with a small video that requires upscaling, cropping to a non-square aspect (e.g., 1.5 = 3:2)
+        StateTracker.get_data_backend_config = MagicMock(
+            return_value={
+                "crop": True,
+                "crop_style": "center",
+                "crop_aspect": "random",
+                "crop_aspect_buckets": [1.5],  # 3:2 aspect ratio
+                "resolution": 1.0,
+                "resolution_type": "area",
+            }
+        )
+
+        # Small 2:1 video (4 frames, 200x100) that needs upscaling to 3:2 target
+        video_data = np.zeros((4, 100, 200, 3), dtype=np.uint8)  # Shape: (frames, H, W, C)
+        sample = TrainingSample(
+            video_data,
+            self.data_backend_id,
+            {"original_size": (200, 100)},
+            model=MagicMock(MAXIMUM_CANVAS_SIZE=None, get_transforms=MagicMock()),
+        )
+        sample.prepare()
+
+        # Verify aspect_ratio matches the target_size geometry, NOT the intermediary size
+        target_aspect = round(sample.target_size[0] / sample.target_size[1], 2)
+        reported_aspect = sample.aspect_ratio
+
+        self.assertEqual(
+            reported_aspect,
+            target_aspect,
+            f"Video aspect_ratio {reported_aspect} must match target_size aspect {target_aspect} "
+            f"(target={sample.target_size}, intermediary={sample.intermediary_size})",
+        )
+
+        # Also verify the video was actually cropped to the target size
+        # Video shape is (frames, H, W, C), so check dimensions [1] and [2]
+        video_size = (sample.image.shape[2], sample.image.shape[1])  # (W, H)
+        self.assertEqual(
+            video_size,
+            sample.target_size,
+            f"Final video size must match target_size (got {video_size}, expected {sample.target_size})",
+        )
+
+        # Verify frame count is preserved
+        self.assertEqual(sample.image.shape[0], 4, "Frame count should be preserved")
+
+    def test_invalid_image_dimensions_rejected(self):
+        """Test that images with invalid dimensions (0 or negative) are rejected."""
+        from simpletuner.helpers.multiaspect.image import MultiaspectImage
+
+        # Test pixel_edge with zero width
+        with self.assertRaises(ValueError) as context:
+            MultiaspectImage.calculate_new_size_by_pixel_edge(1.0, 512, (0, 600))
+        self.assertIn("Invalid image dimensions", str(context.exception))
+
+        # Test pixel_edge with zero height
+        with self.assertRaises(ValueError) as context:
+            MultiaspectImage.calculate_new_size_by_pixel_edge(1.0, 512, (800, 0))
+        self.assertIn("Invalid image dimensions", str(context.exception))
+
+        # Test pixel_area with negative width
+        with self.assertRaises(ValueError) as context:
+            MultiaspectImage.calculate_new_size_by_pixel_area(1.0, 1.0, (-1, 600))
+        self.assertIn("Invalid image dimensions", str(context.exception))
+
+        # Test pixel_area with negative height
+        with self.assertRaises(ValueError) as context:
+            MultiaspectImage.calculate_new_size_by_pixel_area(1.0, 1.0, (800, -1))
+        self.assertIn("Invalid image dimensions", str(context.exception))
+
 
 # Helper mock classes and functions
 class MockCropper:
