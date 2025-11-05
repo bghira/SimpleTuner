@@ -28,15 +28,23 @@ def _candidate_json_paths(env: str | None) -> list[Path]:
             candidates.append(override_path.with_suffix(".json"))
 
     if env and env != "default":
-        env_path = Path(env)
-        candidates.append(Path("config") / env_path / "config.json")
+        env_path = Path(env).expanduser()
+        if env_path.suffix:
+            candidates.append(env_path)
+            if not env_path.is_absolute():
+                candidates.append(Path.cwd() / env_path)
+        else:
+            candidates.append(env_path / "config.json")
+            first_segment = env_path.parts[0] if env_path.parts else ""
+            if first_segment != "config":
+                candidates.append(Path("config") / env_path / "config.json")
 
-        package_root = Path(__file__).resolve().parents[2]
-        candidates.append(package_root / env_path / "config.json")
-        candidates.append(package_root / env_path / "config" / "config.json")
-
-    default_path = Path("config/config.json")
-    candidates.append(default_path)
+            package_root = Path(__file__).resolve().parents[2]
+            candidates.append(package_root / env_path / "config.json")
+            candidates.append(package_root / env_path / "config" / "config.json")
+    else:
+        default_path = Path("config/config.json")
+        candidates.append(default_path)
 
     seen = set()
     ordered_candidates = []

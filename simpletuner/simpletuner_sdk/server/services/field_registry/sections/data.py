@@ -266,6 +266,28 @@ def register_data_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Max Upscale Threshold
+    registry._add_field(
+        ConfigField(
+            name="max_upscale_threshold",
+            arg_name="--max_upscale_threshold",
+            ui_label="Maximum Upscale Threshold",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="training_data",
+            subsection="advanced",
+            default_value=None,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Must be between 0 and 1"),
+                ValidationRule(ValidationRuleType.MAX, value=1, message="Must be between 0 and 1"),
+            ],
+            help_text="Limit upscaling of small images to prevent quality degradation (opt-in)",
+            tooltip="When set, filters out aspect buckets requiring upscaling beyond this threshold. Example: 0.2 allows up to 20% upscaling. Default (None) allows unlimited upscaling.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8,
+        )
+    )
+
     # Caption Dropout
     registry._add_field(
         ConfigField(

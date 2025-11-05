@@ -122,7 +122,7 @@ Both `textfile` and `parquet` support multi-captions:
 - `crop`: Enables or disables image cropping.
 - `crop_style`: Selects the cropping style (`random`, `center`, `corner`, `face`).
 - `crop_aspect`: Chooses the cropping aspect (`closest`, `random`, `square` or `preserve`).
-- `crop_aspect_buckets`: When `crop_aspect` is set to `closest` or `random`, a bucket from this list will be selected, so long as the resulting image size would not result more than 20% upscaling.
+- `crop_aspect_buckets`: When `crop_aspect` is set to `closest` or `random`, a bucket from this list will be selected. By default, all buckets are available (allowing unlimited upscaling). Use `max_upscale_threshold` to limit upscaling if needed.
 
 ### `resolution`
 
@@ -341,6 +341,47 @@ Images are not resized before cropping **unless** `maximum_image_size` and `targ
 - Final image size will be random-cropped to a pixel area of `(1024 * 1024)`
 - Useful for training on eg. 20 megapixel datasets that need to be resized substantially before cropping to avoid massive loss of scene context in the image (like cropping a picture of a person to just a tile wall or a blurry section of the background)
 
+### `max_upscale_threshold`
+
+By default, SimpleTuner will upscale small images to meet the target resolution, which can result in quality degradation. The `max_upscale_threshold` option allows you to limit this upscaling behavior.
+
+- **Default**: `null` (allows unlimited upscaling)
+- **When set**: Filters out aspect buckets that would require upscaling beyond the specified threshold
+- **Value range**: Between 0 and 1 (e.g., `0.2` = allow up to 20% upscaling)
+- **Applies to**: Aspect bucket selection when `crop_aspect` is set to `closest` or `random`
+
+#### Examples
+
+##### Configuration
+```json
+    "resolution": 1024,
+    "resolution_type": "pixel",
+    "crop": true,
+    "crop_aspect": "random",
+    "crop_aspect_buckets": [1.0, 0.5, 2.0],
+    "max_upscale_threshold": null
+```
+
+##### Outcome
+- All aspect buckets are available for selection
+- A 256x256 image can be upscaled to 1024x1024 (4x scaling)
+- May result in quality degradation for very small images
+
+##### Configuration
+```json
+    "resolution": 1024,
+    "resolution_type": "pixel",
+    "crop": true,
+    "crop_aspect": "random",
+    "crop_aspect_buckets": [1.0, 0.5, 2.0],
+    "max_upscale_threshold": 0.2
+```
+
+##### Outcome
+- Only aspect buckets requiring ≤20% upscaling are available
+- A 256x256 image trying to scale to 1024x1024 (4x = 300% upscaling) would have no available buckets
+- An 850x850 image can use all buckets since 1024/850 ≈ 1.2 (20% upscaling)
+- Helps maintain training quality by excluding poorly-upscaled images
 
 ---
 

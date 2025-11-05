@@ -100,6 +100,7 @@ class TrainingSample:
         self._set_resolution()
         self.target_downsample_size = self.data_backend_config.get("target_downsample_size", None)
         self.maximum_image_size = self.data_backend_config.get("maximum_image_size", None)
+        self.max_upscale_threshold = self.data_backend_config.get("max_upscale_threshold", None)
         self._image_path = image_path
         # RGB/EXIF conversion
         self.correct_image()
@@ -107,7 +108,7 @@ class TrainingSample:
 
     def save_debug_image(self, path: str):
         if self.image is not None:
-            if os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "") == "true":
+            if os.environ.get("SIMPLETUNER_DEBUG_IMAGE_PREP", "").lower() == "true":
                 if hasattr(self.image, "save"):
                     self.image.save(path)
                 else:
@@ -225,20 +226,30 @@ class TrainingSample:
             raise Exception(f"Unknown resolution type: {self.resolution_type}")
 
     def _trim_aspect_bucket_list(self):
-        """filter buckets to avoid upscaling >20%"""
+        """filter buckets based on upscale threshold if configured"""
         available_buckets = []
         for bucket in self.crop_aspect_buckets:
-            # skip buckets that would upscale >20%
             if type(bucket) is dict:
                 aspect = bucket["aspect_ratio"]
             elif type(bucket) is float or type(bucket) is int:
                 aspect = bucket
             else:
                 raise ValueError("Aspect buckets must be a list of floats or dictionaries.")
+
+            # If no threshold configured, allow all buckets
+            if self.max_upscale_threshold is None:
+                available_buckets.append(aspect)
+                continue
+
             # Calculate new size
             target_size, _, _ = self.target_size_calculator(aspect, self.resolution, self.original_size)
-            # check 20% upscale threshold
-            if target_size[0] * 1.2 < self.original_size[0] and target_size[1] * 1.2 < self.original_size[1]:
+            # Apply upscale threshold filter: keep buckets where target <= original * (1 + threshold)
+            # This allows downscaling and upscaling within the threshold
+            threshold_multiplier = 1 + self.max_upscale_threshold
+            if (
+                target_size[0] <= self.original_size[0] * threshold_multiplier
+                and target_size[1] <= self.original_size[1] * threshold_multiplier
+            ):
                 available_buckets.append(aspect)
         return available_buckets
 
@@ -515,15 +526,20 @@ class TrainingSample:
 
     def _downsample_before_crop(self):
         """
-        Downsample the image before cropping, to preserve scene details and maintain aspect ratio.
+        Resize the image to intermediary size before cropping, handling both upsampling and downsampling.
 
         Returns:
             TrainingSample: The current TrainingSample instance.
         """
+        # First check if we need to downsample very large images
         if self._should_resize_before_crop():
             target_downsample_size = self._calculate_target_downsample_size()
-            logger.debug(f"Calculated target_downsample_size, resizing to {target_downsample_size}")
+            logger.debug(f"Calculated target_downsample_size for large image, resizing to {target_downsample_size}")
             self.resize(target_downsample_size)
+        # Then resize to intermediary size if needed (for both upsampling and downsampling)
+        elif self.intermediary_size and self.current_size != self.intermediary_size:
+            logger.debug(f"Resizing to intermediary size {self.intermediary_size} from {self.current_size}")
+            self.resize(self.intermediary_size)
         return self
 
     def correct_intermediary_square_size(self):
@@ -567,9 +583,8 @@ class TrainingSample:
                     min_dim = min(self.target_size[0], self.target_size[1])
                     self.target_size = (min_dim, min_dim)
 
-                _, self.intermediary_size, _ = self.target_size_calculator(
-                    self.aspect_ratio, self.resolution, self.original_size
-                )
+                # Calculate intermediary for square crop (aspect 1.0)
+                _, self.intermediary_size, _ = self.target_size_calculator(1.0, self.resolution, self.original_size)
                 self.aspect_ratio = 1.0
                 self.correct_intermediary_square_size()
                 square_crop_metadata = (
@@ -778,7 +793,10 @@ class TrainingSample:
                     logger.debug(f"Trainingsample resize failed, falling back to PIL: {e}")
                     self.image = self.image.resize(size, Image.Resampling.LANCZOS)
 
-                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.image.size)
+                # Only recalculate aspect ratio at final size or when cropping is disabled
+                # During intermediary resize (before crop), aspect_ratio must represent the target post-crop geometry
+                if size == self.target_size or not self.crop_enabled:
+                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(self.image.size)
             elif isinstance(self.image, np.ndarray):
                 # we have a video to resize - use trainingsample for videos
                 logger.debug(f"Resizing {self.image.shape} to {size}, ")
@@ -800,7 +818,10 @@ class TrainingSample:
 
                 width, height = self.image.shape[2], self.image.shape[1]
                 self.current_size = (width, height)
-                self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
+                # Only recalculate aspect ratio at final size or when cropping is disabled
+                # During intermediary resize (before crop), aspect_ratio must represent the target post-crop geometry
+                if size == self.target_size or not self.crop_enabled:
+                    self.aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(size)
                 logger.debug(f"Now {self.image.shape} @ {self.aspect_ratio}")
         self.current_size = size
         return self

@@ -1701,10 +1701,26 @@ class Validation:
 
         work_items = self._prepare_validation_work_items(_content)
         use_distributed = self._use_distributed_validation()
+        num_processes = getattr(self.accelerator, "num_processes", 1)
+
+        # Disable batch-parallel if we don't have enough prompts to meaningfully split
+        # This avoids collective communication deadlocks when some processes get empty work
+        if use_distributed and len(work_items) < num_processes:
+            use_distributed = False
+            logger.info(
+                f"Disabling batch-parallel for validation: {len(work_items)} prompt(s) < {num_processes} processes. "
+                f"Only main process will execute."
+            )
+            # When falling back to single-process, only main process should continue
+            if not self.accelerator.is_main_process:
+                return
+
         local_work_items = split_across_processes(self.accelerator, work_items) if use_distributed else work_items
-        logger.debug(
-            f"Processing {len(local_work_items)} local validation work items "
-            f"(distributed_mode={use_distributed}, total={len(work_items)})"
+        rank = getattr(self.accelerator, "process_index", 0)
+        logger.info(
+            f"[Rank {rank}] Processing {len(local_work_items)} local validation work items "
+            f"(distributed_mode={use_distributed}, total={len(work_items)}, "
+            f"work_item_prompts={[item.prompt for item in local_work_items]})"
         )
         progress_disable = use_distributed and not self.accelerator.is_main_process
         local_payloads: list[dict[str, Any]] = []
@@ -1728,10 +1744,15 @@ class Validation:
             local_payloads.append(payload)
 
         if use_distributed:
+            logger.info(f"[Rank {rank}] Gathering {len(local_payloads)} local payloads")
             gathered_payloads = gather_across_processes(local_payloads)
             if not self.accelerator.is_main_process:
                 return
+            logger.info(
+                f"[Rank {rank}] Gathered {len(gathered_payloads)} payload groups: {[len(p) for p in gathered_payloads]}"
+            )
             aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
+            logger.info(f"[Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
         else:
             aggregated_payloads = local_payloads
 
