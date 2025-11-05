@@ -15,8 +15,13 @@ def get_simpletuner_root() -> Path:
     """
     import simpletuner
 
-    # Get the path to the simpletuner package directory
-    simpletuner_package = Path(simpletuner.__file__).parent
+    
+    if simpletuner.__file__ is None:
+        # Handle case where __file__ is None
+        simpletuner_package = Path(__file__).parent.parent.parent.parent
+    else:
+        # Get the path to the simpletuner package directory
+        simpletuner_package = Path(simpletuner.__file__).parent
 
     # Check if we're running from a source checkout by looking for pyproject.toml
     # one level up (this means we're in a development environment)
@@ -71,7 +76,7 @@ def get_template_directory() -> Path:
     import simpletuner
 
     # Templates are always in the package directory, not project root
-    simpletuner_package = Path(simpletuner.__file__).parent
+    simpletuner_package = get_simpletuner_root()
     return simpletuner_package / "templates"
 
 
@@ -84,7 +89,7 @@ def get_static_directory() -> Path:
     import simpletuner
 
     # Static files are always in the package directory, not project root
-    simpletuner_package = Path(simpletuner.__file__).parent
+    simpletuner_package = get_simpletuner_root()
     return simpletuner_package / "static"
 
 
