@@ -336,12 +336,12 @@ def _candidate_config_paths(env: str, backend_override: Optional[str], config_pa
         override = Path(config_path_override).expanduser()
         if override.suffix:
             _add(override)
-            return candidates
-        for name in filenames:
-            _add(override / name)
-            suffix = Path(name).suffix
-            if suffix:
-                _add(override.with_suffix(suffix))
+        else:
+            for name in filenames:
+                _add(override / name)
+                suffix = Path(name).suffix
+                if suffix:
+                    _add(override.with_suffix(suffix))
         return candidates
 
     env_path = Path(env).expanduser()
@@ -352,11 +352,21 @@ def _candidate_config_paths(env: str, backend_override: Optional[str], config_pa
         return candidates
 
     search_roots: List[Path] = []
+
     if env_path.is_absolute():
         search_roots.append(env_path)
     else:
         search_roots.append(env_path)
+        search_roots.append(Path.cwd() / env_path)
         search_roots.append(Path("config") / env_path)
+
+        home_configs = Path.home() / "configs"
+        search_roots.append(home_configs / env_path)
+
+        config_dir_override = os.environ.get("SIMPLETUNER_CONFIG_DIR")
+        if config_dir_override:
+            search_roots.append(Path(config_dir_override).expanduser() / env_path)
+
         if env_path.parts and env_path.parts[0] == "examples":
             package_root = Path(__file__).resolve().parent
             search_roots.append(package_root / env_path)
