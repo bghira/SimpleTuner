@@ -647,7 +647,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.addCleanup(local_backend_patcher.stop)
         mock_local.return_value.list_files.return_value = ["image1.jpg", "image2.jpg"]
 
-        text_cache_patcher = patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache")
+        # Use autospec to validate constructor parameters
+        text_cache_patcher = patch("simpletuner.helpers.data_backend.factory.TextEmbeddingCache", autospec=True)
         mock_text_cache = text_cache_patcher.start()
         self.addCleanup(text_cache_patcher.stop)
         mock_cache_instance = MagicMock()
@@ -656,9 +657,12 @@ class TestFactoryEdgeCases(unittest.TestCase):
         mock_cache_instance.set_webhook_handler.return_value = None
         mock_text_cache.return_value = mock_cache_instance
 
-        vae_cache_patcher = patch("simpletuner.helpers.data_backend.factory.VAECache")
+        # Use autospec to validate constructor parameters
+        vae_cache_patcher = patch("simpletuner.helpers.data_backend.factory.VAECache", autospec=True)
         mock_vae_cache = vae_cache_patcher.start()
         self.addCleanup(vae_cache_patcher.stop)
+
+        # Create a properly spec'd instance
         mock_vae_instance = MagicMock()
         mock_vae_instance.discover_all_files.return_value = None
         mock_vae_instance.discover_unprocessed_files.return_value = []
@@ -1007,6 +1011,51 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 error_msg = str(context.exception)
                 self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
                 self.assertIn("Enable --allow_dataset_oversubscription", error_msg)
+
+    def test_image_embeds_backend_configuration(self):
+        """Image embed configuration should not instantiate VAE cache directly."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        config = [
+            {
+                "id": "image_embeds_test",
+                "dataset_type": "image_embeds",
+                "type": "local",
+                "instance_data_dir": self.temp_dir,
+                "cache_dir": "/tmp/image_embeds_cache",
+            }
+        ]
+        config_path = self._create_temp_config(config)
+        self.args.data_backend_config = config_path
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+
+        loaded_config = factory.load_configuration()
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker:
+            self._setup_state_tracker_mocks(mock_state_tracker)
+            mock_state_tracker.get_vae.return_value = MagicMock()
+
+            with patch("simpletuner.helpers.data_backend.factory.LocalDataBackend") as mock_local:
+                mock_local.return_value.list_files.return_value = []
+
+                # Use autospec=True to validate constructor parameters
+                with patch("simpletuner.helpers.data_backend.factory.VAECache", autospec=True) as mock_vae_cache:
+                    mock_vae_instance = MagicMock()
+                    mock_vae_instance.discover_all_files.return_value = None
+                    mock_vae_cache.return_value = mock_vae_instance
+
+                    # This should work without raising TypeError if parameters are correct
+                    factory.configure_image_embed_backends(loaded_config)
+
+                    # Image embed setup should not instantiate the cache; the owning dataset does.
+                    mock_vae_cache.assert_not_called()
 
 
 if __name__ == "__main__":
