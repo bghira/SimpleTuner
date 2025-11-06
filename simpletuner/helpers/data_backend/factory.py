@@ -1665,7 +1665,7 @@ class FactoryRegistry:
                 accelerator=self.accelerator,
                 instance_data_dir=init_backend.get("instance_data_dir", ""),
                 cache_dir=init_backend["cache_dir"],
-                cache_file_suffix=self.args.cache_file_suffix,
+                cache_file_suffix=getattr(self.args, "cache_file_suffix", None),
                 write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
                 read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
             )
