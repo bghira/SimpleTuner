@@ -1,14 +1,8 @@
 import optimum
 import torch
-
-try:
-    from optimum.quanto.tensor.packed import PackedTensor
-    from optimum.quanto.tensor.weights.qbits import WeightQBitsTensor
-    from optimum.quanto.tensor.weights.qbytes import WeightQBytesTensor
-except ImportError:  # pragma: no cover - required when optimum-quanto is not installed
-    PackedTensor = None  # type: ignore[assignment]
-    WeightQBytesTensor = None  # type: ignore[assignment]
-    WeightQBitsTensor = None  # type: ignore[assignment]
+from optimum.quanto.tensor.packed import PackedTensor
+from optimum.quanto.tensor.weights.qbits import WeightQBitsTensor
+from optimum.quanto.tensor.weights.qbytes import WeightQBytesTensor
 
 if torch.cuda.is_available():
     # the marlin fp8 kernel needs some help with dtype casting for some reason
@@ -116,8 +110,6 @@ optimum.quanto.tensor.function.QuantizedLinearFunction.backward = reshape_qlf_ba
 
 
 def _bridge_storage_accessors(tensor_cls, data_attr: str) -> None:
-    if tensor_cls is None:
-        return
     if getattr(tensor_cls, "_simpletuner_storage_bridge_applied", False):
         return
 

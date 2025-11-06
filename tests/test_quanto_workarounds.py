@@ -2,22 +2,10 @@ import tempfile
 import unittest
 
 import torch
+from diffusers.hooks import apply_group_offloading
+from optimum.quanto import freeze, qint4, qint8, quantize
 
-try:
-    from diffusers.hooks import apply_group_offloading
-
-    _DIFFUSERS_AVAILABLE = True
-except ImportError:  # pragma: no cover - test skips when diffusers is missing
-    apply_group_offloading = None  # type: ignore[assignment]
-    _DIFFUSERS_AVAILABLE = False
-
-try:
-    from optimum.quanto import freeze, quantize, qint4, qint8
-
-    _QUANTO_AVAILABLE = True
-except ImportError:  # pragma: no cover - test skips when optimum-quanto is missing
-    freeze = quantize = qint4 = qint8 = None  # type: ignore[assignment]
-    _QUANTO_AVAILABLE = False
+import simpletuner.helpers.training.quantisation.quanto_workarounds  # noqa: F401
 
 
 class _LinearWrapper(torch.nn.Module):
@@ -29,12 +17,7 @@ class _LinearWrapper(torch.nn.Module):
         return self.linear(x)
 
 
-@unittest.skipUnless(_QUANTO_AVAILABLE, "Optimum Quanto not installed")
 class QuantoWorkaroundsTests(unittest.TestCase):
-    def setUp(self):
-        # importing applies the monkey patches we want to validate
-        from simpletuner.helpers.training.quantisation import quanto_workarounds  # noqa: F401
-
     def _quantized_linear(self, quant_scheme):
         model = _LinearWrapper()
         quantize(model, weights=quant_scheme)
@@ -56,7 +39,6 @@ class QuantoWorkaroundsTests(unittest.TestCase):
         model = self._quantized_linear(qint4)
         self._assert_storage_matches_backing_tensor(model.linear.weight.data)
 
-    @unittest.skipUnless(_DIFFUSERS_AVAILABLE, "Diffusers group offloading unavailable")
     def test_quantized_module_can_be_group_offloaded(self):
         model = self._quantized_linear(qint8)
         with tempfile.TemporaryDirectory() as tmp_dir:
