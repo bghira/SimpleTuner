@@ -1659,18 +1659,6 @@ class FactoryRegistry:
                     preserve_data_backend_cache=preserve_data_backend_cache,
                 )
 
-            init_backend["vaecache"] = VAECache(
-                vae=StateTracker.get_vae(),
-                data_backend=init_backend["data_backend"],
-                accelerator=self.accelerator,
-                instance_data_dir=init_backend.get("instance_data_dir", ""),
-                cache_dir=init_backend["cache_dir"],
-                cache_file_suffix=self.args.cache_file_suffix,
-                write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
-                read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
-            )
-
-            init_backend["vaecache"].discover_all_files()
             self.image_embed_backends[init_backend["id"]] = init_backend
 
         self.metrics["backend_counts"]["image_embeds"] = len(self.image_embed_backends)
