@@ -15,7 +15,6 @@ def get_simpletuner_root() -> Path:
     """
     import simpletuner
 
-    
     if simpletuner.__file__ is None:
         # Handle case where __file__ is None
         simpletuner_package = Path(__file__).parent.parent.parent.parent
