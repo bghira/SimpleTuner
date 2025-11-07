@@ -1,7 +1,7 @@
 """Tiny AutoEncoder helper utilities."""
 
-from .types import ImageTAESpec, VideoTAESpec
 from .loader import load_tae_decoder
+from .types import ImageTAESpec, VideoTAESpec
 
 __all__ = [
     "ImageTAESpec",

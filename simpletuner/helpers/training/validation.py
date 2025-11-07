@@ -765,6 +765,12 @@ class ValidationPreviewer:
         self.accelerator = accelerator
         self.config = config
         self.enabled = bool(getattr(config, "validation_preview", False))
+        interval = getattr(config, "validation_preview_steps", 1)
+        try:
+            interval = int(interval)
+        except (ValueError, TypeError):
+            interval = 1
+        self.step_interval = max(1, interval)
         self._decoder = None
         self._decoder_failed = False
         self._warned_unsupported = False
@@ -836,6 +842,8 @@ class ValidationPreviewer:
     def _handle_callback(self, step: int, timestep, callback_kwargs: dict, metadata: _PreviewMetadata):
         if not self.enabled or self._decoder_failed:
             return
+        if not self._should_emit_for_step(step):
+            return
         latents = callback_kwargs.get("latents")
         if latents is None:
             return
@@ -905,6 +913,16 @@ class ValidationPreviewer:
             videos=videos,
             job_id=StateTracker.get_job_id(),
         )
+
+    def _should_emit_for_step(self, step: int) -> bool:
+        """
+        Return True if the preview should be emitted for this sampling step.
+        Steps are zero-indexed internally, so we convert to one-indexed before modulo.
+        """
+
+        if self.step_interval <= 1:
+            return True
+        return ((step + 1) % self.step_interval) == 0
 
 
 class Validation:

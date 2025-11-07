@@ -10,7 +10,6 @@ class TestModelsServiceValidationPreview(unittest.TestCase):
     def setUpClass(cls):
         # Import models package to register all families with the ModelRegistry.
         import simpletuner.helpers.models  # noqa: F401
-
         from simpletuner.simpletuner_sdk.server.services.models_service import ModelsService
 
         cls.service = ModelsService()

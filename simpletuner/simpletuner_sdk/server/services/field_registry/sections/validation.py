@@ -86,6 +86,24 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="validation_preview_steps",
+            arg_name="--validation_preview_steps",
+            ui_label="Preview Step Interval",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_schedule",
+            default_value=1,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Preview interval must be >= 1")],
+            help_text="Only emit validation previews every N sampling steps.",
+            tooltip="Set >1 to throttle preview decoding if the Tiny AutoEncoder adds overhead.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+            subsection="advanced",
+        )
+    )
+
     # Validation Prompt
     registry._add_field(
         ConfigField(

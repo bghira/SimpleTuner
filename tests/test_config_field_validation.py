@@ -149,6 +149,11 @@ class TestValidationPreviewField(unittest.TestCase):
         self.assertEqual(field.arg_name, "--validation_preview")
         self.assertEqual(field.field_type, FieldType.CHECKBOX)
         self.assertFalse(field.default_value, "validation_preview should default to False")
+        interval_field = registry.get_field("validation_preview_steps")
+        self.assertIsNotNone(interval_field, "validation_preview_steps field should be registered")
+        self.assertEqual(interval_field.arg_name, "--validation_preview_steps")
+        self.assertEqual(interval_field.field_type, FieldType.NUMBER)
+        self.assertEqual(interval_field.default_value, 1)
 
 
 if __name__ == "__main__":

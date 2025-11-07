@@ -94,9 +94,7 @@ def apply_model_with_memblocks(
         x = x.view(N, T, C, H, W)
     else:
         out: List[torch.Tensor] = []
-        work_queue: List[TWorkItem] = [
-            TWorkItem(xt, 0) for xt in x.reshape(N, T * C, H, W).chunk(T, dim=1)
-        ]
+        work_queue: List[TWorkItem] = [TWorkItem(xt, 0) for xt in x.reshape(N, T * C, H, W).chunk(T, dim=1)]
         progress_bar = tqdm(range(T), disable=not show_progress_bar)
         mem: List[Optional[torch.Tensor]] = [None] * len(model)
         while work_queue:
