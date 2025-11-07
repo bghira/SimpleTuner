@@ -808,6 +808,13 @@ class TestWanTransformerBlock(TransformerBaseTest, TransformerBlockTestMixin):
             "added_kv_proj_dim": None,
         }
 
+    def _accelerator_device(self):
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        self.skipTest("No accelerator device available for device realignment test.")
+
     def test_basic_instantiation(self):
         """Test basic transformer block instantiation."""
         block = WanTransformerBlock(**self.block_config)
@@ -936,15 +943,18 @@ class TestWanTransformerBlock(TransformerBaseTest, TransformerBlockTestMixin):
 
     def test_temporal_embedding_device_alignment(self):
         """Ensure temb tensors are aligned to the block device before scale-shift operations."""
-        if not torch.cuda.is_available():
-            self.skipTest("CUDA is required for WAN transformer device alignment test.")
+        device = self._accelerator_device()
+        block = WanTransformerBlock(**self.block_config).to(device)
+        expected_device = (
+            f"{device.type}:{device.index}"
+            if device.index is not None
+            else ("mps:0" if device.type == "mps" else device.type)
+        )
 
-        block = WanTransformerBlock(**self.block_config).to("cuda")
-
-        hidden_states = self.hidden_states.to("cuda")
-        encoder_hidden_states = self.encoder_hidden_states.to("cuda")
+        hidden_states = self.hidden_states.to(device)
+        encoder_hidden_states = self.encoder_hidden_states.to(device)
         temb = torch.randn(self.batch_size, 6, self.hidden_dim, device="cpu")
-        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64, device="cuda")
+        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64).to(device)
 
         output = block.forward(
             hidden_states=hidden_states,
@@ -953,8 +963,47 @@ class TestWanTransformerBlock(TransformerBaseTest, TransformerBlockTestMixin):
             rotary_emb=rotary_emb,
         )
 
-        self.assert_tensor_device(output, "cuda")
-        self.assert_tensor_device(block.scale_shift_table, "cuda")
+        self.assert_tensor_device(output, expected_device)
+        self.assert_tensor_device(block.scale_shift_table, expected_device)
+
+    def test_scale_shift_table_realigns_to_hidden_state_device(self):
+        """Ensure scale_shift_table matches the execution device before modulation."""
+        device = self._accelerator_device()
+        block = WanTransformerBlock(**self.block_config).to(device)
+        expected_device = (
+            f"{device.type}:{device.index}"
+            if device.index is not None
+            else ("mps:0" if device.type == "mps" else device.type)
+        )
+
+        block.scale_shift_table.data = block.scale_shift_table.data.to("cpu")
+
+        hidden_states = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=device)
+        encoder_hidden_states = torch.randn(self.batch_size, 77, self.hidden_dim, device=device)
+        temb = torch.randn(self.batch_size, 6, self.hidden_dim, device=device)
+
+        def _zero_like(*args, **kwargs):
+            if "hidden_states" in kwargs:
+                reference = kwargs["hidden_states"]
+            elif args:
+                reference = args[0]
+            else:
+                raise AssertionError("Expected tensor argument for zero_like helper.")
+            return torch.zeros_like(reference)
+
+        with (
+            patch.object(block.attn1, "forward", autospec=True) as mock_attn1,
+            patch.object(block.attn2, "forward", autospec=True) as mock_attn2,
+            patch.object(block.ffn, "forward", autospec=True) as mock_ffn,
+        ):
+            mock_attn1.side_effect = _zero_like
+            mock_attn2.side_effect = _zero_like
+            mock_ffn.side_effect = _zero_like
+
+            output = block(hidden_states, encoder_hidden_states, temb, rotary_emb=None)
+
+        self.assert_tensor_device(output, expected_device)
+        self.assert_tensor_device(block.scale_shift_table.data, expected_device)
 
     def test_dtype_conversions_float_operations(self):
         """Test dtype conversions for float operations in normalization."""

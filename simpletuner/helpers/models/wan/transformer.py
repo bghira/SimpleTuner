@@ -325,16 +325,22 @@ class WanTransformerBlock(nn.Module):
         self._parameter_device = self.attn1.to_q.weight.device
 
     def _ensure_module_dtype(self, device: torch.device, dtype: torch.dtype) -> None:
-        if self._parameter_dtype == dtype and self._parameter_device == device:
+        attn_weight = self.attn1.to_q.weight
+        modules_synced = attn_weight.device == device and attn_weight.dtype == dtype
+        scale_shift_synced = self.scale_shift_table.device == device and self.scale_shift_table.dtype == dtype
+
+        if modules_synced and scale_shift_synced:
             return
 
-        for module in (self.attn1, self.attn2, self.ffn):
-            module.to(device=device, dtype=dtype)
+        if not modules_synced:
+            for module in (self.attn1, self.attn2, self.ffn):
+                module.to(device=device, dtype=dtype)
 
-        self.scale_shift_table.data = self.scale_shift_table.data.to(device=device, dtype=dtype)
+        if not scale_shift_synced:
+            self.scale_shift_table.data = self.scale_shift_table.data.to(device=device, dtype=dtype)
 
-        self._parameter_dtype = dtype
-        self._parameter_device = device
+        self._parameter_dtype = self.attn1.to_q.weight.dtype
+        self._parameter_device = self.attn1.to_q.weight.device
 
     def forward(
         self,
