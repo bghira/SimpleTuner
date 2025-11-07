@@ -362,19 +362,11 @@ class WanTransformerBlock(nn.Module):
     ) -> torch.Tensor:
         self._ensure_module_dtype(hidden_states.device, hidden_states.dtype)
 
-        temb = temb.to(device=self.scale_shift_table.device, dtype=temb.dtype, non_blocking=True)
+        temb = temb.to(device=self.scale_shift_table.device, dtype=self.scale_shift_table.dtype, non_blocking=True)
 
-        dtype = hidden_states.dtype
-        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (self.scale_shift_table + temb.float()).chunk(
+        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (self.scale_shift_table + temb).chunk(
             6, dim=1
         )
-
-        shift_msa = shift_msa.to(dtype=dtype)
-        scale_msa = scale_msa.to(dtype=dtype)
-        gate_msa = gate_msa.to(dtype=dtype)
-        c_shift_msa = c_shift_msa.to(dtype=dtype)
-        c_scale_msa = c_scale_msa.to(dtype=dtype)
-        c_gate_msa = c_gate_msa.to(dtype=dtype)
 
         # 1. Self-attention
         norm_hidden_states = self.norm1(hidden_states)
