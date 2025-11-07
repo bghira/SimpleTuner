@@ -172,6 +172,10 @@ class StreamingValidationLightbox {
             return;
         }
 
+        if (payload.is_replay) {
+            return;
+        }
+
         const data = payload.data || {};
         const step = parseInt(data.step) || 0;
         const totalSteps = this.extractTotalSteps(data.step_label) || 0;

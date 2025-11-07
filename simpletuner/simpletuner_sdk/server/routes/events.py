@@ -277,9 +277,6 @@ async def events_stream(request: Request):
                                 and event.index <= replay_cutoff_index
                             )
 
-                            if is_replay_event and event.type in {EventType.VALIDATION, EventType.VALIDATION_IMAGE}:
-                                should_skip = True
-
                             if should_skip:
                                 # Update last_index but don't send to client
                                 if event.index is not None:
@@ -288,6 +285,11 @@ async def events_stream(request: Request):
 
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
+
+                            if is_replay_event and event.type in {EventType.VALIDATION, EventType.VALIDATION_IMAGE}:
+                                payload = dict(payload)
+                                payload["is_replay"] = True
+
                             await sse_manager.send_to_connection(
                                 connection.connection_id,
                                 payload,
