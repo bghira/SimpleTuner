@@ -136,5 +136,20 @@ class TestConfigFieldValidation(unittest.TestCase):
                 self.assertTrue(webhook_config[0]["callback_url"].startswith("https://"))
 
 
+class TestValidationPreviewField(unittest.TestCase):
+    """Ensure the validation_preview field is registered correctly."""
+
+    def test_validation_preview_field_metadata(self):
+        from simpletuner.simpletuner_sdk.server.services.field_registry.registry import FieldRegistry
+        from simpletuner.simpletuner_sdk.server.services.field_registry.types import FieldType
+
+        registry = FieldRegistry()
+        field = registry.get_field("validation_preview")
+        self.assertIsNotNone(field, "validation_preview field should be registered")
+        self.assertEqual(field.arg_name, "--validation_preview")
+        self.assertEqual(field.field_type, FieldType.CHECKBOX)
+        self.assertFalse(field.default_value, "validation_preview should default to False")
+
+
 if __name__ == "__main__":
     unittest.main()
