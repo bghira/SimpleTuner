@@ -92,7 +92,12 @@ class StreamingValidationLightbox {
 
         // Close handlers
         closeBtn.addEventListener('click', () => this.close());
-        backdrop.addEventListener('click', () => this.close());
+        // Only close on backdrop click when expanded
+        backdrop.addEventListener('click', () => {
+            if (this.isExpanded) {
+                this.close();
+            }
+        });
 
         // Expand handler
         expandBtn.addEventListener('click', () => this.toggleExpand());
@@ -316,7 +321,10 @@ class StreamingValidationLightbox {
     show() {
         this.lightboxElement.style.display = 'flex';
         this.isVisible = true;
-        document.body.style.overflow = 'hidden';
+        // Only prevent body scrolling when expanded
+        if (this.isExpanded) {
+            document.body.style.overflow = 'hidden';
+        }
     }
 
     close() {
@@ -327,27 +335,35 @@ class StreamingValidationLightbox {
 
         // Reset expanded state
         if (this.isExpanded) {
-            this.toggleExpand();
+            this.isExpanded = false;
+            this.lightboxElement.classList.remove('expanded');
+
+            const expandBtn = this.lightboxElement.querySelector('.streaming-validation-expand');
+            const icon = expandBtn.querySelector('i');
+            icon.classList.remove('fa-compress');
+            icon.classList.add('fa-expand');
+            expandBtn.setAttribute('title', 'Expand');
         }
     }
 
     toggleExpand() {
-        const content = this.lightboxElement.querySelector('.streaming-validation-content');
         const expandBtn = this.lightboxElement.querySelector('.streaming-validation-expand');
         const icon = expandBtn.querySelector('i');
 
         this.isExpanded = !this.isExpanded;
 
         if (this.isExpanded) {
-            content.classList.add('expanded');
+            this.lightboxElement.classList.add('expanded');
             icon.classList.remove('fa-expand');
             icon.classList.add('fa-compress');
             expandBtn.setAttribute('title', 'Collapse');
+            document.body.style.overflow = 'hidden';
         } else {
-            content.classList.remove('expanded');
+            this.lightboxElement.classList.remove('expanded');
             icon.classList.remove('fa-compress');
             icon.classList.add('fa-expand');
             expandBtn.setAttribute('title', 'Expand');
+            document.body.style.overflow = '';
         }
     }
 

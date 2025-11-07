@@ -13,12 +13,20 @@
     height: 100%;
     z-index: 10000; /* Higher than event lightbox */
     display: flex;
-    align-items: center;
-    justify-content: center;
+    align-items: flex-end; /* Bottom alignment by default */
+    justify-content: flex-start; /* Left alignment by default */
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    pointer-events: none; /* Allow clicking through the container */
 }
 
-/* Backdrop */
+/* Expanded state - center and enable pointer events */
+.streaming-validation-lightbox.expanded {
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+}
+
+/* Backdrop - hidden by default */
 .streaming-validation-backdrop {
     position: absolute;
     top: 0;
@@ -27,29 +35,48 @@
     height: 100%;
     background-color: rgba(0, 0, 0, 0.85);
     backdrop-filter: blur(6px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
 }
 
-/* Lightbox content container */
+/* Show backdrop when expanded */
+.streaming-validation-lightbox.expanded .streaming-validation-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Lightbox content container - PiP style by default */
 .streaming-validation-content {
     position: relative;
-    width: 800px;
-    max-width: 90vw;
-    max-height: 90vh;
+    width: 420px;
+    max-width: calc(100vw - 32px);
+    max-height: 400px;
     background: white;
     border-radius: 12px;
-    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     overflow: hidden;
     display: flex;
     flex-direction: column;
     z-index: 1;
     transition: all 0.3s ease;
+    margin: 16px; /* Bottom-left margin */
+    pointer-events: auto; /* Enable interactions with the content */
 }
 
-/* Expanded state */
-.streaming-validation-content.expanded {
+/* Hover effect in PiP mode */
+.streaming-validation-lightbox:not(.expanded) .streaming-validation-content:hover {
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+    transform: translateY(-2px);
+}
+
+/* Expanded state - full viewport takeover */
+.streaming-validation-lightbox.expanded .streaming-validation-content {
     width: 95vw;
     max-width: 1400px;
     max-height: 95vh;
+    margin: 0;
+    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.4);
 }
 
 /* Header */
@@ -163,11 +190,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 400px;
-    max-height: 60vh;
+    min-height: 200px;
+    max-height: 280px;
     background: #000;
     overflow: hidden;
     flex: 1;
+}
+
+/* Expanded state - larger media container */
+.streaming-validation-lightbox.expanded .streaming-validation-media-container {
+    min-height: 400px;
+    max-height: 60vh;
 }
 
 .streaming-validation-image,
@@ -234,21 +267,21 @@
 /* Responsive design */
 @media (max-width: 992px) {
     .streaming-validation-content {
-        width: 700px;
+        width: 380px;
     }
 
-    .streaming-validation-content.expanded {
+    .streaming-validation-lightbox.expanded .streaming-validation-content {
         width: 95vw;
     }
 }
 
 @media (max-width: 768px) {
     .streaming-validation-content {
-        width: 95vw;
-        max-height: 95vh;
+        width: calc(100vw - 32px);
+        max-height: 350px;
     }
 
-    .streaming-validation-content.expanded {
+    .streaming-validation-lightbox.expanded .streaming-validation-content {
         width: 98vw;
         max-height: 98vh;
     }
@@ -289,10 +322,16 @@
 
 @media (max-width: 480px) {
     .streaming-validation-content {
+        width: calc(100vw - 16px);
+        max-height: 300px;
+        margin: 8px;
+        border-radius: 8px;
+    }
+
+    .streaming-validation-lightbox.expanded .streaming-validation-content {
         width: 98vw;
         max-height: 98vh;
         margin: 0.5rem;
-        border-radius: 8px;
     }
 
     .streaming-validation-header {
@@ -402,10 +441,12 @@
     .streaming-validation-expand,
     .streaming-validation-copy,
     .streaming-validation-close,
-    .streaming-validation-progress-fill {
+    .streaming-validation-progress-fill,
+    .streaming-validation-backdrop {
         transition: none;
     }
 
+    .streaming-validation-lightbox:not(.expanded) .streaming-validation-content:hover,
     .streaming-validation-expand:hover,
     .streaming-validation-copy:hover,
     .streaming-validation-close:hover {
