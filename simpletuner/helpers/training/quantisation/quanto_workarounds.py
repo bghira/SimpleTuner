@@ -69,6 +69,18 @@ class WeightQBytesLinearFunction(optimum.quanto.tensor.function.QuantizedLinearF
     @staticmethod
     def forward(ctx, input, other, bias=None):
         ctx.save_for_backward(input, other)
+        input_device = getattr(input, "device", None)
+        if input_device is None and hasattr(input, "_data"):
+            input_device = input._data.device
+
+        if input_device is not None and hasattr(other, "_data"):
+            backing_data = other._data
+            backing_scale = getattr(other, "_scale", None)
+            if backing_data.device != input_device:
+                other._data = backing_data.to(input_device, non_blocking=True)
+            if backing_scale is not None and hasattr(backing_scale, "device") and backing_scale.device != input_device:
+                other._scale = backing_scale.to(input_device, non_blocking=True)
+
         if isinstance(input, optimum.quanto.tensor.QBytesTensor):
             output = torch.ops.quanto.qbytes_mm(input._data, other._data, input._scale * other._scale)
         else:
