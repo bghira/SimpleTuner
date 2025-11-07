@@ -383,7 +383,7 @@
             // Load SSE Manager script first if not already loaded
             if (typeof window.SSEManager === 'undefined') {
                 var script = document.createElement('script');
-                script.src = '/static/js/sse-manager.js';
+                script.src = '/static/js/sse-manager.js?t=' + Date.now();
                 script.onload = function() {
                     setupSSE();
                 };

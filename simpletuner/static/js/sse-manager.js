@@ -256,10 +256,14 @@
                 }
                 case 'validation': {
                     var eventType = payload && payload.type ? String(payload.type).toLowerCase() : '';
-                    if (eventType === 'validation.image') {
-                        // Preview frames shouldn't raise completion toasts.
+                    console.log('[SSE Manager] Validation event received, type:', eventType, 'is_replay:', payload.is_replay);
+
+                    // Don't show toasts for intermediary validation images or replays
+                    if (eventType === 'validation.image' || payload.is_replay) {
+                        console.log('[SSE Manager] Skipping toast - intermediary or replay event');
                         break;
                     }
+
                     var validationMessage = payload.headline || payload.body || payload.message || 'Validation complete';
                     var validationData = {
                         type: 'validation_complete',
@@ -267,6 +271,7 @@
                         images: payload.images || [],  // Preserve images from payload
                         payload: payload
                     };
+                    console.log('[SSE Manager] Showing validation toast:', validationMessage);
                     handleMessage(validationData);
                     // Also emit to HTMX if event dock exists
                     if (window.htmx) {
