@@ -364,17 +364,26 @@ class WanTransformerBlock(nn.Module):
 
         temb = temb.to(device=self.scale_shift_table.device, dtype=temb.dtype, non_blocking=True)
 
+        dtype = hidden_states.dtype
         shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (self.scale_shift_table + temb.float()).chunk(
             6, dim=1
         )
 
+        shift_msa = shift_msa.to(dtype=dtype)
+        scale_msa = scale_msa.to(dtype=dtype)
+        gate_msa = gate_msa.to(dtype=dtype)
+        c_shift_msa = c_shift_msa.to(dtype=dtype)
+        c_scale_msa = c_scale_msa.to(dtype=dtype)
+        c_gate_msa = c_gate_msa.to(dtype=dtype)
+
         # 1. Self-attention
-        norm_hidden_states = (self.norm1(hidden_states.float()) * (1 + scale_msa) + shift_msa).type_as(hidden_states)
+        norm_hidden_states = self.norm1(hidden_states)
+        norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
         attn_output = self.attn1(hidden_states=norm_hidden_states, rotary_emb=rotary_emb)
-        hidden_states = (hidden_states.float() + attn_output * gate_msa).type_as(hidden_states)
+        hidden_states = hidden_states + attn_output * gate_msa
 
         # 2. Cross-attention
-        norm_hidden_states = self.norm2(hidden_states.float()).type_as(hidden_states)
+        norm_hidden_states = self.norm2(hidden_states)
         attn_output = self.attn2(
             hidden_states=norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -382,9 +391,10 @@ class WanTransformerBlock(nn.Module):
         hidden_states = hidden_states + attn_output
 
         # 3. Feed-forward
-        norm_hidden_states = (self.norm3(hidden_states.float()) * (1 + c_scale_msa) + c_shift_msa).type_as(hidden_states)
+        norm_hidden_states = self.norm3(hidden_states)
+        norm_hidden_states = norm_hidden_states * (1 + c_scale_msa) + c_shift_msa
         ff_output = self.ffn(norm_hidden_states)
-        hidden_states = (hidden_states.float() + ff_output.float() * c_gate_msa).type_as(hidden_states)
+        hidden_states = hidden_states + ff_output * c_gate_msa
 
         return hidden_states
 
