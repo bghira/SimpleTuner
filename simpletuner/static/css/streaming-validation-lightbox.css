@@ -1,0 +1,420 @@
+/**
+ * Streaming Validation Lightbox Styles
+ * Styles for the intermediary validation samples lightbox
+ * with instant content replacement and progress tracking
+ */
+
+/* Main lightbox container */
+.streaming-validation-lightbox {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000; /* Higher than event lightbox */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Backdrop */
+.streaming-validation-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(6px);
+}
+
+/* Lightbox content container */
+.streaming-validation-content {
+    position: relative;
+    width: 800px;
+    max-width: 90vw;
+    max-height: 90vh;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    z-index: 1;
+    transition: all 0.3s ease;
+}
+
+/* Expanded state */
+.streaming-validation-content.expanded {
+    width: 95vw;
+    max-width: 1400px;
+    max-height: 95vh;
+}
+
+/* Header */
+.streaming-validation-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.streaming-validation-title {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: white;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+
+.streaming-validation-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.streaming-validation-expand,
+.streaming-validation-copy,
+.streaming-validation-close {
+    background: rgba(255, 255, 255, 0.15);
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    line-height: 1;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.streaming-validation-expand:hover,
+.streaming-validation-copy:hover,
+.streaming-validation-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.05);
+}
+
+.streaming-validation-expand:active,
+.streaming-validation-copy:active,
+.streaming-validation-close:active {
+    transform: scale(0.95);
+}
+
+.streaming-validation-close {
+    font-size: 1.5rem;
+    font-weight: 300;
+}
+
+/* Body */
+.streaming-validation-body {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+    flex: 1;
+    background: #f8f9fa;
+}
+
+/* Progress bar container */
+.streaming-validation-progress-container {
+    padding: 1rem 1.5rem;
+    background: white;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.streaming-validation-progress-bar {
+    position: relative;
+    width: 100%;
+    height: 8px;
+    background: #e9ecef;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.streaming-validation-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.streaming-validation-progress-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    font-weight: 500;
+    text-align: center;
+}
+
+/* Media container - NO TRANSITIONS for instant replacement */
+.streaming-validation-media-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+    max-height: 60vh;
+    background: #000;
+    overflow: hidden;
+    flex: 1;
+}
+
+.streaming-validation-image,
+.streaming-validation-video {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    /* NO TRANSITION - instant replacement */
+}
+
+.streaming-validation-video {
+    width: 100%;
+}
+
+/* Loading indicator */
+.streaming-validation-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #a0aec0;
+    font-size: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    text-align: center;
+}
+
+.streaming-validation-loading i {
+    font-size: 2rem;
+}
+
+/* Info section */
+.streaming-validation-info {
+    padding: 1rem 1.5rem;
+    background: white;
+    border-top: 1px solid #dee2e6;
+}
+
+.streaming-validation-prompt {
+    font-size: 0.95rem;
+    color: #212529;
+    margin-bottom: 0.5rem;
+    line-height: 1.5;
+    font-style: italic;
+}
+
+.streaming-validation-prompt:empty {
+    display: none;
+}
+
+.streaming-validation-meta {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.streaming-validation-meta .badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+
+/* Responsive design */
+@media (max-width: 992px) {
+    .streaming-validation-content {
+        width: 700px;
+    }
+
+    .streaming-validation-content.expanded {
+        width: 95vw;
+    }
+}
+
+@media (max-width: 768px) {
+    .streaming-validation-content {
+        width: 95vw;
+        max-height: 95vh;
+    }
+
+    .streaming-validation-content.expanded {
+        width: 98vw;
+        max-height: 98vh;
+    }
+
+    .streaming-validation-header {
+        padding: 0.75rem 1rem;
+    }
+
+    .streaming-validation-title {
+        font-size: 1rem;
+    }
+
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close {
+        width: 32px;
+        height: 32px;
+        padding: 0.4rem;
+    }
+
+    .streaming-validation-close {
+        font-size: 1.25rem;
+    }
+
+    .streaming-validation-media-container {
+        min-height: 300px;
+        max-height: 50vh;
+    }
+
+    .streaming-validation-progress-container {
+        padding: 0.75rem 1rem;
+    }
+
+    .streaming-validation-info {
+        padding: 0.75rem 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .streaming-validation-content {
+        width: 98vw;
+        max-height: 98vh;
+        margin: 0.5rem;
+        border-radius: 8px;
+    }
+
+    .streaming-validation-header {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .streaming-validation-title {
+        font-size: 0.9rem;
+    }
+
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close {
+        width: 28px;
+        height: 28px;
+        padding: 0.3rem;
+    }
+
+    .streaming-validation-close {
+        font-size: 1.1rem;
+    }
+
+    .streaming-validation-media-container {
+        min-height: 200px;
+        max-height: 40vh;
+    }
+
+    .streaming-validation-progress-container {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .streaming-validation-info {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .streaming-validation-prompt {
+        font-size: 0.85rem;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .streaming-validation-content {
+        background: #2d3748;
+        color: #e2e8f0;
+    }
+
+    .streaming-validation-header {
+        background: linear-gradient(135deg, #4c51bf 0%, #5a3fb9 100%);
+    }
+
+    .streaming-validation-body {
+        background: #1a202c;
+    }
+
+    .streaming-validation-progress-container,
+    .streaming-validation-info {
+        background: #2d3748;
+        border-color: #4a5568;
+    }
+
+    .streaming-validation-progress-bar {
+        background: #4a5568;
+    }
+
+    .streaming-validation-progress-label {
+        color: #a0aec0;
+    }
+
+    .streaming-validation-prompt {
+        color: #e2e8f0;
+    }
+
+    .streaming-validation-loading {
+        color: #cbd5e0;
+    }
+}
+
+/* Focus styles for accessibility */
+.streaming-validation-expand:focus,
+.streaming-validation-copy:focus,
+.streaming-validation-close:focus {
+    outline: 2px solid white;
+    outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .streaming-validation-backdrop {
+        background-color: rgba(0, 0, 0, 0.95);
+    }
+
+    .streaming-validation-content {
+        border: 3px solid #000;
+    }
+
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close {
+        border: 1px solid white;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .streaming-validation-content,
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close,
+    .streaming-validation-progress-fill {
+        transition: none;
+    }
+
+    .streaming-validation-expand:hover,
+    .streaming-validation-copy:hover,
+    .streaming-validation-close:hover {
+        transform: none;
+    }
+
+    .streaming-validation-expand:active,
+    .streaming-validation-copy:active,
+    .streaming-validation-close:active {
+        transform: none;
+    }
+}
