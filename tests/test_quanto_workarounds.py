@@ -58,21 +58,23 @@ class QuantoWorkaroundsTests(unittest.TestCase):
                 offload_to_disk_path=tmp_dir,
             )
 
-    @unittest.skipIf(not torch.cuda.is_available(), "CUDA not available")
-    def test_quantized_module_can_be_group_offloaded_with_cuda(self):
+    def test_quantized_module_can_be_group_offloaded_on_accelerator(self):
+        device = self._accelerator_device()
         model = self._quantized_linear(qint8)
         with tempfile.TemporaryDirectory() as tmp_dir:
             apply_group_offloading(
                 module=model,
-                onload_device=torch.device("cuda"),
+                onload_device=device,
                 offload_device=torch.device("cpu"),
                 offload_type="block_level",
                 num_blocks_per_group=1,
                 offload_to_disk_path=tmp_dir,
             )
-            input_tensor = torch.randn(2, 4, device="cuda")
+            input_tensor = torch.randn(2, 4, device=device)
             output = model(input_tensor)
-            self.assertEqual(output.device.type, "cuda")
+            self.assertEqual(output.device.type, device.type)
+            if device.index is not None:
+                self.assertEqual(output.device.index, device.index)
 
     def test_param_data_move_keeps_backing_tensors_in_sync(self):
         device = self._accelerator_device()
