@@ -907,7 +907,7 @@ class ValidationPreviewer:
         message_text = f"Validation (step {step_label}): {metadata.shortname or '(validation)'}"
         payload = {
             "type": "validation.image",
-            "title": f"Preview: {metadata.shortname or '(validation)'}",
+            "title": message_text,
             "message": message_text,
             "body": metadata.prompt or "",
             "data": {

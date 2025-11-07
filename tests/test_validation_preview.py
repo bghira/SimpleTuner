@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
-from simpletuner.helpers.training.validation import ValidationPreviewer
+from simpletuner.helpers.training.validation import ValidationPreviewer, _PreviewMetadata
 
 
 class _DummyModel:
@@ -77,6 +77,45 @@ class ValidationPreviewerTests(unittest.TestCase):
         previewer._emit_event = MagicMock()
         previewer._decode_preview(torch.zeros(1, 4, 8, 8))
         model.denormalize_latents_for_preview.assert_called_once()
+
+    @patch("simpletuner.helpers.training.validation.StateTracker")
+    def test_emit_event_formats_step_label_with_config_total(self, mock_state_tracker):
+        handler = MagicMock()
+        mock_state_tracker.get_webhook_handler.return_value = handler
+        config = types.SimpleNamespace(validation_preview=True, validation_preview_steps=1, validation_num_inference_steps=4)
+        accelerator = types.SimpleNamespace(is_main_process=True)
+        previewer = ValidationPreviewer(_DummyModel(), accelerator, config)
+        previewer._webhook_handler = handler
+        metadata = _PreviewMetadata(shortname="foo", prompt="hello", resolution=(512, 512), validation_type="checkpoint")
+        previewer._emit_event([], None, metadata, step=1, timestep=0.5)
+        handler.send_raw.assert_called_once()
+        payload = handler.send_raw.call_args.kwargs["structured_data"]
+        self.assertEqual(payload["message"], "Validation (step 2/4): foo")
+        self.assertEqual(payload["title"], "Validation (step 2/4): foo")
+        self.assertEqual(payload["body"], "hello")
+        self.assertEqual(payload["data"]["step_label"], "2/4")
+        handler.reset_mock()
+
+    @patch("simpletuner.helpers.training.validation.StateTracker")
+    def test_emit_event_uses_metadata_total_override(self, mock_state_tracker):
+        handler = MagicMock()
+        mock_state_tracker.get_webhook_handler.return_value = handler
+        config = types.SimpleNamespace(validation_preview=True, validation_preview_steps=1, validation_num_inference_steps=4)
+        accelerator = types.SimpleNamespace(is_main_process=True)
+        previewer = ValidationPreviewer(_DummyModel(), accelerator, config)
+        previewer._webhook_handler = handler
+        metadata = _PreviewMetadata(
+            shortname="bar",
+            prompt="prompt",
+            resolution=(256, 256),
+            validation_type="checkpoint",
+            total_steps=10,
+        )
+        previewer._emit_event([], None, metadata, step=2, timestep=None)
+        payload = handler.send_raw.call_args.kwargs["structured_data"]
+        self.assertEqual(payload["message"], "Validation (step 3/10): bar")
+        self.assertEqual(payload["title"], "Validation (step 3/10): bar")
+        self.assertEqual(payload["data"]["step_label"], "3/10")
 
 
 if __name__ == "__main__":
