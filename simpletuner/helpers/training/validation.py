@@ -753,6 +753,7 @@ class _PreviewMetadata:
     prompt: str
     resolution: tuple[int, int]
     validation_type: str | None
+    total_steps: int | None = None
 
 
 class ValidationPreviewer:
@@ -896,15 +897,26 @@ class ValidationPreviewer:
     def _emit_event(self, images, videos, metadata: _PreviewMetadata, step: int, timestep):
         if self._webhook_handler is None:
             return
+        total_steps = metadata.total_steps
+        if not total_steps:
+            total_steps = getattr(self.config, "validation_num_inference_steps", None)
+        if total_steps:
+            step_label = f"{int(step + 1)}/{int(total_steps)}"
+        else:
+            step_label = f"{int(step + 1)}"
+        message_text = f"Validation (step {step_label}): {metadata.shortname or '(validation)'}"
         payload = {
             "type": "validation.image",
             "title": f"Preview: {metadata.shortname or '(validation)'}",
-            "message": metadata.prompt or "",
+            "message": message_text,
+            "body": metadata.prompt or "",
             "data": {
                 "step": int(step + 1),
                 "timestep": float(timestep) if timestep is not None else None,
                 "resolution": list(metadata.resolution),
                 "validation_type": metadata.validation_type,
+                "prompt": metadata.prompt,
+                "step_label": step_label,
             },
         }
         self._webhook_handler.send_raw(
@@ -2423,6 +2435,7 @@ class Validation:
                                 prompt=prompt,
                                 resolution=(int(validation_resolution_width), int(validation_resolution_height)),
                                 validation_type=validation_type,
+                                total_steps=getattr(self.config, "validation_num_inference_steps", None),
                             ),
                         )
                     with preview_ctx:

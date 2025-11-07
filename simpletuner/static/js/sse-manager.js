@@ -255,6 +255,11 @@
                     break;
                 }
                 case 'validation': {
+                    var eventType = payload && payload.type ? String(payload.type).toLowerCase() : '';
+                    if (eventType === 'validation.image') {
+                        // Preview frames shouldn't raise completion toasts.
+                        break;
+                    }
                     var validationMessage = payload.headline || payload.body || payload.message || 'Validation complete';
                     var validationData = {
                         type: 'validation_complete',
