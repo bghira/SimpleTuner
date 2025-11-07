@@ -100,7 +100,11 @@ class StateTracker:
                     logger.warning(f"(rank={os.environ.get('RANK')}) Deleted cache file: {cache_path}")
                 except:
                     pass
-                fcntl.flock(f, fcntl.LOCK_UN)
+                try:
+                    fcntl.flock(f, fcntl.LOCK_UN)
+                except:
+                    # delete by other process, then just continue
+                    pass
 
     @classmethod
     def _load_from_disk(cls, cache_name, retry_limit: int = 0):
