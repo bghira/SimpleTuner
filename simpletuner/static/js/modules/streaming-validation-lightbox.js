@@ -21,9 +21,11 @@ class StreamingValidationLightbox {
     }
 
     init() {
+        console.log('[StreamingValidationLightbox] Initializing...');
         this.createLightbox();
         this.setupEventListeners();
         this.registerSSEListener();
+        console.log('[StreamingValidationLightbox] Initialization complete');
     }
 
     createLightbox() {
@@ -167,14 +169,20 @@ class StreamingValidationLightbox {
     }
 
     handleValidationEvent(payload) {
+        console.log('[StreamingValidationLightbox] Received validation event:', payload);
+
         // Only handle validation.image events (intermediary samples)
         if (payload.type !== 'validation.image') {
+            console.log('[StreamingValidationLightbox] Skipping - not validation.image type:', payload.type);
             return;
         }
 
         if (payload.is_replay) {
+            console.log('[StreamingValidationLightbox] Skipping - is_replay flag set');
             return;
         }
+
+        console.log('[StreamingValidationLightbox] Processing validation image');
 
         const data = payload.data || {};
         const step = parseInt(data.step) || 0;
@@ -182,9 +190,11 @@ class StreamingValidationLightbox {
 
         // Show lightbox if not already visible, restore if minimized
         if (!this.isVisible) {
+            console.log('[StreamingValidationLightbox] Showing lightbox');
             this.show();
         } else if (this.isMinimized) {
             // If minimized, show update badge but don't auto-restore
+            console.log('[StreamingValidationLightbox] Showing update badge (minimized)');
             this.showUpdateBadge();
         }
 
@@ -520,8 +530,10 @@ class StreamingValidationLightbox {
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[StreamingValidationLightbox] DOM ready, creating instance');
     window.streamingValidationLightbox = new StreamingValidationLightbox();
     window.StreamingValidationLightbox = StreamingValidationLightbox;
+    console.log('[StreamingValidationLightbox] Instance created and attached to window');
 });
 
 // Export for potential use in other modules
