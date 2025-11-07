@@ -3666,7 +3666,7 @@ class Trainer:
 
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
-                with self.accelerator.accumulate(training_models):
+                with self.accelerator.accumulate(*training_models):
                     bsz = prepared_batch["latents"].shape[0]
                     training_logger.debug("Sending latent batch to GPU.")
 

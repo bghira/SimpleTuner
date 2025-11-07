@@ -1360,7 +1360,162 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
             self.assertFalse(group["use_focus"])
 
-    # Additional tests can be added for other methods as needed
+    @patch("simpletuner.helpers.training.state_tracker.StateTracker")
+    @patch("simpletuner.helpers.training.trainer.tqdm")
+    @patch("simpletuner.helpers.training.trainer.logger")
+    @patch("simpletuner.helpers.training.trainer.training_logger")
+    def test_accumulate_unpacks_training_models_for_fsdp2(
+        self, mock_training_logger, mock_logger, mock_tqdm, mock_state_tracker
+    ):
+        """Regression test: trainer.train() should unpack training_models when calling accumulate()
+
+        This test verifies the fix for the bug where training_models was passed as a list
+        directly to accumulate(), causing AttributeError with FSDP2 in Accelerate 1.11.0+.
+        FSDP2's no_sync() calls model.set_requires_gradient_sync(False) which fails on lists.
+        """
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            model_type="full",
+            train_text_encoder=False,
+            lora_type="standard",
+            num_train_epochs=1,
+            max_train_steps=1000,
+            train_batch_size=1,
+            dataloader_prefetch=False,
+            lr_scheduler="constant",
+            eval_dataset_id=None,
+            num_update_steps_per_epoch=1,
+            ignore_final_epochs=False,
+            distillation_method=None,
+            disable_accelerator=False,
+            optimizer="adamw",
+            gradient_precision="fp32",
+            gradient_accumulation_steps=1,
+            max_grad_norm=1.0,
+        )
+
+        mock_trained_model = Mock()
+        mock_trained_model.set_requires_gradient_sync = Mock()
+        mock_trained_model.train = Mock()
+
+        trainer.model = Mock()
+        trainer.model.get_trained_component = Mock(return_value=mock_trained_model)
+        trainer.model.loss = Mock(return_value=torch.tensor(0.5))
+        trainer.model.auxiliary_loss = Mock(return_value=(torch.tensor(0.5), {}))
+        trainer.text_encoders = []
+        trainer.model_predict = Mock(return_value={"model_prediction": torch.zeros(1, 4, 4, 4)})
+        trainer._max_grad_value = Mock(return_value=torch.tensor(0.1))
+        trainer.params_to_optimize = []
+
+        def prepare_batch_side_effect(batch):
+            if batch is False:
+                return False
+            return {
+                "latents": torch.zeros(1, 4, 4, 4),
+                "timesteps": torch.zeros(1),
+            }
+
+        trainer.prepare_batch = Mock(side_effect=prepare_batch_side_effect)
+
+        trainer.state = {
+            "global_step": 0,
+            "global_resume_step": 0,
+            "current_epoch": 1,
+            "first_epoch": 1,
+            "lr": 0.0001,
+        }
+        trainer.timesteps_buffer = []
+        trainer.distiller = None
+        trainer.bf = None
+        trainer.extra_lr_scheduler_kwargs = {}
+        trainer.train_loss = 0.0
+        trainer._epoch_rollover = Mock()
+        trainer._should_checkpoint_epoch = Mock(return_value=False)
+        trainer._exit_on_signal = Mock()
+        trainer.init_trackers = Mock()
+        trainer._train_initial_msg = Mock()
+        trainer._get_trainable_parameters = Mock(return_value=[])
+
+        received_accumulate_args = []
+        accumulate_call_count = 0
+
+        class StopTrainingException(Exception):
+            pass
+
+        def mock_accumulate(*models):
+            nonlocal accumulate_call_count
+            accumulate_call_count += 1
+            received_accumulate_args.extend(models)
+
+            class _AccumulateContext:
+                def __enter__(self):
+                    for model in models:
+                        if isinstance(model, list):
+                            raise AttributeError(
+                                "'list' object has no attribute 'set_requires_gradient_sync'. "
+                                "This simulates the FSDP2 error."
+                            )
+                        if hasattr(model, "set_requires_gradient_sync"):
+                            model.set_requires_gradient_sync(False)
+                    return self
+
+                def __exit__(self, exc_type, exc_val, exc_tb):
+                    for model in models:
+                        if hasattr(model, "set_requires_gradient_sync"):
+                            model.set_requires_gradient_sync(True)
+                    raise StopTrainingException("Captured accumulate call, stopping test")
+
+            return _AccumulateContext()
+
+        mock_loss_tensor = torch.tensor(0.5)
+        mock_accelerator = Mock()
+        mock_accelerator.is_main_process = True
+        mock_accelerator.accumulate = mock_accumulate
+        mock_accelerator.wait_for_everyone = Mock()
+        mock_accelerator.gather = Mock(return_value=mock_loss_tensor)
+        mock_accelerator.backward = Mock()
+        mock_accelerator.sync_gradients = False
+        trainer.accelerator = mock_accelerator
+
+        mock_progress_bar = Mock()
+        mock_progress_bar.set_description = Mock()
+        mock_tqdm.return_value.__enter__ = Mock(return_value=mock_progress_bar)
+        mock_tqdm.return_value.__exit__ = Mock(return_value=False)
+
+        call_count = [0]
+
+        def mock_iterator(step, backends):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return {"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}
+            return False
+
+        mock_state_tracker.get_data_backends = Mock(
+            return_value={
+                "backend1": {"train_dataloader": [{"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}]}
+            }
+        )
+        mock_state_tracker.backend_status = Mock(return_value=False)
+
+        with patch("simpletuner.helpers.training.trainer.random_dataloader_iterator", mock_iterator):
+            try:
+                trainer.train()
+            except StopTrainingException:
+                pass
+
+        self.assertGreater(accumulate_call_count, 0, "accumulate() should have been called")
+        self.assertGreater(len(received_accumulate_args), 0, "accumulate() should have received arguments")
+        self.assertIs(
+            received_accumulate_args[0],
+            mock_trained_model,
+            "accumulate() should receive the model object, not a list",
+        )
+        self.assertNotIsInstance(
+            received_accumulate_args[0],
+            list,
+            "accumulate() must not receive a list - would cause AttributeError in FSDP2",
+        )
+        mock_trained_model.set_requires_gradient_sync.assert_any_call(False)
 
     @patch("simpletuner.helpers.training.trainer.TorchDynamoPlugin")
     @patch("simpletuner.helpers.training.trainer.Accelerator")
