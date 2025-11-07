@@ -859,13 +859,15 @@ class ValidationPreviewer:
         self._emit_event(image_payloads, video_payloads, metadata, step, timestep_value)
 
     def _decode_preview(self, latents: torch.Tensor):
+        decoder = self._decoder
         latents = latents.detach()
-        dtype = getattr(self._decoder, "dtype", torch.float32)
-        device = getattr(self._decoder, "device", latents.device)
+        dtype = getattr(decoder, "dtype", torch.float32)
+        device = getattr(decoder, "device", latents.device)
         latents = latents.to(device=device, dtype=torch.float32)
-        latents = self.model.denormalize_latents_for_preview(latents)
+        if getattr(decoder, "requires_vae_rescaling", False):
+            latents = self.model.denormalize_latents_for_preview(latents)
         latents = latents.to(dtype=dtype)
-        decoded = self._decoder.decode(latents)
+        decoded = decoder.decode(latents)
         if self._decoder.is_video:
             frames = decoded[0]
             pil_frames = [self._tensor_to_pil(frame) for frame in frames]

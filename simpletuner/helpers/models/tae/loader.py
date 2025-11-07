@@ -65,6 +65,9 @@ class _BaseTAEDecoder:
     def __init__(self):
         self.device: torch.device | None = None
         self.dtype: torch.dtype | None = None
+        # Tiny AutoEncoders operate directly on the diffusion latents.
+        # They should not receive VAE-rescaled values by default.
+        self.requires_vae_rescaling: bool = False
 
     def decode(self, latents: torch.Tensor) -> torch.Tensor:  # pragma: no cover - implemented by subclasses
         raise NotImplementedError
