@@ -8,12 +8,14 @@ class StreamingValidationLightbox {
     constructor() {
         this.lightboxElement = null;
         this.isVisible = false;
+        this.isMinimized = false;
         this.lastSampleTime = null;
         this.autoCloseTimeout = null;
         this.autoCloseDelay = 30000; // 30 seconds
         this.isExpanded = false;
         this.currentImageData = null;
         this.currentVideoData = null;
+        this.hasNewUpdate = false;
 
         this.init();
     }
@@ -35,6 +37,10 @@ class StreamingValidationLightbox {
         const lightboxHTML = `
             <div id="streaming-validation-lightbox" class="streaming-validation-lightbox" style="display: none;">
                 <div class="streaming-validation-backdrop"></div>
+                <div class="streaming-validation-minimized-tab" title="Expand validation preview">
+                    <div class="streaming-validation-minimized-badge"></div>
+                    <i class="fas fa-chevron-right"></i>
+                </div>
                 <div class="streaming-validation-content">
                     <div class="streaming-validation-header">
                         <h4 class="streaming-validation-title">Validation Preview</h4>
@@ -89,15 +95,20 @@ class StreamingValidationLightbox {
         const expandBtn = this.lightboxElement.querySelector('.streaming-validation-expand');
         const copyBtn = this.lightboxElement.querySelector('.streaming-validation-copy');
         const backdrop = this.lightboxElement.querySelector('.streaming-validation-backdrop');
+        const minimizedTab = this.lightboxElement.querySelector('.streaming-validation-minimized-tab');
 
-        // Close handlers
-        closeBtn.addEventListener('click', () => this.close());
+        // Close button now minimizes instead of closing
+        closeBtn.addEventListener('click', () => this.minimize());
+
         // Only close on backdrop click when expanded
         backdrop.addEventListener('click', () => {
             if (this.isExpanded) {
-                this.close();
+                this.minimize();
             }
         });
+
+        // Minimized tab click restores to PiP mode
+        minimizedTab.addEventListener('click', () => this.restore());
 
         // Expand handler
         expandBtn.addEventListener('click', () => this.toggleExpand());
@@ -109,9 +120,17 @@ class StreamingValidationLightbox {
         document.addEventListener('keydown', (event) => {
             if (!this.isVisible) return;
 
+            // Don't respond to shortcuts when minimized
+            if (this.isMinimized) {
+                if (event.key === 'Escape') {
+                    this.close(); // Escape fully closes even when minimized
+                }
+                return;
+            }
+
             switch (event.key) {
                 case 'Escape':
-                    this.close();
+                    this.minimize();
                     break;
                 case 'c':
                 case 'C':
@@ -157,9 +176,12 @@ class StreamingValidationLightbox {
         const step = parseInt(data.step) || 0;
         const totalSteps = this.extractTotalSteps(data.step_label) || 0;
 
-        // Show lightbox if not already visible
+        // Show lightbox if not already visible, restore if minimized
         if (!this.isVisible) {
             this.show();
+        } else if (this.isMinimized) {
+            // If minimized, show update badge but don't auto-restore
+            this.showUpdateBadge();
         }
 
         // Update content instantly (no flicker)
@@ -321,17 +343,53 @@ class StreamingValidationLightbox {
     show() {
         this.lightboxElement.style.display = 'flex';
         this.isVisible = true;
+        this.isMinimized = false;
+        this.lightboxElement.classList.remove('minimized');
+        this.hideUpdateBadge();
+
         // Only prevent body scrolling when expanded
         if (this.isExpanded) {
             document.body.style.overflow = 'hidden';
         }
     }
 
+    minimize() {
+        // Minimize to tab instead of fully closing
+        this.isMinimized = true;
+        this.lightboxElement.classList.add('minimized');
+        document.body.style.overflow = '';
+
+        // Collapse if expanded
+        if (this.isExpanded) {
+            this.isExpanded = false;
+            this.lightboxElement.classList.remove('expanded');
+
+            const expandBtn = this.lightboxElement.querySelector('.streaming-validation-expand');
+            const icon = expandBtn.querySelector('i');
+            icon.classList.remove('fa-compress');
+            icon.classList.add('fa-expand');
+            expandBtn.setAttribute('title', 'Expand');
+        }
+
+        // Don't clear auto-close timeout - it should still close after 30s
+    }
+
+    restore() {
+        // Restore from minimized state to PiP mode
+        this.isMinimized = false;
+        this.lightboxElement.classList.remove('minimized');
+        this.hideUpdateBadge();
+    }
+
     close() {
+        // Fully close/hide the lightbox (called by timeout)
         this.lightboxElement.style.display = 'none';
         this.isVisible = false;
+        this.isMinimized = false;
+        this.lightboxElement.classList.remove('minimized');
         document.body.style.overflow = '';
         this.clearAutoCloseTimeout();
+        this.hideUpdateBadge();
 
         // Reset expanded state
         if (this.isExpanded) {
@@ -343,6 +401,20 @@ class StreamingValidationLightbox {
             icon.classList.remove('fa-compress');
             icon.classList.add('fa-expand');
             expandBtn.setAttribute('title', 'Expand');
+        }
+    }
+
+    showUpdateBadge() {
+        const minimizedTab = this.lightboxElement.querySelector('.streaming-validation-minimized-tab');
+        if (minimizedTab) {
+            minimizedTab.classList.add('has-update');
+        }
+    }
+
+    hideUpdateBadge() {
+        const minimizedTab = this.lightboxElement.querySelector('.streaming-validation-minimized-tab');
+        if (minimizedTab) {
+            minimizedTab.classList.remove('has-update');
         }
     }
 
