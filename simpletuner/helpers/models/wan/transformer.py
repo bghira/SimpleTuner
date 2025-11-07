@@ -327,12 +327,31 @@ class WanTransformerBlock(nn.Module):
         self.scale_shift_table = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
         self._parameter_dtype = self.attn1.to_q.weight.dtype
         self._parameter_device = self.attn1.to_q.weight.device
-        self._chunk_size = WAN_FEED_FORWARD_CHUNK_SIZE if WAN_FEED_FORWARD_CHUNK_SIZE > 0 else None
-        self._chunk_dim = WAN_FEED_FORWARD_CHUNK_DIM if WAN_FEED_FORWARD_CHUNK_SIZE > 0 else 0
+        self._chunk_enabled = False
+        self._chunk_auto = False
+        self._chunk_size: Optional[int] = None
+        self._chunk_dim: Optional[int] = None
+        if WAN_FEED_FORWARD_CHUNK_SIZE > 0:
+            self.set_chunk_feed_forward(WAN_FEED_FORWARD_CHUNK_SIZE, WAN_FEED_FORWARD_CHUNK_DIM)
 
-    def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: int = 0) -> None:
-        self._chunk_size = chunk_size
-        self._chunk_dim = dim
+    def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: Optional[int] = 0) -> None:
+        self._chunk_enabled = True
+        if chunk_size is None:
+            self._chunk_auto = True
+            self._chunk_size = None
+            self._chunk_dim = dim
+        else:
+            normalized_size = max(1, int(chunk_size))
+            normalized_dim = int(dim) if dim is not None else 0
+            self._chunk_auto = False
+            self._chunk_size = normalized_size
+            self._chunk_dim = normalized_dim
+
+    def disable_chunk_feed_forward(self) -> None:
+        self._chunk_enabled = False
+        self._chunk_auto = False
+        self._chunk_size = None
+        self._chunk_dim = None
 
     def _ensure_module_dtype(self, device: torch.device, dtype: torch.dtype) -> None:
         attn_weight = self.attn1.to_q.weight
@@ -395,13 +414,63 @@ class WanTransformerBlock(nn.Module):
         # 3. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + c_scale_msa) + c_shift_msa
-        if self._chunk_size is not None:
-            ff_output = _chunked_feed_forward(self.ffn, norm_hidden_states, self._chunk_dim, self._chunk_size)
+        if self._chunk_enabled:
+            ff_output = self._run_chunked_feed_forward(norm_hidden_states)
         else:
             ff_output = self.ffn(norm_hidden_states)
         hidden_states = hidden_states + ff_output * c_gate_msa
 
         return hidden_states
+
+    def _run_chunked_feed_forward(self, norm_hidden_states: torch.Tensor) -> torch.Tensor:
+        if self._chunk_auto:
+            return self._auto_chunk_feed_forward(norm_hidden_states)
+        if self._chunk_size is None:
+            return self.ffn(norm_hidden_states)
+        chunk_dim = self._chunk_dim if self._chunk_dim is not None else 0
+        return self._chunk_feed_forward_with_params(norm_hidden_states, chunk_dim, self._chunk_size)
+
+    def _auto_chunk_feed_forward(self, norm_hidden_states: torch.Tensor) -> torch.Tensor:
+        batch = norm_hidden_states.size(0)
+        seq_len = norm_hidden_states.size(1) if norm_hidden_states.ndim > 1 else None
+
+        if batch > 1:
+            chunk_dim = 0
+            chunk_size = 2 if batch >= 2 else 1
+            return self._chunk_feed_forward_with_params(norm_hidden_states, chunk_dim, chunk_size)
+
+        if seq_len is not None and seq_len > 1:
+            chunk_dim = 1
+            desired_chunks = 4
+            chunk_size = max(1, seq_len // desired_chunks)
+            return self._chunk_feed_forward_with_params(norm_hidden_states, chunk_dim, chunk_size)
+
+        return self.ffn(norm_hidden_states)
+
+    def _chunk_feed_forward_with_params(
+        self, norm_hidden_states: torch.Tensor, chunk_dim: int, chunk_size: int
+    ) -> torch.Tensor:
+        if chunk_dim < 0 or chunk_dim >= norm_hidden_states.ndim:
+            return self.ffn(norm_hidden_states)
+
+        dim_extent = norm_hidden_states.size(chunk_dim)
+        if dim_extent <= 1:
+            return self.ffn(norm_hidden_states)
+
+        if chunk_size <= 0:
+            return self.ffn(norm_hidden_states)
+
+        if chunk_size >= dim_extent:
+            chunk_size = max(1, dim_extent // 2)
+            if chunk_size == 0:
+                return self.ffn(norm_hidden_states)
+
+        if dim_extent % chunk_size != 0:
+            chunk_size = math.gcd(dim_extent, chunk_size)
+            if chunk_size <= 1:
+                return self.ffn(norm_hidden_states)
+
+        return _chunked_feed_forward(self.ffn, norm_hidden_states, chunk_dim, chunk_size)
 
 
 class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):

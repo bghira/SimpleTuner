@@ -322,25 +322,25 @@ class Wan(VideoModelFoundation):
     def supports_chunked_feed_forward(cls) -> bool:
         return True
 
-    def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: int = 0) -> None:
-        chunk_value = chunk_size or getattr(self.config, "feed_forward_chunk_size", None)
-        if chunk_value is None:
-            raise ValueError(
-                "`feed_forward_chunk_size` must be provided when enabling feed-forward chunking for Wan models."
-            )
-        try:
-            chunk_value = int(chunk_value)
-        except (TypeError, ValueError) as error:
-            raise ValueError("`feed_forward_chunk_size` must be an integer.") from error
-        if chunk_value <= 0:
-            raise ValueError("`feed_forward_chunk_size` must be greater than zero.")
-
+    def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: Optional[int] = None) -> None:
         transformer = self.unwrap_model(self.model)
         if transformer is None or not hasattr(transformer, "set_chunk_feed_forward"):
             raise RuntimeError("Wan transformer is not available for feed-forward chunking.")
 
-        transformer.set_chunk_feed_forward(chunk_value, chunk_dim)
-        logger.info("Wan feed-forward chunking enabled (chunk_size=%s, chunk_dim=%s).", chunk_value, chunk_dim)
+        if chunk_size is None:
+            transformer.set_chunk_feed_forward(None, chunk_dim)
+            logger.info("Wan feed-forward chunking enabled (auto mode).")
+            return
+
+        chunk_value = int(chunk_size)
+        if chunk_value <= 0:
+            transformer.set_chunk_feed_forward(None, chunk_dim)
+            logger.info("Wan feed-forward chunking enabled (auto mode).")
+            return
+
+        normalized_dim = chunk_dim if chunk_dim is not None else 0
+        transformer.set_chunk_feed_forward(chunk_value, normalized_dim)
+        logger.info("Wan feed-forward chunking enabled (chunk_size=%s, chunk_dim=%s).", chunk_value, normalized_dim)
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)

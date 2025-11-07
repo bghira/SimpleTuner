@@ -1054,6 +1054,71 @@ class TestWanTransformerBlock(TransformerBaseTest, TransformerBlockTestMixin):
 
         torch.testing.assert_close(ref_output, chunked_output, atol=1e-5, rtol=1e-5)
 
+    def test_feed_forward_chunking_handles_non_divisible_shapes(self):
+        """Chunking gracefully falls back when batch size < chunk size."""
+        base_block = WanTransformerBlock(**self.block_config)
+        chunked_block = copy.deepcopy(base_block)
+        chunked_block.set_chunk_feed_forward(chunk_size=16, dim=0)
+
+        encoder_hidden_states = torch.randn(self.batch_size, 77, self.hidden_dim)
+        temb = torch.randn(self.batch_size, 6, self.hidden_dim)
+        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64)
+
+        ref_output = base_block(
+            hidden_states=self.hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            temb=temb,
+            rotary_emb=rotary_emb,
+        )
+        chunked_output = chunked_block(
+            hidden_states=self.hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            temb=temb,
+            rotary_emb=rotary_emb,
+        )
+
+        torch.testing.assert_close(ref_output, chunked_output, atol=1e-5, rtol=1e-5)
+
+    def test_auto_chunk_uses_batch_dimension_when_batch_gt_one(self):
+        block = WanTransformerBlock(**self.block_config)
+        block.set_chunk_feed_forward(None, None)
+
+        hidden_states = torch.randn(2, self.seq_len, self.hidden_dim)
+        encoder_hidden_states = torch.randn(2, 77, self.hidden_dim)
+        temb = torch.randn(2, 6, self.hidden_dim)
+        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64)
+
+        def _passthrough(ffn, norm_hs, dim, size):
+            return ffn(norm_hs)
+
+        with patch(
+            "simpletuner.helpers.models.wan.transformer._chunked_feed_forward", side_effect=_passthrough
+        ) as mock_chunk:
+            block(hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states, temb=temb, rotary_emb=rotary_emb)
+
+        self.assertIsNotNone(mock_chunk.call_args)
+        self.assertEqual(mock_chunk.call_args[0][2], 0)
+
+    def test_auto_chunk_switches_to_sequence_dimension_for_single_batch(self):
+        block = WanTransformerBlock(**self.block_config)
+        block.set_chunk_feed_forward(None, None)
+
+        hidden_states = torch.randn(1, self.seq_len, self.hidden_dim)
+        encoder_hidden_states = torch.randn(1, 77, self.hidden_dim)
+        temb = torch.randn(1, 6, self.hidden_dim)
+        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64)
+
+        def _passthrough(ffn, norm_hs, dim, size):
+            return ffn(norm_hs)
+
+        with patch(
+            "simpletuner.helpers.models.wan.transformer._chunked_feed_forward", side_effect=_passthrough
+        ) as mock_chunk:
+            block(hidden_states=hidden_states, encoder_hidden_states=encoder_hidden_states, temb=temb, rotary_emb=rotary_emb)
+
+        self.assertIsNotNone(mock_chunk.call_args)
+        self.assertEqual(mock_chunk.call_args[0][2], 1)
+
     def test_dtype_conversions_float_operations(self):
         """Test dtype conversions for float operations in normalization."""
         if not torch.cuda.is_available():

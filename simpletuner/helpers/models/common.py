@@ -1261,21 +1261,23 @@ class ModelFoundation(ABC):
         if self.model is None:
             raise RuntimeError("Model must be loaded before enabling feed-forward chunking.")
 
-        chunk_size_value = getattr(self.config, "feed_forward_chunk_size", None)
-        if chunk_size_value is None:
-            chunk_size_value = 2
-        try:
-            chunk_size_value = int(chunk_size_value)
-        except (TypeError, ValueError) as error:
-            raise ValueError("`feed_forward_chunk_size` must be a positive integer.") from error
-        if chunk_size_value <= 0:
-            raise ValueError("`feed_forward_chunk_size` must be greater than zero.")
+        raw_chunk_size = getattr(self.config, "feed_forward_chunk_size", None)
+        chunk_size_value: Optional[int]
+        if raw_chunk_size in ("", None):
+            chunk_size_value = None
+        else:
+            try:
+                chunk_size_value = int(raw_chunk_size)
+            except (TypeError, ValueError) as error:
+                raise ValueError("`feed_forward_chunk_size` must be a positive integer when provided.") from error
+            if chunk_size_value <= 0:
+                chunk_size_value = None
 
-        chunk_dim_value = getattr(self.config, "feed_forward_chunk_dim", 0)
+        chunk_dim_value = getattr(self.config, "feed_forward_chunk_dim", None)
         try:
-            chunk_dim_value = int(chunk_dim_value)
+            chunk_dim_value = int(chunk_dim_value) if chunk_dim_value is not None else None
         except (TypeError, ValueError):
-            chunk_dim_value = 0
+            chunk_dim_value = None
 
         try:
             self.enable_chunked_feed_forward(chunk_size=chunk_size_value, chunk_dim=chunk_dim_value)
@@ -1283,10 +1285,12 @@ class ModelFoundation(ABC):
             raise RuntimeError(f"Failed to enable feed-forward chunking: {error}") from error
 
         logger.info(
-            "Feed-forward chunking enabled for %s (chunk_size=%s, chunk_dim=%s).",
+            "Feed-forward chunking enabled for %s (%s).",
             self.__class__.__name__,
-            chunk_size_value,
-            chunk_dim_value,
+            (
+                f"chunk_size={'auto' if chunk_size_value is None else chunk_size_value}, "
+                f"chunk_dim={'auto' if chunk_dim_value is None else chunk_dim_value}"
+            ),
         )
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
