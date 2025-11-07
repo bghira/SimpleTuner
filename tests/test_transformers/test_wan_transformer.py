@@ -19,6 +19,7 @@ Functions tested:
 6. prepare_video_coords (coordinate preparation - inherited)
 """
 
+import copy
 import math
 import os
 
@@ -1028,6 +1029,31 @@ class TestWanTransformerBlock(TransformerBaseTest, TransformerBlockTestMixin):
 
         self.assert_tensor_device(block.norm2.weight.data, expected_device)
 
+    def test_feed_forward_chunking_matches_full_pass(self):
+        """Chunked feed-forward should match the unchunked reference."""
+        base_block = WanTransformerBlock(**self.block_config)
+        chunked_block = copy.deepcopy(base_block)
+        chunked_block.set_chunk_feed_forward(chunk_size=2, dim=0)
+
+        encoder_hidden_states = torch.randn(self.batch_size, 77, self.hidden_dim)
+        temb = torch.randn(self.batch_size, 6, self.hidden_dim)
+        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64)
+
+        ref_output = base_block(
+            hidden_states=self.hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            temb=temb,
+            rotary_emb=rotary_emb,
+        )
+        chunked_output = chunked_block(
+            hidden_states=self.hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            temb=temb,
+            rotary_emb=rotary_emb,
+        )
+
+        torch.testing.assert_close(ref_output, chunked_output, atol=1e-5, rtol=1e-5)
+
     def test_dtype_conversions_float_operations(self):
         """Test dtype conversions for float operations in normalization."""
         if not torch.cuda.is_available():
@@ -1109,6 +1135,15 @@ class TestWanTransformer3DModel(TransformerBaseTest):
 
         # Check number of transformer blocks
         self.assertEqual(len(model.blocks), self.model_config["num_layers"])
+
+    def test_set_chunk_feed_forward_propagates(self):
+        """Model-level chunk configuration should propagate to every block."""
+        model = WanTransformer3DModel(**self.model_config)
+        chunk_size = 2
+        model.set_chunk_feed_forward(chunk_size, dim=0)
+        self.assertEqual(model._feed_forward_chunk_size, chunk_size)
+        for block in model.blocks:
+            self.assertEqual(block._chunk_size, chunk_size)
 
     def test_forward_pass_minimal(self):
         """Test minimal forward pass with video data."""

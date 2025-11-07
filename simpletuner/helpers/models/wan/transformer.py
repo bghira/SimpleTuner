@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -20,7 +21,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
-from diffusers.models.attention import FeedForward
+from diffusers.models.attention import FeedForward, _chunked_feed_forward
 from diffusers.models.attention_processor import Attention
 from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
@@ -31,6 +32,9 @@ from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscal
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+WAN_FEED_FORWARD_CHUNK_SIZE = int(os.getenv("WAN_FEED_FORWARD_CHUNK_SIZE", "0") or 0)
+WAN_FEED_FORWARD_CHUNK_DIM = int(os.getenv("WAN_FEED_FORWARD_CHUNK_DIM", "0") or 0)
 
 
 def _apply_rotary_emb_anyshape(x, rotary_emb, use_real=False):
@@ -323,6 +327,12 @@ class WanTransformerBlock(nn.Module):
         self.scale_shift_table = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
         self._parameter_dtype = self.attn1.to_q.weight.dtype
         self._parameter_device = self.attn1.to_q.weight.device
+        self._chunk_size = WAN_FEED_FORWARD_CHUNK_SIZE if WAN_FEED_FORWARD_CHUNK_SIZE > 0 else None
+        self._chunk_dim = WAN_FEED_FORWARD_CHUNK_DIM if WAN_FEED_FORWARD_CHUNK_SIZE > 0 else 0
+
+    def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: int = 0) -> None:
+        self._chunk_size = chunk_size
+        self._chunk_dim = dim
 
     def _ensure_module_dtype(self, device: torch.device, dtype: torch.dtype) -> None:
         attn_weight = self.attn1.to_q.weight
@@ -385,7 +395,10 @@ class WanTransformerBlock(nn.Module):
         # 3. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + c_scale_msa) + c_shift_msa
-        ff_output = self.ffn(norm_hidden_states)
+        if self._chunk_size is not None:
+            ff_output = _chunked_feed_forward(self.ffn, norm_hidden_states, self._chunk_dim, self._chunk_size)
+        else:
+            ff_output = self.ffn(norm_hidden_states)
         hidden_states = hidden_states + ff_output * c_gate_msa
 
         return hidden_states
@@ -426,6 +439,11 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             Whether to use img_emb.
         added_kv_proj_dim (`int`, *optional*, defaults to `None`):
             The number of channels to use for the added key and value projections. If `None`, no projection is used.
+        feed_forward_chunk_size (`int`, *optional*, defaults to `None`):
+            When set, split feed-forward computations into smaller pieces to reduce peak memory. Can also be provided
+            via the `WAN_FEED_FORWARD_CHUNK_SIZE` environment variable.
+        feed_forward_chunk_dim (`int`, defaults to `0`):
+            The dimension along which chunking is applied. Defaults to the batch dimension.
     """
 
     _supports_gradient_checkpointing = True
@@ -459,6 +477,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         image_dim: Optional[int] = None,
         added_kv_proj_dim: Optional[int] = None,
         rope_max_seq_len: int = 1024,
+        feed_forward_chunk_size: Optional[int] = None,
+        feed_forward_chunk_dim: int = 0,
     ) -> None:
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -478,6 +498,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             image_dim=image_dim,
             added_kv_proj_dim=added_kv_proj_dim,
             rope_max_seq_len=rope_max_seq_len,
+            feed_forward_chunk_size=feed_forward_chunk_size,
+            feed_forward_chunk_dim=feed_forward_chunk_dim,
         )
 
         inner_dim = num_attention_heads * attention_head_dim
@@ -513,6 +535,16 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             ]
         )
 
+        configured_chunk_size = feed_forward_chunk_size
+        configured_chunk_dim = feed_forward_chunk_dim
+        if configured_chunk_size is None and WAN_FEED_FORWARD_CHUNK_SIZE > 0:
+            configured_chunk_size = WAN_FEED_FORWARD_CHUNK_SIZE
+            configured_chunk_dim = WAN_FEED_FORWARD_CHUNK_DIM
+        self._feed_forward_chunk_size = configured_chunk_size
+        self._feed_forward_chunk_dim = configured_chunk_dim
+        if configured_chunk_size is not None:
+            self.set_chunk_feed_forward(configured_chunk_size, configured_chunk_dim)
+
         # 4. Output norm & projection
         self.norm_out = FP32LayerNorm(inner_dim, eps, elementwise_affine=False)
         self.proj_out = nn.Linear(inner_dim, out_channels * math.prod(patch_size))
@@ -536,6 +568,15 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         """Set the TREAD router and routing configuration."""
         self._tread_router = router
         self._tread_routes = routes
+
+    def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: int = 0) -> None:
+        """
+        Configure feed-forward chunking for all transformer blocks.
+        """
+        self._feed_forward_chunk_size = chunk_size
+        self._feed_forward_chunk_dim = dim
+        for block in self.blocks:
+            block.set_chunk_feed_forward(chunk_size, dim)
 
     @staticmethod
     def _route_rope(rope, info, keep_len: int, batch: int):

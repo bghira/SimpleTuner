@@ -316,6 +316,45 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Feed-forward chunking (Wan)
+    registry._add_field(
+        ConfigField(
+            name="enable_chunked_feed_forward",
+            arg_name="--enable_chunked_feed_forward",
+            ui_label="Enable Feed-Forward Chunking",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Split Wan feed-forward layers into smaller chunks to reduce peak VRAM usage.",
+            tooltip="Available for Wan models. Breaks long MLPs into mini-batches so checkpoint recomputes allocate less memory.",
+            importance=ImportanceLevel.ADVANCED,
+            model_specific=["wan"],
+            order=8,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="feed_forward_chunk_size",
+            arg_name="--feed_forward_chunk_size",
+            ui_label="Feed-Forward Chunk Size",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="memory_optimization",
+            default_value=2,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Chunk size must be at least 1")],
+            help_text="Number of samples processed per chunk when feed-forward chunking is enabled.",
+            tooltip="Lower values reduce memory further but increase wall-clock time. Start with 2 for 14B runs.",
+            importance=ImportanceLevel.ADVANCED,
+            model_specific=["wan"],
+            order=9,
+            dependencies=[
+                FieldDependency(field="enable_chunked_feed_forward", operator="equals", value=True, action="show")
+            ],
+        )
+    )
+
     # Train Text Encoder
     registry._add_field(
         ConfigField(

@@ -318,6 +318,30 @@ class Wan(VideoModelFoundation):
     )
     STRICT_I2V_FLAVOURS = tuple(sorted((I2V_FLAVOURS | FLF2V_FLAVOURS)))
 
+    @classmethod
+    def supports_chunked_feed_forward(cls) -> bool:
+        return True
+
+    def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: int = 0) -> None:
+        chunk_value = chunk_size or getattr(self.config, "feed_forward_chunk_size", None)
+        if chunk_value is None:
+            raise ValueError(
+                "`feed_forward_chunk_size` must be provided when enabling feed-forward chunking for Wan models."
+            )
+        try:
+            chunk_value = int(chunk_value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("`feed_forward_chunk_size` must be an integer.") from error
+        if chunk_value <= 0:
+            raise ValueError("`feed_forward_chunk_size` must be greater than zero.")
+
+        transformer = self.unwrap_model(self.model)
+        if transformer is None or not hasattr(transformer, "set_chunk_feed_forward"):
+            raise RuntimeError("Wan transformer is not available for feed-forward chunking.")
+
+        transformer.set_chunk_feed_forward(chunk_value, chunk_dim)
+        logger.info("Wan feed-forward chunking enabled (chunk_size=%s, chunk_dim=%s).", chunk_value, chunk_dim)
+
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
         self._wan_cached_stage_modules: Dict[str, WanTransformer3DModel] = {}
