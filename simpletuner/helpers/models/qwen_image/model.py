@@ -20,6 +20,7 @@ from simpletuner.helpers.models.qwen_image.pipeline_edit_plus import (
     QwenImageEditPlusPipeline,
 )
 from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
+from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class QwenImage(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKLQwenImage
     AUTOENCODER_SCALING_FACTOR = 1.0
     LATENT_CHANNEL_COUNT = 16
+    VALIDATION_PREVIEW_SPEC = VideoTAESpec(filename="taew2_1.pth", description="Wan 2.1 VAE compatible")
 
     MODEL_CLASS = QwenImageTransformer2DModel
     MODEL_SUBFOLDER = "transformer"

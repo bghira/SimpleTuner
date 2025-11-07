@@ -24,6 +24,7 @@ try:
 except ImportError:
     FSDP_AVAILABLE = False
 
+from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
@@ -168,6 +169,8 @@ class ModelFoundation(ABC):
         self.noise_schedule = None
         self.pipelines = {}
         self._qkv_projections_fused = False
+        self._validation_preview_decoder = None
+        self._validation_preview_decoder_failed = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
 
@@ -568,6 +571,68 @@ class ModelFoundation(ABC):
 
         if should_configure_offload:
             self.configure_group_offload()
+
+    def get_validation_preview_spec(self):
+        """
+        Return the Tiny AutoEncoder specification for this model family, if any.
+        """
+        return getattr(self, "VALIDATION_PREVIEW_SPEC", None)
+
+    def supports_validation_preview(self) -> bool:
+        return self.get_validation_preview_spec() is not None
+
+    def get_validation_preview_decoder(self):
+        """
+        Lazily instantiate the Tiny AutoEncoder used for validation previews.
+        """
+        if self._validation_preview_decoder_failed:
+            return None
+        spec = self.get_validation_preview_spec()
+        if spec is None:
+            return None
+        if self._validation_preview_decoder is None:
+            try:
+                dtype = getattr(self.config, "weight_dtype", torch.float16)
+                decoder = load_tae_decoder(
+                    spec,
+                    device=getattr(self.accelerator, "device", None),
+                    dtype=dtype,
+                )
+                self._validation_preview_decoder = decoder
+            except Exception as exc:  # pragma: no cover - hardware / network dependent
+                logger.warning("Failed to load Tiny AutoEncoder decoder: %s", exc)
+                self._validation_preview_decoder_failed = True
+                return None
+        return self._validation_preview_decoder
+
+    def _vae_scaling_factor(self):
+        vae = self.get_vae()
+        if vae is None:
+            return 1.0
+        scaling_factor = getattr(vae.config, "scaling_factor", None)
+        if scaling_factor is None:
+            scaling_factor = getattr(self, "AUTOENCODER_SCALING_FACTOR", 1.0)
+        return float(scaling_factor or 1.0)
+
+    def denormalize_latents_for_preview(self, latents: torch.Tensor) -> torch.Tensor:
+        """
+        Convert latents from the diffusion space back into decoder space prior to Tiny AE decode.
+        """
+        vae = self.get_vae()
+        if vae is None:
+            return latents
+        scaling_factor = self._vae_scaling_factor()
+        latents_mean = getattr(vae.config, "latents_mean", None)
+        latents_std = getattr(vae.config, "latents_std", None)
+        view_shape = (1, latents.shape[1], 1, 1) if latents.ndim == 4 else (1, latents.shape[1], 1, 1, 1)
+
+        if latents_mean is not None and latents_std is not None:
+            mean = torch.tensor(latents_mean, device=latents.device, dtype=latents.dtype).view(view_shape)
+            std = torch.tensor(latents_std, device=latents.device, dtype=latents.dtype).view(view_shape)
+            latents = latents * std / scaling_factor + mean
+        else:
+            latents = latents / scaling_factor
+        return latents
 
     def get_vae(self):
         """

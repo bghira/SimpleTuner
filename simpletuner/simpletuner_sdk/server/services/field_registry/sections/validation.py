@@ -68,6 +68,24 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="validation_preview",
+            arg_name="--validation_preview",
+            ui_label="Stream Validation Previews",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_schedule",
+            default_value=False,
+            help_text="Decode intermediate validation latents with Tiny AutoEncoders and stream them over webhook callbacks.",
+            tooltip="Enables live previews via webhook for supported models. Requires a webhook configuration.",
+            warning="Only available on model families with Tiny AutoEncoder support.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+            subsection="advanced",
+        )
+    )
+
     # Validation Prompt
     registry._add_field(
         ConfigField(

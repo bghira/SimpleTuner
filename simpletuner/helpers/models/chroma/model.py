@@ -21,6 +21,7 @@ from simpletuner.helpers.models.chroma.pipeline_controlnet import ChromaControlN
 from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class Chroma(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 

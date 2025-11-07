@@ -9,6 +9,7 @@ from simpletuner.helpers.models.auraflow.pipeline import AuraFlowPipeline
 from simpletuner.helpers.models.auraflow.pipeline_controlnet import AuraFlowControlNetModel, AuraFlowControlNetPipeline
 from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -27,6 +28,7 @@ class Auraflow(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesdxl")
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = [
         "to_k",
