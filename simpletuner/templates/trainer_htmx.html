@@ -17,7 +17,16 @@
 <!-- Event lightbox -->
 <link href="/static/css/event_lightbox.css" rel="stylesheet">
 <!-- Streaming validation lightbox -->
-<link href="/static/css/streaming-validation-lightbox.css?v=2" rel="stylesheet">
+<link href="/static/css/streaming-validation-lightbox.css" rel="stylesheet">
+<script>
+    // Force reload of streaming validation lightbox CSS with timestamp
+    (function() {
+        var links = document.querySelectorAll('link[href*="streaming-validation-lightbox.css"]');
+        links.forEach(function(link) {
+            link.href = link.href.split('?')[0] + '?t=' + Date.now();
+        });
+    })();
+</script>
 {% endblock %}
 
 {% block body %}
@@ -5825,7 +5834,14 @@ window.showToast = window.showToast || function(message, type) {
 <script src="/static/js/modules/checkpoints.js"></script>
 <script src="/static/js/modules/event_lightbox.js"></script>
 <script src="/static/js/modules/event-renderer.js"></script>
-<script src="/static/js/modules/streaming-validation-lightbox.js?v=2"></script>
+<script>
+    // Force reload of streaming validation lightbox JS with timestamp
+    (function() {
+        var script = document.createElement('script');
+        script.src = '/static/js/modules/streaming-validation-lightbox.js?t=' + Date.now();
+        document.currentScript.parentNode.insertBefore(script, document.currentScript.nextSibling);
+    })();
+</script>
 
 <!-- Module loader for browser compatibility -->
 <script src="/static/js/module-loader.js"></script>
