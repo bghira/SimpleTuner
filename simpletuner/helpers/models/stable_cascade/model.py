@@ -3,8 +3,6 @@ import os
 from typing import Dict
 
 import torch
-
-from diffusers import StableCascadePriorPipeline, StableCascadeUNet
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
@@ -12,6 +10,8 @@ from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.multi_process import should_log
 
 from .autoencoder import TORCHVISION_IMPORT_ERROR, StableCascadeStageCAutoencoder
+from .pipeline_prior import StableCascadePriorPipeline
+from .unet import StableCascadeUNet
 
 logger = logging.getLogger(__name__)
 if should_log():
@@ -227,18 +227,14 @@ class StableCascadeStageC(ImageModelFoundation):
         mixed_precision = getattr(self.config, "mixed_precision", None)
         if mixed_precision not in (None, "no", "fp32"):
             if not getattr(self.config, "i_know_what_i_am_doing", False):
-                raise ValueError(
-                    "Stable Cascade Stage C requires --mixed_precision=no to run in full precision."
-                )
+                raise ValueError("Stable Cascade Stage C requires --mixed_precision=no to run in full precision.")
             logger.warning(
                 "Stable Cascade Stage C is running with mixed_precision=%s due to i_know_what_i_am_doing.",
                 mixed_precision,
             )
 
         if getattr(self.config, "base_model_precision", "no_change") != "no_change":
-            logger.warning(
-                "Stable Cascade Stage C ignores base_model_precision. Quantising the UNet is not recommended."
-            )
+            logger.warning("Stable Cascade Stage C ignores base_model_precision. Quantising the UNet is not recommended.")
 
         max_tokens = 77
         if getattr(self.config, "tokenizer_max_length", None) not in (None, max_tokens):
