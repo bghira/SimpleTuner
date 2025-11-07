@@ -36,6 +36,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
             super().__init__(_adapt(), media_type="text/event-stream", *args, **kwargs)
 
 
+from ..services.callback_events import EventType
 from ..services.callback_presenter import CallbackPresenter
 from ..services.callback_service import CallbackService, get_default_callback_service
 from ..services.sse_manager import get_sse_manager
@@ -225,6 +226,7 @@ async def events_stream(request: Request):
     async def event_generator():
         """Generate SSE events with proper connection management."""
         callback_service = _get_callback_service(request)
+        replay_cutoff_index = callback_service.latest_index()
 
         # Support SSE reconnection by reading Last-Event-ID header
         # This prevents replaying all events when the connection drops
@@ -258,7 +260,6 @@ async def events_stream(request: Request):
                         for event in events:
                             # Skip events that are already directly broadcast via SSE
                             # to prevent duplicate delivery to clients
-                            from simpletuner.simpletuner_sdk.server.services.callback_events import EventType
 
                             should_skip = False
 
@@ -268,6 +269,15 @@ async def events_stream(request: Request):
 
                             # Skip lifecycle stage events (broadcast via _broadcast_startup_stage)
                             if event.stage is not None:
+                                should_skip = True
+
+                            is_replay_event = (
+                                replay_cutoff_index is not None
+                                and event.index is not None
+                                and event.index <= replay_cutoff_index
+                            )
+
+                            if is_replay_event and event.type in {EventType.VALIDATION, EventType.VALIDATION_IMAGE}:
                                 should_skip = True
 
                             if should_skip:
