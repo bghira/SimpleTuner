@@ -153,6 +153,8 @@ class TAEHV(nn.Module):
         self.image_channels = 3
         self.is_cogvideox = checkpoint_path is not None and "taecvx" in checkpoint_path
         if checkpoint_path is not None and "taew2_2" in checkpoint_path:
+            # Wan 2.2 5B checkpoints always require patch_size=2 and 48-channel latents.
+            # Override caller-provided values to match the architecture.
             self.patch_size, self.latent_channels = 2, 48
 
         self.encoder = nn.Sequential(

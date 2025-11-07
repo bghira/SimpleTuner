@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,7 @@ class VideoTAESpec:
     latent_channels: Optional[int] = None
     parallel_decode: bool = False
     description: Optional[str] = None
+    sha256: Optional[str] = None
 
     @property
     def download_url(self) -> str:

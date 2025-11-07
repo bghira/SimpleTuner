@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Union
 
 import requests
 import torch
@@ -42,11 +43,25 @@ def _resolve_dtype(dtype: Union[str, torch.dtype, None]) -> torch.dtype:
     return torch.float16 if torch.cuda.is_available() else torch.float32
 
 
-def _download_checkpoint(url: str, filename: str) -> Path:
+def _verify_checksum(path: Path, expected: str) -> bool:
+    if not expected:
+        return True
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1_048_576), b""):
+            digest.update(chunk)
+    return digest.hexdigest().lower() == expected.lower()
+
+
+def _download_checkpoint(url: str, filename: str, sha256: str | None = None) -> Path:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     destination = _CACHE_DIR / filename
     if destination.exists():
-        return destination
+        if sha256 and not _verify_checksum(destination, sha256):
+            logger.warning("Checksum mismatch for %s, re-downloading.", destination)
+            destination.unlink(missing_ok=True)
+        else:
+            return destination
     logger.info("Downloading Tiny AutoEncoder weights from %s", url)
     response = requests.get(url, stream=True, timeout=60)
     response.raise_for_status()
@@ -55,6 +70,9 @@ def _download_checkpoint(url: str, filename: str) -> Path:
         for chunk in response.iter_content(chunk_size=1_048_576):
             if chunk:
                 handle.write(chunk)
+    if sha256 and not _verify_checksum(temp_path, sha256):
+        temp_path.unlink(missing_ok=True)
+        raise ValueError(f"Checksum mismatch after downloading {filename}")
     os.replace(temp_path, destination)
     return destination
 
@@ -126,7 +144,7 @@ def _instantiate_image_decoder(spec: ImageTAESpec, device: torch.device, dtype: 
 
 
 def _instantiate_video_decoder(spec: VideoTAESpec, device: torch.device, dtype: torch.dtype) -> VideoTAEDecoder:
-    checkpoint_path = _download_checkpoint(spec.download_url, spec.filename)
+    checkpoint_path = _download_checkpoint(spec.download_url, spec.filename, spec.sha256)
     decoder_kwargs = {
         "checkpoint_path": str(checkpoint_path),
         "decoder_time_upscale": spec.decoder_time_upscale or (True, True),

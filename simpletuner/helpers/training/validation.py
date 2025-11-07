@@ -896,7 +896,6 @@ class ValidationPreviewer:
     def _emit_event(self, images, videos, metadata: _PreviewMetadata, step: int, timestep):
         if self._webhook_handler is None:
             return
-        message = f"Preview step {step + 1}"
         payload = {
             "type": "validation.image",
             "title": f"Preview: {metadata.shortname or '(validation)'}",
