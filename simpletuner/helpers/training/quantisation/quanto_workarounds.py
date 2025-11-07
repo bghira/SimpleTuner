@@ -4,6 +4,8 @@ from optimum.quanto.tensor.packed import PackedTensor
 from optimum.quanto.tensor.weights.qbits import WeightQBitsTensor
 from optimum.quanto.tensor.weights.qbytes import WeightQBytesTensor
 
+_TORCH_TENSOR_DATA_DESCRIPTOR = torch.Tensor.data
+
 if torch.cuda.is_available():
     # the marlin fp8 kernel needs some help with dtype casting for some reason
     # see: https://github.com/huggingface/optimum-quanto/pull/296#issuecomment-2380719201
@@ -149,3 +151,24 @@ def _bridge_storage_accessors(tensor_cls, data_attr: str) -> None:
 _bridge_storage_accessors(WeightQBytesTensor, "_data")
 _bridge_storage_accessors(WeightQBitsTensor, "_data")
 _bridge_storage_accessors(PackedTensor, "_data")
+
+
+def _mirror_tensor_data_property(tensor_cls, attrs: tuple[str, ...]) -> None:
+    if getattr(tensor_cls, "_simpletuner_data_bridge_applied", False):
+        return
+
+    def _data_get(self):
+        return _TORCH_TENSOR_DATA_DESCRIPTOR.__get__(self, type(self))
+
+    def _data_set(self, value):
+        _TORCH_TENSOR_DATA_DESCRIPTOR.__set__(self, value)
+        for attr in attrs:
+            if hasattr(value, attr) and hasattr(self, attr):
+                setattr(self, attr, getattr(value, attr))
+
+    tensor_cls.data = property(_data_get, _data_set)  # type: ignore[assignment]
+    tensor_cls._simpletuner_data_bridge_applied = True  # type: ignore[attr-defined]
+
+
+_mirror_tensor_data_property(WeightQBytesTensor, ("_data", "_scale", "activation_qtype", "_axis", "_qtype"))
+_mirror_tensor_data_property(WeightQBitsTensor, ("_data", "_scale", "_shift", "_axis", "_qtype"))

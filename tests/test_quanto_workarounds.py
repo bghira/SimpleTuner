@@ -18,6 +18,13 @@ class _LinearWrapper(torch.nn.Module):
 
 
 class QuantoWorkaroundsTests(unittest.TestCase):
+    def _accelerator_device(self):
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        self.skipTest("No accelerator device available for device transfer tests")
+
     def _quantized_linear(self, quant_scheme):
         model = _LinearWrapper()
         quantize(model, weights=quant_scheme)
@@ -66,6 +73,21 @@ class QuantoWorkaroundsTests(unittest.TestCase):
             input_tensor = torch.randn(2, 4, device="cuda")
             output = model(input_tensor)
             self.assertEqual(output.device.type, "cuda")
+
+    def test_param_data_move_keeps_backing_tensors_in_sync(self):
+        device = self._accelerator_device()
+        model = self._quantized_linear(qint8)
+        weight = model.linear.weight
+        weight.data = weight.data.to(device)
+        self.assertEqual(weight.device.type, device.type)
+        if device.index is not None:
+            self.assertEqual(weight.device.index, device.index)
+        self.assertEqual(weight._data.device.type, device.type)
+        if device.index is not None:
+            self.assertEqual(weight._data.device.index, device.index)
+        self.assertEqual(weight._scale.device.type, device.type)
+        if device.index is not None:
+            self.assertEqual(weight._scale.device.index, device.index)
 
 
 if __name__ == "__main__":
