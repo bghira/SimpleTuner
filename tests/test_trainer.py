@@ -1360,8 +1360,6 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
             self.assertFalse(group["use_focus"])
 
-    # Additional tests can be added for other methods as needed
-
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     @patch("simpletuner.helpers.training.trainer.tqdm")
     @patch("simpletuner.helpers.training.trainer.logger")
@@ -1518,6 +1516,114 @@ class TestTrainer(unittest.TestCase):
             "accumulate() must not receive a list - would cause AttributeError in FSDP2",
         )
         mock_trained_model.set_requires_gradient_sync.assert_any_call(False)
+
+    @patch("simpletuner.helpers.training.trainer.TorchDynamoPlugin")
+    @patch("simpletuner.helpers.training.trainer.Accelerator")
+    def test_dynamo_plugin_created_when_advanced_options_enabled(self, mock_accelerator, mock_dynamo_plugin):
+        """Test that TorchDynamoPlugin is created when dynamo advanced options are used"""
+        from simpletuner.helpers.training.trainer import DynamoBackend
+
+        mock_backend_enum = Mock()
+        mock_backend_enum.INDUCTOR = Mock(value="inductor")
+        mock_backend_enum.NO = Mock()
+
+        mock_dynamo_instance = Mock()
+        mock_dynamo_plugin.return_value = mock_dynamo_instance
+
+        accelerator_kwargs = {}
+
+        resolved_dynamo_backend = mock_backend_enum.INDUCTOR
+        will_create_dynamo_plugin = resolved_dynamo_backend and resolved_dynamo_backend != mock_backend_enum.NO
+        dynamo_backend_env = "inductor"
+
+        if not will_create_dynamo_plugin and dynamo_backend_env:
+            accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
+
+        if will_create_dynamo_plugin:
+            plugin_kwargs = {"backend": resolved_dynamo_backend}
+            plugin_kwargs["mode"] = "max-autotune"
+            plugin_kwargs["dynamic"] = True
+            plugin_kwargs["use_regional_compilation"] = True
+
+            mock_dynamo_plugin(**plugin_kwargs)
+            accelerator_kwargs["dynamo_plugin"] = mock_dynamo_instance
+
+        self.assertIn("dynamo_plugin", accelerator_kwargs)
+        self.assertNotIn("dynamo_backend", accelerator_kwargs)
+        mock_dynamo_plugin.assert_called_once()
+        call_args = mock_dynamo_plugin.call_args[1]
+        self.assertEqual(call_args["mode"], "max-autotune")
+        self.assertTrue(call_args["dynamic"])
+        self.assertTrue(call_args["use_regional_compilation"])
+
+    @patch("simpletuner.helpers.training.trainer.Accelerator")
+    def test_dynamo_backend_string_used_when_no_advanced_options(self, mock_accelerator):
+        """Test that simple dynamo_backend string is used when no advanced options are specified"""
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            dynamo_backend="inductor",
+            dynamo_mode=None,
+            dynamo_dynamic=None,
+            dynamo_fullgraph=None,
+            dynamo_use_regional_compilation=None,
+            gradient_accumulation_steps=1,
+            mixed_precision="bf16",
+            fsdp_enable=False,
+            deepspeed_config=None,
+            report_to="none",
+        )
+
+        from simpletuner.helpers.training.trainer import DynamoBackend
+
+        accelerator_kwargs = {}
+
+        resolved_dynamo_backend = None
+        will_create_dynamo_plugin = resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO
+        dynamo_backend_env = "inductor"
+
+        if not will_create_dynamo_plugin and dynamo_backend_env:
+            accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
+
+        self.assertIn("dynamo_backend", accelerator_kwargs)
+        self.assertNotIn("dynamo_plugin", accelerator_kwargs)
+        self.assertEqual(accelerator_kwargs["dynamo_backend"], "inductor")
+
+    @patch("simpletuner.helpers.training.trainer.Accelerator")
+    def test_dynamo_conflict_error_message(self, mock_accelerator):
+        """Test that a clear error message is shown when both dynamo_backend and dynamo_plugin are set"""
+        mock_accelerator.side_effect = ValueError(
+            "You cannot pass in both dynamo_plugin and dynamo_backend, please only pass in one."
+        )
+
+        trainer = object.__new__(Trainer)
+        trainer._should_force_bf16_override = Mock(return_value=False)
+
+        accelerator_kwargs = {
+            "dynamo_backend": "inductor",
+            "dynamo_plugin": Mock(),
+        }
+
+        try:
+            mock_accelerator(**accelerator_kwargs)
+        except ValueError as err:
+            if "dynamo_plugin and dynamo_backend" in str(err):
+                has_backend = "dynamo_backend" in accelerator_kwargs
+                has_plugin = "dynamo_plugin" in accelerator_kwargs
+                backend_val = accelerator_kwargs.get("dynamo_backend", "not set")
+                plugin_val = "set" if has_plugin else "not set"
+
+                with self.assertRaises(ValueError) as context:
+                    raise ValueError(
+                        f"Conflicting Torch Dynamo configuration detected. "
+                        f"Cannot pass both dynamo_plugin and dynamo_backend to Accelerator. "
+                        f"Current state: dynamo_backend={backend_val} (present={has_backend}), "
+                        f"dynamo_plugin={plugin_val} (present={has_plugin}). "
+                        f"Original error: {err}"
+                    ) from err
+
+                self.assertIn("Conflicting Torch Dynamo configuration", str(context.exception))
+                self.assertIn("dynamo_backend=inductor", str(context.exception))
+                self.assertIn("dynamo_plugin=set", str(context.exception))
 
 
 if __name__ == "__main__":
