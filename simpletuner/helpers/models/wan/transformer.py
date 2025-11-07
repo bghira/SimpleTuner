@@ -326,7 +326,14 @@ class WanTransformerBlock(nn.Module):
 
     def _ensure_module_dtype(self, device: torch.device, dtype: torch.dtype) -> None:
         attn_weight = self.attn1.to_q.weight
-        modules_synced = attn_weight.device == device and attn_weight.dtype == dtype
+        attn_synced = attn_weight.device == device and attn_weight.dtype == dtype
+        norm_synced = True
+        for norm_module in (self.norm1, self.norm2, self.norm3):
+            weight = getattr(norm_module, "weight", None)
+            if weight is not None and weight.device != device:
+                norm_synced = False
+                break
+        modules_synced = attn_synced and norm_synced
         scale_shift_synced = self.scale_shift_table.device == device and self.scale_shift_table.dtype == dtype
 
         if modules_synced and scale_shift_synced:
@@ -335,6 +342,10 @@ class WanTransformerBlock(nn.Module):
         if not modules_synced:
             for module in (self.attn1, self.attn2, self.ffn):
                 module.to(device=device, dtype=dtype)
+            for norm_module in (self.norm1, self.norm2, self.norm3):
+                if hasattr(norm_module, "to"):
+                    # Norm layers intentionally stay in FP32; only realign devices.
+                    norm_module.to(device=device)
 
         if not scale_shift_synced:
             self.scale_shift_table.data = self.scale_shift_table.data.to(device=device, dtype=dtype)

@@ -1005,6 +1005,29 @@ class TestWanTransformerBlock(TransformerBaseTest, TransformerBlockTestMixin):
         self.assert_tensor_device(output, expected_device)
         self.assert_tensor_device(block.scale_shift_table.data, expected_device)
 
+    def test_cross_attention_norm_device_alignment(self):
+        """Ensure FP32LayerNorm used in cross-attn path moves to the execution device."""
+        device = self._accelerator_device()
+        config = self.block_config.copy()
+        config["cross_attn_norm"] = True
+        block = WanTransformerBlock(**config).to(device)
+        expected_device = (
+            f"{device.type}:{device.index}"
+            if device.index is not None
+            else ("mps:0" if device.type == "mps" else device.type)
+        )
+
+        block.norm2.weight.data = block.norm2.weight.data.to("cpu")
+
+        hidden_states = torch.randn(self.batch_size, self.seq_len, self.hidden_dim, device=device)
+        encoder_hidden_states = torch.randn(self.batch_size, 77, self.hidden_dim, device=device)
+        temb = torch.randn(self.batch_size, 6, self.hidden_dim, device=device)
+        rotary_emb = torch.randn(1, 1, self.seq_len, self.head_dim // 2, dtype=torch.complex64).to(device)
+
+        block(hidden_states, encoder_hidden_states, temb, rotary_emb)
+
+        self.assert_tensor_device(block.norm2.weight.data, expected_device)
+
     def test_dtype_conversions_float_operations(self):
         """Test dtype conversions for float operations in normalization."""
         if not torch.cuda.is_available():
