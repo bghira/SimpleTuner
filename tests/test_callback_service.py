@@ -100,6 +100,17 @@ class CallbackServiceTestCase(unittest.TestCase):
         )
         self.assertFalse(retry_in_recent, "Terminal job status updates should not appear in event history")
 
+    def test_latest_index_tracks_highest_recorded_event(self) -> None:
+        self.assertIsNone(self.service.latest_index())
+
+        first = self.service.handle_incoming({"type": "notification", "message": "first"})
+        self.assertIsNotNone(first)
+        self.assertEqual(self.service.latest_index(), first.index)
+
+        second = self.service.handle_incoming({"type": "notification", "message": "second"})
+        self.assertIsNotNone(second)
+        self.assertEqual(self.service.latest_index(), second.index)
+
     @patch("simpletuner.simpletuner_sdk.server.services.callback_service.get_sse_manager")
     def test_progress_event_broadcasts_via_sse(self, mock_get_sse_manager: Mock) -> None:
         """Test that progress events trigger SSE broadcasts with correct payload."""
