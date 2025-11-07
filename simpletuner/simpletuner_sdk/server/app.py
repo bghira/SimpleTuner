@@ -86,6 +86,13 @@ async def lifespan(app: FastAPI):
     """Handle application startup and shutdown."""
     # Startup
     logger.info("SimpleTuner server starting up...")
+
+    # Initialize SSE manager for heartbeats and connection management
+    from simpletuner.simpletuner_sdk.server.services.sse_manager import initialize_sse_manager, shutdown_sse_manager
+
+    await initialize_sse_manager()
+    logger.info("SSE manager started")
+
     # Register signal handlers for immediate shutdown (only works in main thread)
     try:
         signal.signal(signal.SIGINT, signal_handler)
@@ -100,6 +107,7 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("SimpleTuner server shutting down...")
+        await shutdown_sse_manager()
         cleanup_training_processes()
 
 

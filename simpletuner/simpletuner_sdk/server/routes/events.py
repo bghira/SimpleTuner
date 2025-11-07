@@ -225,7 +225,19 @@ async def events_stream(request: Request):
     async def event_generator():
         """Generate SSE events with proper connection management."""
         callback_service = _get_callback_service(request)
-        last_index = -1  # Start at -1 so stream_since(-1) includes index 0
+
+        # Support SSE reconnection by reading Last-Event-ID header
+        # This prevents replaying all events when the connection drops
+        last_event_id = request.headers.get("Last-Event-ID")
+        if last_event_id:
+            try:
+                last_index = int(last_event_id)
+                logger.debug(f"SSE reconnection detected, resuming from event {last_index}")
+            except ValueError:
+                logger.warning(f"Invalid Last-Event-ID header: {last_event_id}, starting from beginning")
+                last_index = -1
+        else:
+            last_index = -1  # Start at -1 so stream_since(-1) includes index 0
 
         try:
             # Send initial connection event
@@ -270,6 +282,7 @@ async def events_stream(request: Request):
                                 connection.connection_id,
                                 payload,
                                 event_type=event_type,
+                                event_id=str(event.index) if event.index is not None else None,
                             )
                             if event.index is not None:
                                 last_index = event.index
@@ -290,10 +303,17 @@ async def events_stream(request: Request):
 
                 # Use SSE manager's event generator
                 async for message in sse_manager.create_event_generator(connection):
+                    sse_msg = {"data": json.dumps(message["data"])}
+
+                    # Add event type if present
                     if message.get("event"):
-                        yield {"event": message["event"], "data": json.dumps(message["data"])}
-                    else:
-                        yield {"data": json.dumps(message["data"])}
+                        sse_msg["event"] = message["event"]
+
+                    # Add event ID if present (for Last-Event-ID tracking on reconnect)
+                    if message.get("id"):
+                        sse_msg["id"] = str(message["id"])
+
+                    yield sse_msg
 
             finally:
                 # Clean up monitoring task - ensure it's cancelled even if creation failed
