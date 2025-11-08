@@ -69,6 +69,13 @@ class StableCascadeStageCAutoencoder(nn.Module):
         """
         return self.latent_dtype
 
+    @property
+    def device(self) -> torch.device:
+        """
+        Expose the current device using the registered buffers.
+        """
+        return self._mean.device
+
     @classmethod
     def from_pretrained(
         cls,
