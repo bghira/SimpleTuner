@@ -255,6 +255,7 @@
                     break;
                 }
                 case 'validation': {
+                    console.log('[SSE Manager] Full validation payload:', JSON.stringify(payload, null, 2));
                     var eventType = payload && payload.type ? String(payload.type).toLowerCase() : '';
                     console.log('[SSE Manager] Validation event received, type:', eventType, 'is_replay:', payload.is_replay);
 
