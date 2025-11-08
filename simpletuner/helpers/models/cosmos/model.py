@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 
 import torch
@@ -28,8 +29,8 @@ class Cosmos2Image(VideoModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
+    DEFAULT_NOISE_SCHEDULER = "rectified_flow_ab2"
     VALIDATION_PREVIEW_SPEC = VideoTAESpec(filename="taehv.pth", description="Hunyuan VAE compatible")
-    DEFAULT_NOISE_SCHEDULER = "flow_matching"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
@@ -64,6 +65,7 @@ class Cosmos2Image(VideoModelFoundation):
     sigma_min = 0.002
     sigma_data = 1.0
     final_sigmas_type = "sigma_min"
+    sigma_schedule_order = 7.0
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -246,10 +248,12 @@ class Cosmos2Image(VideoModelFoundation):
         return loss.mean()
 
     def prepare_edm_sigmas(self, bsz: int, device: torch.device):
-        log_min = torch.log10(torch.tensor(self.sigma_min, device=device))
-        log_max = torch.log10(torch.tensor(self.sigma_max, device=device))
-        u = torch.rand(bsz, device=device)
-        sigmas = 10.0 ** (log_min + (log_max - log_min) * u)
+        u = torch.rand(bsz, device=device, dtype=torch.float32)
+        eps = torch.finfo(u.dtype).eps
+        u = u.clamp_(eps, 1.0 - eps)
+        log_sigma = math.sqrt(2.0) * torch.erfinv(2.0 * u - 1.0)
+        sigmas = torch.exp(log_sigma)
+        sigmas = sigmas.clamp_(self.sigma_min, self.sigma_max)
         return {"sigmas": sigmas.to(device)}
 
     def check_user_config(self):

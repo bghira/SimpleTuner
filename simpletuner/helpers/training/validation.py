@@ -43,6 +43,7 @@ from transformers.utils import ContextManagers
 
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
@@ -73,6 +74,7 @@ SCHEDULER_NAME_MAP = {
     "ddpm": DDPMScheduler,
     "dpm++": DPMSolverMultistepScheduler,
     "sana": FlowMatchEulerDiscreteScheduler,
+    "rectified_flow_ab2": RectifiedFlowAB2Scheduler,
 }
 
 import logging
@@ -1546,14 +1548,24 @@ class Validation:
 
             scheduler_args["variance_type"] = variance_type
 
-        scheduler = SCHEDULER_NAME_MAP[self.config.validation_noise_scheduler].from_pretrained(
-            self.config.pretrained_model_name_or_path,
-            subfolder="scheduler",
-            revision=self.config.revision,
-            timestep_spacing=self.config.inference_scheduler_timestep_spacing,
-            rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
-            **scheduler_args,
-        )
+        scheduler_cls = SCHEDULER_NAME_MAP[self.config.validation_noise_scheduler]
+
+        if scheduler_cls is RectifiedFlowAB2Scheduler:
+            scheduler_args.setdefault("sigma_min", getattr(self.model, "sigma_min", 0.002))
+            scheduler_args.setdefault("sigma_max", getattr(self.model, "sigma_max", 80.0))
+            scheduler_args.setdefault("sigma_data", getattr(self.model, "sigma_data", 1.0))
+            scheduler_args.setdefault("final_sigmas_type", getattr(self.model, "final_sigmas_type", "sigma_min"))
+            scheduler_args.setdefault("order", getattr(self.model, "sigma_schedule_order", 7.0))
+            scheduler = scheduler_cls(**scheduler_args)
+        else:
+            scheduler = scheduler_cls.from_pretrained(
+                self.config.pretrained_model_name_or_path,
+                subfolder="scheduler",
+                revision=self.config.revision,
+                timestep_spacing=self.config.inference_scheduler_timestep_spacing,
+                rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
+                **scheduler_args,
+            )
         if self.model.pipeline is not None:
             self.model.pipeline.scheduler = scheduler
         return scheduler
