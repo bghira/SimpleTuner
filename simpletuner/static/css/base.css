@@ -122,6 +122,11 @@ button {
     max-height: calc(100vh - 3rem);
 }
 
+/* Prevent modal-dialog-centered from stretching to fill viewport */
+.modal-dialog-centered {
+    min-height: auto !important;
+}
+
 .modal-content {
     max-height: calc(100vh - 3rem);
     overflow-y: auto;
