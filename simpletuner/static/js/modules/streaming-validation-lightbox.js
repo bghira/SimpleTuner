@@ -528,13 +528,21 @@ class StreamingValidationLightbox {
     }
 }
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+// Initialize when DOM is ready (or immediately if already loaded)
+function initStreamingValidationLightbox() {
     console.log('[StreamingValidationLightbox] DOM ready, creating instance');
     window.streamingValidationLightbox = new StreamingValidationLightbox();
     window.StreamingValidationLightbox = StreamingValidationLightbox;
     console.log('[StreamingValidationLightbox] Instance created and attached to window');
-});
+}
+
+if (document.readyState === 'loading') {
+    // DOM not ready yet, wait for it
+    document.addEventListener('DOMContentLoaded', initStreamingValidationLightbox);
+} else {
+    // DOM is already ready, initialize immediately
+    initStreamingValidationLightbox();
+}
 
 // Export for potential use in other modules
 if (typeof module !== 'undefined' && module.exports) {
