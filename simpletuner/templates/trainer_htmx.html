@@ -5,28 +5,28 @@
 
 {% block extra_css %}
 <!-- Load design tokens first -->
-<link href="/static/css/tokens.css" rel="stylesheet">
+<link href="/static/css/tokens.css" rel="stylesheet" id="css-tokens">
+<script>document.getElementById('css-tokens').href = '/static/css/tokens.css?t=' + cssTimestamp;</script>
 <!-- Load existing trainer CSS for consistency -->
-<link href="/static/css/trainer.css" rel="stylesheet">
-<link href="/static/css/dataloader-builder.css" rel="stylesheet">
-<link href="/static/css/trainer-core.css" rel="stylesheet">
-<link href="/static/css/environments.css" rel="stylesheet">
-<link href="/static/css/tab-navigation.css" rel="stylesheet">
+<link href="/static/css/trainer.css" rel="stylesheet" id="css-trainer-extra">
+<script>document.getElementById('css-trainer-extra').href = '/static/css/trainer.css?t=' + cssTimestamp;</script>
+<link href="/static/css/dataloader-builder.css" rel="stylesheet" id="css-dataloader-builder">
+<script>document.getElementById('css-dataloader-builder').href = '/static/css/dataloader-builder.css?t=' + cssTimestamp;</script>
+<link href="/static/css/trainer-core.css" rel="stylesheet" id="css-trainer-core">
+<script>document.getElementById('css-trainer-core').href = '/static/css/trainer-core.css?t=' + cssTimestamp;</script>
+<link href="/static/css/environments.css" rel="stylesheet" id="css-environments">
+<script>document.getElementById('css-environments').href = '/static/css/environments.css?t=' + cssTimestamp;</script>
+<link href="/static/css/tab-navigation.css" rel="stylesheet" id="css-tab-navigation">
+<script>document.getElementById('css-tab-navigation').href = '/static/css/tab-navigation.css?t=' + cssTimestamp;</script>
 <!-- HTMX loading states -->
-<link href="/static/css/htmx-loading-states.css" rel="stylesheet">
+<link href="/static/css/htmx-loading-states.css" rel="stylesheet" id="css-htmx-loading-states">
+<script>document.getElementById('css-htmx-loading-states').href = '/static/css/htmx-loading-states.css?t=' + cssTimestamp;</script>
 <!-- Event lightbox -->
-<link href="/static/css/event_lightbox.css" rel="stylesheet">
+<link href="/static/css/event_lightbox.css" rel="stylesheet" id="css-event-lightbox">
+<script>document.getElementById('css-event-lightbox').href = '/static/css/event_lightbox.css?t=' + cssTimestamp;</script>
 <!-- Streaming validation lightbox -->
-<link href="/static/css/streaming-validation-lightbox.css" rel="stylesheet">
-<script>
-    // Force reload of streaming validation lightbox CSS with timestamp
-    (function() {
-        var links = document.querySelectorAll('link[href*="streaming-validation-lightbox.css"]');
-        links.forEach(function(link) {
-            link.href = link.href.split('?')[0] + '?t=' + Date.now();
-        });
-    })();
-</script>
+<link href="/static/css/streaming-validation-lightbox.css" rel="stylesheet" id="css-streaming-validation-lightbox">
+<script>document.getElementById('css-streaming-validation-lightbox').href = '/static/css/streaming-validation-lightbox.css?t=' + cssTimestamp;</script>
 {% endblock %}
 
 {% block body %}
