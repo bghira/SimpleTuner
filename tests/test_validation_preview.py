@@ -31,7 +31,7 @@ class ValidationPreviewerTests(unittest.TestCase):
         config = types.SimpleNamespace(validation_preview=True, validation_preview_steps=3)
         accelerator = types.SimpleNamespace(is_main_process=True)
         previewer = ValidationPreviewer(_DummyModel(), accelerator, config)
-        self.assertFalse(previewer._should_emit_for_step(0))
+        self.assertTrue(previewer._should_emit_for_step(0))
         self.assertFalse(previewer._should_emit_for_step(1))
         self.assertTrue(previewer._should_emit_for_step(2))
         self.assertFalse(previewer._should_emit_for_step(3))

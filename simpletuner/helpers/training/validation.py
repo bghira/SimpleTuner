@@ -930,10 +930,13 @@ class ValidationPreviewer:
     def _should_emit_for_step(self, step: int) -> bool:
         """
         Return True if the preview should be emitted for this sampling step.
-        Steps are zero-indexed internally, so we convert to one-indexed before modulo.
+
+        The first sampling step always emits so that users see an immediate preview.
+        Subsequent emissions follow the configured interval, which is specified in
+        one-indexed units to match scheduler step counts.
         """
 
-        if self.step_interval <= 1:
+        if self.step_interval <= 1 or step == 0:
             return True
         return ((step + 1) % self.step_interval) == 0
 

@@ -326,6 +326,7 @@ class Wan(VideoModelFoundation):
         if "5b" in str(flavour).lower():
             return self._TAE_SPEC_22
         return self._TAE_SPEC_21
+
     @classmethod
     def supports_chunked_feed_forward(cls) -> bool:
         return True

@@ -457,12 +457,37 @@ class StreamingValidationLightbox {
         const copyBtn = this.lightboxElement.querySelector('.streaming-validation-copy');
         const icon = copyBtn.querySelector('i');
         const originalClass = icon.className;
+        const hasClipboard = typeof navigator !== 'undefined' && navigator.clipboard;
+        const canWrite = hasClipboard && typeof navigator.clipboard.write === 'function';
+        const canWriteText = hasClipboard && typeof navigator.clipboard.writeText === 'function';
+        const canUseClipboardItem = canWrite && typeof window !== 'undefined' && typeof window.ClipboardItem === 'function';
+
+        const copyTextFallback = async (text) => {
+            if (canWriteText) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            // As a final fallback, use a hidden textarea with execCommand if available.
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'absolute';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const succeeded = document.execCommand ? document.execCommand('copy') : false;
+            document.body.removeChild(textarea);
+            if (!succeeded) {
+                throw new Error('Clipboard copy is not supported in this browser.');
+            }
+        };
 
         try {
             // Determine what to copy (image or video)
             if (this.currentImageData) {
                 // For images, try to copy the actual image to clipboard
-                if (this.currentImageData.startsWith('data:image/')) {
+                if (this.currentImageData.startsWith('data:image/') && canUseClipboardItem) {
                     // Convert data URL to blob
                     const blob = await this.dataURLToBlob(this.currentImageData);
                     await navigator.clipboard.write([
@@ -472,11 +497,11 @@ class StreamingValidationLightbox {
                     ]);
                 } else {
                     // Fallback to copying URL as text
-                    await navigator.clipboard.writeText(this.currentImageData);
+                    await copyTextFallback(this.currentImageData);
                 }
             } else if (this.currentVideoData) {
                 // For videos, copy the URL/data as text
-                await navigator.clipboard.writeText(this.currentVideoData);
+                await copyTextFallback(this.currentVideoData);
             } else {
                 throw new Error('No media to copy');
             }

@@ -5608,28 +5608,19 @@ function trainerComponent() {
 
 {% block extra_js %}
 <!-- Load dataloader builder scripts -->
-<script>var jsTimestamp = Date.now();</script>
 <script src="/static/js/server-config.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/server-config.js?t=' + jsTimestamp;</script>
 <script src="/static/js/utils/api.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/utils/api.js?t=' + jsTimestamp;</script>
 <script src="/static/js/dataloader-builder.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/dataloader-builder.js?t=' + jsTimestamp;</script>
 <script src="/static/js/dataloader-htmx-init.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/dataloader-htmx-init.js?t=' + jsTimestamp;</script>
 <script src="/static/js/event-handler.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/event-handler.js?t=' + jsTimestamp;</script>
 <script src="/static/js/services/dependency-manager.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/services/dependency-manager.js?t=' + jsTimestamp;</script>
 
 <!-- Load event lightbox for event images -->
 <link href="/static/css/event_lightbox.css" rel="stylesheet">
 <script src="/static/js/modules/event_lightbox.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/event_lightbox.js?t=' + jsTimestamp;</script>
 
 <!-- Load event renderer for SSE event display -->
 <script src="/static/js/modules/event-renderer.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/event-renderer.js?t=' + jsTimestamp;</script>
 
 <script>
 // Enhanced HTMX configuration for trainer
@@ -5833,33 +5824,18 @@ window.showToast = window.showToast || function(message, type) {
 </div>
 
 <script src="/static/js/modules/tab-navigation.js" defer></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/tab-navigation.js?t=' + jsTimestamp;</script>
 
 <!-- Load search module for sidebar search functionality -->
 <script src="/static/js/modules/search.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/search.js?t=' + jsTimestamp;</script>
 
 <!-- Load tab-specific modules early so they're available when tabs load -->
 <script src="/static/js/modules/publishing.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/publishing.js?t=' + jsTimestamp;</script>
 <script src="/static/js/modules/webhooks.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/webhooks.js?t=' + jsTimestamp;</script>
 <script src="/static/js/modules/checkpoints.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/checkpoints.js?t=' + jsTimestamp;</script>
-<script src="/static/js/modules/event-renderer.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/modules/event-renderer.js?t=' + jsTimestamp;</script>
-<script>
-    // Force reload of streaming validation lightbox JS with timestamp
-    (function() {
-        var script = document.createElement('script');
-        script.src = '/static/js/modules/streaming-validation-lightbox.js?t=' + Date.now();
-        document.currentScript.parentNode.insertBefore(script, document.currentScript.nextSibling);
-    })();
-</script>
+<script src="/static/js/modules/streaming-validation-lightbox.js"></script>
 
 <!-- Module loader for browser compatibility -->
 <script src="/static/js/module-loader.js"></script>
-<script>document.currentScript.previousElementSibling.src = '/static/js/module-loader.js?t=' + jsTimestamp;</script>
 
 <!-- Load modular JavaScript with fallback support -->
 <script>

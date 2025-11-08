@@ -639,7 +639,12 @@ class ModelFoundation(ABC):
         scaling_factor = self._vae_scaling_factor()
         latents_mean = getattr(vae.config, "latents_mean", None)
         latents_std = getattr(vae.config, "latents_std", None)
-        view_shape = (1, latents.shape[1], 1, 1) if latents.ndim == 4 else (1, latents.shape[1], 1, 1, 1)
+        if latents.ndim == 4:
+            view_shape = (1, latents.shape[1], 1, 1)
+        elif latents.ndim == 5:
+            view_shape = (1, latents.shape[1], 1, 1, 1)
+        else:
+            raise ValueError(f"Unsupported number of dimensions for latents: {latents.ndim}. Expected 4 or 5.")
 
         if latents_mean is not None and latents_std is not None:
             mean = torch.tensor(latents_mean, device=latents.device, dtype=latents.dtype).view(view_shape)
