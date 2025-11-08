@@ -149,6 +149,18 @@ Wan is one of the heaviest models SimpleTuner supports. Enable grouped offloadin
 - Leave disk staging commented out unless CPU memory is the bottleneck.
 - `--enable_model_cpu_offload` is mutually exclusive with group offload.
 
+### Feed-forward chunking (optional)
+
+If the 14B checkpoints still OOM during gradient checkpointing, chunk the Wan feed-forward layers:
+
+```bash
+--enable_chunked_feed_forward \
+--feed_forward_chunk_size 2 \
+```
+
+This matches the new toggle in the configuration wizard (`Training → Memory Optimisation`). Smaller chunk sizes save more
+memory but slow each step. You can also set `WAN_FEED_FORWARD_CHUNK_SIZE=2` in your environment for quick experiments.
+
 
 If you prefer to manually configure:
 

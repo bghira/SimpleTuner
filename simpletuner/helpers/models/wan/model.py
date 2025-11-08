@@ -326,6 +326,29 @@ class Wan(VideoModelFoundation):
         if "5b" in str(flavour).lower():
             return self._TAE_SPEC_22
         return self._TAE_SPEC_21
+    @classmethod
+    def supports_chunked_feed_forward(cls) -> bool:
+        return True
+
+    def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: Optional[int] = None) -> None:
+        transformer = self.unwrap_model(self.model)
+        if transformer is None or not hasattr(transformer, "set_chunk_feed_forward"):
+            raise RuntimeError("Wan transformer is not available for feed-forward chunking.")
+
+        if chunk_size is None:
+            transformer.set_chunk_feed_forward(None, chunk_dim)
+            logger.info("Wan feed-forward chunking enabled (auto mode).")
+            return
+
+        chunk_value = int(chunk_size)
+        if chunk_value <= 0:
+            transformer.set_chunk_feed_forward(None, chunk_dim)
+            logger.info("Wan feed-forward chunking enabled (auto mode).")
+            return
+
+        normalized_dim = chunk_dim if chunk_dim is not None else 0
+        transformer.set_chunk_feed_forward(chunk_value, normalized_dim)
+        logger.info("Wan feed-forward chunking enabled (chunk_size=%s, chunk_dim=%s).", chunk_value, normalized_dim)
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
