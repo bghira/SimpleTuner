@@ -112,6 +112,71 @@ def _get_callback_service(request: Request) -> CallbackService:
     return get_default_callback_service()
 
 
+def _strip_replay_validation_media(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Return a payload copy with heavyweight validation media removed.
+
+    This is used when replaying historical validation events so we can send the
+    textual metadata without forcing the browser to download large base64 blobs.
+    """
+
+    def _is_sequence(value: Any) -> bool:
+        return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
+
+    def _clear_media(container: dict[str, Any], key: str) -> bool:
+        value = container.get(key)
+        if _is_sequence(value) and value:
+            container[key] = []
+            return True
+        return False
+
+    def _null_scalar(container: dict[str, Any], key: str) -> bool:
+        if container.get(key):
+            container[key] = None
+            return True
+        return False
+
+    cleaned: dict[str, Any] = dict(payload)
+    changed = False
+
+    for media_key in ("images", "videos"):
+        if _clear_media(cleaned, media_key):
+            changed = True
+
+    validation_payload = cleaned.get("validation")
+    if isinstance(validation_payload, Mapping):
+        validation_copy = dict(validation_payload)
+        validation_changed = False
+        if _clear_media(validation_copy, "assets"):
+            validation_changed = True
+        if _clear_media(validation_copy, "images"):
+            validation_changed = True
+        if validation_changed:
+            cleaned["validation"] = validation_copy
+            changed = True
+
+    data_payload = cleaned.get("data")
+    if isinstance(data_payload, Mapping):
+        data_copy = dict(data_payload)
+        data_changed = False
+        if _clear_media(data_copy, "assets"):
+            data_changed = True
+        if _clear_media(data_copy, "images"):
+            data_changed = True
+        if _null_scalar(data_copy, "image"):
+            data_changed = True
+        if _null_scalar(data_copy, "preview"):
+            data_changed = True
+        if data_changed:
+            cleaned["data"] = data_copy
+            changed = True
+
+    if changed:
+        cleaned["media_filtered"] = True
+
+    return cleaned
+
+
 def _resolve_broadcast_timeout(timeout_param: float | None) -> float:
     """Return timeout value using query parameter or environment override."""
     if timeout_param is not None:
@@ -283,14 +348,20 @@ async def events_stream(request: Request):
                                     last_index = event.index
                                 continue
 
+                            # Drop intermediary validation.image events when replaying to avoid large payloads
+                            if is_replay_event and event.type == EventType.VALIDATION_IMAGE:
+                                if event.index is not None:
+                                    last_index = event.index
+                                continue
+
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
 
-                            # Mark replay events (for both validation and validation.image)
-                            # These still get sent to clients (for event list), but clients can choose to skip them
-                            if is_replay_event and event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
+                            # Mark replay validation events and strip their media so we don't resend large blobs
+                            if is_replay_event and event.type == EventType.VALIDATION:
                                 payload = dict(payload)
                                 payload["is_replay"] = True
+                                payload = _strip_replay_validation_media(payload)
 
                             await sse_manager.send_to_connection(
                                 connection.connection_id,
