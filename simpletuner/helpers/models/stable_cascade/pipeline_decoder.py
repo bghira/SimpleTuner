@@ -491,13 +491,15 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
 
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
+        scheduler_class_name = type(self.scheduler).__name__.lower()
+        is_wuerstchen_scheduler = "ddpmwuerstchenscheduler" in scheduler_class_name
 
         # 5. Prepare latents
         latents = self.prepare_latents(
             batch_size, image_embeddings, num_images_per_prompt, dtype, device, generator, latents, self.scheduler
         )
 
-        if isinstance(self.scheduler, DDPMWuerstchenScheduler):
+        if is_wuerstchen_scheduler:
             timesteps = timesteps[:-1]
         else:
             if hasattr(self.scheduler.config, "clip_sample") and self.scheduler.config.clip_sample:
@@ -513,7 +515,7 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
 
         self._num_timesteps = len(timesteps)
         for i, t in enumerate(self.progress_bar(timesteps)):
-            if not isinstance(self.scheduler, DDPMWuerstchenScheduler):
+            if not is_wuerstchen_scheduler:
                 if len(alphas_cumprod) > 0:
                     timestep_ratio = self.get_timestep_ratio_conditioning(t.long().cpu(), alphas_cumprod)
                     timestep_ratio = timestep_ratio.expand(latents.size(0)).to(dtype).to(device)
@@ -537,7 +539,7 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
                 predicted_latents = torch.lerp(predicted_latents_uncond, predicted_latents_text, self.guidance_scale)
 
             # 9. Renoise latents to next timestep
-            if not isinstance(self.scheduler, DDPMWuerstchenScheduler):
+            if not is_wuerstchen_scheduler:
                 timestep_ratio = t
             latents = self.scheduler.step(
                 model_output=predicted_latents,
