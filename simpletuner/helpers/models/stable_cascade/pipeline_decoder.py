@@ -148,6 +148,9 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
                 return tensor.unsqueeze(0).unsqueeze(1)
             if tensor.ndim == 2:
                 return tensor.unsqueeze(1)
+            if tensor.ndim > 3:
+                seq_len, hidden_dim = tensor.shape[-2:]
+                tensor = tensor.reshape(-1, seq_len, hidden_dim)
             return tensor
 
         if prompt_embeds is None:
