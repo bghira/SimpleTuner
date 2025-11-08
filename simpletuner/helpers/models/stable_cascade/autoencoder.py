@@ -62,6 +62,13 @@ class StableCascadeStageCAutoencoder(nn.Module):
         self.config.scaling_factor = 1.0
         self.config.shift_factor = None
 
+    @property
+    def dtype(self) -> torch.dtype:
+        """
+        Mirror the interface of diffusers autoencoders so training helpers can read the active dtype.
+        """
+        return self.latent_dtype
+
     @classmethod
     def from_pretrained(
         cls,
