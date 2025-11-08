@@ -3,7 +3,7 @@ import os
 from typing import Dict, Optional
 
 import torch
-from transformers import AutoTokenizer, CLIPTextModelWithProjection
+from transformers import CLIPTextModelWithProjection, PreTrainedTokenizerFast
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -64,7 +64,7 @@ class StableCascadeStageC(ImageModelFoundation):
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "CLIP-ViT-bigG-14",
-            "tokenizer": AutoTokenizer,
+            "tokenizer": PreTrainedTokenizerFast,
             "tokenizer_subfolder": "tokenizer",
             "model": CLIPTextModelWithProjection,
             "subfolder": "text_encoder",
