@@ -255,24 +255,23 @@
                     break;
                 }
                 case 'validation': {
-                    console.log('[SSE Manager] Full validation payload:', JSON.stringify(payload, null, 2));
-                    var eventType = payload && payload.type ? String(payload.type).toLowerCase() : '';
-                    console.log('[SSE Manager] Validation event received, type:', eventType, 'is_replay:', payload.is_replay);
+                    // Handle nested payload structure - type might be in payload.payload.type
+                    var actualPayload = payload.payload || payload;
+                    var eventType = actualPayload && actualPayload.type ? String(actualPayload.type).toLowerCase() : '';
+                    var isReplay = actualPayload.is_replay || payload.is_replay;
 
                     // Don't show toasts for intermediary validation images or replays
-                    if (eventType === 'validation.image' || payload.is_replay) {
-                        console.log('[SSE Manager] Skipping toast - intermediary or replay event');
+                    if (eventType === 'validation.image' || isReplay) {
                         break;
                     }
 
-                    var validationMessage = payload.headline || payload.body || payload.message || 'Validation complete';
+                    var validationMessage = actualPayload.headline || actualPayload.body || actualPayload.message || payload.headline || payload.body || payload.message || 'Validation complete';
                     var validationData = {
                         type: 'validation_complete',
                         message: validationMessage,
                         images: payload.images || [],  // Preserve images from payload
                         payload: payload
                     };
-                    console.log('[SSE Manager] Showing validation toast:', validationMessage);
                     handleMessage(validationData);
                     // Also emit to HTMX if event dock exists
                     if (window.htmx) {
