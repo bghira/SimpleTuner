@@ -237,6 +237,15 @@
                 data = Object.prototype.hasOwnProperty.call(payload, 'payload') ? payload.payload : payload.data;
             }
 
+            // DEBUG: Log validation events
+            if (category === 'validation') {
+                console.log('[SSE Manager DEBUG] Validation event - category:', category);
+                console.log('[SSE Manager DEBUG] Raw payload:', payload);
+                console.log('[SSE Manager DEBUG] Extracted data:', data);
+                console.log('[SSE Manager DEBUG] Data type field:', data?.type);
+                console.log('[SSE Manager DEBUG] Listener count for callback:validation:', (listeners['callback:validation'] || []).length);
+            }
+
             notifyListeners('callback:' + category, data, rawEvent);
             notifyListeners('callback', { category: category, payload: data, event: rawEvent });
 
