@@ -69,8 +69,9 @@ class CallbackService:
 
             # Debug logging for validation events
             if typed_event.type in {EventType.VALIDATION, EventType.VALIDATION_IMAGE}:
-                logger.debug(
-                    f"Stored {typed_event.type.value} event at index {index}, " f"has_stage={typed_event.stage is not None}"
+                logger.info(
+                    f"[VALIDATION DEBUG] Stored {typed_event.type.value} event at index {index}, "
+                    f"has_stage={typed_event.stage is not None}"
                 )
 
         self._update_training_state(typed_event)
