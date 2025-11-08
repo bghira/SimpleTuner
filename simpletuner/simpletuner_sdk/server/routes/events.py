@@ -261,6 +261,14 @@ async def events_stream(request: Request):
                             # Skip events that are already directly broadcast via SSE
                             # to prevent duplicate delivery to clients
 
+                            # Debug logging for validation events
+                            if event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
+                                logger.debug(
+                                    f"Processing {event.type.value} event: index={event.index}, "
+                                    f"has_stage={event.stage is not None}, "
+                                    f"replay_cutoff={replay_cutoff_index}"
+                                )
+
                             should_skip = False
 
                             # Skip training progress events (broadcast via _broadcast_training_progress)
@@ -281,16 +289,22 @@ async def events_stream(request: Request):
                                 # Update last_index but don't send to client
                                 if event.index is not None:
                                     last_index = event.index
+                                if event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
+                                    logger.debug(f"Skipping {event.type.value} event due to should_skip=True")
                                 continue
 
                             # Drop validation events when replaying - they should only display once when fresh
                             if is_replay_event and event.type in (EventType.VALIDATION_IMAGE, EventType.VALIDATION):
                                 if event.index is not None:
                                     last_index = event.index
+                                logger.debug(f"Skipping replay {event.type.value} event")
                                 continue
 
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
+
+                            if event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
+                                logger.debug(f"Sending {event.type.value} event to client")
 
                             await sse_manager.send_to_connection(
                                 connection.connection_id,
