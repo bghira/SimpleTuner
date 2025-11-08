@@ -149,6 +149,18 @@ Wan is one of the heaviest models SimpleTuner supports. Enable grouped offloadin
 - Leave disk staging commented out unless CPU memory is the bottleneck.
 - `--enable_model_cpu_offload` is mutually exclusive with group offload.
 
+### Feed-forward chunking (optional)
+
+If the 14B checkpoints still OOM during gradient checkpointing, chunk the Wan feed-forward layers:
+
+```bash
+--enable_chunked_feed_forward \
+--feed_forward_chunk_size 2 \
+```
+
+This matches the new toggle in the configuration wizard (`Training → Memory Optimisation`). Smaller chunk sizes save more
+memory but slow each step. You can also set `WAN_FEED_FORWARD_CHUNK_SIZE=2` in your environment for quick experiments.
+
 
 If you prefer to manually configure:
 
@@ -360,6 +372,24 @@ This should not be enabled for video model training, at the present time.
 # Stable evaluation loss
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+
+#### Validation previews
+
+SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
+
+To enable:
+```json
+{
+  "validation_preview": true,
+  "validation_preview_steps": 1
+}
+```
+
+**Requirements:**
+- Webhook configuration
+- Validation enabled
+
+Set `validation_preview_steps` to a higher value (e.g., 3 or 5) to reduce Tiny AutoEncoder overhead. With `validation_num_inference_steps=20` and `validation_preview_steps=5`, you'll receive preview images at steps 5, 10, 15, and 20.
 
 #### Flow-matching schedule shift
 

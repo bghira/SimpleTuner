@@ -54,6 +54,17 @@ class CallbackPresenter:
     def to_sse(cls, event: CallbackEvent) -> tuple[str, dict[str, Any]]:
         """Return an SSE tuple of event type and payload."""
         payload = cls.to_dict(event)
+
+        # Preserve the event type value in the payload for client-side filtering
+        # This is especially important for distinguishing validation.image from validation
+        if event.type == EventType.VALIDATION_IMAGE:
+            payload.setdefault("type", EventType.VALIDATION_IMAGE.value)
+        elif event.type == EventType.VALIDATION:
+            # Regular validation events may have a type in their payload already
+            # Only set it if not present
+            if "type" not in payload:
+                payload.setdefault("type", EventType.VALIDATION.value)
+
         event_type = cls._EVENT_TYPE_TO_SSE.get(event.type, event.type.value)
         if callable(event_type):
             event_type = event_type(event)
