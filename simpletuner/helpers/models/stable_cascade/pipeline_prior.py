@@ -165,6 +165,8 @@ class StableCascadePriorPipeline(DiffusionPipeline):
         def _ensure_sequence_dim(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
             if tensor is None:
                 return None
+            if tensor.ndim == 1:
+                return tensor.unsqueeze(0).unsqueeze(1)
             if tensor.ndim == 2:
                 return tensor.unsqueeze(1)
             return tensor
@@ -276,6 +278,11 @@ class StableCascadePriorPipeline(DiffusionPipeline):
             negative_prompt_embeds_pooled = _ensure_sequence_dim(negative_prompt_embeds_pooled)
 
         if do_classifier_free_guidance:
+            if negative_prompt_embeds is None or negative_prompt_embeds_pooled is None:
+                raise ValueError(
+                    "Classifier-free guidance requires negative prompt embeddings. Provide "
+                    "`negative_prompt_embeds`/`negative_prompt_embeds_pooled` or leave the text encoder loaded."
+                )
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
             negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder_dtype, device=device)
