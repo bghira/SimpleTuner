@@ -255,16 +255,12 @@
                     break;
                 }
                 case 'validation': {
-                    // Handle nested payload structure - type might be in payload.payload.type
+                    // Extract type from nested payload structure
                     var actualPayload = payload.payload || payload;
                     var eventType = actualPayload && actualPayload.type ? String(actualPayload.type).toLowerCase() : '';
                     var isReplay = actualPayload.is_replay || payload.is_replay;
 
-                    // Don't show toasts for intermediary validation images or replays
-                    if (eventType === 'validation.image' || isReplay) {
-                        break;
-                    }
-
+                    // Prepare validation data for both toast and HTMX
                     var validationMessage = actualPayload.headline || actualPayload.body || actualPayload.message || payload.headline || payload.body || payload.message || 'Validation complete';
                     var validationData = {
                         type: 'validation_complete',
@@ -272,8 +268,13 @@
                         images: payload.images || [],  // Preserve images from payload
                         payload: payload
                     };
-                    handleMessage(validationData);
-                    // Also emit to HTMX if event dock exists
+
+                    // Only show toasts for final validation events (not intermediary validation.image or replays)
+                    if (eventType !== 'validation.image' && !isReplay) {
+                        handleMessage(validationData);
+                    }
+
+                    // Emit to HTMX event dock if it exists
                     if (window.htmx) {
                         var eventDock = document.querySelector('#eventList');
                         if (eventDock) {
