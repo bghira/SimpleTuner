@@ -5,7 +5,7 @@ import os
 import random
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 import torch
@@ -190,6 +190,21 @@ class ModelFoundation(ABC):
         if cls.SUPPORTS_CONTROLNET is not None:
             return bool(cls.SUPPORTS_CONTROLNET)
         return False
+
+    @classmethod
+    def supports_chunked_feed_forward(cls) -> bool:
+        """
+        Indicates whether feed-forward chunking can be enabled for this model family.
+        Subclasses should override if chunking is supported.
+        """
+        return False
+
+    def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: int = 0) -> None:
+        """
+        Activate feed-forward chunking on the underlying model.
+        Base implementation is a no-op and should be overridden by subclasses that support chunking.
+        """
+        return
 
     @classmethod
     def strict_i2v_flavours(cls):
@@ -857,6 +872,9 @@ class ModelFoundation(ABC):
         )
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
+
+        self.configure_chunked_feed_forward()
+
         if (
             self.config.gradient_checkpointing_interval is not None
             and self.config.gradient_checkpointing_interval > 0
@@ -1226,6 +1244,54 @@ class ModelFoundation(ABC):
 
         logger.info("Group offloading enabled for %s.", ", ".join(modules.keys()))
         self._group_offload_configured = True
+
+    def chunked_feed_forward_requested(self) -> bool:
+        return bool(getattr(self.config, "enable_chunked_feed_forward", False))
+
+    def configure_chunked_feed_forward(self) -> None:
+        if not self.chunked_feed_forward_requested():
+            return
+
+        if not self.supports_chunked_feed_forward():
+            raise ValueError(
+                f"{self.__class__.__name__} does not support feed-forward chunking. Disable "
+                "`--enable_chunked_feed_forward` for this model family."
+            )
+
+        if self.model is None:
+            raise RuntimeError("Model must be loaded before enabling feed-forward chunking.")
+
+        raw_chunk_size = getattr(self.config, "feed_forward_chunk_size", None)
+        chunk_size_value: Optional[int]
+        if raw_chunk_size in ("", None):
+            chunk_size_value = None
+        else:
+            try:
+                chunk_size_value = int(raw_chunk_size)
+            except (TypeError, ValueError) as error:
+                raise ValueError("`feed_forward_chunk_size` must be a positive integer when provided.") from error
+            if chunk_size_value <= 0:
+                chunk_size_value = None
+
+        chunk_dim_value = getattr(self.config, "feed_forward_chunk_dim", None)
+        try:
+            chunk_dim_value = int(chunk_dim_value) if chunk_dim_value is not None else None
+        except (TypeError, ValueError):
+            chunk_dim_value = None
+
+        try:
+            self.enable_chunked_feed_forward(chunk_size=chunk_size_value, chunk_dim=chunk_dim_value)
+        except Exception as error:  # pragma: no cover - safety net
+            raise RuntimeError(f"Failed to enable feed-forward chunking: {error}") from error
+
+        logger.info(
+            "Feed-forward chunking enabled for %s (%s).",
+            self.__class__.__name__,
+            (
+                f"chunk_size={'auto' if chunk_size_value is None else chunk_size_value}, "
+                f"chunk_dim={'auto' if chunk_dim_value is None else chunk_dim_value}"
+            ),
+        )
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
