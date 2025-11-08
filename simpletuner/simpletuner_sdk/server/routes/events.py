@@ -356,6 +356,10 @@ async def get_recent_events(request: Request):
 
     events = callback_service.get_recent(limit=10)
 
+    # Filter out intermediary validation images - these are only for the streaming lightbox
+    # Final validation images (from validation events) should still appear in the event list
+    events = [event for event in events if event.type != EventType.VALIDATION_IMAGE]
+
     if not events:
         return HTMLResponse(
             """
