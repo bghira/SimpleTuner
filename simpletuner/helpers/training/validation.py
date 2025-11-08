@@ -1872,12 +1872,14 @@ class Validation:
         image_accumulator: dict | None = None,
     ):
         """Processes each validation prompt and logs the result."""
+        logger.info(f"[VALIDATION DEBUG] process_prompts called, validation_type={validation_type}")
         self.evaluation_result = None
         if self.validation_prompt_dict is None:
             self.validation_prompt_dict = {}
         validation_images = image_accumulator if image_accumulator is not None else {}
         _content = self.validation_prompt_metadata.get("validation_prompts", []) if self.validation_prompt_metadata else []
         total_samples = len(_content) if _content is not None else 0
+        logger.info(f"[VALIDATION DEBUG] total_samples={total_samples}")
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
@@ -1889,11 +1891,15 @@ class Validation:
 
         logger.debug(f"Processing content: {_content}")
         if total_samples == 0:
-            logger.debug("No validation prompts to process.")
+            logger.info("[VALIDATION DEBUG] No validation prompts to process - returning early")
             return
 
+        logger.info("[VALIDATION DEBUG] Preparing validation work items")
         work_items = self._prepare_validation_work_items(_content)
         use_distributed = self._use_distributed_validation()
+        logger.info(
+            f"[VALIDATION DEBUG] use_distributed={use_distributed}, is_main_process={self.accelerator.is_main_process}"
+        )
         num_processes = getattr(self.accelerator, "num_processes", 1)
 
         # Disable batch-parallel if we don't have enough prompts to meaningfully split
@@ -1937,18 +1943,23 @@ class Validation:
             local_payloads.append(payload)
 
         if use_distributed:
-            logger.info(f"[Rank {rank}] Gathering {len(local_payloads)} local payloads")
+            logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Gathering {len(local_payloads)} local payloads")
             gathered_payloads = gather_across_processes(local_payloads)
             if not self.accelerator.is_main_process:
+                logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Not main process, returning early without applying results")
                 return
             logger.info(
-                f"[Rank {rank}] Gathered {len(gathered_payloads)} payload groups: {[len(p) for p in gathered_payloads]}"
+                f"[VALIDATION DEBUG] [Rank {rank}] Gathered {len(gathered_payloads)} payload groups: {[len(p) for p in gathered_payloads]}"
             )
             aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
-            logger.info(f"[Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
+            logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
         else:
+            logger.info(
+                f"[VALIDATION DEBUG] Not using distributed, using local payloads directly ({len(local_payloads)} items)"
+            )
             aggregated_payloads = local_payloads
 
+        logger.info(f"[VALIDATION DEBUG] About to apply {len(aggregated_payloads)} serialised validation results")
         aggregated_payloads.sort(key=lambda payload: payload["index"])
         for payload in aggregated_payloads:
             self._apply_serialised_validation_result(
@@ -1956,6 +1967,7 @@ class Validation:
                 validation_images=validation_images,
                 validation_type=validation_type,
             )
+        logger.info(f"[VALIDATION DEBUG] Finished applying all serialised validation results")
         self.validation_images = validation_images
         if not use_distributed or self.accelerator.is_main_process:
             try:
