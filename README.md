@@ -123,6 +123,7 @@ Detailed quickstart guides are available for all supported models:
 - **[Cosmos2 Guide](/documentation/quickstart/COSMOS2IMAGE.md)** - Multi-modal image generation
 - **[OmniGen Guide](/documentation/quickstart/OMNIGEN.md)** - Unified image generation model
 - **[Qwen Image Guide](/documentation/quickstart/QWEN_IMAGE.md)** - 20B parameter large-scale training
+- **[Stable Cascade Stage C Guide](/quickstart/STABLE_CASCADE_C.md)** - Prior LoRAs with combined prior+decoder validation
 
 ---
 
