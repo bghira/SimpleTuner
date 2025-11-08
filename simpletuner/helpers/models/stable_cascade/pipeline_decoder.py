@@ -142,6 +142,11 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
         negative_prompt_embeds_pooled: Optional[torch.Tensor] = None,
     ):
         if prompt_embeds is None:
+            if self.text_encoder is None:
+                raise ValueError(
+                    "Prompt text embeddings were not provided, but the Stable Cascade decoder text encoder has been "
+                    "unloaded. Please either keep `text_encoder` attached or pass `prompt_embeds`/`prompt_embeds_pooled`."
+                )
             # get prompt text embeddings
             text_inputs = self.tokenizer(
                 prompt,
@@ -171,12 +176,34 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
             if prompt_embeds_pooled is None:
                 prompt_embeds_pooled = text_encoder_output.text_embeds.unsqueeze(1)
 
-        prompt_embeds = prompt_embeds.to(dtype=self.text_encoder.dtype, device=device)
-        prompt_embeds_pooled = prompt_embeds_pooled.to(dtype=self.text_encoder.dtype, device=device)
+        text_encoder_dtype = getattr(self.text_encoder, "dtype", None)
+        if text_encoder_dtype is None:
+            for tensor in (
+                prompt_embeds,
+                prompt_embeds_pooled,
+                negative_prompt_embeds,
+                negative_prompt_embeds_pooled,
+            ):
+                if tensor is not None:
+                    text_encoder_dtype = tensor.dtype
+                    break
+        if text_encoder_dtype is None:
+            raise ValueError(
+                "Could not determine dtype for Stable Cascade decoder embeddings. Ensure either the text encoder is "
+                "loaded or at least one embedding tensor is provided."
+            )
+
+        prompt_embeds = prompt_embeds.to(dtype=text_encoder_dtype, device=device)
+        prompt_embeds_pooled = prompt_embeds_pooled.to(dtype=text_encoder_dtype, device=device)
         prompt_embeds = prompt_embeds.repeat_interleave(num_images_per_prompt, dim=0)
         prompt_embeds_pooled = prompt_embeds_pooled.repeat_interleave(num_images_per_prompt, dim=0)
 
         if negative_prompt_embeds is None and do_classifier_free_guidance:
+            if self.text_encoder is None:
+                raise ValueError(
+                    "Classifier-free guidance requested but negative prompt embeddings were not provided and the text "
+                    "encoder has been unloaded. Please supply `negative_prompt_embeds` or keep the text encoder loaded."
+                )
             uncond_tokens: List[str]
             if negative_prompt is None:
                 uncond_tokens = [""] * batch_size
@@ -215,12 +242,12 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
-            negative_prompt_embeds = negative_prompt_embeds.to(dtype=self.text_encoder.dtype, device=device)
+            negative_prompt_embeds = negative_prompt_embeds.to(dtype=text_encoder_dtype, device=device)
             negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
             negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
             seq_len = negative_prompt_embeds_pooled.shape[1]
-            negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.to(dtype=self.text_encoder.dtype, device=device)
+            negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.to(dtype=text_encoder_dtype, device=device)
             negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.repeat(1, num_images_per_prompt, 1)
             negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.view(
                 batch_size * num_images_per_prompt, seq_len, -1
