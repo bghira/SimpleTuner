@@ -1942,6 +1942,15 @@ class Validation:
             )
             local_payloads.append(payload)
 
+            # In non-distributed mode, apply results immediately after each prompt completes
+            if not use_distributed:
+                logger.info(f"[VALIDATION DEBUG] Applying result immediately for {decorated_shortname}")
+                self._apply_serialised_validation_result(
+                    payload=payload,
+                    validation_images=validation_images,
+                    validation_type=validation_type,
+                )
+
         if use_distributed:
             logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Gathering {len(local_payloads)} local payloads")
             gathered_payloads = gather_across_processes(local_payloads)
@@ -1953,21 +1962,20 @@ class Validation:
             )
             aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
             logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
-        else:
-            logger.info(
-                f"[VALIDATION DEBUG] Not using distributed, using local payloads directly ({len(local_payloads)} items)"
-            )
-            aggregated_payloads = local_payloads
 
-        logger.info(f"[VALIDATION DEBUG] About to apply {len(aggregated_payloads)} serialised validation results")
-        aggregated_payloads.sort(key=lambda payload: payload["index"])
-        for payload in aggregated_payloads:
-            self._apply_serialised_validation_result(
-                payload=payload,
-                validation_images=validation_images,
-                validation_type=validation_type,
+            logger.info(
+                f"[VALIDATION DEBUG] About to apply {len(aggregated_payloads)} serialised validation results (distributed mode)"
             )
-        logger.info(f"[VALIDATION DEBUG] Finished applying all serialised validation results")
+            aggregated_payloads.sort(key=lambda payload: payload["index"])
+            for payload in aggregated_payloads:
+                self._apply_serialised_validation_result(
+                    payload=payload,
+                    validation_images=validation_images,
+                    validation_type=validation_type,
+                )
+            logger.info(f"[VALIDATION DEBUG] Finished applying all serialised validation results (distributed mode)")
+        else:
+            logger.info(f"[VALIDATION DEBUG] Non-distributed mode - results already applied inline during processing")
         self.validation_images = validation_images
         if not use_distributed or self.accelerator.is_main_process:
             try:
