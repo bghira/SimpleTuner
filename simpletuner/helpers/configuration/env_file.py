@@ -32,6 +32,8 @@ env_to_args_map = {
     "MODEL_FAMILY": "--model_family",
     "TRAIN_BATCH_SIZE": "--train_batch_size",
     "USE_GRADIENT_CHECKPOINTING": "--gradient_checkpointing",
+    "ENABLE_CHUNKED_FEED_FORWARD": "--enable_chunked_feed_forward",
+    "FEED_FORWARD_CHUNK_SIZE": "--feed_forward_chunk_size",
     "CAPTION_DROPOUT_PROBABILITY": "--caption_dropout_probability",
     "RESOLUTION_TYPE": "--resolution_type",
     "RESOLUTION": "--resolution",

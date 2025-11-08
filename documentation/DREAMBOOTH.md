@@ -236,6 +236,38 @@ If you wish to enable evaluations to score the model's performance, see [this do
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
 
+# Validation previews
+
+SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This feature allows you to see your validation images being generated step-by-step in real-time via webhook callbacks, rather than waiting for the complete generation.
+
+## Enabling validation previews
+
+To enable validation previews, add the following to your `config.json`:
+
+```json
+{
+  "validation_preview": true,
+  "validation_preview_steps": 1
+}
+```
+
+## Requirements
+
+- Model family with Tiny AutoEncoder support (Flux, SDXL, SD3, etc.)
+- Webhook configuration to receive the preview images
+- Validation must be enabled (`validation_disable` must not be set to true)
+
+## Configuration options
+
+- `--validation_preview`: Enable/disable the preview feature (default: false)
+- `--validation_preview_steps`: Controls how frequently previews are decoded during sampling (default: 1)
+  - Set to 1 to receive a preview at every sampling step
+  - Set to higher values (e.g., 3 or 5) to reduce overhead from Tiny AutoEncoder decoding
+
+## Example
+
+With `validation_num_inference_steps=20` and `validation_preview_steps=5`, you'll receive preview images at steps 5, 10, 15, and 20 during each validation generation.
+
 # Refiner tuning
 
 If you're a fan of the SDXL refiner, you may find that it causes your generations to "ruin" the results of your Dreamboothed model.

@@ -489,14 +489,18 @@ class Trainer:
                 logging.getLogger("SimpleTuner").info("Applying Accelerate bf16 capability override for this platform.")
                 self._enable_bf16_override()
 
+            will_create_dynamo_plugin = resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO
+
             accelerator_kwargs = dict(
                 gradient_accumulation_steps=self.config.gradient_accumulation_steps,
                 mixed_precision=self.config.mixed_precision,
                 log_with=report_to,
                 project_config=self.config.accelerator_project_config,
                 kwargs_handlers=accelerator_custom_config,
-                dynamo_backend=dynamo_backend_env,
             )
+
+            if not will_create_dynamo_plugin and dynamo_backend_env:
+                accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
 
             fsdp_plugin = None
             if getattr(self.config, "fsdp_enable", False):
@@ -513,7 +517,7 @@ class Trainer:
                 accelerator_kwargs["deepspeed_plugin"] = deepspeed_plugin
 
             dynamo_plugin = None
-            if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
+            if will_create_dynamo_plugin:
                 if is_bitsandbytes_available and self._config_uses_bitsandbytes():
                     self._enable_dynamo_dynamic_output_capture()
 
@@ -606,7 +610,19 @@ class Trainer:
             try:
                 self.accelerator = Accelerator(**accelerator_kwargs)
             except ValueError as err:
-                if not should_override_bf16 and self._should_force_bf16_override(err):
+                if "dynamo_plugin and dynamo_backend" in str(err):
+                    has_backend = "dynamo_backend" in accelerator_kwargs
+                    has_plugin = "dynamo_plugin" in accelerator_kwargs
+                    backend_val = accelerator_kwargs.get("dynamo_backend", "not set")
+                    plugin_val = "set" if has_plugin else "not set"
+                    raise ValueError(
+                        f"Conflicting Torch Dynamo configuration detected. "
+                        f"Cannot pass both dynamo_plugin and dynamo_backend to Accelerator. "
+                        f"Current state: dynamo_backend={backend_val} (present={has_backend}), "
+                        f"dynamo_plugin={plugin_val} (present={has_plugin}). "
+                        f"Original error: {err}"
+                    ) from err
+                elif not should_override_bf16 and self._should_force_bf16_override(err):
                     logging.getLogger("SimpleTuner").warning(
                         "Retrying Accelerator initialisation with bf16 capability override."
                     )
@@ -3650,7 +3666,7 @@ class Trainer:
 
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
-                with self.accelerator.accumulate(training_models):
+                with self.accelerator.accumulate(*training_models):
                     bsz = prepared_batch["latents"].shape[0]
                     training_logger.debug("Sending latent batch to GPU.")
 

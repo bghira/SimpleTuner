@@ -9,6 +9,7 @@ from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, 
 from simpletuner.helpers.models.sd3.controlnet import StableDiffusion3ControlNetPipeline
 from simpletuner.helpers.models.sd3.pipeline import StableDiffusion3Img2ImgPipeline, StableDiffusion3Pipeline
 from simpletuner.helpers.models.sd3.transformer import SD3Transformer2DModel
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -101,6 +102,7 @@ class SD3(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesd3")
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with SD3.
