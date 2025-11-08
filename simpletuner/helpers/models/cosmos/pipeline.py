@@ -187,7 +187,6 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self.vae_scale_factor_temporal = 2 ** sum(self.vae.temperal_downsample) if getattr(self, "vae", None) else 4
         self.vae_scale_factor_spatial = 2 ** len(self.vae.temperal_downsample) if getattr(self, "vae", None) else 8
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
-
         if self.scheduler is not None:
             self.scheduler.register_to_config(
                 sigma_max=self.sigma_max,

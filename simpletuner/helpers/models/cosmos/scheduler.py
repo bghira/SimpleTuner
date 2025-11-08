@@ -1,9 +1,4 @@
-"""Rectified Flow scheduler utilities for Cosmos models.
-
-This module ports the RectifiedFlowAB2Scheduler logic used by the official
-Cosmos Predict2 pipelines so SimpleTuner can reproduce the same inference and
-sampling behaviour.
-"""
+"""Rectified Flow scheduler utilities for Cosmos models."""
 
 from __future__ import annotations
 
@@ -103,13 +98,15 @@ class RectifiedFlowAB2Scheduler(KDPM2DiscreteScheduler):
         use_double_precision: bool = True,
         **kpm2_kwargs,
     ):
+        prediction_type = kpm2_kwargs.pop("prediction_type", "epsilon")
+        num_train_timesteps = kpm2_kwargs.pop("num_train_timesteps", 1000)
         self._use_fp64 = use_double_precision
         self._sample_eps = 1e-6
         self.sigmas: torch.Tensor | None = None
         self.timesteps: torch.Tensor | None = None
         super().__init__(
-            prediction_type="epsilon",
-            num_train_timesteps=1000,
+            prediction_type=prediction_type,
+            num_train_timesteps=num_train_timesteps,
             **kpm2_kwargs,
         )
 
