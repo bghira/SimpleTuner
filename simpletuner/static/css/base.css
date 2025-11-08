@@ -116,27 +116,24 @@ button {
     margin-top: 1.5rem !important;
 }
 
-/* Modal layout adjustments */
-/* Modal container - centers the dialog */
-.modal {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
+/* Modal dialog adjustments */
+.modal-dialog {
+    max-width: min(720px, 95vw);
+    max-height: calc(100vh - 3rem);
 }
 
-/* Modal dialog - the actual modal box */
-.modal-dialog {
-    flex: 0 1 auto;
-    width: min(720px, 95vw);
+.modal-content {
     max-height: calc(100vh - 3rem);
     overflow-y: auto;
-    margin: 1.5rem auto; /* Changed from margin: 0 to allow vertical centering */
 }
 
 @media (max-width: 768px) {
     .modal-dialog {
-        width: 100%;
+        max-width: 95vw;
+        max-height: calc(100vh - 2rem);
+    }
+
+    .modal-content {
         max-height: calc(100vh - 2rem);
     }
 }

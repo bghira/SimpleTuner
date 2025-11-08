@@ -13,15 +13,15 @@
     height: 100%;
     z-index: 10000; /* Higher than event lightbox */
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    pointer-events: none !important; /* Allow clicking through the container */
+    pointer-events: none; /* Allow clicking through the container */
 }
 
 /* Expanded state - enable pointer events */
 .streaming-validation-lightbox.expanded {
-    pointer-events: auto !important;
+    pointer-events: auto;
 }
 
-/* Backdrop - completely hidden by default */
+/* Backdrop - hidden by default */
 .streaming-validation-backdrop {
     position: absolute;
     top: 0;
@@ -30,17 +30,15 @@
     height: 100%;
     background-color: rgba(0, 0, 0, 0.85);
     backdrop-filter: blur(6px);
-    display: none; /* Completely hidden when not expanded */
     opacity: 0;
-    pointer-events: none !important;
+    pointer-events: none;
     transition: opacity 0.3s ease;
 }
 
 /* Show backdrop when expanded */
 .streaming-validation-lightbox.expanded .streaming-validation-backdrop {
-    display: block;
     opacity: 1;
-    pointer-events: auto !important;
+    pointer-events: auto;
 }
 
 /* Lightbox content container - PiP style by default (bottom-left) */
