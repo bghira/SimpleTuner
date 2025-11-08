@@ -286,8 +286,9 @@ async def events_stream(request: Request):
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
 
-                            # Mark replay events, but NOT validation.image events (they should always show)
-                            if is_replay_event and event.type == EventType.VALIDATION:
+                            # Mark replay events (for both validation and validation.image)
+                            # These still get sent to clients (for event list), but clients can choose to skip them
+                            if is_replay_event and event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
                                 payload = dict(payload)
                                 payload["is_replay"] = True
 
