@@ -217,7 +217,7 @@ class StableCascadeStageC(ImageModelFoundation):
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         if pipeline_type is PipelineTypes.TEXT2IMG and not load_base_model and self._use_combined_pipeline():
-            if not isinstance(self._combined_validation_pipeline, StableCascadeCombinedPipeline):
+            if self._combined_validation_pipeline is None:
                 self._combined_validation_pipeline = self._build_combined_validation_pipeline()
             return self._combined_validation_pipeline
         return super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
@@ -330,8 +330,6 @@ class StableCascadeStageC(ImageModelFoundation):
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs = super().update_pipeline_call_kwargs(pipeline_kwargs)
         if not self._use_combined_pipeline():
-            return pipeline_kwargs
-        if not isinstance(self._combined_validation_pipeline, StableCascadeCombinedPipeline):
             return pipeline_kwargs
 
         prior_steps = getattr(
