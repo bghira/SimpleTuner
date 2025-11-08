@@ -237,6 +237,15 @@
                 data = Object.prototype.hasOwnProperty.call(payload, 'payload') ? payload.payload : payload.data;
             }
 
+            // DEBUG: Log validation events
+            if (category === 'validation') {
+                console.log('[SSE Manager DEBUG] Validation event - category:', category);
+                console.log('[SSE Manager DEBUG] Raw payload:', payload);
+                console.log('[SSE Manager DEBUG] Extracted data:', data);
+                console.log('[SSE Manager DEBUG] Data type field:', data?.type);
+                console.log('[SSE Manager DEBUG] Listener count for callback:validation:', (listeners['callback:validation'] || []).length);
+            }
+
             notifyListeners('callback:' + category, data, rawEvent);
             notifyListeners('callback', { category: category, payload: data, event: rawEvent });
 
@@ -255,15 +264,26 @@
                     break;
                 }
                 case 'validation': {
-                    var validationMessage = payload.headline || payload.body || payload.message || 'Validation complete';
+                    // Extract type from nested payload structure
+                    var actualPayload = payload.payload || payload;
+                    var eventType = actualPayload && actualPayload.type ? String(actualPayload.type).toLowerCase() : '';
+                    var isReplay = actualPayload.is_replay || payload.is_replay;
+
+                    // Prepare validation data for both toast and HTMX
+                    var validationMessage = actualPayload.headline || actualPayload.body || actualPayload.message || payload.headline || payload.body || payload.message || 'Validation complete';
                     var validationData = {
                         type: 'validation_complete',
                         message: validationMessage,
                         images: payload.images || [],  // Preserve images from payload
                         payload: payload
                     };
-                    handleMessage(validationData);
-                    // Also emit to HTMX if event dock exists
+
+                    // Only show toasts for final validation events (not intermediary validation.image or replays)
+                    if (eventType !== 'validation.image' && !isReplay) {
+                        handleMessage(validationData);
+                    }
+
+                    // Emit to HTMX event dock if it exists
                     if (window.htmx) {
                         var eventDock = document.querySelector('#eventList');
                         if (eventDock) {

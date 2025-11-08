@@ -108,6 +108,13 @@ class CallbackService:
                 return event
         return None
 
+    def latest_index(self) -> int | None:
+        """Return the highest event index currently stored."""
+        with self._lock:
+            if not self._index_order:
+                return None
+            return self._index_order[-1]
+
     def as_payloads(self, events: Sequence[CallbackEvent]) -> list[dict[str, Any]]:
         """Convert events into serialisable dictionaries for transport."""
         return [event.to_payload() for event in events]

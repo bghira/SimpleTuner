@@ -332,6 +332,23 @@ A lot of settings are instead set through the [dataloader config](/documentation
   - When provided, the single-adapter options (`--validation_adapter_path`, `--validation_adapter_name`, `--validation_adapter_strength`, `--validation_adapter_mode`) are ignored/disabled in the UI.
   - Each run is loaded one at a time and fully detached before the next run begins.
 
+### `--validation_preview`
+
+- **What**: Stream intermediate validation previews during diffusion sampling using Tiny AutoEncoders
+- **Default**: False
+- **Why**: Enables real-time preview of validation images as they're being generated, decoded via lightweight Tiny AutoEncoder models and sent through webhook callbacks. This allows you to monitor the progression of validation samples step-by-step rather than waiting for the complete generation.
+- **Notes**:
+  - Only available on model families with Tiny AutoEncoder support (e.g., Flux, SDXL, SD3)
+  - Requires webhook configuration to receive preview images
+  - Use `--validation_preview_steps` to control how frequently previews are decoded
+
+### `--validation_preview_steps`
+
+- **What**: Interval for decoding and streaming validation previews
+- **Default**: 1
+- **Why**: Controls how often intermediate latents are decoded during validation sampling. Setting this to a higher value (e.g., 3) reduces the overhead of running the Tiny AutoEncoder by only decoding every N sampling steps.
+- **Example**: With `--validation_num_inference_steps=20` and `--validation_preview_steps=5`, you'll receive 4 preview images during the generation process (at steps 5, 10, 15, 20).
+
 ### `--evaluation_type`
 
 - **What**: Enable CLIP evaluation of generated images during validations.

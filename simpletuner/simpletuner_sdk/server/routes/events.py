@@ -36,11 +36,13 @@ except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
             super().__init__(_adapt(), media_type="text/event-stream", *args, **kwargs)
 
 
+from ..services.callback_events import EventType
 from ..services.callback_presenter import CallbackPresenter
 from ..services.callback_service import CallbackService, get_default_callback_service
 from ..services.sse_manager import get_sse_manager
 
 logger = logging.getLogger("EventRoutes")
+logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO").upper())
 
 router = APIRouter(prefix="")
 
@@ -225,7 +227,20 @@ async def events_stream(request: Request):
     async def event_generator():
         """Generate SSE events with proper connection management."""
         callback_service = _get_callback_service(request)
-        last_index = -1  # Start at -1 so stream_since(-1) includes index 0
+        replay_cutoff_index = callback_service.latest_index()
+
+        # Support SSE reconnection by reading Last-Event-ID header
+        # This prevents replaying all events when the connection drops
+        last_event_id = request.headers.get("Last-Event-ID")
+        if last_event_id:
+            try:
+                last_index = int(last_event_id)
+                logger.debug(f"SSE reconnection detected, resuming from event {last_index}")
+            except ValueError:
+                logger.warning(f"Invalid Last-Event-ID header: {last_event_id}, starting from beginning")
+                last_index = -1
+        else:
+            last_index = -1  # Start at -1 so stream_since(-1) includes index 0
 
         try:
             # Send initial connection event
@@ -246,7 +261,6 @@ async def events_stream(request: Request):
                         for event in events:
                             # Skip events that are already directly broadcast via SSE
                             # to prevent duplicate delivery to clients
-                            from simpletuner.simpletuner_sdk.server.services.callback_events import EventType
 
                             should_skip = False
 
@@ -258,18 +272,32 @@ async def events_stream(request: Request):
                             if event.stage is not None:
                                 should_skip = True
 
+                            is_replay_event = (
+                                replay_cutoff_index is not None
+                                and event.index is not None
+                                and event.index <= replay_cutoff_index
+                            )
+
                             if should_skip:
                                 # Update last_index but don't send to client
                                 if event.index is not None:
                                     last_index = event.index
                                 continue
 
+                            # Drop validation events when replaying - they should only display once when fresh
+                            if is_replay_event and event.type in (EventType.VALIDATION_IMAGE, EventType.VALIDATION):
+                                if event.index is not None:
+                                    last_index = event.index
+                                continue
+
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
+
                             await sse_manager.send_to_connection(
                                 connection.connection_id,
                                 payload,
                                 event_type=event_type,
+                                event_id=str(event.index) if event.index is not None else None,
                             )
                             if event.index is not None:
                                 last_index = event.index
@@ -290,10 +318,17 @@ async def events_stream(request: Request):
 
                 # Use SSE manager's event generator
                 async for message in sse_manager.create_event_generator(connection):
+                    sse_msg = {"data": json.dumps(message["data"])}
+
+                    # Add event type if present
                     if message.get("event"):
-                        yield {"event": message["event"], "data": json.dumps(message["data"])}
-                    else:
-                        yield {"data": json.dumps(message["data"])}
+                        sse_msg["event"] = message["event"]
+
+                    # Add event ID if present (for Last-Event-ID tracking on reconnect)
+                    if message.get("id"):
+                        sse_msg["id"] = str(message["id"])
+
+                    yield sse_msg
 
             finally:
                 # Clean up monitoring task - ensure it's cancelled even if creation failed
@@ -321,6 +356,10 @@ async def get_recent_events(request: Request):
     callback_service = _get_callback_service(request)
 
     events = callback_service.get_recent(limit=10)
+
+    # Filter out intermediary validation images - these are only for the streaming lightbox
+    # Final validation images (from validation events) should still appear in the event list
+    events = [event for event in events if event.type != EventType.VALIDATION_IMAGE]
 
     if not events:
         return HTMLResponse(

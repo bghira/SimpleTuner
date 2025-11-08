@@ -1,0 +1,548 @@
+/**
+ * Streaming Validation Lightbox Styles
+ * Styles for the intermediary validation samples lightbox
+ * with instant content replacement and progress tracking
+ */
+
+/* Main lightbox container */
+.streaming-validation-lightbox {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000; /* Higher than event lightbox */
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    pointer-events: none; /* Allow clicking through the container */
+}
+
+/* Expanded state - enable pointer events */
+.streaming-validation-lightbox.expanded {
+    pointer-events: auto;
+}
+
+/* Backdrop - hidden by default */
+.streaming-validation-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+/* Show backdrop when expanded */
+.streaming-validation-lightbox.expanded .streaming-validation-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* Lightbox content container - PiP style by default (bottom-left) */
+.streaming-validation-content {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    width: 420px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    z-index: 10001; /* Above backdrop */
+    transition: all 0.3s ease;
+    pointer-events: auto; /* Enable interactions with the content */
+}
+
+/* Hide content when minimized */
+.streaming-validation-lightbox.minimized .streaming-validation-content {
+    display: none;
+}
+
+/* Hover effect in PiP mode */
+.streaming-validation-lightbox:not(.expanded) .streaming-validation-content:hover {
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
+    transform: translateY(-2px);
+}
+
+/* Expanded state - full viewport takeover (centered) */
+.streaming-validation-lightbox.expanded .streaming-validation-content {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    bottom: auto;
+    width: 95vw;
+    max-width: 1400px;
+    max-height: 95vh;
+    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.4);
+}
+
+/* Fix hover transform in expanded mode */
+.streaming-validation-lightbox.expanded .streaming-validation-content:hover {
+    transform: translate(-50%, -50%);
+}
+
+/* Header */
+.streaming-validation-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.streaming-validation-title {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: white;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+
+.streaming-validation-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.streaming-validation-expand,
+.streaming-validation-copy,
+.streaming-validation-close {
+    background: rgba(255, 255, 255, 0.15);
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    line-height: 1;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.streaming-validation-expand:hover,
+.streaming-validation-copy:hover,
+.streaming-validation-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+    transform: scale(1.05);
+}
+
+.streaming-validation-expand:active,
+.streaming-validation-copy:active,
+.streaming-validation-close:active {
+    transform: scale(0.95);
+}
+
+.streaming-validation-close {
+    font-size: 1.5rem;
+    font-weight: 300;
+}
+
+/* Body */
+.streaming-validation-body {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
+    flex: 1;
+    background: #f8f9fa;
+}
+
+/* Progress bar container */
+.streaming-validation-progress-container {
+    padding: 1rem 1.5rem;
+    background: white;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.streaming-validation-progress-bar {
+    position: relative;
+    width: 100%;
+    height: 8px;
+    background: #e9ecef;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.streaming-validation-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.streaming-validation-progress-label {
+    font-size: 0.85rem;
+    color: #6c757d;
+    font-weight: 500;
+    text-align: center;
+}
+
+/* Media container - NO TRANSITIONS for instant replacement */
+.streaming-validation-media-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    overflow: hidden;
+    flex: 1 1 auto;
+    min-height: 0; /* Allow flexbox to shrink if needed */
+}
+
+/* Expanded state - larger media container */
+.streaming-validation-lightbox.expanded .streaming-validation-media-container {
+    min-height: 400px;
+    max-height: 60vh;
+}
+
+.streaming-validation-image,
+.streaming-validation-video {
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    /* NO TRANSITION - instant replacement */
+}
+
+.streaming-validation-video {
+    width: 100%;
+}
+
+/* Loading indicator */
+.streaming-validation-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #a0aec0;
+    font-size: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    text-align: center;
+}
+
+.streaming-validation-loading i {
+    font-size: 2rem;
+}
+
+/* Info section */
+.streaming-validation-info {
+    padding: 1rem 1.5rem;
+    background: white;
+    border-top: 1px solid #dee2e6;
+}
+
+.streaming-validation-prompt {
+    font-size: 0.95rem;
+    color: #212529;
+    margin-bottom: 0.5rem;
+    line-height: 1.5;
+    font-style: italic;
+}
+
+.streaming-validation-prompt:empty {
+    display: none;
+}
+
+.streaming-validation-meta {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.streaming-validation-meta .badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+
+/* Responsive design */
+@media (max-width: 992px) {
+    .streaming-validation-content {
+        width: 380px;
+    }
+
+    .streaming-validation-lightbox.expanded .streaming-validation-content {
+        width: 95vw;
+    }
+}
+
+@media (max-width: 768px) {
+    .streaming-validation-content {
+        width: calc(100vw - 32px);
+        max-height: calc(100vh - 32px);
+    }
+
+    .streaming-validation-lightbox.expanded .streaming-validation-content {
+        width: 98vw;
+        max-height: 98vh;
+    }
+
+    .streaming-validation-header {
+        padding: 0.75rem 1rem;
+    }
+
+    .streaming-validation-title {
+        font-size: 1rem;
+    }
+
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close {
+        width: 32px;
+        height: 32px;
+        padding: 0.4rem;
+    }
+
+    .streaming-validation-close {
+        font-size: 1.25rem;
+    }
+
+    .streaming-validation-media-container {
+        min-height: 0;
+    }
+
+    .streaming-validation-progress-container {
+        padding: 0.75rem 1rem;
+    }
+
+    .streaming-validation-info {
+        padding: 0.75rem 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .streaming-validation-content {
+        width: calc(100vw - 16px);
+        max-height: calc(100vh - 16px);
+        margin: 8px;
+        border-radius: 8px;
+    }
+
+    .streaming-validation-lightbox.expanded .streaming-validation-content {
+        width: 98vw;
+        max-height: 98vh;
+        margin: 0.5rem;
+    }
+
+    .streaming-validation-header {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .streaming-validation-title {
+        font-size: 0.9rem;
+    }
+
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close {
+        width: 28px;
+        height: 28px;
+        padding: 0.3rem;
+    }
+
+    .streaming-validation-close {
+        font-size: 1.1rem;
+    }
+
+    .streaming-validation-media-container {
+        min-height: 0;
+    }
+
+    .streaming-validation-progress-container {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .streaming-validation-info {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .streaming-validation-prompt {
+        font-size: 0.85rem;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .streaming-validation-content {
+        background: #2d3748;
+        color: #e2e8f0;
+    }
+
+    .streaming-validation-header {
+        background: linear-gradient(135deg, #4c51bf 0%, #5a3fb9 100%);
+    }
+
+    .streaming-validation-body {
+        background: #1a202c;
+    }
+
+    .streaming-validation-progress-container,
+    .streaming-validation-info {
+        background: #2d3748;
+        border-color: #4a5568;
+    }
+
+    .streaming-validation-progress-bar {
+        background: #4a5568;
+    }
+
+    .streaming-validation-progress-label {
+        color: #a0aec0;
+    }
+
+    .streaming-validation-prompt {
+        color: #e2e8f0;
+    }
+
+    .streaming-validation-loading {
+        color: #cbd5e0;
+    }
+}
+
+/* Focus styles for accessibility */
+.streaming-validation-expand:focus,
+.streaming-validation-copy:focus,
+.streaming-validation-close:focus {
+    outline: 2px solid white;
+    outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .streaming-validation-backdrop {
+        background-color: rgba(0, 0, 0, 0.95);
+    }
+
+    .streaming-validation-content {
+        border: 3px solid #000;
+    }
+
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close {
+        border: 1px solid white;
+    }
+}
+
+/* Minimized tab - shown when minimized */
+.streaming-validation-minimized-tab {
+    position: fixed;
+    top: 100px;
+    right: 0;
+    width: 48px;
+    height: 120px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 8px 0 0 8px;
+    box-shadow: -2px 4px 12px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    pointer-events: auto;
+    z-index: 10001;
+}
+
+/* Show tab when minimized */
+.streaming-validation-lightbox.minimized .streaming-validation-minimized-tab {
+    display: flex;
+}
+
+.streaming-validation-minimized-tab:hover {
+    width: 54px;
+    box-shadow: -4px 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.streaming-validation-minimized-tab i {
+    color: white;
+    font-size: 1.5rem;
+    transform: rotate(180deg); /* Point left to indicate expand */
+    transition: transform 0.3s ease;
+}
+
+.streaming-validation-minimized-tab:hover i {
+    transform: rotate(180deg) scale(1.1);
+}
+
+/* Badge on minimized tab to show there's new content */
+.streaming-validation-minimized-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 8px;
+    height: 8px;
+    background: #fbbf24;
+    border-radius: 50%;
+    border: 2px solid white;
+    display: none;
+}
+
+.streaming-validation-minimized-tab.has-update .streaming-validation-minimized-badge {
+    display: block;
+    animation: pulse-badge 2s infinite;
+}
+
+@keyframes pulse-badge {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.7;
+        transform: scale(1.1);
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .streaming-validation-content,
+    .streaming-validation-expand,
+    .streaming-validation-copy,
+    .streaming-validation-close,
+    .streaming-validation-progress-fill,
+    .streaming-validation-backdrop,
+    .streaming-validation-minimized-tab,
+    .streaming-validation-minimized-tab i {
+        transition: none;
+    }
+
+    .streaming-validation-lightbox:not(.expanded) .streaming-validation-content:hover,
+    .streaming-validation-expand:hover,
+    .streaming-validation-copy:hover,
+    .streaming-validation-close:hover,
+    .streaming-validation-minimized-tab:hover,
+    .streaming-validation-minimized-tab:hover i {
+        transform: none;
+    }
+
+    .streaming-validation-expand:active,
+    .streaming-validation-copy:active,
+    .streaming-validation-close:active {
+        transform: none;
+    }
+
+    .streaming-validation-minimized-tab.has-update .streaming-validation-minimized-badge {
+        animation: none;
+    }
+}

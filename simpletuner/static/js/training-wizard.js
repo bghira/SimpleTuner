@@ -66,6 +66,8 @@ function trainingWizardComponent() {
             enable_validations: true,
             validation_steps: 100,
             validation_prompt: '',
+            validation_preview: false,
+            validation_preview_steps: 1,
             report_to: 'none',
             learning_rate: null,
             optimizer: null,

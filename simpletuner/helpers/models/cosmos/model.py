@@ -9,6 +9,7 @@ from transformers import T5EncoderModel, T5TokenizerFast
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.cosmos.pipeline import Cosmos2TextToImagePipeline
 from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
+from simpletuner.helpers.models.tae.types import VideoTAESpec
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -27,6 +28,7 @@ class Cosmos2Image(VideoModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
+    VALIDATION_PREVIEW_SPEC = VideoTAESpec(filename="taehv.pth", description="Hunyuan VAE compatible")
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]

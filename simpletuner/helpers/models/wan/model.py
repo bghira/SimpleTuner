@@ -18,6 +18,7 @@ from simpletuner.helpers.models.common import (
     VideoModelFoundation,
     VideoToTensor,
 )
+from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
 from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
 
@@ -203,6 +204,8 @@ class Wan(VideoModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
+    _TAE_SPEC_21 = VideoTAESpec(filename="taew2_1.pth", description="Wan 2.1 / 2.2 14B VAE")
+    _TAE_SPEC_22 = VideoTAESpec(filename="taew2_2.pth", description="Wan 2.2 5B VAE", patch_size=2, latent_channels=48)
     DEFAULT_NOISE_SCHEDULER = "unipc"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
@@ -317,6 +320,12 @@ class Wan(VideoModelFoundation):
         }
     )
     STRICT_I2V_FLAVOURS = tuple(sorted((I2V_FLAVOURS | FLF2V_FLAVOURS)))
+
+    def get_validation_preview_spec(self):
+        flavour = getattr(self.config, "model_flavour", self.DEFAULT_MODEL_FLAVOUR) or ""
+        if "5b" in str(flavour).lower():
+            return self._TAE_SPEC_22
+        return self._TAE_SPEC_21
 
     @classmethod
     def supports_chunked_feed_forward(cls) -> bool:

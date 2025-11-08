@@ -11,7 +11,9 @@
     <title>{% block title %}SimpleTuner Training Studio{% endblock %}</title>
 
     <!-- Critical CSS (inline for performance) -->
-    <link href="/static/css/critical.css" rel="stylesheet">
+    <script>var cssTimestamp = Date.now();</script>
+    <link href="/static/css/critical.css" rel="stylesheet" id="css-critical">
+    <script>document.getElementById('css-critical').href = '/static/css/critical.css?t=' + cssTimestamp;</script>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <!-- External CSS (preconnect for performance) -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
@@ -20,10 +22,14 @@
     <!-- Non-critical CSS (loaded asynchronously) -->
     <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="/static/css/base.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="/static/css/trainer.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="/static/css/browser-compat.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="/static/css/dataset-card.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/css/base.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-base">
+    <script>document.getElementById('css-base').href = '/static/css/base.css?t=' + cssTimestamp;</script>
+    <link rel="preload" href="/static/css/trainer.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-trainer">
+    <script>document.getElementById('css-trainer').href = '/static/css/trainer.css?t=' + cssTimestamp;</script>
+    <link rel="preload" href="/static/css/browser-compat.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-browser-compat">
+    <script>document.getElementById('css-browser-compat').href = '/static/css/browser-compat.css?t=' + cssTimestamp;</script>
+    <link rel="preload" href="/static/css/dataset-card.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-dataset-card">
+    <script>document.getElementById('css-dataset-card').href = '/static/css/dataset-card.css?t=' + cssTimestamp;</script>
 
     <!-- Fallback for browsers without JS -->
     <noscript>
@@ -220,7 +226,8 @@
     </style>
 
     <!-- Training Wizard Styles -->
-    <link href="/static/css/training-wizard.css" rel="stylesheet">
+    <link href="/static/css/training-wizard.css" rel="stylesheet" id="css-training-wizard">
+    <script>document.getElementById('css-training-wizard').href = '/static/css/training-wizard.css?t=' + cssTimestamp;</script>
 
     {% block extra_css %}{% endblock %}
 </head>
@@ -383,7 +390,7 @@
             // Load SSE Manager script first if not already loaded
             if (typeof window.SSEManager === 'undefined') {
                 var script = document.createElement('script');
-                script.src = '/static/js/sse-manager.js';
+                script.src = '/static/js/sse-manager.js?t=' + Date.now();
                 script.onload = function() {
                     setupSSE();
                 };

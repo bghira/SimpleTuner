@@ -700,6 +700,32 @@
                         </div>
                     </div>
 
+                    <div class="mt-3">
+                        <div class="form-check">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="validation_preview_check"
+                                   x-model="answers.validation_preview">
+                            <label class="form-check-label" for="validation_preview_check">
+                                Stream validation previews
+                            </label>
+                            <div class="form-text">
+                                Enable real-time preview of validation images as they're being generated using Tiny AutoEncoders. Requires webhook configuration and model support (Flux, SDXL, SD3).
+                            </div>
+                        </div>
+
+                        <div x-show="answers.validation_preview" class="mt-2">
+                            <label class="form-label">Preview Step Interval</label>
+                            <input type="number"
+                                   class="form-control"
+                                   x-model.number="answers.validation_preview_steps"
+                                   min="1"
+                                   step="1"
+                                   placeholder="1">
+                            <div class="form-text">Only decode previews every N sampling steps. Higher values reduce Tiny AutoEncoder overhead.</div>
+                        </div>
+                    </div>
+
                     <div class="alert mt-3"
                          x-show="validationAlignmentDetails.hasData"
                          :class="validationAlignmentDetails.aligns ? 'alert-success' : 'alert-warning'">

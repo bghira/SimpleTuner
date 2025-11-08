@@ -3,7 +3,7 @@ import inspect
 import logging
 import os
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, Union
@@ -747,6 +747,200 @@ class _ValidationWorkItem:
     conditioning: Any
 
 
+@dataclass(frozen=True)
+class _PreviewMetadata:
+    shortname: str
+    prompt: str
+    resolution: tuple[int, int]
+    validation_type: str | None
+    total_steps: int | None = None
+
+
+class ValidationPreviewer:
+    """
+    Handles Tiny AutoEncoder powered previews emitted during validation.
+    """
+
+    def __init__(self, model: ModelFoundation, accelerator, config):
+        self.model = model
+        self.accelerator = accelerator
+        self.config = config
+        self.enabled = bool(getattr(config, "validation_preview", False))
+        interval = getattr(config, "validation_preview_steps", 1)
+        try:
+            interval = int(interval)
+        except (ValueError, TypeError):
+            interval = 1
+        self.step_interval = max(1, interval)
+        self._decoder = None
+        self._decoder_failed = False
+        self._warned_unsupported = False
+        self._warned_callback = False
+        self._webhook_handler = StateTracker.get_webhook_handler()
+        if self.enabled and not self._webhook_handler:
+            logger.warning("validation_preview is enabled but no webhook is configured; previews are disabled.")
+            self.enabled = False
+        if self.enabled and not self.model.supports_validation_preview():
+            logger.warning(
+                "validation_preview requested but %s does not provide Tiny AutoEncoder metadata.", self.model.NAME
+            )
+            self.enabled = False
+
+    def _is_main_process(self) -> bool:
+        if self.accelerator is None:
+            return True
+        return bool(getattr(self.accelerator, "is_main_process", True))
+
+    def _ensure_decoder(self) -> bool:
+        if not self.enabled or self._decoder_failed:
+            return False
+        if self._decoder is None:
+            self._decoder = self.model.get_validation_preview_decoder()
+        if self._decoder is None:
+            if not self._warned_unsupported:
+                logger.warning("validation_preview requested but no Tiny AutoEncoder could be loaded.")
+                self._warned_unsupported = True
+            return False
+        return True
+
+    def _pipeline_supports_preview(self, pipeline) -> bool:
+        if pipeline is None:
+            return False
+        signature = inspect.signature(pipeline.__call__)
+        return "callback_on_step_end" in signature.parameters
+
+    @contextmanager
+    def attach(self, pipeline, pipeline_kwargs: dict, metadata: _PreviewMetadata):
+        if not self.enabled or not self._is_main_process():
+            yield
+            return
+        if not self._ensure_decoder():
+            yield
+            return
+        if not self._pipeline_supports_preview(pipeline):
+            if not self._warned_callback:
+                logger.warning(
+                    "validation_preview is enabled but pipeline %s does not expose callback_on_step_end.",
+                    type(pipeline).__name__,
+                )
+                self._warned_callback = True
+            yield
+            return
+
+        def _callback(pipe, step, timestep, callback_kwargs):
+            self._handle_callback(step, timestep, callback_kwargs, metadata)
+            return callback_kwargs
+
+        pipeline_kwargs["callback_on_step_end"] = _callback
+        pipeline_kwargs.setdefault("callback_on_step_end_tensor_inputs", ["latents"])
+        try:
+            yield
+        finally:
+            pipeline_kwargs.pop("callback_on_step_end", None)
+            if pipeline_kwargs.get("callback_on_step_end_tensor_inputs") == ["latents"]:
+                pipeline_kwargs.pop("callback_on_step_end_tensor_inputs", None)
+
+    def _handle_callback(self, step: int, timestep, callback_kwargs: dict, metadata: _PreviewMetadata):
+        if not self.enabled or self._decoder_failed:
+            return
+        if not self._should_emit_for_step(step):
+            return
+        latents = callback_kwargs.get("latents")
+        if latents is None:
+            return
+        try:
+            image_payloads, video_payloads = self._decode_preview(latents)
+        except Exception as exc:  # pragma: no cover - hardware dependent
+            logger.warning("Disabling validation preview due to decode failure: %s", exc)
+            self._decoder_failed = True
+            return
+        if not image_payloads and not video_payloads:
+            return
+        timestep_value = timestep.item() if torch.is_tensor(timestep) else timestep
+        self._emit_event(image_payloads, video_payloads, metadata, step, timestep_value)
+
+    def _decode_preview(self, latents: torch.Tensor):
+        decoder = self._decoder
+        latents = latents.detach()
+        dtype = getattr(decoder, "dtype", torch.float32)
+        device = getattr(decoder, "device", latents.device)
+        latents = latents.to(device=device, dtype=torch.float32)
+        if getattr(decoder, "requires_vae_rescaling", False):
+            latents = self.model.denormalize_latents_for_preview(latents)
+        latents = latents.to(dtype=dtype)
+        decoded = decoder.decode(latents)
+        if self._decoder.is_video:
+            frames = decoded[0]
+            pil_frames = [self._tensor_to_pil(frame) for frame in frames]
+            video_payload = self._frames_to_gif(pil_frames)
+            first_frame = pil_frames[0] if pil_frames else None
+            images = [first_frame] if first_frame else []
+            return images, video_payload
+        else:
+            image = decoded[0]
+            return [self._tensor_to_pil(image)], None
+
+    def _tensor_to_pil(self, tensor: torch.Tensor) -> Image.Image:
+        array = tensor.detach().clamp(0, 1).mul(255).byte().permute(1, 2, 0).cpu().numpy()
+        return Image.fromarray(array)
+
+    def _frames_to_gif(self, frames):
+        if not frames:
+            return None
+        import imageio
+
+        buffer = BytesIO()
+        imageio.mimsave(buffer, [np.array(frame) for frame in frames], format="GIF", duration=0.08)
+        data_uri = f"data:image/gif;base64,{base64.b64encode(buffer.getvalue()).decode('utf-8')}"
+        return [{"src": data_uri, "mime_type": "image/gif"}]
+
+    def _emit_event(self, images, videos, metadata: _PreviewMetadata, step: int, timestep):
+        if self._webhook_handler is None:
+            return
+        total_steps = metadata.total_steps
+        if not total_steps:
+            total_steps = getattr(self.config, "validation_num_inference_steps", None)
+        if total_steps:
+            step_label = f"{int(step + 1)}/{int(total_steps)}"
+        else:
+            step_label = f"{int(step + 1)}"
+        message_text = f"Validation (step {step_label}): {metadata.shortname or '(validation)'}"
+        payload = {
+            "type": "validation.image",
+            "title": message_text,
+            "message": message_text,
+            "body": metadata.prompt or "",
+            "data": {
+                "step": int(step + 1),
+                "timestep": float(timestep) if timestep is not None else None,
+                "resolution": list(metadata.resolution),
+                "validation_type": metadata.validation_type,
+                "prompt": metadata.prompt,
+                "step_label": step_label,
+            },
+        }
+        self._webhook_handler.send_raw(
+            structured_data=payload,
+            message_type="validation.image",
+            images=images,
+            videos=videos,
+            job_id=StateTracker.get_job_id(),
+        )
+
+    def _should_emit_for_step(self, step: int) -> bool:
+        """
+        Return True if the preview should be emitted for this sampling step.
+
+        The first sampling step always emits so that users see an immediate preview.
+        Subsequent emissions follow the configured interval, which is specified in
+        one-indexed units to match scheduler step counts.
+        """
+
+        if self.step_interval <= 1 or step == 0:
+            return True
+        return ((step + 1) % self.step_interval) == 0
+
+
 class Validation:
     def __init__(
         self,
@@ -827,6 +1021,7 @@ class Validation:
             adapter_mode=getattr(args, "validation_adapter_mode", None),
         )
         self._active_adapter_run: ValidationAdapterRun | None = None
+        self.preview = ValidationPreviewer(self.model, self.accelerator, self.config)
 
     def _validation_multigpu_mode(self) -> str:
         """
@@ -1743,6 +1938,14 @@ class Validation:
             )
             local_payloads.append(payload)
 
+            # In non-distributed mode, apply results immediately after each prompt completes
+            if not use_distributed:
+                self._apply_serialised_validation_result(
+                    payload=payload,
+                    validation_images=validation_images,
+                    validation_type=validation_type,
+                )
+
         if use_distributed:
             logger.info(f"[Rank {rank}] Gathering {len(local_payloads)} local payloads")
             gathered_payloads = gather_across_processes(local_payloads)
@@ -1753,16 +1956,14 @@ class Validation:
             )
             aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
             logger.info(f"[Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
-        else:
-            aggregated_payloads = local_payloads
 
-        aggregated_payloads.sort(key=lambda payload: payload["index"])
-        for payload in aggregated_payloads:
-            self._apply_serialised_validation_result(
-                payload=payload,
-                validation_images=validation_images,
-                validation_type=validation_type,
-            )
+            aggregated_payloads.sort(key=lambda payload: payload["index"])
+            for payload in aggregated_payloads:
+                self._apply_serialised_validation_result(
+                    payload=payload,
+                    validation_images=validation_images,
+                    validation_type=validation_type,
+                )
         self.validation_images = validation_images
         if not use_distributed or self.accelerator.is_main_process:
             try:
@@ -2233,11 +2434,25 @@ class Validation:
                     if removed_kwargs:
                         logger.warning(f"Removed the following kwargs from validation pipeline: {removed_kwargs}")
                     # run in autocast ctx
-                    with torch.amp.autocast(
-                        self.inference_device.type,
-                        dtype=self.config.weight_dtype,
-                    ):
-                        pipeline_result = self.model.pipeline(**pipeline_kwargs)
+                    preview_ctx = nullcontext()
+                    if self.preview and current_validation_type == "checkpoint":
+                        preview_ctx = self.preview.attach(
+                            self.model.pipeline,
+                            pipeline_kwargs,
+                            _PreviewMetadata(
+                                shortname=validation_shortname,
+                                prompt=prompt,
+                                resolution=(int(validation_resolution_width), int(validation_resolution_height)),
+                                validation_type=validation_type,
+                                total_steps=getattr(self.config, "validation_num_inference_steps", None),
+                            ),
+                        )
+                    with preview_ctx:
+                        with torch.amp.autocast(
+                            self.inference_device.type,
+                            dtype=self.config.weight_dtype,
+                        ):
+                            pipeline_result = self.model.pipeline(**pipeline_kwargs)
                         if hasattr(pipeline_result, "frames"):
                             all_validation_type_results[current_validation_type] = pipeline_result.frames
                         elif hasattr(pipeline_result, "images"):
