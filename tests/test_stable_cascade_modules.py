@@ -8,9 +8,11 @@ except ModuleNotFoundError:  # pragma: no cover - environments without torch
 
 STABLE_CASCADE_IMPORT_ERROR = False
 try:
+    from simpletuner.helpers.models.common import PipelineTypes
     from simpletuner.helpers.models.stable_cascade import DDPMWuerstchenScheduler, StableCascadeStageC
     from simpletuner.helpers.models.stable_cascade.autoencoder import StableCascadeStageCAutoencoder
 except Exception:  # pragma: no cover - missing deps
+    PipelineTypes = None
     DDPMWuerstchenScheduler = None
     StableCascadeStageC = None
     StableCascadeStageCAutoencoder = None
@@ -104,6 +106,13 @@ class StableCascadeStageCTests(unittest.TestCase):
         def _fake_init(self, cfg, accelerator):
             self.config = cfg
             self.accelerator = accelerator
+            self.pipelines = {}
+            self.model = None
+            self.controlnet = None
+            self.vae = None
+            self.text_encoders = []
+            self.tokenizers = []
+            self.noise_schedule = mock.MagicMock()
 
         with mock.patch(
             "simpletuner.helpers.models.stable_cascade.model.ImageModelFoundation.__init__",
@@ -132,6 +141,51 @@ class StableCascadeStageCTests(unittest.TestCase):
         model = self._build_model(config)
         model.check_user_config()
         self.assertEqual(config.tokenizer_max_length, 77)
+
+    @mock.patch(
+        "simpletuner.helpers.models.stable_cascade.model.ensure_wuerstchen_scheduler",
+        side_effect=lambda scheduler: scheduler,
+    )
+    @mock.patch("simpletuner.helpers.models.stable_cascade.model.StableCascadeCombinedPipeline.from_pretrained")
+    def test_get_pipeline_uses_combined_wrapper(self, mock_from_pretrained, _mock_ensure):
+        config = mock.MagicMock()
+        config.model_flavour = "stage-c"
+        config.pretrained_model_name_or_path = "prior"
+        config.pretrained_vae_model_name_or_path = "prior"
+        config.vae_path = "prior"
+        config.stable_cascade_use_decoder_for_validation = True
+        config.stable_cascade_decoder_model_name_or_path = "decoder-repo"
+        config.stable_cascade_decoder_variant = None
+        config.stable_cascade_decoder_subfolder = None
+        config.stable_cascade_decoder_dtype = "fp16"
+        config.weight_dtype = torch.float32
+        config.validation_guidance = 3.0
+        config.stable_cascade_validation_prior_num_inference_steps = 9
+        config.stable_cascade_validation_prior_guidance_scale = 5.5
+        config.stable_cascade_validation_decoder_guidance_scale = 2.0
+
+        dummy_pipeline = mock.MagicMock()
+        dummy_pipeline.prior_pipe = mock.MagicMock()
+        dummy_pipeline.decoder_pipe = mock.MagicMock()
+        dummy_pipeline.prior_scheduler = mock.MagicMock()
+        mock_from_pretrained.return_value = dummy_pipeline
+
+        model = self._build_model(config)
+        prior_unet = mock.MagicMock()
+        model.model = prior_unet
+        model.text_encoders = [mock.MagicMock()]
+        model.tokenizers = [mock.MagicMock()]
+        model.unwrap_model = mock.MagicMock(return_value=prior_unet)
+
+        pipeline = model.get_pipeline(load_base_model=False)
+        self.assertIs(pipeline, dummy_pipeline)
+        self.assertIs(dummy_pipeline.prior_pipe.prior, prior_unet)
+        self.assertIs(model._combined_validation_pipeline, dummy_pipeline)
+
+        kwargs = model.update_pipeline_call_kwargs({})
+        self.assertEqual(kwargs["prior_num_inference_steps"], 9)
+        self.assertEqual(kwargs["prior_guidance_scale"], 5.5)
+        self.assertEqual(kwargs["decoder_guidance_scale"], 2.0)
 
 
 if __name__ == "__main__":

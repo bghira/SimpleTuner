@@ -81,6 +81,7 @@ class StableCascadeStageC(ImageModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
+        self._combined_validation_pipeline = None
 
     def setup_model_flavour(self):
         super().setup_model_flavour()
@@ -215,17 +216,14 @@ class StableCascadeStageC(ImageModelFoundation):
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
-        if pipeline_type is PipelineTypes.TEXT2IMG and self._use_combined_pipeline():
-            cached = self.pipelines.get(pipeline_type)
-            if not isinstance(cached, StableCascadeCombinedPipeline):
-                pipeline = self._build_combined_validation_pipeline()
-                self.pipelines[pipeline_type] = pipeline
-            return self.pipelines[pipeline_type]
+        if pipeline_type is PipelineTypes.TEXT2IMG and not load_base_model and self._use_combined_pipeline():
+            if not isinstance(self._combined_validation_pipeline, StableCascadeCombinedPipeline):
+                self._combined_validation_pipeline = self._build_combined_validation_pipeline()
+            return self._combined_validation_pipeline
         return super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
 
     def unload_model(self):
-        if PipelineTypes.TEXT2IMG in self.pipelines:
-            del self.pipelines[PipelineTypes.TEXT2IMG]
+        self._combined_validation_pipeline = None
         parent = super()
         if hasattr(parent, "unload_model"):
             parent.unload_model()
@@ -332,6 +330,8 @@ class StableCascadeStageC(ImageModelFoundation):
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs = super().update_pipeline_call_kwargs(pipeline_kwargs)
         if not self._use_combined_pipeline():
+            return pipeline_kwargs
+        if not isinstance(self._combined_validation_pipeline, StableCascadeCombinedPipeline):
             return pipeline_kwargs
 
         prior_steps = getattr(
