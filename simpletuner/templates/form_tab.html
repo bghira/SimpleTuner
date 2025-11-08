@@ -1,6 +1,7 @@
 <!-- Generic Form Tab Template for HTMX -->
 <!-- Used by Basic, Model, Training, and Advanced tabs -->
-<link rel="stylesheet" href="/static/css/form-sections.css">
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-form">
+<script>document.getElementById('css-form-sections-form').href = '/static/css/form-sections.css?t=' + Date.now();</script>
 
 <div class="tab-fragment"
      id="{{ tab_name }}-tab-content"

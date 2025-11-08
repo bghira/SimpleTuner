@@ -28,6 +28,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from transformers import T5EncoderModel, T5TokenizerFast
 
+from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.flux.pipeline import FluxLoraLoaderMixin
 
 if is_torch_xla_available():
@@ -139,7 +140,7 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             [T5Tokenizer](https://huggingface.co/docs/transformers/model_doc/t5#transformers.T5Tokenizer).
         transformer ([`CosmosTransformer3DModel`]):
             Conditional Transformer to denoise the encoded image latents.
-        scheduler ([`FlowMatchEulerDiscreteScheduler`]):
+        scheduler ([`FlowMatchEulerDiscreteScheduler`] or [`RectifiedFlowAB2Scheduler`]):
             A scheduler to be used in combination with `transformer` to denoise the encoded image latents.
         vae ([`AutoencoderKLWan`]):
             Variational Auto-Encoder (VAE) Model to encode and decode videos to and from latent representations.
@@ -156,9 +157,24 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         tokenizer: T5TokenizerFast,
         transformer: CosmosTransformer3DModel,
         vae: AutoencoderKLWan,
-        scheduler: FlowMatchEulerDiscreteScheduler,
+        scheduler: Union[FlowMatchEulerDiscreteScheduler, RectifiedFlowAB2Scheduler],
     ):
         super().__init__()
+
+        self.sigma_max = 80.0
+        self.sigma_min = 0.002
+        self.sigma_data = 1.0
+        self.sigma_schedule_order = 7.0
+        self.final_sigmas_type = "sigma_min"
+
+        if scheduler is None or not isinstance(scheduler, RectifiedFlowAB2Scheduler):
+            scheduler = RectifiedFlowAB2Scheduler(
+                sigma_min=self.sigma_min,
+                sigma_max=self.sigma_max,
+                order=self.sigma_schedule_order,
+                sigma_data=self.sigma_data,
+                final_sigmas_type=self.final_sigmas_type,
+            )
 
         self.register_modules(
             vae=vae,
@@ -171,17 +187,13 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self.vae_scale_factor_temporal = 2 ** sum(self.vae.temperal_downsample) if getattr(self, "vae", None) else 4
         self.vae_scale_factor_spatial = 2 ** len(self.vae.temperal_downsample) if getattr(self, "vae", None) else 8
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
-
-        self.sigma_max = 80.0
-        self.sigma_min = 0.002
-        self.sigma_data = 1.0
-        self.final_sigmas_type = "sigma_min"
         if self.scheduler is not None:
             self.scheduler.register_to_config(
                 sigma_max=self.sigma_max,
                 sigma_min=self.sigma_min,
                 sigma_data=self.sigma_data,
                 final_sigmas_type=self.final_sigmas_type,
+                order=self.sigma_schedule_order,
             )
 
     # Copied from diffusers.pipelines.cosmos.pipeline_cosmos_text2world.CosmosTextToWorldPipeline._get_t5_prompt_embeds
@@ -523,12 +535,11 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         )
 
         # 4. Prepare timesteps
-        sigmas_dtype = torch.float32 if torch.backends.mps.is_available() else torch.float64
-        sigmas = torch.linspace(0, 1, num_inference_steps, dtype=sigmas_dtype)
-        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, device=device, sigmas=sigmas)
-        if self.scheduler.config.get("final_sigmas_type", "zero") == "sigma_min":
-            # Replace the last sigma (which is zero) with the minimum sigma value
-            self.scheduler.sigmas[-1] = self.scheduler.sigmas[-2]
+        timesteps, num_inference_steps = retrieve_timesteps(
+            self.scheduler,
+            num_inference_steps=num_inference_steps,
+            device=device,
+        )
 
         # 5. Prepare latent variables
         transformer_dtype = self.transformer.dtype
@@ -551,13 +562,15 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
 
+        x0_prev = None
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
                     continue
 
                 self._current_timestep = t
-                current_sigma = self.scheduler.sigmas[i]
+                current_sigma = self.scheduler.sigmas[i].to(device=latents.device, dtype=latents.dtype)
 
                 current_t = current_sigma / (current_sigma + 1)
                 c_in = 1 - current_t
@@ -575,7 +588,7 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     padding_mask=padding_mask,
                     return_dict=False,
                 )[0]
-                noise_pred = (c_skip * latents + c_out * noise_pred.float()).to(transformer_dtype)
+                x0_pred = (c_skip * latents + c_out * noise_pred.float()).to(latents.dtype)
 
                 if self.do_classifier_free_guidance:
                     noise_pred_uncond = self.transformer(
@@ -585,11 +598,12 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         padding_mask=padding_mask,
                         return_dict=False,
                     )[0]
-                    noise_pred_uncond = (c_skip * latents + c_out * noise_pred_uncond.float()).to(transformer_dtype)
-                    noise_pred = noise_pred + self.guidance_scale * (noise_pred - noise_pred_uncond)
+                    noise_pred_uncond = (c_skip * latents + c_out * noise_pred_uncond.float()).to(latents.dtype)
+                    x0_pred = noise_pred_uncond + self.guidance_scale * (x0_pred - noise_pred_uncond)
 
-                noise_pred = (latents - noise_pred) / current_sigma
-                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+                step_output = self.scheduler.step(x0_pred, i, latents, x0_prev=x0_prev, return_dict=True)
+                latents = step_output.prev_sample
+                x0_prev = step_output.pred_original_sample
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}

@@ -1,5 +1,6 @@
 <!-- templates/ui_settings_tab.html - WebUI preferences tab -->
-<link rel="stylesheet" href="/static/css/form-sections.css">
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-ui">
+<script>document.getElementById('css-form-sections-ui').href = '/static/css/form-sections.css?t=' + Date.now();</script>
 {% set ui_context = ui_settings | default({}) %}
 {% set defaults = ui_context.defaults | default({}) %}
 <script>

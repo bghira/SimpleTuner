@@ -136,7 +136,9 @@ class SSEManager:
 
         logger.info(f"Removed SSE connection {connection_id}")
 
-    async def send_to_connection(self, connection_id: str, data: Dict[str, Any], event_type: Optional[str] = None):
+    async def send_to_connection(
+        self, connection_id: str, data: Dict[str, Any], event_type: Optional[str] = None, event_id: Optional[str] = None
+    ):
         """Send data to a specific connection."""
         if connection_id not in self.connections:
             return
@@ -147,7 +149,7 @@ class SSEManager:
 
         connection.last_activity = datetime.utcnow()
 
-        message = {"data": data, "event": event_type, "timestamp": time.time()}
+        message = {"data": data, "event": event_type, "id": event_id, "timestamp": time.time()}
 
         await connection.queue.put(message)
 
@@ -216,10 +218,17 @@ class SSEManager:
                     message = await asyncio.wait_for(connection.queue.get(), timeout=1.0)
 
                     # Format SSE message
+                    sse_message = {"data": message["data"]}
+
+                    # Add event type if present
                     if message.get("event"):
-                        yield {"event": message["event"], "data": message["data"]}
-                    else:
-                        yield {"data": message["data"]}
+                        sse_message["event"] = message["event"]
+
+                    # Add event ID if present (for Last-Event-ID support)
+                    if message.get("id"):
+                        sse_message["id"] = message["id"]
+
+                    yield sse_message
 
                 except asyncio.TimeoutError:
                     # Continue loop to check if still active

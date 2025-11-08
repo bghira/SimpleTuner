@@ -10,6 +10,7 @@
         var eventList = null;
         var maxEvents = 500;
         var processedEventIds = new Set(); // Track processed event IDs to prevent duplicates
+        var listenersRegistered = false; // Track if event listeners are already registered
         var severityIcons = {
             'success': 'fas fa-check-circle text-success',
             'info': 'fas fa-info-circle text-info',
@@ -58,6 +59,12 @@
         }
 
         function registerListeners() {
+            // Prevent double-registration of listeners
+            if (listenersRegistered) {
+                console.log('[EventRenderer] Listeners already registered, skipping');
+                return;
+            }
+
             var callbackTypes = ['validation', 'checkpoint', 'progress', 'alert', 'status', 'job', 'debug', 'metric'];
 
             callbackTypes.forEach(function(type) {
@@ -75,10 +82,18 @@
                 renderEvent('error', payload);
             });
 
+            listenersRegistered = true;
             console.log('[EventRenderer] Registered SSE event listeners');
         }
 
         function renderCallbackEvent(category, payload) {
+            // Skip intermediary validation images - these are only for the streaming lightbox
+            // Final validation images (type: 'validation') should still appear in the event list
+            if (payload.type === 'validation.image') {
+                console.log('[EventRenderer] Skipping intermediary validation image for event dock');
+                return;
+            }
+
             // Check for duplicate events by ID
             var eventId = payload.id;
             if (eventId && processedEventIds.has(eventId)) {

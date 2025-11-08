@@ -116,25 +116,29 @@ button {
     margin-top: 1.5rem !important;
 }
 
-/* Modal layout adjustments */
-.modal-backdrop {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1.5rem;
+/* Modal dialog adjustments */
+.modal-dialog {
+    max-width: min(720px, 95vw);
+    max-height: calc(100vh - 3rem);
 }
 
-.modal-dialog {
-    flex: 0 1 auto;
-    width: min(720px, 95vw);
+/* Prevent modal-dialog-centered from stretching to fill viewport */
+.modal-dialog-centered {
+    min-height: auto !important;
+}
+
+.modal-content {
     max-height: calc(100vh - 3rem);
     overflow-y: auto;
-    margin: 0;
 }
 
 @media (max-width: 768px) {
     .modal-dialog {
-        width: 100%;
+        max-width: 95vw;
+        max-height: calc(100vh - 2rem);
+    }
+
+    .modal-content {
         max-height: calc(100vh - 2rem);
     }
 }

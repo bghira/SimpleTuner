@@ -1,5 +1,6 @@
 <!-- templates/environments_tab.html - Configuration management tab -->
-<link rel="stylesheet" href="/static/css/form-sections.css">
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-environments">
+<script>document.getElementById('css-form-sections-environments').href = '/static/css/form-sections.css?t=' + Date.now();</script>
 <script>
 const localSanitizeConfigName = (window.sanitizeConfigName
     ? window.sanitizeConfigName

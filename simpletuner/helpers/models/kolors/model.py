@@ -8,6 +8,7 @@ from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.kolors.pipeline import KolorsImg2ImgPipeline, KolorsPipeline
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -26,6 +27,7 @@ class Kolors(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.UNET
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesdxl")
     DEFAULT_NOISE_SCHEDULER = "euler"
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with SD3.

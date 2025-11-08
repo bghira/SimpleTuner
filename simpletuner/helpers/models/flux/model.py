@@ -23,6 +23,7 @@ from simpletuner.helpers.models.flux import build_kontext_inputs, pack_latents, 
 from simpletuner.helpers.models.flux.pipeline import FluxKontextPipeline, FluxPipeline
 from simpletuner.helpers.models.flux.pipeline_controlnet import FluxControlNetPipeline, FluxControlPipeline
 from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.training import diffusers_overrides
 from simpletuner.helpers.training.multi_process import _get_rank
 
@@ -43,6 +44,7 @@ class Flux(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     # Only training the Attention blocks by default.

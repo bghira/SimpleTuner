@@ -326,3 +326,21 @@ If you wish to enable evaluations to score the model's performance, see [this do
 # Stable evaluation loss
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
+
+#### Validation previews
+
+SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
+
+To enable:
+```json
+{
+  "validation_preview": true,
+  "validation_preview_steps": 1
+}
+```
+
+**Requirements:**
+- Webhook configuration
+- Validation enabled
+
+Set `validation_preview_steps` to a higher value (e.g., 3 or 5) to reduce Tiny AutoEncoder overhead. With `validation_num_inference_steps=20` and `validation_preview_steps=5`, you'll receive preview images at steps 5, 10, 15, and 20.

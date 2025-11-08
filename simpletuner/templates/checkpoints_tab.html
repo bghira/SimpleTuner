@@ -1,6 +1,8 @@
 <!-- templates/checkpoints_tab.html - Training Checkpoints Management -->
-<link rel="stylesheet" href="/static/css/form-sections.css">
-<link rel="stylesheet" href="/static/css/checkpoints.css">
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-checkpoints">
+<script>document.getElementById('css-form-sections-checkpoints').href = '/static/css/form-sections.css?t=' + Date.now();</script>
+<link rel="stylesheet" href="/static/css/checkpoints.css" id="css-checkpoints">
+<script>document.getElementById('css-checkpoints').href = '/static/css/checkpoints.css?t=' + Date.now();</script>
 <script src="/static/js/vendor/js-yaml.min.js"></script>
 <script src="/static/js/vendor/markdown-it.min.js"></script>
 <script src="/static/js/vendor/purify.min.js"></script>

@@ -11,6 +11,7 @@ from simpletuner.helpers.models.sd1x.pipeline import (
     StableDiffusionImg2ImgPipeline,
     StableDiffusionPipeline,
 )
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -29,6 +30,7 @@ class StableDiffusion1(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.UNET
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesd")
     DEFAULT_NOISE_SCHEDULER = "ddim"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
