@@ -4,13 +4,17 @@ Handles webhook callbacks and event broadcasting.
 """
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
+import mimetypes
 import os
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 try:  # pragma: no cover - optional dependency
@@ -36,7 +40,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback to basic streaming
             super().__init__(_adapt(), media_type="text/event-stream", *args, **kwargs)
 
 
-from ..services.callback_events import EventType
+from ..services.callback_events import CallbackEvent, EventType
 from ..services.callback_presenter import CallbackPresenter
 from ..services.callback_service import CallbackService, get_default_callback_service
 from ..services.sse_manager import get_sse_manager
@@ -112,69 +116,136 @@ def _get_callback_service(request: Request) -> CallbackService:
     return get_default_callback_service()
 
 
-def _strip_replay_validation_media(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """
-    Return a payload copy with heavyweight validation media removed.
-
-    This is used when replaying historical validation events so we can send the
-    textual metadata without forcing the browser to download large base64 blobs.
-    """
-
-    def _is_sequence(value: Any) -> bool:
-        return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
-
-    def _clear_media(container: dict[str, Any], key: str) -> bool:
-        value = container.get(key)
-        if _is_sequence(value) and value:
-            container[key] = []
-            return True
-        return False
-
-    def _null_scalar(container: dict[str, Any], key: str) -> bool:
-        if container.get(key):
-            container[key] = None
-            return True
-        return False
+def _prepare_replay_validation_payload(event: CallbackEvent, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a payload copy that proxies heavy media through download endpoints."""
 
     cleaned: dict[str, Any] = dict(payload)
-    changed = False
+    event_index = event.index
+    manifest: dict[str, Any] = {}
 
-    for media_key in ("images", "videos"):
-        if _clear_media(cleaned, media_key):
-            changed = True
+    if event_index is not None:
+        image_proxies = _build_media_proxy_list(event_index, event.images, media_kind="image")
+        if image_proxies:
+            cleaned["images"] = image_proxies
+            manifest["images"] = len(image_proxies)
+        else:
+            cleaned.pop("images", None)
+
+        video_proxies = _build_media_proxy_list(event_index, event.videos, media_kind="video")
+        if video_proxies:
+            cleaned["videos"] = video_proxies
+            manifest["videos"] = len(video_proxies)
+        else:
+            cleaned.pop("videos", None)
+    else:
+        cleaned.pop("images", None)
+        cleaned.pop("videos", None)
 
     validation_payload = cleaned.get("validation")
     if isinstance(validation_payload, Mapping):
         validation_copy = dict(validation_payload)
-        validation_changed = False
-        if _clear_media(validation_copy, "assets"):
-            validation_changed = True
-        if _clear_media(validation_copy, "images"):
-            validation_changed = True
-        if validation_changed:
-            cleaned["validation"] = validation_copy
-            changed = True
+        if validation_copy.get("assets"):
+            validation_copy["assets"] = []
+        if validation_copy.get("images"):
+            validation_copy["images"] = []
+        cleaned["validation"] = validation_copy
 
     data_payload = cleaned.get("data")
     if isinstance(data_payload, Mapping):
         data_copy = dict(data_payload)
-        data_changed = False
-        if _clear_media(data_copy, "assets"):
-            data_changed = True
-        if _clear_media(data_copy, "images"):
-            data_changed = True
-        if _null_scalar(data_copy, "image"):
-            data_changed = True
-        if _null_scalar(data_copy, "preview"):
-            data_changed = True
-        if data_changed:
-            cleaned["data"] = data_copy
-            changed = True
+        for key in ("assets", "images"):
+            if data_copy.get(key):
+                data_copy[key] = []
+        for key in ("image", "preview"):
+            if data_copy.get(key):
+                data_copy[key] = None
+        cleaned["data"] = data_copy
 
-    if changed:
-        cleaned["media_filtered"] = True
-
+    cleaned["media_filtered"] = True
+    cleaned["media_proxy_available"] = bool(event_index is not None)
+    if manifest:
+        cleaned["media_manifest"] = manifest
     return cleaned
+
+
+def _build_media_proxy_list(event_index: int, media_list: Sequence[Any] | None, *, media_kind: str) -> list[dict[str, Any]]:
+    proxies: list[dict[str, Any]] = []
+    if media_list is None:
+        return proxies
+    for idx, source in enumerate(media_list):
+        proxy = _build_media_proxy(event_index, media_kind, idx, source)
+        if proxy:
+            proxies.append(proxy)
+    return proxies
+
+
+def _build_media_proxy(event_index: int, media_kind: str, media_index: int, source: Any) -> dict[str, Any] | None:
+    default_mime = "video/mp4" if media_kind == "video" else "image/png"
+    referenced_src, mime_hint = _extract_media_reference(source)
+
+    if referenced_src and referenced_src.startswith(("http://", "https://", "//")):
+        return {"src": referenced_src, "mime_type": mime_hint or default_mime}
+
+    proxy_url = f"/api/events/{event_index}/media/{media_kind}/{media_index}"
+    return {"src": proxy_url, "mime_type": mime_hint or default_mime}
+
+
+def _extract_media_reference(source: Any) -> tuple[str | None, str | None]:
+    """Return a tuple of (media source string, mime hint)."""
+
+    if isinstance(source, Mapping):
+        mime_hint = source.get("mime_type") or source.get("mime") or source.get("content_type")
+        for key in ("src", "url", "data", "base64", "image", "image_base64", "video", "video_base64"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), mime_hint
+        return None, mime_hint
+
+    if isinstance(source, str):
+        value = source.strip()
+        return (value or None), None
+
+    return None, None
+
+
+def _resolve_media_blob(source: Any, *, default_mime: str) -> tuple[bytes, str]:
+    referenced_src, mime_hint = _extract_media_reference(source)
+    if not referenced_src:
+        raise ValueError("Media payload missing data")
+
+    if referenced_src.startswith("data:"):
+        try:
+            header, encoded = referenced_src.split(",", 1)
+        except ValueError as exc:  # pragma: no cover - defensive guard
+            raise ValueError("Malformed data URI") from exc
+        mime = _extract_data_uri_mime(header) or mime_hint or default_mime
+        try:
+            return base64.b64decode(encoded), mime
+        except binascii.Error as exc:  # pragma: no cover - defensive guard
+            raise ValueError("Invalid base64 content in data URI") from exc
+
+    if referenced_src.startswith(("http://", "https://", "//")):
+        raise ValueError("Remote media cannot be proxied")
+
+    path_candidate = Path(referenced_src)
+    if path_candidate.is_file():
+        mime = mime_hint or mimetypes.guess_type(path_candidate.name)[0] or default_mime
+        return path_candidate.read_bytes(), mime
+
+    try:
+        return base64.b64decode(referenced_src), mime_hint or default_mime
+    except binascii.Error as exc:
+        raise ValueError("Media payload is not base64 encoded") from exc
+
+
+def _extract_data_uri_mime(header: str) -> str | None:
+    if ":" not in header:
+        return None
+    _, meta = header.split(":", 1)
+    if ";" in meta:
+        mime, _ = meta.split(";", 1)
+        return mime or None
+    return meta or None
 
 
 def _resolve_broadcast_timeout(timeout_param: float | None) -> float:
@@ -357,11 +428,11 @@ async def events_stream(request: Request):
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
 
-                            # Mark replay validation events and strip their media so we don't resend large blobs
+                            # Mark replay validation events and replace their media with download proxies
                             if is_replay_event and event.type == EventType.VALIDATION:
                                 payload = dict(payload)
                                 payload["is_replay"] = True
-                                payload = _strip_replay_validation_media(payload)
+                                payload = _prepare_replay_validation_payload(event, payload)
 
                             await sse_manager.send_to_connection(
                                 connection.connection_id,
@@ -416,6 +487,32 @@ async def events_stream(request: Request):
             await sse_manager.remove_connection(connection.connection_id)
 
     return EventSourceResponse(event_generator())
+
+
+@router.get("/api/events/{event_index}/media/{media_kind}/{media_index}")
+async def get_event_media(event_index: int, media_kind: str, media_index: int, request: Request):
+    """Stream stored validation media for replay payloads."""
+
+    if media_kind not in {"image", "video"}:
+        raise HTTPException(status_code=404, detail="Unsupported media type")
+
+    callback_service = _get_callback_service(request)
+    event = callback_service.get_event_by_index(event_index)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    media_list = list(event.images if media_kind == "image" else event.videos)
+    if media_index < 0 or media_index >= len(media_list):
+        raise HTTPException(status_code=404, detail="Media index out of range")
+
+    default_mime = "video/mp4" if media_kind == "video" else "image/png"
+    try:
+        blob, mime_type = _resolve_media_blob(media_list[media_index], default_mime=default_mime)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    headers = {"Cache-Control": "public, max-age=604800, immutable"}
+    return Response(content=blob, media_type=mime_type, headers=headers)
 
 
 @router.get("/api/events/recent")
