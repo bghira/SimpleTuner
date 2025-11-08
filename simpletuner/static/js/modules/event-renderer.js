@@ -79,6 +79,13 @@
         }
 
         function renderCallbackEvent(category, payload) {
+            // Skip intermediary validation images - these are only for the streaming lightbox
+            // Final validation images (type: 'validation') should still appear in the event list
+            if (payload.type === 'validation.image') {
+                console.log('[EventRenderer] Skipping intermediary validation image for event dock');
+                return;
+            }
+
             // Check for duplicate events by ID
             var eventId = payload.id;
             if (eventId && processedEventIds.has(eventId)) {
