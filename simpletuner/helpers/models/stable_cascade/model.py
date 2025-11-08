@@ -10,7 +10,9 @@ from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.multi_process import should_log
 
 from .autoencoder import TORCHVISION_IMPORT_ERROR, StableCascadeStageCAutoencoder
+from .pipeline_combined import StableCascadeCombinedPipeline
 from .pipeline_prior import StableCascadePriorPipeline
+from .scheduler_ddpm_wuerstchen import ensure_wuerstchen_scheduler
 from .unet import StableCascadeUNet
 
 logger = logging.getLogger(__name__)
@@ -73,6 +75,13 @@ class StableCascadeStageC(ImageModelFoundation):
         "stage-c-lite": "prior_lite",
     }
 
+    DEFAULT_DECODER_REPO = "stabilityai/stable-cascade"
+    DEFAULT_VALIDATION_PRIOR_GUIDANCE = 4.0
+    DEFAULT_VALIDATION_PRIOR_STEPS = 20
+
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+
     def setup_model_flavour(self):
         super().setup_model_flavour()
         flavour = getattr(self.config, "model_flavour", self.DEFAULT_MODEL_FLAVOUR)
@@ -82,6 +91,117 @@ class StableCascadeStageC(ImageModelFoundation):
         self.config.pretrained_unet_subfolder = subfolder
         if getattr(self.config, "pretrained_unet_model_name_or_path", None) is None:
             self.config.pretrained_unet_model_name_or_path = self.config.pretrained_model_name_or_path
+
+    def _use_combined_pipeline(self) -> bool:
+        return bool(getattr(self.config, "stable_cascade_use_decoder_for_validation", True))
+
+    @staticmethod
+    def _coerce_dtype(candidate, fallback=None):
+        def _convert(value):
+            if isinstance(value, torch.dtype):
+                return value
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                mapping = {
+                    "fp32": torch.float32,
+                    "float32": torch.float32,
+                    "f32": torch.float32,
+                    "fp16": torch.float16,
+                    "float16": torch.float16,
+                    "half": torch.float16,
+                    "f16": torch.float16,
+                    "bf16": torch.bfloat16,
+                    "bfloat16": torch.bfloat16,
+                }
+                return mapping.get(normalized)
+            return None
+
+        resolved = _convert(candidate)
+        if resolved is not None:
+            return resolved
+        resolved = _convert(fallback)
+        if resolved is not None:
+            return resolved
+        return torch.float16
+
+    def _decoder_repo_id(self) -> str:
+        repo = getattr(self.config, "stable_cascade_decoder_model_name_or_path", None)
+        if isinstance(repo, str) and repo:
+            return repo
+        return self.DEFAULT_DECODER_REPO
+
+    def _decoder_variant(self) -> Optional[str]:
+        variant = getattr(self.config, "stable_cascade_decoder_variant", None)
+        if isinstance(variant, str) and variant.strip():
+            return variant.strip()
+        return None
+
+    def _decoder_subfolder(self) -> Optional[str]:
+        subfolder = getattr(self.config, "stable_cascade_decoder_subfolder", None)
+        if isinstance(subfolder, str) and subfolder.strip():
+            return subfolder.strip()
+        return None
+
+    def _decoder_pipeline_dtype(self) -> torch.dtype:
+        return self._coerce_dtype(
+            getattr(self.config, "stable_cascade_decoder_dtype", None),
+            getattr(self.config, "weight_dtype", None),
+        )
+
+    def _apply_prior_overrides(self, pipeline: StableCascadeCombinedPipeline) -> None:
+        prior_model = self.unwrap_model(model=self.model)
+        if prior_model is None:
+            raise RuntimeError("Stable Cascade prior weights must be loaded before building the combined pipeline.")
+        pipeline.prior_prior = prior_model
+        if hasattr(pipeline, "prior_pipe"):
+            pipeline.prior_pipe.prior = prior_model
+
+        if self.text_encoders:
+            prior_text_encoder = self.text_encoders[0]
+            pipeline.prior_text_encoder = prior_text_encoder
+            if hasattr(pipeline, "prior_pipe"):
+                pipeline.prior_pipe.text_encoder = prior_text_encoder
+
+        if self.tokenizers:
+            prior_tokenizer = self.tokenizers[0]
+            pipeline.prior_tokenizer = prior_tokenizer
+            if hasattr(pipeline, "prior_pipe"):
+                pipeline.prior_pipe.tokenizer = prior_tokenizer
+
+        pipeline.prior_scheduler = ensure_wuerstchen_scheduler(getattr(pipeline, "prior_scheduler", None))
+        if hasattr(pipeline, "prior_pipe"):
+            pipeline.prior_pipe.scheduler = pipeline.prior_scheduler
+
+    def _maybe_override_decoder_components(self, pipeline: StableCascadeCombinedPipeline, dtype: torch.dtype) -> None:
+        subfolder = self._decoder_subfolder()
+        if not subfolder:
+            return
+        repo_id = self._decoder_repo_id()
+        decoder = StableCascadeUNet.from_pretrained(
+            repo_id,
+            subfolder=subfolder,
+            torch_dtype=dtype,
+            use_safetensors=True,
+        )
+        pipeline.decoder = decoder
+        if hasattr(pipeline, "decoder_pipe"):
+            pipeline.decoder_pipe.decoder = decoder
+
+    def _build_combined_validation_pipeline(self) -> StableCascadeCombinedPipeline:
+        repo_id = self._decoder_repo_id()
+        dtype = self._decoder_pipeline_dtype()
+        load_kwargs = {"torch_dtype": dtype, "use_safetensors": True}
+        variant = self._decoder_variant()
+        if variant:
+            load_kwargs["variant"] = variant
+        try:
+            pipeline = StableCascadeCombinedPipeline.from_pretrained(repo_id, **load_kwargs)
+        except Exception as exc:  # pragma: no cover - initialization failure is surfaced to the user
+            raise RuntimeError(f"Failed to load Stable Cascade decoder pipeline from '{repo_id}': {exc}") from exc
+
+        self._apply_prior_overrides(pipeline)
+        self._maybe_override_decoder_components(pipeline, dtype)
+        return pipeline
 
     def load_vae(self, move_to_device: bool = True):
         vae_path = getattr(self.config, "vae_path", None)
@@ -93,6 +213,22 @@ class StableCascadeStageC(ImageModelFoundation):
             self.vae.to(self.accelerator.device, dtype=torch.float32)
         self.vae.eval()
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        if pipeline_type is PipelineTypes.TEXT2IMG and self._use_combined_pipeline():
+            cached = self.pipelines.get(pipeline_type)
+            if not isinstance(cached, StableCascadeCombinedPipeline):
+                pipeline = self._build_combined_validation_pipeline()
+                self.pipelines[pipeline_type] = pipeline
+            return self.pipelines[pipeline_type]
+        return super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
+
+    def unload_model(self):
+        if PipelineTypes.TEXT2IMG in self.pipelines:
+            del self.pipelines[PipelineTypes.TEXT2IMG]
+        parent = super()
+        if hasattr(parent, "unload_model"):
+            parent.unload_model()
 
     def encode_with_vae(self, vae, samples):
         latents = vae(samples)
@@ -192,6 +328,44 @@ class StableCascadeStageC(ImageModelFoundation):
         timesteps = timesteps.to(self.accelerator.device).float()
         denom = max(self.noise_schedule.config.num_train_timesteps - 1, 1)
         return timesteps / denom
+
+    def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        pipeline_kwargs = super().update_pipeline_call_kwargs(pipeline_kwargs)
+        if not self._use_combined_pipeline():
+            return pipeline_kwargs
+
+        prior_steps = getattr(
+            self.config,
+            "stable_cascade_validation_prior_num_inference_steps",
+            self.DEFAULT_VALIDATION_PRIOR_STEPS,
+        )
+        try:
+            pipeline_kwargs.setdefault("prior_num_inference_steps", int(prior_steps))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("`stable_cascade_validation_prior_num_inference_steps` must be an integer.") from exc
+
+        prior_guidance = getattr(
+            self.config,
+            "stable_cascade_validation_prior_guidance_scale",
+            getattr(self.config, "validation_guidance", self.DEFAULT_VALIDATION_PRIOR_GUIDANCE),
+        )
+        try:
+            pipeline_kwargs.setdefault("prior_guidance_scale", float(prior_guidance))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("`stable_cascade_validation_prior_guidance_scale` must be numeric.") from exc
+
+        decoder_guidance = getattr(
+            self.config,
+            "stable_cascade_validation_decoder_guidance_scale",
+            getattr(self.config, "validation_guidance", None),
+        )
+        if decoder_guidance is not None:
+            try:
+                pipeline_kwargs["decoder_guidance_scale"] = float(decoder_guidance)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("`stable_cascade_validation_decoder_guidance_scale` must be numeric.") from exc
+
+        return pipeline_kwargs
 
     def model_predict(self, prepared_batch):
         device = self.accelerator.device
