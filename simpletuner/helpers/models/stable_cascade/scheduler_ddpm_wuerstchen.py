@@ -17,7 +17,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Any, List, Optional, Tuple, Union
 
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
@@ -229,3 +229,23 @@ class DDPMWuerstchenScheduler(SchedulerMixin, ConfigMixin):
         index = (self.timesteps - timestep[0]).abs().argmin().item()
         prev_t = self.timesteps[index + 1][None].expand(timestep.shape[0])
         return prev_t
+
+
+def ensure_wuerstchen_scheduler(scheduler: Union["DDPMWuerstchenScheduler", SchedulerMixin, Any]) -> DDPMWuerstchenScheduler:
+    """
+    Stable Cascade pipelines only work with the custom DDPM Wuerstchen scheduler shipped with SimpleTuner.
+    Convert any compatible scheduler instance to that implementation so downstream code can rely on it.
+    """
+
+    if scheduler is None:
+        raise ValueError("Stable Cascade requires a scheduler instance.")
+    if isinstance(scheduler, DDPMWuerstchenScheduler):
+        return scheduler
+
+    scheduler_config = getattr(scheduler, "config", None)
+    if scheduler_config is None:
+        raise TypeError("Cannot convert scheduler without a config.")
+    if hasattr(scheduler_config, "to_dict"):
+        scheduler_config = scheduler_config.to_dict()
+
+    return DDPMWuerstchenScheduler.from_config(scheduler_config)

@@ -24,7 +24,7 @@ from diffusers.utils import BaseOutput, is_torch_xla_available, logging, replace
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import CLIPImageProcessor, CLIPTextModelWithProjection, CLIPTokenizer, CLIPVisionModelWithProjection
 
-from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler
+from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler, ensure_wuerstchen_scheduler
 from .unet import StableCascadeUNet
 
 if is_torch_xla_available():
@@ -119,6 +119,7 @@ class StableCascadePriorPipeline(DiffusionPipeline):
         image_encoder: Optional[CLIPVisionModelWithProjection] = None,
     ) -> None:
         super().__init__()
+        scheduler = ensure_wuerstchen_scheduler(scheduler)
         self.register_modules(
             tokenizer=tokenizer,
             text_encoder=text_encoder,

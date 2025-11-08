@@ -21,7 +21,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer
 
 from .paella_vq_model import PaellaVQModel
-from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler
+from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler, ensure_wuerstchen_scheduler
 from .unet import StableCascadeUNet
 
 if is_torch_xla_available():
@@ -98,6 +98,7 @@ class StableCascadeDecoderPipeline(DiffusionPipeline):
         latent_dim_scale: float = 10.67,
     ) -> None:
         super().__init__()
+        scheduler = ensure_wuerstchen_scheduler(scheduler)
         self.register_modules(
             decoder=decoder,
             tokenizer=tokenizer,

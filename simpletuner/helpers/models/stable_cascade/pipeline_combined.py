@@ -15,17 +15,15 @@ from typing import Callable, Dict, List, Optional, Union
 
 import PIL
 import torch
-from transformers import CLIPImageProcessor, CLIPTextModelWithProjection, CLIPTokenizer, CLIPVisionModelWithProjection
-
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.utils import is_torch_version, replace_example_docstring
+from transformers import CLIPImageProcessor, CLIPTextModelWithProjection, CLIPTokenizer, CLIPVisionModelWithProjection
 
 from .paella_vq_model import PaellaVQModel
 from .pipeline_decoder import StableCascadeDecoderPipeline
 from .pipeline_prior import StableCascadePriorPipeline
-from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler
+from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler, ensure_wuerstchen_scheduler
 from .unet import StableCascadeUNet
-
 
 TEXT2IMAGE_EXAMPLE_DOC_STRING = """
     Examples:
@@ -93,6 +91,8 @@ class StableCascadeCombinedPipeline(DiffusionPipeline):
         prior_image_encoder: Optional[CLIPVisionModelWithProjection] = None,
     ):
         super().__init__()
+        scheduler = ensure_wuerstchen_scheduler(scheduler)
+        prior_scheduler = ensure_wuerstchen_scheduler(prior_scheduler)
 
         self.register_modules(
             text_encoder=text_encoder,
@@ -270,9 +270,7 @@ class StableCascadeCombinedPipeline(DiffusionPipeline):
         """
         dtype = self.decoder_pipe.decoder.dtype
         if is_torch_version("<", "2.2.0") and dtype == torch.bfloat16:
-            raise ValueError(
-                "`StableCascadeCombinedPipeline` requires torch>=2.2.0 when using `torch.bfloat16` dtype."
-            )
+            raise ValueError("`StableCascadeCombinedPipeline` requires torch>=2.2.0 when using `torch.bfloat16` dtype.")
 
         prior_outputs = self.prior_pipe(
             prompt=prompt if prompt_embeds is None else None,
