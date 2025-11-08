@@ -162,6 +162,13 @@ class StableCascadePriorPipeline(DiffusionPipeline):
         negative_prompt_embeds: Optional[torch.Tensor] = None,
         negative_prompt_embeds_pooled: Optional[torch.Tensor] = None,
     ):
+        def _ensure_sequence_dim(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+            if tensor is None:
+                return None
+            if tensor.ndim == 2:
+                return tensor.unsqueeze(1)
+            return tensor
+
         if prompt_embeds is None:
             if self.text_encoder is None:
                 raise ValueError(
@@ -196,6 +203,11 @@ class StableCascadePriorPipeline(DiffusionPipeline):
             prompt_embeds = text_encoder_output.hidden_states[-1]
             if prompt_embeds_pooled is None:
                 prompt_embeds_pooled = text_encoder_output.text_embeds.unsqueeze(1)
+
+        prompt_embeds = _ensure_sequence_dim(prompt_embeds)
+        prompt_embeds_pooled = _ensure_sequence_dim(prompt_embeds_pooled)
+        negative_prompt_embeds = _ensure_sequence_dim(negative_prompt_embeds)
+        negative_prompt_embeds_pooled = _ensure_sequence_dim(negative_prompt_embeds_pooled)
 
         text_encoder_dtype = getattr(self.text_encoder, "dtype", None)
         if text_encoder_dtype is None:
@@ -259,6 +271,9 @@ class StableCascadePriorPipeline(DiffusionPipeline):
 
             negative_prompt_embeds = negative_prompt_embeds_text_encoder_output.hidden_states[-1]
             negative_prompt_embeds_pooled = negative_prompt_embeds_text_encoder_output.text_embeds.unsqueeze(1)
+
+            negative_prompt_embeds = _ensure_sequence_dim(negative_prompt_embeds)
+            negative_prompt_embeds_pooled = _ensure_sequence_dim(negative_prompt_embeds_pooled)
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
