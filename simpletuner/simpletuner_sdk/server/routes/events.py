@@ -149,11 +149,6 @@ async def handle_callback(request: Request):
     """
     data = await request.json()
 
-    # Log validation events at the earliest point
-    event_type = data.get("type", "unknown")
-    if "validation" in event_type:
-        logger.info(f"[VALIDATION DEBUG] Received callback with type={event_type}")
-
     callback_service = _get_callback_service(request)
 
     event = callback_service.handle_incoming(data)
@@ -163,12 +158,6 @@ async def handle_callback(request: Request):
 
     if event:
         logger.debug("Normalised callback: %s", _truncate_long_strings(event.to_payload()))
-        # Also log validation events at info level so they're always visible
-        if event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
-            logger.info(
-                f"[VALIDATION DEBUG] Created {event.type.value} event at index {event.index}, "
-                f"has_stage={event.stage is not None}"
-            )
 
     return {"message": "Callback received successfully"}
 
@@ -273,14 +262,6 @@ async def events_stream(request: Request):
                             # Skip events that are already directly broadcast via SSE
                             # to prevent duplicate delivery to clients
 
-                            # Debug logging for validation events
-                            if event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
-                                logger.info(
-                                    f"[VALIDATION DEBUG] Processing {event.type.value} event: index={event.index}, "
-                                    f"has_stage={event.stage is not None}, "
-                                    f"replay_cutoff={replay_cutoff_index}"
-                                )
-
                             should_skip = False
 
                             # Skip training progress events (broadcast via _broadcast_training_progress)
@@ -301,24 +282,16 @@ async def events_stream(request: Request):
                                 # Update last_index but don't send to client
                                 if event.index is not None:
                                     last_index = event.index
-                                if event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
-                                    logger.info(
-                                        f"[VALIDATION DEBUG] Skipping {event.type.value} event due to should_skip=True"
-                                    )
                                 continue
 
                             # Drop validation events when replaying - they should only display once when fresh
                             if is_replay_event and event.type in (EventType.VALIDATION_IMAGE, EventType.VALIDATION):
                                 if event.index is not None:
                                     last_index = event.index
-                                logger.info(f"[VALIDATION DEBUG] Skipping replay {event.type.value} event")
                                 continue
 
                             # Send non-broadcast events via polling
                             event_type, payload = CallbackPresenter.to_sse(event)
-
-                            if event.type in (EventType.VALIDATION, EventType.VALIDATION_IMAGE):
-                                logger.info(f"[VALIDATION DEBUG] Sending {event.type.value} event to client")
 
                             await sse_manager.send_to_connection(
                                 connection.connection_id,

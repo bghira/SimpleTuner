@@ -1854,7 +1854,6 @@ class Validation:
     ) -> None:
         decorated_shortname: str = payload["decorated_shortname"]
         prompt: str = payload["prompt"]
-        logger.info(f"[VALIDATION DEBUG] _apply_serialised_validation_result called for {decorated_shortname}")
         stitched_results = self._deserialise_media_list(payload.get("stitched", []))
         checkpoint_results = self._deserialise_media_list(payload.get("checkpoint", []))
         self.validation_prompt_dict[decorated_shortname] = prompt
@@ -1875,14 +1874,12 @@ class Validation:
         image_accumulator: dict | None = None,
     ):
         """Processes each validation prompt and logs the result."""
-        logger.info(f"[VALIDATION DEBUG] process_prompts called, validation_type={validation_type}")
         self.evaluation_result = None
         if self.validation_prompt_dict is None:
             self.validation_prompt_dict = {}
         validation_images = image_accumulator if image_accumulator is not None else {}
         _content = self.validation_prompt_metadata.get("validation_prompts", []) if self.validation_prompt_metadata else []
         total_samples = len(_content) if _content is not None else 0
-        logger.info(f"[VALIDATION DEBUG] total_samples={total_samples}")
         if self.validation_image_inputs:
             # Override the pipeline inputs to be entirely based upon the validation image inputs.
             _content = self.validation_image_inputs
@@ -1894,15 +1891,11 @@ class Validation:
 
         logger.debug(f"Processing content: {_content}")
         if total_samples == 0:
-            logger.info("[VALIDATION DEBUG] No validation prompts to process - returning early")
+            logger.debug("No validation prompts to process.")
             return
 
-        logger.info("[VALIDATION DEBUG] Preparing validation work items")
         work_items = self._prepare_validation_work_items(_content)
         use_distributed = self._use_distributed_validation()
-        logger.info(
-            f"[VALIDATION DEBUG] use_distributed={use_distributed}, is_main_process={self.accelerator.is_main_process}"
-        )
         num_processes = getattr(self.accelerator, "num_processes", 1)
 
         # Disable batch-parallel if we don't have enough prompts to meaningfully split
@@ -1947,7 +1940,6 @@ class Validation:
 
             # In non-distributed mode, apply results immediately after each prompt completes
             if not use_distributed:
-                logger.info(f"[VALIDATION DEBUG] Applying result immediately for {decorated_shortname}")
                 self._apply_serialised_validation_result(
                     payload=payload,
                     validation_images=validation_images,
@@ -1955,20 +1947,16 @@ class Validation:
                 )
 
         if use_distributed:
-            logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Gathering {len(local_payloads)} local payloads")
+            logger.info(f"[Rank {rank}] Gathering {len(local_payloads)} local payloads")
             gathered_payloads = gather_across_processes(local_payloads)
             if not self.accelerator.is_main_process:
-                logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Not main process, returning early without applying results")
                 return
             logger.info(
-                f"[VALIDATION DEBUG] [Rank {rank}] Gathered {len(gathered_payloads)} payload groups: {[len(p) for p in gathered_payloads]}"
+                f"[Rank {rank}] Gathered {len(gathered_payloads)} payload groups: {[len(p) for p in gathered_payloads]}"
             )
             aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
-            logger.info(f"[VALIDATION DEBUG] [Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
+            logger.info(f"[Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
 
-            logger.info(
-                f"[VALIDATION DEBUG] About to apply {len(aggregated_payloads)} serialised validation results (distributed mode)"
-            )
             aggregated_payloads.sort(key=lambda payload: payload["index"])
             for payload in aggregated_payloads:
                 self._apply_serialised_validation_result(
@@ -1976,9 +1964,6 @@ class Validation:
                     validation_images=validation_images,
                     validation_type=validation_type,
                 )
-            logger.info(f"[VALIDATION DEBUG] Finished applying all serialised validation results (distributed mode)")
-        else:
-            logger.info(f"[VALIDATION DEBUG] Non-distributed mode - results already applied inline during processing")
         self.validation_images = validation_images
         if not use_distributed or self.accelerator.is_main_process:
             try:
@@ -2682,11 +2667,7 @@ class Validation:
 
     def _log_validations_to_webhook(self, validation_images, validation_shortname, validation_prompt):
         webhook_handler = StateTracker.get_webhook_handler()
-        logger.info(
-            f"[VALIDATION DEBUG] _log_validations_to_webhook called for {validation_shortname}, webhook_handler={'present' if webhook_handler else 'None'}"
-        )
         if webhook_handler is None:
-            logger.info("[VALIDATION DEBUG] Skipping webhook logging - no webhook handler")
             return
 
         media_word = "video" if isinstance(self.model, VideoModelFoundation) else "image"
@@ -2720,13 +2701,11 @@ class Validation:
                 if videos_for_discord:
                     images_payload = None
 
-        logger.info(f"[VALIDATION DEBUG] About to send webhook messages for {validation_shortname}")
         webhook_handler.send(
             message,
             images=images_payload,
             videos=videos_for_discord,
         )
-        logger.info(f"[VALIDATION DEBUG] Sent discord webhook, now sending raw event")
 
         webhook_handler.send_raw(
             structured_data={"message": f"Validation: {validation_shortname}"},
@@ -2736,7 +2715,6 @@ class Validation:
             images=images_payload,
             videos=videos_for_raw,
         )
-        logger.info(f"[VALIDATION DEBUG] Sent training.validation event for {validation_shortname}")
 
     def _log_validations_to_trackers(self, validation_images):
         for tracker in self.accelerator.trackers:
