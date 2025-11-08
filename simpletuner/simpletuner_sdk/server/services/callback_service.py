@@ -115,13 +115,6 @@ class CallbackService:
                 return None
             return self._index_order[-1]
 
-    def get_event_by_index(self, index: int | None) -> CallbackEvent | None:
-        """Return a single event by its stored index."""
-        if index is None:
-            return None
-        with self._lock:
-            return self._typed_by_index.get(index)
-
     def as_payloads(self, events: Sequence[CallbackEvent]) -> list[dict[str, Any]]:
         """Convert events into serialisable dictionaries for transport."""
         return [event.to_payload() for event in events]
