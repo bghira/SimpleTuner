@@ -1851,6 +1851,7 @@ class Validation:
     ) -> None:
         decorated_shortname: str = payload["decorated_shortname"]
         prompt: str = payload["prompt"]
+        logger.info(f"[VALIDATION DEBUG] _apply_serialised_validation_result called for {decorated_shortname}")
         stitched_results = self._deserialise_media_list(payload.get("stitched", []))
         checkpoint_results = self._deserialise_media_list(payload.get("checkpoint", []))
         self.validation_prompt_dict[decorated_shortname] = prompt
@@ -2658,7 +2659,11 @@ class Validation:
 
     def _log_validations_to_webhook(self, validation_images, validation_shortname, validation_prompt):
         webhook_handler = StateTracker.get_webhook_handler()
+        logger.info(
+            f"[VALIDATION DEBUG] _log_validations_to_webhook called for {validation_shortname}, webhook_handler={'present' if webhook_handler else 'None'}"
+        )
         if webhook_handler is None:
+            logger.info("[VALIDATION DEBUG] Skipping webhook logging - no webhook handler")
             return
 
         media_word = "video" if isinstance(self.model, VideoModelFoundation) else "image"
@@ -2692,11 +2697,13 @@ class Validation:
                 if videos_for_discord:
                     images_payload = None
 
+        logger.info(f"[VALIDATION DEBUG] About to send webhook messages for {validation_shortname}")
         webhook_handler.send(
             message,
             images=images_payload,
             videos=videos_for_discord,
         )
+        logger.info(f"[VALIDATION DEBUG] Sent discord webhook, now sending raw event")
 
         webhook_handler.send_raw(
             structured_data={"message": f"Validation: {validation_shortname}"},
@@ -2706,6 +2713,7 @@ class Validation:
             images=images_payload,
             videos=videos_for_raw,
         )
+        logger.info(f"[VALIDATION DEBUG] Sent training.validation event for {validation_shortname}")
 
     def _log_validations_to_trackers(self, validation_images):
         for tracker in self.accelerator.trackers:
