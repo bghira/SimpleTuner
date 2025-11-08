@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer
@@ -152,7 +152,7 @@ class StableCascadeStageC(ImageModelFoundation):
     def _format_text_embedding(self, text_embedding):
         return text_embedding
 
-    def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: Optional[str] = None) -> dict:
         return {
             "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
             "prompt_embeds_pooled": text_embedding["pooled_prompt_embeds"].unsqueeze(0),

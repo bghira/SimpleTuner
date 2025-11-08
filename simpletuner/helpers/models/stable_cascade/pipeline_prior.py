@@ -19,15 +19,13 @@ from typing import Callable, Dict, List, Optional, Union
 import numpy as np
 import PIL
 import torch
-from transformers import CLIPImageProcessor, CLIPTextModelWithProjection, CLIPTokenizer, CLIPVisionModelWithProjection
-
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.utils import BaseOutput, is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from transformers import CLIPImageProcessor, CLIPTextModelWithProjection, CLIPTokenizer, CLIPVisionModelWithProjection
 
 from .scheduler_ddpm_wuerstchen import DDPMWuerstchenScheduler
 from .unet import StableCascadeUNet
-
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -178,12 +176,8 @@ class StableCascadePriorPipeline(DiffusionPipeline):
 
             untruncated_ids = self.tokenizer(prompt, padding="longest", return_tensors="pt").input_ids
 
-            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
-                text_input_ids, untruncated_ids
-            ):
-                removed_text = self.tokenizer.batch_decode(
-                    untruncated_ids[:, self.tokenizer.model_max_length - 1 : -1]
-                )
+            if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(text_input_ids, untruncated_ids):
+                removed_text = self.tokenizer.batch_decode(untruncated_ids[:, self.tokenizer.model_max_length - 1 : -1])
                 logger.warning(
                     "The following part of your input was truncated because CLIP can only handle sequences up to"
                     f" {self.tokenizer.model_max_length} tokens: {removed_text}"
@@ -247,9 +241,7 @@ class StableCascadePriorPipeline(DiffusionPipeline):
             negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
             seq_len = negative_prompt_embeds_pooled.shape[1]
-            negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.to(
-                dtype=self.text_encoder.dtype, device=device
-            )
+            negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.to(dtype=self.text_encoder.dtype, device=device)
             negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.repeat(1, num_images_per_prompt, 1)
             negative_prompt_embeds_pooled = negative_prompt_embeds_pooled.view(
                 batch_size * num_images_per_prompt, seq_len, -1
@@ -567,7 +559,7 @@ class StableCascadePriorPipeline(DiffusionPipeline):
             timesteps = timesteps[:-1]
         else:
             if hasattr(self.scheduler.config, "clip_sample") and self.scheduler.config.clip_sample:
-                self.scheduler.config.clip_sample = False  # disample sample clipping
+                self.scheduler.config.clip_sample = False  # disable sample clipping
                 logger.warning(" set `clip_sample` to be False")
         # 6. Run denoising loop
         if hasattr(self.scheduler, "betas"):

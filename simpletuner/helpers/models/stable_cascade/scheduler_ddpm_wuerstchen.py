@@ -20,7 +20,6 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
 import torch
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from diffusers.utils import BaseOutput
@@ -98,8 +97,10 @@ class DDPMWuerstchenScheduler(SchedulerMixin, ConfigMixin):
     For more details, see the original paper: https://arxiv.org/abs/2006.11239
 
     Args:
-        scaler (`float`): ....
-        s (`float`): ....
+        scaler (`float`): Exponent that controls how non-linear the cosine time schedule is. Values greater than 1 make
+            the schedule decay faster near the end, while values between 0 and 1 flatten it.
+        s (`float`): Small positive offset added to the cosine schedule to avoid singularities and improve numerical
+            stability for very small timesteps.
     """
 
     @register_to_config

@@ -19,7 +19,6 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin
 from diffusers.models.attention_processor import Attention
@@ -208,6 +207,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             clip_image_in_channels (`int`, *optional*):
                 Number of input channels for CLIP based image conditioning.
             clip_seq (`int`, *optional*, defaults to 4):
+                Sequence length for CLIP text/image conditioning features.
             effnet_in_channels (`int`, *optional*, defaults to `None`):
                 Number of input channels for effnet conditioning.
             pixel_mapper_in_channels (`int`, defaults to `None`):
@@ -291,9 +291,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             elif block_type == "SDCascadeAttnBlock":
                 return SDCascadeAttnBlock(in_channels, conditioning_dim, nhead, self_attn=self_attn, dropout=dropout)
             elif block_type == "SDCascadeTimestepBlock":
-                return SDCascadeTimestepBlock(
-                    in_channels, timestep_ratio_embedding_dim, conds=timestep_conditioning_type
-                )
+                return SDCascadeTimestepBlock(in_channels, timestep_ratio_embedding_dim, conds=timestep_conditioning_type)
             else:
                 raise ValueError(f"Block type {block_type} not supported")
 
@@ -307,11 +305,13 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 self.down_downscalers.append(
                     nn.Sequential(
                         SDCascadeLayerNorm(block_out_channels[i - 1], elementwise_affine=False, eps=1e-6),
-                        UpDownBlock2d(
-                            block_out_channels[i - 1], block_out_channels[i], mode="down", enabled=switch_level[i - 1]
-                        )
-                        if switch_level is not None
-                        else nn.Conv2d(block_out_channels[i - 1], block_out_channels[i], kernel_size=2, stride=2),
+                        (
+                            UpDownBlock2d(
+                                block_out_channels[i - 1], block_out_channels[i], mode="down", enabled=switch_level[i - 1]
+                            )
+                            if switch_level is not None
+                            else nn.Conv2d(block_out_channels[i - 1], block_out_channels[i], kernel_size=2, stride=2)
+                        ),
                     )
                 )
             else:
@@ -345,12 +345,14 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 self.up_upscalers.append(
                     nn.Sequential(
                         SDCascadeLayerNorm(block_out_channels[i], elementwise_affine=False, eps=1e-6),
-                        UpDownBlock2d(
-                            block_out_channels[i], block_out_channels[i - 1], mode="up", enabled=switch_level[i - 1]
-                        )
-                        if switch_level is not None
-                        else nn.ConvTranspose2d(
-                            block_out_channels[i], block_out_channels[i - 1], kernel_size=2, stride=2
+                        (
+                            UpDownBlock2d(
+                                block_out_channels[i], block_out_channels[i - 1], mode="up", enabled=switch_level[i - 1]
+                            )
+                            if switch_level is not None
+                            else nn.ConvTranspose2d(
+                                block_out_channels[i], block_out_channels[i - 1], kernel_size=2, stride=2
+                            )
                         ),
                     )
                 )
@@ -412,7 +414,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         for level_block in self.down_blocks + self.up_blocks:
             for block in level_block:
                 if isinstance(block, SDCascadeResBlock):
-                    block.channelwise[-1].weight.data *= np.sqrt(1 / sum(self.config.blocks[0]))
+                    block.channelwise[-1].weight.data *= np.sqrt(1 / sum(self.config.block_out_channels))
                 elif isinstance(block, SDCascadeTimestepBlock):
                     nn.init.constant_(block.mapper.weight, 0)
 
@@ -432,7 +434,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
     def get_clip_embeddings(self, clip_txt_pooled, clip_txt=None, clip_img=None):
         if len(clip_txt_pooled.shape) == 2:
-            clip_txt_pool = clip_txt_pooled.unsqueeze(1)
+            clip_txt_pooled = clip_txt_pooled.unsqueeze(1)
         clip_txt_pool = self.clip_txt_pooled_mapper(clip_txt_pooled).view(
             clip_txt_pooled.size(0), clip_txt_pooled.size(1) * self.config.clip_seq, -1
         )
@@ -440,9 +442,7 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             clip_txt = self.clip_txt_mapper(clip_txt)
             if len(clip_img.shape) == 2:
                 clip_img = clip_img.unsqueeze(1)
-            clip_img = self.clip_img_mapper(clip_img).view(
-                clip_img.size(0), clip_img.size(1) * self.config.clip_seq, -1
-            )
+            clip_img = self.clip_img_mapper(clip_img).view(clip_img.size(0), clip_img.size(1) * self.config.clip_seq, -1)
             clip = torch.cat([clip_txt, clip_txt_pool, clip_img], dim=1)
         else:
             clip = clip_txt_pool

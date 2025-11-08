@@ -1,5 +1,5 @@
 import unittest
-from unittest import mock
+import unittest.mock as mock
 
 try:
     import torch
@@ -8,13 +8,8 @@ except ModuleNotFoundError:  # pragma: no cover - environments without torch
 
 STABLE_CASCADE_IMPORT_ERROR = False
 try:
-    from simpletuner.helpers.models.stable_cascade import (
-        DDPMWuerstchenScheduler,
-        StableCascadeStageC,
-    )
-    from simpletuner.helpers.models.stable_cascade.autoencoder import (
-        StableCascadeStageCAutoencoder,
-    )
+    from simpletuner.helpers.models.stable_cascade import DDPMWuerstchenScheduler, StableCascadeStageC
+    from simpletuner.helpers.models.stable_cascade.autoencoder import StableCascadeStageCAutoencoder
 except Exception:  # pragma: no cover - missing deps
     DDPMWuerstchenScheduler = None
     StableCascadeStageC = None
