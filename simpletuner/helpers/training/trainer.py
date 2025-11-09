@@ -4030,12 +4030,13 @@ class Trainer:
                 progress_bar.set_postfix(**logs)
 
                 if self.validation is not None:
-                    if self.validation.would_validate():
+                    should_validate = self.validation.would_validate()
+                    if should_validate:
                         self.mark_optimizer_eval()
                         self.enable_sageattention_inference()
                         self.disable_gradient_checkpointing()
                     self.validation.run_validations(validation_type="intermediary", step=step)
-                    if self.validation.would_validate():
+                    if should_validate:
                         self.disable_sageattention_inference()
                         self.enable_gradient_checkpointing()
                         self.mark_optimizer_train()
