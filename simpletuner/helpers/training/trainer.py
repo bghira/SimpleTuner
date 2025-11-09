@@ -3976,7 +3976,7 @@ class Trainer:
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None
-                        and self.config.accelerator.cache_clear_interval > 0
+                        and self.config.accelerator_cache_clear_interval > 0
                         and self.state["global_step"] % self.config.accelerator_cache_clear_interval == 0
                     ):
                         reclaim_memory()
