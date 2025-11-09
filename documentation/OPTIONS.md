@@ -1115,7 +1115,8 @@ options:
   --sageattention_usage {training,inference,training+inference}
                         When to use SageAttention
   --disable_tf32 [DISABLE_TF32]
-                        Disable TF32 precision on Ampere GPUs
+                        Force IEEE FP32 precision (disables TF32) using
+                        PyTorch's fp32_precision controls when available
   --set_grads_to_none [SET_GRADS_TO_NONE]
                         Set gradients to None instead of zero
   --noise_offset NOISE_OFFSET
