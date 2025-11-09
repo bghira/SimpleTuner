@@ -443,8 +443,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=False,
             platform_specific=["cuda"],
-            help_text="Disable TF32 precision on Ampere GPUs",
-            tooltip="TF32 is enabled by default on RTX 3000/4000 series. Disabling may reduce performance but increase precision.",
+            help_text="Force IEEE FP32 precision (disables TF32) via PyTorch's fp32_precision controls",
+            tooltip="SimpleTuner enables TF32 by default using PyTorch 2.9+ precision overrides. Disable if TF32 hurts accuracy or determinism.",
             importance=ImportanceLevel.ADVANCED,
             order=11,
         )
@@ -2051,8 +2051,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=False,
             platform_specific=["cuda"],
-            help_text="Disable TF32 precision on Ampere GPUs",
-            tooltip="TF32 is enabled by default on RTX 3000/4000 series. Disabling may reduce performance but increase precision.",
+            help_text="Force IEEE FP32 precision (disables TF32) via PyTorch's fp32_precision controls",
+            tooltip="SimpleTuner enables TF32 by default using PyTorch 2.9+ precision overrides. Disable if TF32 hurts accuracy or determinism.",
             importance=ImportanceLevel.ADVANCED,
             order=11,
         )
