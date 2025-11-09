@@ -102,6 +102,51 @@ def _configure_tf32(disable_tf32: bool) -> None:
         info_log("Enabled NVIDIA TF32 for faster training on Ampere GPUs. Use --disable_tf32 if this causes any problems.")
 
 
+def _configure_rocm_environment() -> None:
+    """Enable ROCm-specific acceleration toggles when running on HIP builds."""
+    if not torch.cuda.is_available():
+        return
+    hip_version = getattr(getattr(torch, "version", None), "hip", None)
+    if not hip_version:
+        return
+
+    os.environ.setdefault("PYTORCH_TUNABLEOP_ENABLED", "1")
+
+    if "HIPBLASLT_ALLOW_TF32" in os.environ:
+        return
+
+    if not _has_mi300_gpu():
+        return
+
+    os.environ["HIPBLASLT_ALLOW_TF32"] = "1"
+
+
+def _has_mi300_gpu() -> bool:
+    """Return True when at least one visible device exposes an MI300 (gfx94x) architecture."""
+    try:
+        device_count = torch.cuda.device_count()
+    except Exception:
+        device_count = 0
+
+    for index in range(device_count):
+        try:
+            props = torch.cuda.get_device_properties(index)
+        except Exception:
+            continue
+        if _device_is_mi300(props):
+            return True
+    return False
+
+
+def _device_is_mi300(props: Any) -> bool:
+    mi300_tokens = ("mi300", "gfx940", "gfx941", "gfx942", "gfx943", "gfx944", "gfx94")
+    candidates = (
+        str(getattr(props, "gcnArchName", "") or "").lower(),
+        str(getattr(props, "name", "") or "").lower(),
+    )
+    return any(token in candidate for token in mi300_tokens for candidate in candidates)
+
+
 _ARG_PARSER_CACHE: Optional[argparse.ArgumentParser] = None
 
 BOOL_TRUE_STRINGS = {"1", "true", "yes", "y", "on"}
@@ -669,6 +714,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     _configure_tf32(disable_tf32=args.disable_tf32)
+    _configure_rocm_environment()
 
     args.is_quantized = False if (args.base_model_precision == "no_change" or "lora" not in args.model_type) else True
     args.weight_dtype = (

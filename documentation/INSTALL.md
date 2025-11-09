@@ -86,6 +86,8 @@ pushd /opt/rocm/share/amd_smi
 popd
 ```
 
+> ℹ️ **ROCm acceleration defaults**: When SimpleTuner detects a HIP-enabled PyTorch build it automatically exports `PYTORCH_TUNABLEOP_ENABLED=1` (unless you already set it) so TunableOp kernels are available. On MI300/gfx94x devices we also set `HIPBLASLT_ALLOW_TF32=1` by default, enabling hipBLASLt’s TF32 paths without requiring manual environment tweaks.
+
 ### All platforms
 
 - 2a. **Option One (Recommended)**: Run `simpletuner configure`
