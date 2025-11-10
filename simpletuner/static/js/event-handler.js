@@ -903,6 +903,12 @@ class EventHandler {
                         totalValue = 100;
                     }
                     const stageStatus = this.extractLifecycleStatus(stageInfo);
+
+                    // Clear completed lifecycle events when a Running lifecycle event arrives
+                    if (stageStatus === 'running') {
+                        this.clearCompletedLifecycleEvents();
+                    }
+
                     const progressElement = this.updateProgressBar(
                         String(progressType),
                         currentValue,
@@ -1109,16 +1115,17 @@ class EventHandler {
         const isTraining = options.forceTraining === true || activeStatuses.has(normalizedStatus);
         const shouldResetProgress = options.resetProgress === true || terminalStatuses.has(normalizedStatus);
 
+        // Clear completed lifecycle events when training enters running state
+        // Do this before the early return so it happens on every 'running' event
+        if (normalizedStatus === 'running') {
+            this.clearCompletedLifecycleEvents();
+        }
+
         if (this.lastReportedStatus === normalizedStatus && !options.force && jobId === this.lastKnownJobId && !shouldResetProgress) {
             return;
         }
 
         this.lastReportedStatus = normalizedStatus;
-
-        // Clear completed lifecycle events when training enters running state
-        if (normalizedStatus === 'running') {
-            this.clearCompletedLifecycleEvents();
-        }
 
         const trainerActions = this.getTrainerActionsInstance();
         if (trainerActions) {

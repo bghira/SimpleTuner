@@ -434,6 +434,67 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertEqual(remaining_progress[0].get("current"), "1")
                 self.assertEqual(remaining_progress[0].get("total"), "3")
 
+            with self.subTest("lifecycle_stage_completion_schedules_removal"):
+                lifecycle_stage_check = driver.execute_script(
+                    """
+                    return (function() {
+                        const handler = window.eventHandler;
+                        if (!handler || typeof handler.parseStructuredData !== 'function') {
+                            return { hasHandler: false };
+                        }
+
+                        let container = document.getElementById('progressBars');
+                        const hadContainer = !!container;
+                        if (!container) {
+                            container = document.createElement('div');
+                            container.id = 'progressBars';
+                            const dock = document.querySelector('.event-dock-body') || document.body;
+                            dock.appendChild(container);
+                        }
+
+                        container.innerHTML = '';
+
+                        handler.parseStructuredData({
+                            message_type: 'lifecycle.stage',
+                            stage: {
+                                key: 'dataset_indexing',
+                                label: 'Dataset Indexing',
+                                status: 'completed',
+                                progress: {
+                                    current: 1,
+                                    total: 10,
+                                    percent: 10
+                                }
+                            }
+                        });
+
+                        const item = container.querySelector('.progress-item');
+                        const result = {
+                            hasHandler: true,
+                            itemExists: !!item,
+                            lifecycleStatus: item ? item.dataset.lifecycleStatus : null,
+                            removalScheduled: item ? item.dataset.removalScheduled === 'true' : false
+                        };
+
+                        container.innerHTML = '';
+                        if (!hadContainer && container.parentNode) {
+                            container.parentNode.removeChild(container);
+                        }
+
+                        return result;
+                    })();
+                    """
+                )
+                self.assertTrue(lifecycle_stage_check.get("hasHandler"), "Event handler should handle lifecycle stages")
+                self.assertTrue(
+                    lifecycle_stage_check.get("itemExists"), "Lifecycle stage event should create a progress entry"
+                )
+                self.assertEqual(lifecycle_stage_check.get("lifecycleStatus"), "completed")
+                self.assertTrue(
+                    lifecycle_stage_check.get("removalScheduled"),
+                    "Completed lifecycle stages should schedule progress removal even if percent < 100",
+                )
+
             driver.execute_script(
                 dispatch_script,
                 {
