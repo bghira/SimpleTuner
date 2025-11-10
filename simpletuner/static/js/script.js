@@ -1,24 +1,3 @@
-// Function to trigger manual validation
-async function triggerManualValidation() {
-    try {
-        const response = await fetch('/api/training/validation/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        const data = await response.json();
-        if (response.ok) {
-            window.showToast(data.result || 'Validation queued successfully', 'success');
-        } else {
-            window.showToast(data.detail || 'Failed to queue validation', 'error');
-        }
-    } catch (error) {
-        window.showToast('Error triggering validation: ' + error.message, 'error');
-    }
-}
-
-// Expose function to window for template access
-window.triggerManualValidation = triggerManualValidation;
-
 // Wrap in IIFE to wait for ServerConfig
 (async function() {
     // Wait for server configuration to be ready
