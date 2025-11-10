@@ -967,6 +967,27 @@ class EventHandler {
         }
     }
 
+    clearCompletedLifecycleEvents() {
+        const progressBars = document.getElementById('progressBars');
+        if (!progressBars) {
+            return;
+        }
+
+        // Find all progress items that are at 100% and remove them
+        const progressItems = Array.from(progressBars.querySelectorAll('.progress-item'));
+        for (const item of progressItems) {
+            const current = Number(item.dataset.current);
+            const total = Number(item.dataset.total);
+
+            if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+                const percent = (current / total) * 100;
+                if (percent >= 99.9) {
+                    item.remove();
+                }
+            }
+        }
+    }
+
     shouldDisplayEvent(event) {
         // Determine if an event without a message should still be displayed
         return ['train', 'validation', 'checkpoint'].includes(event.message_type);
@@ -1022,6 +1043,11 @@ class EventHandler {
         }
 
         this.lastReportedStatus = normalizedStatus;
+
+        // Clear completed lifecycle events when training enters running state
+        if (normalizedStatus === 'running') {
+            this.clearCompletedLifecycleEvents();
+        }
 
         const trainerActions = this.getTrainerActionsInstance();
         if (trainerActions) {
