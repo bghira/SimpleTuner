@@ -54,6 +54,12 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: This is useful for large models like HiDream and Wan 2.1, which can OOM when loading the VAE cache. This option does not impact quality of training, but for very large text encoders or slow CPUs, it can extend startup time substantially with many datasets. This is disabled by default due to this reason.
 - **Tip**: Complements the group offloading feature below for especially memory-constrained systems.
 
+### `--offload_during_save`
+
+- **What**: Temporarily move the entire pipeline to CPU while `save_hooks.py` prepares checkpoints so that all FP8/quantized weights are written off-device.
+- **Why**: Saving fp8-quanto weights can spike VRAM usage (for example, during `state_dict()` serialization). This option keeps the model on the accelerator for training but offloads it briefly when a save is triggered to avoid CUDA OOMs.
+- **Tip**: Enable this only when saving fails with OOM errors; the loader moves the model back afterward so training resumes seamlessly.
+
 ### `--enable_group_offload`
 
 - **What**: Enables diffusers' grouped module offloading so model blocks can be staged on CPU (or disk) between forward passes.

@@ -316,6 +316,22 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="offload_during_save",
+            arg_name="--offload_during_save",
+            ui_label="Offload During Save",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Temporarily move models to CPU when checkpoints are written to avoid VRAM pressure.",
+            tooltip="Helps avoid CUDA OOMs during fp8 checkpoint saves; the model is restored immediately afterwards.",
+            importance=ImportanceLevel.ADVANCED,
+            order=10,
+        )
+    )
+
     # Feed-forward chunking (Wan)
     registry._add_field(
         ConfigField(
