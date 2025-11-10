@@ -1019,3 +1019,23 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
     if clear_job_id:
         APIState.set_state("current_job_id", None)
     return True
+
+
+def request_manual_validation(job_id: Optional[str] = None) -> str:
+    """Signal the running trainer to execute validation after the next gradient sync."""
+
+    active_job = job_id or APIState.get_state("current_job_id")
+    if not active_job:
+        raise RuntimeError("No active training job to validate.")
+    process_keeper.send_process_command(active_job, "trigger_validation", None)
+    return active_job
+
+
+def request_manual_checkpoint(job_id: Optional[str] = None) -> str:
+    """Signal the running trainer to persist a checkpoint after the next gradient sync."""
+
+    active_job = job_id or APIState.get_state("current_job_id")
+    if not active_job:
+        raise RuntimeError("No active training job to checkpoint.")
+    process_keeper.send_process_command(active_job, "trigger_checkpoint", None)
+    return active_job

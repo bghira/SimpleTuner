@@ -134,6 +134,73 @@ curl -s -X POST http://localhost:8001/api/training/start \
 
 The payload must be JSON serialised as a string; the server posts job lifecycle updates to the `callback_url`. See the `--webhook_config` description in `documentation/OPTIONS.md` or the sample `config/webhooks.json` template for supported fields.
 
+### Trigger manual validation
+
+If you want to force an evaluation pass **between** scheduled validation intervals, call the new endpoint:
+
+```bash
+curl -s -X POST http://localhost:8001/api/training/validation/run
+```
+
+- The server responds with the active `job_id`.
+- The trainer queues a validation run that fires immediately after the next gradient synchronization (it does not interrupt the current micro-batch).
+- The run reuses your configured validation prompts/settings so the resulting images appear in the usual event/log streams.
+
+If no job is active the endpoint returns HTTP 400, so check `/api/training/status` first when scripting retries.
+
+### Trigger manual checkpoint
+
+To persist the current model state immediately (without waiting for the next scheduled checkpoint), hit:
+
+```bash
+curl -s -X POST http://localhost:8001/api/training/checkpoint/run
+```
+
+- The server responds with the active `job_id`.
+- The trainer saves a checkpoint after the next gradient synchronization using the same settings as scheduled checkpoints (upload rules, rolling retention, etc.).
+- Rolling cleanup and webhook notifications behave exactly like a scheduled checkpoint.
+
+As with validation, the endpoint returns HTTP 400 if no training job is running.
+
+### Stream validation previews
+
+Models that expose Tiny AutoEncoder (or equivalent) hooks can emit **per-step validation previews** while an image/video is still being sampled. Enable the feature by adding the CLI flags to your payload:
+
+```bash
+curl -s -X POST http://localhost:8001/api/training/start \
+  -F __active_tab__=validation \
+  -F --validation_preview=true \
+  -F --validation_preview_steps=4 \
+  -F --validation_num_inference_steps=20 \
+  …other fields…
+```
+
+- `--validation_preview` (defaults to `false`) unlocks the preview decoder.
+- `--validation_preview_steps` determines how often to emit intermediate frames. With the example above, you receive events at steps 1,5,9,13,17,20 (the first step is always emitted, then every 4th step).
+
+Each preview is published as a `validation.image` event (see `simpletuner/helpers/training/validation.py:899-929`). You can consume them via raw webhooks, `GET /api/training/events`, or the SSE stream at `/api/training/events/stream`. A typical payload looks like:
+
+```json
+{
+  "type": "validation.image",
+  "title": "Validation (step 5/20): night bench",
+  "body": "night bench shot of <token>",
+  "data": {
+    "step": 5,
+    "timestep": 563.0,
+    "resolution": [1024, 1024],
+    "validation_type": "intermediary",
+    "prompt": "night bench shot of <token>",
+    "step_label": "5/20"
+  },
+  "images": [
+    {"src": "data:image/png;base64,...", "mime_type": "image/png"}
+  ]
+}
+```
+
+Video-capable models attach a `videos` array instead (GIF data URIs with `mime_type: image/gif`). Because these events stream in near-real-time, you can surface them directly in dashboards or send them to Slack/Discord via a raw webhook backend.
+
 ## Common API workflow
 
 1. **Create an environment** – `POST /api/configs/environments`

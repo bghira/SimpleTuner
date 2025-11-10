@@ -333,6 +333,32 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertIsNone(training_service.APIState.get_state("current_job_id"))
         self.assertEqual(training_service.APIState.get_state("training_status"), "cancelled")
 
+    def test_request_manual_validation_sends_command(self) -> None:
+        training_service.APIState.set_state("current_job_id", "job-xyz")
+        with patch.object(training_service.process_keeper, "send_process_command") as mock_send:
+            job_id = training_service.request_manual_validation()
+
+        self.assertEqual(job_id, "job-xyz")
+        mock_send.assert_called_once_with("job-xyz", "trigger_validation", None)
+
+    def test_request_manual_validation_without_job_raises(self) -> None:
+        training_service.APIState.set_state("current_job_id", None)
+        with self.assertRaises(RuntimeError):
+            training_service.request_manual_validation()
+
+    def test_request_manual_checkpoint_sends_command(self) -> None:
+        training_service.APIState.set_state("current_job_id", "job-abc")
+        with patch.object(training_service.process_keeper, "send_process_command") as mock_send:
+            job_id = training_service.request_manual_checkpoint()
+
+        self.assertEqual(job_id, "job-abc")
+        mock_send.assert_called_once_with("job-abc", "trigger_checkpoint", None)
+
+    def test_request_manual_checkpoint_without_job_raises(self) -> None:
+        training_service.APIState.set_state("current_job_id", None)
+        with self.assertRaises(RuntimeError):
+            training_service.request_manual_checkpoint()
+
     def test_build_config_bundle_filters_webui_only_fields(self) -> None:
         """Test that webui_only fields are filtered from config_dict and don't appear in trainer configs."""
 
