@@ -5550,6 +5550,12 @@ function trainerComponent() {
                 <div class="event-dock-actions">
                     <button type="button" class="btn btn-sm btn-outline-light"
                             x-show="showTrainingProgress"
+                            title="Trigger checkpoint save after next gradient sync"
+                            @click="window.triggerManualCheckpoint()">
+                        <i class="fas fa-save"></i> Trigger Checkpoint
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light"
+                            x-show="showTrainingProgress"
                             title="Trigger validation run after next gradient sync"
                             @click="window.triggerManualValidation()">
                         <i class="fas fa-check-circle"></i> Trigger Validation
@@ -5791,6 +5797,24 @@ window.triggerManualValidation = async function() {
         }
     } catch (error) {
         window.showToast('Error triggering validation: ' + error.message, 'error');
+    }
+};
+
+// Function to trigger manual checkpointing
+window.triggerManualCheckpoint = async function() {
+    try {
+        const response = await fetch('/api/training/checkpoint/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        if (response.ok) {
+            window.showToast(data.message || 'Checkpoint queued successfully', 'success');
+        } else {
+            window.showToast(data.detail || 'Failed to queue checkpoint', 'error');
+        }
+    } catch (error) {
+        window.showToast('Error triggering checkpoint: ' + error.message, 'error');
     }
 };
 </script>

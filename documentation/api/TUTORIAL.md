@@ -148,6 +148,20 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
 
 If no job is active the endpoint returns HTTP 400, so check `/api/training/status` first when scripting retries.
 
+### Trigger manual checkpoint
+
+To persist the current model state immediately (without waiting for the next scheduled checkpoint), hit:
+
+```bash
+curl -s -X POST http://localhost:8001/api/training/checkpoint/run
+```
+
+- The server responds with the active `job_id`.
+- The trainer saves a checkpoint after the next gradient synchronization using the same settings as scheduled checkpoints (upload rules, rolling retention, etc.).
+- Rolling cleanup and webhook notifications behave exactly like a scheduled checkpoint.
+
+As with validation, the endpoint returns HTTP 400 if no training job is running.
+
 ### Stream validation previews
 
 Models that expose Tiny AutoEncoder (or equivalent) hooks can emit **per-step validation previews** while an image/video is still being sampled. Enable the feature by adding the CLI flags to your payload:
