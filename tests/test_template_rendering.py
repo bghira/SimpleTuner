@@ -20,6 +20,28 @@ class TemplateRenderingTests(unittest.TestCase):
         template = self.env.get_template("form_field.html")
         return template.render(field=field_payload)
 
+    def render_field_htmx(self, field_payload):
+        template = self.env.get_template("partials/form_field_htmx.html")
+        return template.render(field=field_payload)
+
+    def render_form_tab(self, **overrides):
+        template = self.env.get_template("form_tab.html")
+        base_context = {
+            "tab_name": "validation",
+            "danger_mode_enabled": False,
+            "tab_config": {
+                "id": "validation",
+                "title": "Validation",
+                "icon": "fas fa-check",
+                "description": "",
+            },
+            "fields": [],
+            "sections": [],
+            "config_values": {},
+        }
+        base_context.update(overrides)
+        return template.render(**base_context)
+
     def test_text_field_has_basic_attributes_and_no_x_model(self):
         rendered = self.render_field(
             {
@@ -158,6 +180,44 @@ class TemplateRenderingTests(unittest.TestCase):
         )
 
         self.assertIn("This is a helpful description", rendered)
+
+    def test_prompt_library_component_renders_dropdown_and_script(self):
+        rendered = self.render_field_htmx(
+            {
+                "id": "user_prompt_library",
+                "name": "user_prompt_library",
+                "type": "text",
+                "label": "Custom Prompt Library Path",
+                "value": "",
+                "custom_component": "prompt_library_path",
+            }
+        )
+
+        self.assertIn('class="prompt-library-selector"', rendered)
+        self.assertIn('data-prompt-library-field="user_prompt_library"', rendered)
+        self.assertIn('class="prompt-library-dropdown dropdown flex-grow-1"', rendered)
+        self.assertIn("prompt-library-custom-toggle", rendered)
+        self.assertIn("Use custom path", rendered)
+        self.assertIn("window.promptLibrarySelector", rendered)
+        self.assertIn("lib?.absolute_path", rendered)
+
+    def test_form_tab_embeds_prompt_library_script_when_context_provided(self):
+        rendered = self.render_form_tab(
+            prompt_libraries=[
+                {
+                    "filename": "user_prompt_library-alpha.json",
+                    "relative_path": "validation_prompt_libraries/user_prompt_library-alpha.json",
+                    "display_name": "alpha",
+                    "library_name": "alpha",
+                    "absolute_path": "/tmp/user_prompt_library-alpha.json",
+                    "prompt_count": 1,
+                    "updated_at": "2024-06-24T00:00:00Z",
+                }
+            ]
+        )
+
+        self.assertIn("window.__promptLibraries =", rendered)
+        self.assertIn("user_prompt_library-alpha.json", rendered)
 
 
 if __name__ == "__main__":

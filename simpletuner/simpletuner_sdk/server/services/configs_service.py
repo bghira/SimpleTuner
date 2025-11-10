@@ -1120,6 +1120,7 @@ class ConfigsService:
             "--data_backend_config",
             "--webhook_config",
             "--lycoris_config",
+            "--user_prompt_library",
         }
 
         numeric_fields = {

@@ -251,6 +251,416 @@
             })();
         </script>
 
+    {% elif custom_component == 'prompt_library_path' %}
+        <div class="prompt-library-selector" data-prompt-library-field="{{ field_id }}">
+            <div class="input-group">
+                <div class="prompt-library-dropdown dropdown flex-grow-1">
+                    <input type="hidden"
+                           id="{{ field_id }}"
+                           name="{{ field_name }}"
+                           value="{{ field_value }}"
+                           {% if field.required %}data-required="true"{% endif %}
+                           {% if field.disabled %}disabled{% endif %}
+                           data-debounce="500"
+                           hx-post="/api/validate/{{ field_id }}"
+                           hx-trigger="change"
+                           hx-target="#field-feedback-{{ field_id }}"
+                           hx-swap="innerHTML"
+                           hx-on::after-request="window.handleFieldValidation(event, this)"
+                           data-feedback-id="field-feedback-{{ field_id }}">
+                    <button class="btn btn-outline-secondary w-100 dropdown-toggle prompt-library-toggle"
+                            type="button"
+                            data-bs-toggle="dropdown"
+                            aria-expanded="false"
+                            {% if field.disabled %}disabled{% endif %}>
+                        <span class="prompt-library-toggle-label">
+                            {% if field_value %}
+                                <span class="prompt-library-toggle-name">Custom path</span>
+                                <span class="prompt-library-toggle-path">{{ field_value }}</span>
+                            {% else %}
+                                <span class="text-muted">Select prompt library</span>
+                            {% endif %}
+                        </span>
+                    </button>
+                    <div class="dropdown-menu w-100 prompt-library-menu" role="menu"></div>
+                </div>
+                <button class="btn btn-outline-secondary"
+                        type="button"
+                        id="prompt-library-button-{{ field_id }}"
+                        data-prompt-library-trigger
+                        data-prompt-library-target="{{ field_id }}">
+                    <i class="fas fa-book"></i>
+                    <span data-prompt-library-button-label>
+                        {{ 'Edit prompt library' if field_value else 'Create prompt library' }}
+                    </span>
+                </button>
+            </div>
+            <div class="d-flex justify-content-between align-items-center mt-2">
+                <button type="button"
+                        class="btn btn-link btn-sm px-0 prompt-library-custom-toggle"
+                        data-custom-toggle="{{ field_id }}"
+                        {% if field.disabled %}disabled{% endif %}>
+                    Use custom path
+                </button>
+                <small class="text-muted">Libraries live under validation_prompt_libraries/</small>
+            </div>
+            <div class="prompt-library-custom d-none mt-2" data-custom-container="{{ field_id }}">
+                <input type="text"
+                       class="form-control form-control-sm"
+                       placeholder="{{ field.placeholder|default('/path/to/prompt_library.json') }}"
+                       value="{{ field_value }}"
+                       data-custom-input="{{ field_id }}"
+                       {% if field.disabled %}disabled{% endif %}>
+            </div>
+            <div class="form-text mt-2">
+                Selecting a saved library fills this path automatically. Custom paths let you point at JSON files managed outside SimpleTuner.
+            </div>
+        </div>
+        <script>
+        (function() {
+            function getTrainerStore() {
+                return (window.Alpine && typeof window.Alpine.store === 'function')
+                    ? window.Alpine.store('trainer')
+                    : null;
+            }
+
+            function ensureSelectorModule() {
+                if (window.promptLibrarySelector) {
+                    return window.promptLibrarySelector;
+                }
+
+                const state = {
+                    libraries: Array.isArray(window.__promptLibraries) ? window.__promptLibraries.slice() : [],
+                    fields: new Map(),
+                };
+
+                const cleanupFields = () => {
+                    state.fields.forEach((field, key) => {
+                        if (!field.root || !field.root.isConnected) {
+                            state.fields.delete(key);
+                        }
+                    });
+                };
+
+                const normalizePath = (value) => {
+                    if (!value) {
+                        return '';
+                    }
+                    return String(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
+                };
+
+                const escapeHtml = (value) => {
+                    if (value == null) {
+                        return '';
+                    }
+                    return String(value).replace(/[&<>"']/g, (char) => ({
+                        '&': '&amp;',
+                        '<': '&lt;',
+                        '>': '&gt;',
+                        '"': '&quot;',
+                        "'": '&#39;',
+                    }[char] || char));
+                };
+
+                const getActiveEnvironment = () => {
+                    const store = getTrainerStore();
+                    return store && typeof store.activeEnvironment === 'string'
+                        ? store.activeEnvironment.trim()
+                        : '';
+                };
+
+                const dispatchValidation = (input) => {
+                    if (!input) {
+                        return;
+                    }
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                };
+
+                const sortLibraries = () => {
+                    const env = normalizePath(getActiveEnvironment());
+                    const prefix = env ? `${env}/` : '';
+                    const libs = state.libraries.slice();
+                    libs.sort((a, b) => {
+                        const priority = (entry) => {
+                            const rel = normalizePath(entry?.relative_path || '');
+                            return prefix && rel.startsWith(prefix) ? 1 : 0;
+                        };
+                        const diff = priority(b) - priority(a);
+                        if (diff !== 0) {
+                            return diff;
+                        }
+                        const labelFor = (entry) => (entry?.display_name || entry?.filename || '').toLowerCase();
+                        return labelFor(a).localeCompare(labelFor(b));
+                    });
+                    return libs;
+                };
+
+                const formatLabel = (field, value) => {
+                    const label = field.label;
+                    if (!label) {
+                        return;
+                    }
+                    const libs = state.libraries || [];
+                    const match = libs.find((entry) => entry.relative_path === value || entry.absolute_path === value);
+                    if (match) {
+                        const env = getActiveEnvironment();
+                        const relPath = match.relative_path || '';
+                        const prefix = env ? `${env}/` : '';
+                        const isEnvMatch = Boolean(prefix && relPath.startsWith(prefix));
+                        const nameText = escapeHtml(match.display_name || match.filename || '');
+                        const pathText = escapeHtml(relPath);
+                        label.innerHTML = `
+                            <span class="prompt-library-toggle-name">
+                                ${nameText}
+                                ${isEnvMatch ? '<span class="badge bg-primary-subtle text-primary-emphasis ms-2">Current env</span>' : ''}
+                            </span>
+                            <span class="prompt-library-toggle-path">${pathText}</span>
+                        `;
+                    } else if (value) {
+                        const customText = escapeHtml(value);
+                        label.innerHTML = `
+                            <span class="prompt-library-toggle-name">Custom path</span>
+                            <span class="prompt-library-toggle-path">${customText}</span>
+                        `;
+                    } else {
+                        label.innerHTML = '<span class="text-muted">Select prompt library</span>';
+                    }
+                };
+
+                const setHiddenValue = (field, value, source) => {
+                    if (!field.hiddenInput) {
+                        return;
+                    }
+                    const sanitized = value || '';
+                    const changed = field.hiddenInput.value !== sanitized;
+                    field.hiddenInput.value = sanitized;
+                    if (field.customInput && source !== 'custom') {
+                        field.customInput.value = sanitized;
+                    }
+                    formatLabel(field, sanitized);
+                    if (changed) {
+                        dispatchValidation(field.hiddenInput);
+                    }
+                    if (field.customContainer && source !== 'custom' && !field.customContainer.classList.contains('d-none')) {
+                        field.customContainer.classList.add('d-none');
+                        if (field.customToggle) {
+                            field.customToggle.textContent = 'Use custom path';
+                        }
+                    }
+                    if (field.customContainer && !sanitized && !field.customContainer.classList.contains('d-none')) {
+                        field.customContainer.classList.add('d-none');
+                        if (field.customToggle) {
+                            field.customToggle.textContent = 'Use custom path';
+                        }
+                    }
+                };
+
+                const handleOptionSelect = (field, lib) => {
+                    const nextValue = (lib?.absolute_path || lib?.relative_path || '').trim();
+                    setHiddenValue(field, nextValue, 'dropdown');
+                    if (field.dropdownInstance && typeof field.dropdownInstance.hide === 'function') {
+                        field.dropdownInstance.hide();
+                    }
+                };
+
+                const renderEmptyState = (menu) => {
+                    const message = document.createElement('div');
+                    message.className = 'dropdown-item text-muted small';
+                    message.textContent = 'No prompt libraries found. Use the editor to create one.';
+                    message.tabIndex = -1;
+                    message.setAttribute('role', 'presentation');
+                    menu.appendChild(message);
+                };
+
+                const renderOption = (field, lib) => {
+                    const option = document.createElement('button');
+                    option.type = 'button';
+                    option.className = 'dropdown-item prompt-library-option';
+                    option.dataset.value = lib.relative_path || '';
+                    option.dataset.absolutePath = lib.absolute_path || '';
+                    option.dataset.relativePath = lib.relative_path || '';
+                    const env = normalizePath(getActiveEnvironment());
+                    const prefix = env ? `${env}/` : '';
+                    const isEnvMatch = Boolean(prefix && normalizePath(lib.relative_path || '').startsWith(prefix));
+                    const name = document.createElement('span');
+                    name.className = 'prompt-library-option-name';
+                    name.textContent = lib.display_name || lib.filename || 'prompt library';
+                    const path = document.createElement('span');
+                    path.className = 'prompt-library-option-path';
+                    path.textContent = lib.relative_path || lib.filename || '';
+                    if (isEnvMatch) {
+                        const badge = document.createElement('span');
+                        badge.className = 'badge bg-primary-subtle text-primary-emphasis ms-2';
+                        badge.textContent = 'Current env';
+                        name.appendChild(badge);
+                    }
+                    option.appendChild(name);
+                    option.appendChild(path);
+                    const hiddenValue = field.hiddenInput ? field.hiddenInput.value : '';
+                    if (hiddenValue && hiddenValue === (lib.absolute_path || lib.relative_path || '')) {
+                        option.classList.add('active');
+                    }
+                    option.addEventListener('click', () => handleOptionSelect(field, lib));
+                    return option;
+                };
+
+                const renderClearOption = (field) => {
+                    const clearBtn = document.createElement('button');
+                    clearBtn.type = 'button';
+                    clearBtn.className = 'dropdown-item text-start';
+                    clearBtn.textContent = 'Clear selection';
+                    clearBtn.addEventListener('click', () => handleOptionSelect(field, { relative_path: '' }));
+                    return clearBtn;
+                };
+
+                const populateMenu = (field) => {
+                    if (!field.menu) {
+                        return;
+                    }
+                    field.menu.innerHTML = '';
+                    field.menu.appendChild(renderClearOption(field));
+                    const libs = sortLibraries();
+                    if (!libs.length) {
+                        renderEmptyState(field.menu);
+                        return;
+                    }
+                    libs.forEach((lib) => {
+                        field.menu.appendChild(renderOption(field, lib));
+                    });
+                };
+
+                const toggleCustomVisibility = (field, force) => {
+                    if (!field.customContainer || !field.customToggle) {
+                        return;
+                    }
+                    const nextState = typeof force === 'boolean'
+                        ? force
+                        : field.customContainer.classList.contains('d-none');
+                    field.customContainer.classList.toggle('d-none', !nextState);
+                    field.customToggle.textContent = nextState ? 'Hide custom path' : 'Use custom path';
+                    if (nextState && field.customInput) {
+                        field.customInput.value = field.hiddenInput?.value || '';
+                        field.customInput.focus();
+                        field.customInput.select();
+                    }
+                };
+
+                const registerField = (root) => {
+                    if (!root || root.dataset.promptLibraryInitialized === 'true') {
+                        return;
+                    }
+                    root.dataset.promptLibraryInitialized = 'true';
+                    const fieldId = root.dataset.promptLibraryField;
+                    const hiddenInput = root.querySelector('input[type="hidden"]');
+                    const label = root.querySelector('.prompt-library-toggle-label');
+                    const menu = root.querySelector('.prompt-library-menu');
+                    const toggle = root.querySelector('.prompt-library-toggle');
+                    const customToggle = root.querySelector(`[data-custom-toggle="${fieldId}"]`);
+                    const customContainer = root.querySelector(`[data-custom-container="${fieldId}"]`);
+                    const customInput = customContainer ? customContainer.querySelector('input') : null;
+                    const field = {
+                        fieldId,
+                        root,
+                        hiddenInput,
+                        label,
+                        menu,
+                        toggle,
+                        customToggle,
+                        customContainer,
+                        customInput,
+                        dropdownInstance: null,
+                    };
+                    if (toggle && window.bootstrap && window.bootstrap.Dropdown) {
+                        field.dropdownInstance = window.bootstrap.Dropdown.getOrCreateInstance(toggle);
+                    }
+                    if (hiddenInput) {
+                        hiddenInput.addEventListener('change', () => formatLabel(field, hiddenInput.value || ''));
+                        hiddenInput.addEventListener('input', () => formatLabel(field, hiddenInput.value || ''));
+                    }
+                    if (toggle) {
+                        toggle.addEventListener('click', () => populateMenu(field));
+                    }
+                    if (customInput) {
+                        customInput.addEventListener('input', (event) => {
+                            setHiddenValue(field, event.target.value || '', 'custom');
+                        });
+                    }
+                    if (customToggle) {
+                        customToggle.addEventListener('click', (event) => {
+                            event.preventDefault();
+                            toggleCustomVisibility(field);
+                        });
+                    }
+
+                    const initialValue = hiddenInput ? hiddenInput.value : '';
+                    const libs = state.libraries || [];
+                    const match = libs.find((entry) => entry.relative_path === initialValue || entry.absolute_path === initialValue);
+                    if (initialValue && !match) {
+                        toggleCustomVisibility(field, true);
+                    }
+                    formatLabel(field, initialValue);
+                    populateMenu(field);
+                    if (fieldId && state.fields.has(fieldId)) {
+                        state.fields.delete(fieldId);
+                    }
+                    state.fields.set(fieldId, field);
+                };
+
+                const init = (scope) => {
+                    const target = scope || document;
+                    cleanupFields();
+                    target.querySelectorAll('[data-prompt-library-field]').forEach((root) => registerField(root));
+                };
+
+                const updateLibraries = (libs) => {
+                    state.libraries = Array.isArray(libs) ? libs.slice() : [];
+                    state.fields.forEach((field) => populateMenu(field));
+                    state.fields.forEach((field) => formatLabel(field, field.hiddenInput?.value || ''));
+                };
+
+                window.addEventListener('promptLibrarySaved', (event) => {
+                    const libs = event?.detail?.libraries;
+                    if (Array.isArray(libs)) {
+                        window.__promptLibraries = libs.slice();
+                        updateLibraries(libs);
+                    }
+                });
+
+                window.addEventListener('environment-changed', () => {
+                    state.fields.forEach((field) => {
+                        populateMenu(field);
+                        formatLabel(field, field.hiddenInput?.value || '');
+                    });
+                });
+
+                window.addEventListener('promptLibrariesRefreshed', (event) => {
+                    const libs = event?.detail?.libraries;
+                    if (Array.isArray(libs)) {
+                        window.__promptLibraries = libs.slice();
+                        updateLibraries(libs);
+                    }
+                });
+
+                document.addEventListener('htmx:load', (event) => {
+                    init(event?.detail?.elt || event.target);
+                });
+
+                document.addEventListener('htmx:afterSwap', () => init(document));
+
+                return {
+                    init,
+                    updateLibraries,
+                };
+            }
+
+            const selectorModule = ensureSelectorModule();
+            selectorModule.init(document);
+            if (Array.isArray(window.__promptLibraries)) {
+                selectorModule.updateLibraries(window.__promptLibraries);
+            }
+        })();
+        </script>
     {% elif custom_component == 'merge_environment_toggle' %}
         <div class="merge-env-toggle" x-data="mergeEnvironmentPopover('{{ 'true' if field_value else 'false' }}')">
             <input type="hidden" name="{{ field_name }}" x-model="mergeEnabledString">
@@ -290,7 +700,7 @@
                 </div>
             </div>
 
-            {% if field.description %}
+            {% if field.description and custom_component != 'prompt_library_path' %}
             <p class="form-text mt-2">{{ field.description }}</p>
             {% endif %}
         </div>
@@ -699,6 +1109,97 @@ select[multiple] {
 .dataset-dropdown .dataset-option:focus .dataset-path,
 .dataset-dropdown .dataset-option.active .dataset-path {
     color: rgba(203, 213, 225, 0.9);
+}
+
+/* Prompt library dropdown styling */
+.prompt-library-selector .prompt-library-toggle {
+    background-color: rgba(15, 23, 42, 0.65);
+    color: #e2e8f0;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    text-align: left;
+    padding-right: 2.5rem;
+    position: relative;
+}
+
+.prompt-library-selector .prompt-library-toggle::after {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.prompt-library-selector .prompt-library-toggle:hover,
+.prompt-library-selector .prompt-library-toggle:focus {
+    background-color: rgba(30, 41, 59, 0.85);
+    border-color: rgba(148, 163, 184, 0.65);
+    color: #f8fafc;
+}
+
+.prompt-library-toggle-label {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    gap: 0.15rem;
+}
+
+.prompt-library-toggle-name {
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.prompt-library-toggle-path {
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    font-size: 0.85rem;
+    color: rgba(148, 163, 184, 0.85);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.prompt-library-dropdown .prompt-library-menu {
+    max-height: 280px;
+    overflow-y: auto;
+    background-color: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    box-shadow: 0 18px 40px rgba(8, 47, 73, 0.45);
+    min-width: 100%;
+}
+
+.prompt-library-option {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+    color: #e2e8f0;
+}
+
+.prompt-library-option-name {
+    font-weight: 600;
+}
+
+.prompt-library-option-path {
+    font-size: 0.85rem;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+    color: rgba(148, 163, 184, 0.85);
+    word-break: break-all;
+}
+
+.prompt-library-selector .prompt-library-custom-toggle {
+    color: rgba(125, 211, 252, 0.9);
+}
+
+.prompt-library-selector .prompt-library-custom-toggle:hover {
+    color: #bae6fd;
+}
+
+.prompt-library-custom input {
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
 }
 
 /* File input styling */

@@ -1,5 +1,5 @@
 <!-- Dataset Creation Wizard Modal -->
-<div class="modal-backdrop"
+<div class="dataset-wizard-backdrop"
      @keydown.escape.window="closeWizard()"
      @click.self="closeWizard()"
      x-show="wizardOpen"
@@ -1156,7 +1156,7 @@
 </div>
 
 <!-- File Browser Modal (shared) -->
-<div class="modal-backdrop file-browser-backdrop"
+<div class="dataset-wizard-backdrop file-browser-backdrop"
      x-show="fileBrowserOpen"
      x-transition.opacity
      x-cloak>
