@@ -371,25 +371,28 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
 
             WebDriverWait(driver, 5).until(lambda d: d.execute_script("return !!window.__simpletunerLifecycleTestHook;"))
 
-            def send_lifecycle_stage(stage_status):
+            def send_lifecycle_stage(stage_status, *, key="model_loading", label="Model Loading", percent=50):
                 driver.execute_script(
                     """
                     window.__simpletunerLifecycleTestHook && window.__simpletunerLifecycleTestHook({
                         type: 'lifecycle.stage',
                         job_id: 'harness-job',
                         stage: {
-                            key: 'model_loading',
-                            label: 'Model Loading',
+                            key: arguments[1],
+                            label: arguments[2],
                             status: arguments[0],
                             progress: {
                                 current: 1,
                                 total: 2,
-                                percent: 50
+                                percent: arguments[3]
                             }
                         }
                     });
                     """,
                     stage_status,
+                    key,
+                    label,
+                    percent,
                 )
 
             with self.subTest("running_status_clears_completed_lifecycle_progress"):
@@ -517,6 +520,43 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                     lifecycle_stage_check.get("removalScheduled"),
                     "Completed lifecycle stages should schedule progress removal even if percent < 100",
                 )
+
+            with self.subTest("lifecycle_component_shows_only_current_stage"):
+                send_lifecycle_stage("running", key="dataset_indexing", label="Dataset Indexing", percent=25)
+                WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script(
+                        "return document.querySelectorAll('#training-status .startup-progress-item').length;"
+                    )
+                    == 1
+                )
+                first_label = driver.execute_script(
+                    "const el=document.querySelector('#training-status .startup-progress-item .fw-semibold');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+                self.assertIn("Dataset Indexing", first_label)
+
+                send_lifecycle_stage("completed", key="dataset_indexing", label="Dataset Indexing", percent=100)
+                WebDriverWait(driver, 5).until(
+                    lambda d: bool(
+                        d.execute_script(
+                            "const badge=document.querySelector('#training-status .startup-progress-item .badge');"
+                            "return badge && badge.textContent.includes('Completed');"
+                        )
+                    )
+                )
+
+                send_lifecycle_stage("running", key="model_loading", label="Model Loading", percent=10)
+                WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script(
+                        "return document.querySelectorAll('#training-status .startup-progress-item').length;"
+                    )
+                    == 1
+                )
+                updated_label = driver.execute_script(
+                    "const el=document.querySelector('#training-status .startup-progress-item .fw-semibold');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+                self.assertIn("Model Loading", updated_label)
 
             with self.subTest("lifecycle_component_clears_after_running_status"):
                 send_lifecycle_stage("running")

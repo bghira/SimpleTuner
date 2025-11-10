@@ -475,15 +475,38 @@
             }
         }
 
-        // Always update/add the stage; completed stages remain until progress is explicitly cleared
-        console.log('[SSE-DEBUG] Adding/updating stage:', key, 'status:', stageData.status);
-        startupStages.set(key, stageData);
+        const stageIsActive = isStageActive(stageData);
+        let stagesChanged = false;
+
+        if (stageIsActive) {
+            console.log('[SSE-DEBUG] Stage is active; pruning completed stages before updating list');
+            startupStages.forEach((entry, existingKey) => {
+                if (!isStageActive(entry)) {
+                    startupStages.delete(existingKey);
+                    stagesChanged = true;
+                }
+            });
+            const previous = startupStages.get(key);
+            startupStages.set(key, stageData);
+            if (!previous || previous.percent !== stageData.percent || previous.status !== stageData.status) {
+                stagesChanged = true;
+            }
+        } else {
+            const previous = startupStages.get(key);
+            startupStages.set(key, stageData);
+            if (!previous || previous.percent !== stageData.percent || previous.status !== stageData.status) {
+                stagesChanged = true;
+            }
+        }
+
+        if (stagesChanged) {
+            console.log('[SSE-DEBUG] Rendering startup progress after stage update');
+            renderStartupProgress();
+        }
 
         console.log('[SSE-DEBUG] Current startup stages:', Array.from(startupStages.keys()));
-        renderStartupProgress();
 
         const resolvedStageStatus = String(stageData.status || '').toLowerCase();
-        const stageIsActive = isStageActive(stageData);
         const shouldReflectStage = stageIsActive || resolvedStageStatus === 'failed';
 
         if (shouldReflectStage) {
