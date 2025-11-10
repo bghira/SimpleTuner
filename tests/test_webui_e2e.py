@@ -363,6 +363,77 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 " { detail: { category: 'status', payload: arguments[0] } }));"
             )
 
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "return !!(window.eventHandler && typeof window.eventHandler.notifyTrainingState === 'function');"
+                )
+            )
+
+            with self.subTest("running_status_clears_completed_lifecycle_progress"):
+                lifecycle_check = driver.execute_script(
+                    """
+                    return (function() {
+                        const handler = window.eventHandler;
+                        if (!handler || typeof handler.notifyTrainingState !== 'function') {
+                            return { hasHandler: false };
+                        }
+
+                        let container = document.getElementById('progressBars');
+                        const hadContainer = !!container;
+                        let previousChildren = [];
+
+                        if (!container) {
+                            container = document.createElement('div');
+                            container.id = 'progressBars';
+                            const dock = document.querySelector('.event-dock-body') || document.body;
+                            dock.appendChild(container);
+                        } else {
+                            previousChildren = Array.from(container.children).map(child => child.cloneNode(true));
+                        }
+
+                        container.innerHTML = '';
+
+                        const addItem = (current, total) => {
+                            const item = document.createElement('div');
+                            item.className = 'progress-item';
+                            item.dataset.current = String(current);
+                            item.dataset.total = String(total);
+                            container.appendChild(item);
+                        };
+
+                        addItem(3, 3); // Completed lifecycle task
+                        addItem(1, 3); // In-progress lifecycle task
+
+                        handler.notifyTrainingState('running', { job_id: 'selenium-job' }, {});
+
+                        const remaining = Array.from(container.querySelectorAll('.progress-item')).map(item => ({
+                            current: item.dataset.current,
+                            total: item.dataset.total
+                        }));
+
+                        handler.notifyTrainingState('idle', { job_id: 'selenium-job' }, { force: true });
+
+                        if (hadContainer) {
+                            container.innerHTML = '';
+                            previousChildren.forEach(child => container.appendChild(child));
+                        } else if (container && container.parentNode) {
+                            container.parentNode.removeChild(container);
+                        }
+
+                        return { hasHandler: true, remaining };
+                    })();
+                    """
+                )
+                self.assertTrue(lifecycle_check.get("hasHandler"), "Event handler should be initialised on the trainer page")
+                remaining_progress = lifecycle_check.get("remaining", [])
+                self.assertEqual(
+                    len(remaining_progress),
+                    1,
+                    "Running status should remove completed lifecycle progress entries while preserving ongoing ones",
+                )
+                self.assertEqual(remaining_progress[0].get("current"), "1")
+                self.assertEqual(remaining_progress[0].get("total"), "3")
+
             driver.execute_script(
                 dispatch_script,
                 {
