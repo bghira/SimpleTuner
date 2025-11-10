@@ -3,6 +3,12 @@
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-form">
 <script>document.getElementById('css-form-sections-form').href = '/static/css/form-sections.css?t=' + Date.now();</script>
 
+{% if prompt_libraries is defined %}
+<script>
+window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
+</script>
+{% endif %}
+
 <div class="tab-fragment"
      id="{{ tab_name }}-tab-content"
      data-tab-name="{{ tab_name }}"

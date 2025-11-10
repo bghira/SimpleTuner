@@ -125,7 +125,7 @@
 }
 
 /* Modal overrides for wizard */
-.modal-backdrop {
+.dataset-wizard-backdrop {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.75);
@@ -288,7 +288,7 @@
 }
 
 /* File browser modal styles - specific override without breaking main wizard */
-.modal-backdrop.file-browser-backdrop {
+.dataset-wizard-backdrop.file-browser-backdrop {
     z-index: 10500;
     background: rgba(0, 0, 0, 0.85);
 }

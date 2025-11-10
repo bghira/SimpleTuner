@@ -5819,6 +5819,36 @@ window.triggerManualCheckpoint = async function() {
 };
 </script>
 
+<!-- Validation Prompt Library Modal -->
+<div class="modal fade" id="promptLibraryModal" tabindex="-1" aria-labelledby="promptLibraryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="promptLibraryModalLabel">Validation Prompt Library</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="prompt-library-modal-error" class="alert alert-danger d-none" role="alert"></div>
+
+                <div class="mb-3">
+                    <label for="prompt-library-name" class="form-label">Library name</label>
+                    <input type="text" class="form-control" id="prompt-library-name" placeholder="e.g. nightly-prompts">
+                    <div class="form-text">
+                        Filename will be <code data-filename-name>user_prompt_library.json</code> inside <code>validation_prompt_libraries/</code>.
+                    </div>
+                </div>
+
+                <div id="prompt-library-rows" class="d-flex flex-column gap-3"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="prompt-library-save">Save Prompt Library</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
 <!-- FSDP Block Detection Modal -->
 <div class="modal fade" id="fsdpBlockModal" tabindex="-1" aria-labelledby="fsdpBlockModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -5881,6 +5911,7 @@ window.triggerManualCheckpoint = async function() {
 <script src="/static/js/modules/webhooks.js"></script>
 <script src="/static/js/modules/checkpoints.js"></script>
 <script src="/static/js/modules/streaming-validation-lightbox.js"></script>
+<script src="/static/js/prompt-library-manager.js" defer></script>
 
 <!-- Module loader for browser compatibility -->
 <script src="/static/js/module-loader.js"></script>
