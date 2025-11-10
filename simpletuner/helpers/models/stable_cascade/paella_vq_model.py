@@ -17,7 +17,6 @@ from typing import Union
 
 import torch
 import torch.nn as nn
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.autoencoders.vae import DecoderOutput, VectorQuantizer
 from diffusers.models.modeling_utils import ModelMixin
@@ -40,9 +39,7 @@ class MixingResidualBlock(nn.Module):
 
         # channelwise
         self.norm2 = nn.LayerNorm(inp_channels, elementwise_affine=False, eps=1e-6)
-        self.channelwise = nn.Sequential(
-            nn.Linear(inp_channels, embed_dim), nn.GELU(), nn.Linear(embed_dim, inp_channels)
-        )
+        self.channelwise = nn.Sequential(nn.Linear(inp_channels, embed_dim), nn.GELU(), nn.Linear(embed_dim, inp_channels))
 
         self.gammas = nn.Parameter(torch.zeros(6), requires_grad=True)
 

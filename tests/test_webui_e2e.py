@@ -363,6 +363,233 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 " { detail: { category: 'status', payload: arguments[0] } }));"
             )
 
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    "return !!(window.eventHandler && typeof window.eventHandler.notifyTrainingState === 'function');"
+                )
+            )
+
+            WebDriverWait(driver, 5).until(lambda d: d.execute_script("return !!window.__simpletunerLifecycleTestHook;"))
+
+            def send_lifecycle_stage(stage_status, *, key="model_loading", label="Model Loading", percent=50):
+                driver.execute_script(
+                    """
+                    window.__simpletunerLifecycleTestHook && window.__simpletunerLifecycleTestHook({
+                        type: 'lifecycle.stage',
+                        job_id: 'harness-job',
+                        stage: {
+                            key: arguments[1],
+                            label: arguments[2],
+                            status: arguments[0],
+                            progress: {
+                                current: 1,
+                                total: 2,
+                                percent: arguments[3]
+                            }
+                        }
+                    });
+                    """,
+                    stage_status,
+                    key,
+                    label,
+                    percent,
+                )
+
+            with self.subTest("running_status_clears_completed_lifecycle_progress"):
+                lifecycle_check = driver.execute_script(
+                    """
+                    return (function() {
+                        const handler = window.eventHandler;
+                        if (!handler || typeof handler.notifyTrainingState !== 'function') {
+                            return { hasHandler: false };
+                        }
+
+                        let container = document.getElementById('progressBars');
+                        const hadContainer = !!container;
+                        let previousChildren = [];
+
+                        if (!container) {
+                            container = document.createElement('div');
+                            container.id = 'progressBars';
+                            const dock = document.querySelector('.event-dock-body') || document.body;
+                            dock.appendChild(container);
+                        } else {
+                            previousChildren = Array.from(container.children).map(child => child.cloneNode(true));
+                        }
+
+                        container.innerHTML = '';
+
+                        const addItem = (current, total) => {
+                            const item = document.createElement('div');
+                            item.className = 'progress-item';
+                            item.dataset.current = String(current);
+                            item.dataset.total = String(total);
+                            container.appendChild(item);
+                        };
+
+                        addItem(3, 3); // Completed lifecycle task
+                        addItem(1, 3); // In-progress lifecycle task
+
+                        handler.notifyTrainingState('running', { job_id: 'selenium-job' }, {});
+
+                        const remaining = Array.from(container.querySelectorAll('.progress-item')).map(item => ({
+                            current: item.dataset.current,
+                            total: item.dataset.total
+                        }));
+
+                        handler.notifyTrainingState('idle', { job_id: 'selenium-job' }, { force: true });
+
+                        if (hadContainer) {
+                            container.innerHTML = '';
+                            previousChildren.forEach(child => container.appendChild(child));
+                        } else if (container && container.parentNode) {
+                            container.parentNode.removeChild(container);
+                        }
+
+                        return { hasHandler: true, remaining };
+                    })();
+                    """
+                )
+                self.assertTrue(lifecycle_check.get("hasHandler"), "Event handler should be initialised on the trainer page")
+                remaining_progress = lifecycle_check.get("remaining", [])
+                self.assertEqual(
+                    len(remaining_progress),
+                    1,
+                    "Running status should remove completed lifecycle progress entries while preserving ongoing ones",
+                )
+                self.assertEqual(remaining_progress[0].get("current"), "1")
+                self.assertEqual(remaining_progress[0].get("total"), "3")
+
+            with self.subTest("lifecycle_stage_completion_schedules_removal"):
+                lifecycle_stage_check = driver.execute_script(
+                    """
+                    return (function() {
+                        const handler = window.eventHandler;
+                        if (!handler || typeof handler.parseStructuredData !== 'function') {
+                            return { hasHandler: false };
+                        }
+
+                        let container = document.getElementById('progressBars');
+                        const hadContainer = !!container;
+                        if (!container) {
+                            container = document.createElement('div');
+                            container.id = 'progressBars';
+                            const dock = document.querySelector('.event-dock-body') || document.body;
+                            dock.appendChild(container);
+                        }
+
+                        container.innerHTML = '';
+
+                        handler.parseStructuredData({
+                            message_type: 'lifecycle.stage',
+                            stage: {
+                                key: 'dataset_indexing',
+                                label: 'Dataset Indexing',
+                                status: 'completed',
+                                progress: {
+                                    current: 1,
+                                    total: 10,
+                                    percent: 10
+                                }
+                            }
+                        });
+
+                        const item = container.querySelector('.progress-item');
+                        const result = {
+                            hasHandler: true,
+                            itemExists: !!item,
+                            lifecycleStatus: item ? item.dataset.lifecycleStatus : null,
+                            removalScheduled: item ? item.dataset.removalScheduled === 'true' : false
+                        };
+
+                        container.innerHTML = '';
+                        if (!hadContainer && container.parentNode) {
+                            container.parentNode.removeChild(container);
+                        }
+
+                        return result;
+                    })();
+                    """
+                )
+                self.assertTrue(lifecycle_stage_check.get("hasHandler"), "Event handler should handle lifecycle stages")
+                self.assertTrue(
+                    lifecycle_stage_check.get("itemExists"), "Lifecycle stage event should create a progress entry"
+                )
+                self.assertEqual(lifecycle_stage_check.get("lifecycleStatus"), "completed")
+                self.assertTrue(
+                    lifecycle_stage_check.get("removalScheduled"),
+                    "Completed lifecycle stages should schedule progress removal even if percent < 100",
+                )
+
+            with self.subTest("lifecycle_component_shows_only_current_stage"):
+                send_lifecycle_stage("running", key="dataset_indexing", label="Dataset Indexing", percent=25)
+                WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script(
+                        "return document.querySelectorAll('#training-status .startup-progress-item').length;"
+                    )
+                    == 1
+                )
+                first_label = driver.execute_script(
+                    "const el=document.querySelector('#training-status .startup-progress-item .fw-semibold');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+                self.assertIn("Dataset Indexing", first_label)
+
+                send_lifecycle_stage("completed", key="dataset_indexing", label="Dataset Indexing", percent=100)
+                WebDriverWait(driver, 5).until(
+                    lambda d: bool(
+                        d.execute_script(
+                            "const badge=document.querySelector('#training-status .startup-progress-item .badge');"
+                            "return badge && badge.textContent.includes('Completed');"
+                        )
+                    )
+                )
+
+                send_lifecycle_stage("running", key="model_loading", label="Model Loading", percent=10)
+                WebDriverWait(driver, 5).until(
+                    lambda d: d.execute_script(
+                        "return document.querySelectorAll('#training-status .startup-progress-item').length;"
+                    )
+                    == 1
+                )
+                updated_label = driver.execute_script(
+                    "const el=document.querySelector('#training-status .startup-progress-item .fw-semibold');"
+                    "return el ? el.textContent.trim() : '';"
+                )
+                self.assertIn("Model Loading", updated_label)
+
+            with self.subTest("lifecycle_component_clears_after_running_status"):
+                send_lifecycle_stage("running")
+                WebDriverWait(driver, 5).until(
+                    lambda d: bool(
+                        d.execute_script("return document.querySelector('#training-status .startup-progress-alert');")
+                    )
+                )
+
+                driver.execute_script(
+                    dispatch_script,
+                    {
+                        "type": "training.status",
+                        "status": "running",
+                        "severity": "info",
+                        "message": "Training is running",
+                        "job_id": "harness-job",
+                        "data": {"status": "running", "job_id": "harness-job"},
+                    },
+                )
+
+                WebDriverWait(driver, 5).until(
+                    lambda d: not d.execute_script(
+                        "return !!document.querySelector('#training-status .startup-progress-alert');"
+                    )
+                )
+
+                send_lifecycle_stage("running")
+                self.assertFalse(
+                    driver.execute_script("return !!document.querySelector('#training-status .startup-progress-alert');"),
+                    "Lifecycle UI should remain hidden once training is running",
+                )
+
             driver.execute_script(
                 dispatch_script,
                 {

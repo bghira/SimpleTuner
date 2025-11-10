@@ -173,8 +173,9 @@
             activeJobId = null;
         }
 
+        const preserveDuringStartup = ['starting', 'initializing'];
         const shouldPreserveStartup = normalized === 'disconnected';
-        if (!['starting', 'running', 'initializing'].includes(normalized) && !shouldPreserveStartup) {
+        if (!preserveDuringStartup.includes(normalized) && !shouldPreserveStartup) {
             clearStartupProgress();
         }
 
@@ -392,6 +393,13 @@
 
         console.log('[SSE-DEBUG] Stage key:', possibleKey, 'stageStatus:', stageStatus);
 
+        let stageJobId = data.job_id || startupJobId || activeJobId;
+        const isSameActiveJob = !data.job_id || (activeJobId && data.job_id === activeJobId);
+        if (!startupStatusActive && currentTrainingStatus === 'running' && isSameActiveJob) {
+            console.log('[SSE-DEBUG] Ignoring lifecycle stage update because training is already running');
+            return;
+        }
+
         // Check if this is a new job starting
         if (data.job_id && activeJobId && data.job_id !== activeJobId && currentTrainingStatus === 'completed') {
             console.log('[SSE-DEBUG] New job detected, resetting training state. Old job:', activeJobId, 'New job:', data.job_id);
@@ -419,6 +427,8 @@
         }
 
         // Extract stage data - it might be nested under 'stage' property
+        stageJobId = data.job_id || startupJobId || activeJobId;
+
         const stageInfo = data.stage || data;
         const progressInfo = stageInfo.progress || data.progress || {};
 
@@ -434,7 +444,6 @@
                 return;
             }
         }
-        const stageJobId = data.job_id || startupJobId || activeJobId;
         const stagePercent = clampPercent(stageInfo.percent || progressInfo.percent || data.percent || 0);
         // Use the stageStatus already declared above
         const stageData = {
@@ -466,15 +475,38 @@
             }
         }
 
-        // Always update/add the stage; completed stages remain until progress is explicitly cleared
-        console.log('[SSE-DEBUG] Adding/updating stage:', key, 'status:', stageData.status);
-        startupStages.set(key, stageData);
+        const stageIsActive = isStageActive(stageData);
+        let stagesChanged = false;
+
+        if (stageIsActive) {
+            console.log('[SSE-DEBUG] Stage is active; pruning completed stages before updating list');
+            startupStages.forEach((entry, existingKey) => {
+                if (!isStageActive(entry)) {
+                    startupStages.delete(existingKey);
+                    stagesChanged = true;
+                }
+            });
+            const previous = startupStages.get(key);
+            startupStages.set(key, stageData);
+            if (!previous || previous.percent !== stageData.percent || previous.status !== stageData.status) {
+                stagesChanged = true;
+            }
+        } else {
+            const previous = startupStages.get(key);
+            startupStages.set(key, stageData);
+            if (!previous || previous.percent !== stageData.percent || previous.status !== stageData.status) {
+                stagesChanged = true;
+            }
+        }
+
+        if (stagesChanged) {
+            console.log('[SSE-DEBUG] Rendering startup progress after stage update');
+            renderStartupProgress();
+        }
 
         console.log('[SSE-DEBUG] Current startup stages:', Array.from(startupStages.keys()));
-        renderStartupProgress();
 
         const resolvedStageStatus = String(stageData.status || '').toLowerCase();
-        const stageIsActive = isStageActive(stageData);
         const shouldReflectStage = stageIsActive || resolvedStageStatus === 'failed';
 
         if (shouldReflectStage) {
@@ -498,8 +530,12 @@
         }
 
         if (!['failed', 'error', 'cancelled', 'stopped'].includes(resolvedStageStatus)) {
-            setTrainingState('starting', { job_id: stageJobId });
-            setStatus('Starting', 'info');
+            if (startupStatusActive) {
+                setTrainingState('starting', { job_id: stageJobId });
+                setStatus('Starting', 'info');
+            } else {
+                console.log('[SSE-DEBUG] All startup stages complete; keeping training state running');
+            }
         }
     }
 
@@ -1199,6 +1235,16 @@
                 // No-op for generic callbacks
             }
         }
+    }
+
+    if (!window.__simpletunerLifecycleTestHook) {
+        window.__simpletunerLifecycleTestHook = function(payload) {
+            try {
+                handleLifecycleStageUpdate(payload || {});
+            } catch (err) {
+                console.error('[SSE-DEBUG] lifecycle test hook dispatch failed:', err);
+            }
+        };
     }
 
     if (!window.__simpletunerTestCallbackHook) {
