@@ -5549,6 +5549,12 @@ function trainerComponent() {
                 </div>
                 <div class="event-dock-actions">
                     <button type="button" class="btn btn-sm btn-outline-light"
+                            x-show="showTrainingProgress"
+                            title="Trigger validation run after next gradient sync"
+                            @click="window.triggerManualValidation()">
+                        <i class="fas fa-check-circle"></i> Trigger Validation
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light"
                             title="Clear events"
                             @click="if (window.EventRenderer) { document.getElementById('eventList').innerHTML = ''; }">
                         <i class="fas fa-trash"></i>
