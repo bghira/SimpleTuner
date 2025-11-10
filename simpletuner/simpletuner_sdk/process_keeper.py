@@ -205,12 +205,21 @@ func_file = r"{self.func_file}"
 should_abort = False
 command_check_thread = None
 manual_validation_event = threading.Event()
+manual_checkpoint_event = threading.Event()
 
 
 def consume_manual_validation_request():
     """Return True if a manual validation trigger was pending and clear it."""
     if manual_validation_event.is_set():
         manual_validation_event.clear()
+        return True
+    return False
+
+
+def consume_manual_checkpoint_request():
+    """Return True if a manual checkpoint trigger was pending and clear it."""
+    if manual_checkpoint_event.is_set():
+        manual_checkpoint_event.clear()
         return True
     return False
 
@@ -324,6 +333,9 @@ def check_commands():
                 elif command_name == "trigger_validation":
                     logger.info("Received manual validation trigger")
                     manual_validation_event.set()
+                elif command_name == "trigger_checkpoint":
+                    logger.info("Received manual checkpoint trigger")
+                    manual_checkpoint_event.set()
 
                 # Write back remaining commands
                 with open(command_file, 'w') as f:
@@ -357,6 +369,7 @@ class ConfigWrapper:
         self.__dict__.update(config)
         self.should_abort = lambda: should_abort
         self.consume_manual_validation_request = consume_manual_validation_request
+        self.consume_manual_checkpoint_request = consume_manual_checkpoint_request
 
 wrapped_config = ConfigWrapper(config)
 

@@ -262,6 +262,7 @@ class Trainer:
         self.should_abort = False
         self._external_abort_checker = None
         self._manual_validation_consumer: Optional[Callable[[], bool]] = None
+        self._manual_checkpoint_consumer: Optional[Callable[[], bool]] = None
         self.ema_model = None
         self.job_id = job_id
         StateTracker.set_job_id(job_id)
@@ -300,6 +301,15 @@ class Trainer:
         if self._manual_validation_consumer is None:
             return False
         return bool(self._manual_validation_consumer())
+
+    def register_manual_checkpoint_trigger(self, consumer: Callable[[], bool]) -> None:
+        """Register a callable that returns True once per manual checkpoint request."""
+        self._manual_checkpoint_consumer = consumer
+
+    def _consume_manual_checkpoint_request(self) -> bool:
+        if self._manual_checkpoint_consumer is None:
+            return False
+        return bool(self._manual_checkpoint_consumer())
 
     def _update_grad_metrics(
         self, target_logs: Dict[str, float], *, require_value_method: bool = False, clone_norm_value: bool = False
@@ -3930,9 +3940,18 @@ class Trainer:
                         and step % self.config.gradient_accumulation_steps == 0
                         and self.state["global_step"] > self.state["global_resume_step"]
                     )
-                    if checkpoint_step_interval and self.state["global_step"] % checkpoint_step_interval == 0:
+                    manual_checkpoint_requested = self._consume_manual_checkpoint_request()
+                    scheduled_checkpoint_due = (
+                        checkpoint_step_interval and self.state["global_step"] % checkpoint_step_interval == 0
+                    )
+                    if manual_checkpoint_requested or scheduled_checkpoint_due:
+                        checkpoint_message = (
+                            f"Manual checkpoint requested. {webhook_pending_msg}"
+                            if manual_checkpoint_requested
+                            else webhook_pending_msg
+                        )
                         self._run_standard_checkpoint(
-                            webhook_message=webhook_pending_msg,
+                            webhook_message=checkpoint_message,
                             parent_loss=parent_loss,
                             epoch=epoch,
                             upload_to_hub=upload_to_hub,
@@ -4226,11 +4245,13 @@ def run_trainer_job(config):
     job_id = None
     should_abort_callable = None
     manual_validation_consumer = None
+    manual_checkpoint_consumer = None
 
     if hasattr(config, "__dict__"):
         attrs = vars(config).copy()
         should_abort_callable = attrs.pop("should_abort", None)
         manual_validation_consumer = attrs.pop("consume_manual_validation_request", None)
+        manual_checkpoint_consumer = attrs.pop("consume_manual_checkpoint_request", None)
         job_id = attrs.pop("__job_id__", None) or attrs.pop("job_id", None)
         config_payload = attrs
     elif isinstance(config, dict):
@@ -4238,6 +4259,7 @@ def run_trainer_job(config):
         job_id = config_payload.pop("__job_id__", None) or config_payload.pop("job_id", None)
         should_abort_callable = config_payload.pop("should_abort", None)
         manual_validation_consumer = config_payload.pop("consume_manual_validation_request", None)
+        manual_checkpoint_consumer = config_payload.pop("consume_manual_checkpoint_request", None)
     else:
         config_payload = config
 
@@ -4700,6 +4722,8 @@ def run_trainer_job(config):
             trainer.hf_access_token = hf_token
         if callable(manual_validation_consumer):
             trainer.register_manual_validation_trigger(manual_validation_consumer)
+        if callable(manual_checkpoint_consumer):
+            trainer.register_manual_checkpoint_trigger(manual_checkpoint_consumer)
 
     except Exception as e:
         webhook_handler = StateTracker.get_webhook_handler()

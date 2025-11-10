@@ -208,6 +208,24 @@ async def trigger_manual_validation():
     }
 
 
+@router.post("/checkpoint/run")
+async def trigger_manual_checkpoint():
+    """Request a checkpoint save after the next gradient sync."""
+    job_id = APIState.get_state("current_job_id")
+    if not job_id:
+        raise HTTPException(status_code=400, detail="No active training job")
+
+    try:
+        training_service.request_manual_checkpoint(job_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "message": "Checkpoint queued for the next gradient sync.",
+        "job_id": job_id,
+    }
+
+
 @router.post("/cancel", response_class=HTMLResponse)
 async def cancel_training(request: Request):
     """Cancel current training and return HTML response for HTMX."""
