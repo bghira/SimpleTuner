@@ -369,6 +369,29 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
 
+            WebDriverWait(driver, 5).until(lambda d: d.execute_script("return !!window.__simpletunerLifecycleTestHook;"))
+
+            def send_lifecycle_stage(stage_status):
+                driver.execute_script(
+                    """
+                    window.__simpletunerLifecycleTestHook && window.__simpletunerLifecycleTestHook({
+                        type: 'lifecycle.stage',
+                        job_id: 'harness-job',
+                        stage: {
+                            key: 'model_loading',
+                            label: 'Model Loading',
+                            status: arguments[0],
+                            progress: {
+                                current: 1,
+                                total: 2,
+                                percent: 50
+                            }
+                        }
+                    });
+                    """,
+                    stage_status,
+                )
+
             with self.subTest("running_status_clears_completed_lifecycle_progress"):
                 lifecycle_check = driver.execute_script(
                     """
@@ -493,6 +516,38 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertTrue(
                     lifecycle_stage_check.get("removalScheduled"),
                     "Completed lifecycle stages should schedule progress removal even if percent < 100",
+                )
+
+            with self.subTest("lifecycle_component_clears_after_running_status"):
+                send_lifecycle_stage("running")
+                WebDriverWait(driver, 5).until(
+                    lambda d: bool(
+                        d.execute_script("return document.querySelector('#training-status .startup-progress-alert');")
+                    )
+                )
+
+                driver.execute_script(
+                    dispatch_script,
+                    {
+                        "type": "training.status",
+                        "status": "running",
+                        "severity": "info",
+                        "message": "Training is running",
+                        "job_id": "harness-job",
+                        "data": {"status": "running", "job_id": "harness-job"},
+                    },
+                )
+
+                WebDriverWait(driver, 5).until(
+                    lambda d: not d.execute_script(
+                        "return !!document.querySelector('#training-status .startup-progress-alert');"
+                    )
+                )
+
+                send_lifecycle_stage("running")
+                self.assertFalse(
+                    driver.execute_script("return !!document.querySelector('#training-status .startup-progress-alert');"),
+                    "Lifecycle UI should remain hidden once training is running",
                 )
 
             driver.execute_script(
