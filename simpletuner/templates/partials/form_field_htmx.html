@@ -457,7 +457,8 @@
                 };
 
                 const handleOptionSelect = (field, lib) => {
-                    setHiddenValue(field, lib?.relative_path || '', 'dropdown');
+                    const nextValue = (lib?.absolute_path || lib?.relative_path || '').trim();
+                    setHiddenValue(field, nextValue, 'dropdown');
                     if (field.dropdownInstance && typeof field.dropdownInstance.hide === 'function') {
                         field.dropdownInstance.hide();
                     }
@@ -477,6 +478,8 @@
                     option.type = 'button';
                     option.className = 'dropdown-item prompt-library-option';
                     option.dataset.value = lib.relative_path || '';
+                    option.dataset.absolutePath = lib.absolute_path || '';
+                    option.dataset.relativePath = lib.relative_path || '';
                     const env = normalizePath(getActiveEnvironment());
                     const prefix = env ? `${env}/` : '';
                     const isEnvMatch = Boolean(prefix && normalizePath(lib.relative_path || '').startsWith(prefix));
@@ -494,7 +497,8 @@
                     }
                     option.appendChild(name);
                     option.appendChild(path);
-                    if (field.hiddenInput && field.hiddenInput.value === (lib.relative_path || '')) {
+                    const hiddenValue = field.hiddenInput ? field.hiddenInput.value : '';
+                    if (hiddenValue && hiddenValue === (lib.absolute_path || lib.relative_path || '')) {
                         option.classList.add('active');
                     }
                     option.addEventListener('click', () => handleOptionSelect(field, lib));

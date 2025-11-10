@@ -366,8 +366,9 @@
                 throw new Error(data.detail || data.message || 'Failed to save prompt library.');
             }
             state.previousFilename = data.library?.filename || filename;
-            if (data.library?.relative_path) {
-                setTargetInputValue(data.library.relative_path);
+            const targetPath = data.library?.absolute_path || data.library?.relative_path;
+            if (targetPath) {
+                setTargetInputValue(targetPath);
             }
             await refreshList(true);
             dispatchLibrariesSaved();

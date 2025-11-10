@@ -199,6 +199,7 @@ class TemplateRenderingTests(unittest.TestCase):
         self.assertIn("prompt-library-custom-toggle", rendered)
         self.assertIn("Use custom path", rendered)
         self.assertIn("window.promptLibrarySelector", rendered)
+        self.assertIn("lib?.absolute_path", rendered)
 
     def test_form_tab_embeds_prompt_library_script_when_context_provided(self):
         rendered = self.render_form_tab(
