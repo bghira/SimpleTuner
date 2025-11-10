@@ -1,3 +1,4 @@
+import copy
 import unittest
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -7,7 +8,7 @@ import numpy as np
 import torch
 
 import tests.test_stubs  # noqa: F401
-from simpletuner.helpers.training.collate import collate_fn
+from simpletuner.helpers.training.collate import collate_fn, describe_missing_conditioning_pairs
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -20,6 +21,24 @@ class _StubModel:
 
     def collate_prompt_embeds(self, encoder_outputs):
         return {}
+
+
+class _StubConditioningSample:
+    def __init__(self, training_path: str, backend_id: str, caption=None):
+        self._training_path = training_path
+        self._source_dataset_id = backend_id
+        self._image_path = training_path
+        self.caption = caption
+        self.data_backend_id = backend_id
+
+    def training_sample_path(self, training_dataset_id: str):
+        return self._training_path
+
+    def get_conditioning_type(self):
+        return "controlnet"
+
+    def image_path(self, basename_only=False):
+        return self._training_path
 
 
 class CollateFunctionTests(unittest.TestCase):
@@ -116,6 +135,45 @@ class CollateFunctionTests(unittest.TestCase):
         cache = backend_dict["conditioning_image_embed_cache"]
         cache.retrieve_from_cache.assert_called_once_with("sample.png")
         self.assertIsNotNone(result["conditioning_image_embeds"])
+
+    def test_describe_missing_conditioning_pairs_reports_backend(self):
+        examples = [{"image_path": "sample.png", "data_backend_id": "backend-1"}]
+        conditioning_backends = [{"id": "cond-1"}, {"id": "cond-2"}]
+        conditioning_examples = [_StubConditioningSample("/train/sample.png", "cond-1")]
+
+        messages = describe_missing_conditioning_pairs(
+            examples=examples,
+            conditioning_examples=conditioning_examples,
+            conditioning_backends=conditioning_backends,
+            training_backend_id="backend-1",
+            training_root="/train",
+        )
+
+        self.assertTrue(messages)
+        self.assertIn("cond-2 missing 1 pair(s)", messages[0])
+        self.assertIn("sample.png", messages[0])
+
+    def test_collate_fn_includes_missing_conditioning_detail(self):
+        text_outputs = {
+            "prompt_embeds": torch.zeros(1, 1),
+            "pooled_prompt_embeds": torch.zeros(1, 1),
+        }
+        backend_dict = {
+            "config": {"instance_data_dir": "/train"},
+            "conditioning_data": [{"id": "cond-1"}, {"id": "cond-2"}],
+            "text_embed_cache": SimpleNamespace(disabled=False),
+        }
+        model = _StubModel(requires_conditioning=False)
+        patchers, _ = self._patch_state_tracker(model=model, data_backend=backend_dict, text_outputs=text_outputs)
+
+        batch = copy.deepcopy(self.base_batch)
+        batch[0]["conditioning_samples"] = [_StubConditioningSample("/train/sample.png", "cond-1")]
+
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            with self.assertRaisesRegex(ValueError, "cond-2 missing 1 pair\\(s\\)"):
+                collate_fn(batch)
 
 
 if __name__ == "__main__":
