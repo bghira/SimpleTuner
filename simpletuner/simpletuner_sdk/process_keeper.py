@@ -204,6 +204,16 @@ func_file = r"{self.func_file}"
 # State
 should_abort = False
 command_check_thread = None
+manual_validation_event = threading.Event()
+
+
+def consume_manual_validation_request():
+    """Return True if a manual validation trigger was pending and clear it."""
+    if manual_validation_event.is_set():
+        manual_validation_event.clear()
+        return True
+    return False
+
 
 def send_event(event_type, data=None):
     """Send event back to parent process."""
@@ -305,11 +315,15 @@ def check_commands():
             if commands:
                 # Process the first command
                 cmd = commands.pop(0)
+                command_name = str(cmd.get("command") or "").lower()
 
-                if cmd.get("command") == "abort":
+                if command_name == "abort":
                     logger.info("Received abort command")
                     should_abort = True
                     send_event("state", {{"status": "aborting"}})
+                elif command_name == "trigger_validation":
+                    logger.info("Received manual validation trigger")
+                    manual_validation_event.set()
 
                 # Write back remaining commands
                 with open(command_file, 'w') as f:
@@ -342,6 +356,7 @@ class ConfigWrapper:
     def __init__(self, config):
         self.__dict__.update(config)
         self.should_abort = lambda: should_abort
+        self.consume_manual_validation_request = consume_manual_validation_request
 
 wrapped_config = ConfigWrapper(config)
 

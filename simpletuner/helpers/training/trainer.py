@@ -16,7 +16,7 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import huggingface_hub
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
@@ -261,6 +261,7 @@ class Trainer:
         self.webhook_handler = None
         self.should_abort = False
         self._external_abort_checker = None
+        self._manual_validation_consumer: Optional[Callable[[], bool]] = None
         self.ema_model = None
         self.job_id = job_id
         StateTracker.set_job_id(job_id)
@@ -290,6 +291,15 @@ class Trainer:
         if not config:
             return None
         return type("Config", (object,), config)
+
+    def register_manual_validation_trigger(self, consumer: Callable[[], bool]) -> None:
+        """Register a callable that returns True once per manual validation request."""
+        self._manual_validation_consumer = consumer
+
+    def _consume_manual_validation_request(self) -> bool:
+        if self._manual_validation_consumer is None:
+            return False
+        return bool(self._manual_validation_consumer())
 
     def _update_grad_metrics(
         self, target_logs: Dict[str, float], *, require_value_method: bool = False, clone_norm_value: bool = False
@@ -4030,12 +4040,17 @@ class Trainer:
                 progress_bar.set_postfix(**logs)
 
                 if self.validation is not None:
-                    should_validate = self.validation.would_validate()
+                    manual_validation_requested = self._consume_manual_validation_request()
+                    should_validate = manual_validation_requested or self.validation.would_validate()
                     if should_validate:
                         self.mark_optimizer_eval()
                         self.enable_sageattention_inference()
                         self.disable_gradient_checkpointing()
-                    self.validation.run_validations(validation_type="intermediary", step=step)
+                    self.validation.run_validations(
+                        validation_type="intermediary",
+                        step=step,
+                        force_evaluation=manual_validation_requested,
+                    )
                     if should_validate:
                         self.disable_sageattention_inference()
                         self.enable_gradient_checkpointing()
@@ -4210,16 +4225,19 @@ def run_trainer_job(config):
 
     job_id = None
     should_abort_callable = None
+    manual_validation_consumer = None
 
     if hasattr(config, "__dict__"):
         attrs = vars(config).copy()
         should_abort_callable = attrs.pop("should_abort", None)
+        manual_validation_consumer = attrs.pop("consume_manual_validation_request", None)
         job_id = attrs.pop("__job_id__", None) or attrs.pop("job_id", None)
         config_payload = attrs
     elif isinstance(config, dict):
         config_payload = dict(config)
         job_id = config_payload.pop("__job_id__", None) or config_payload.pop("job_id", None)
         should_abort_callable = config_payload.pop("should_abort", None)
+        manual_validation_consumer = config_payload.pop("consume_manual_validation_request", None)
     else:
         config_payload = config
 
@@ -4680,6 +4698,8 @@ def run_trainer_job(config):
 
         if hf_token:
             trainer.hf_access_token = hf_token
+        if callable(manual_validation_consumer):
+            trainer.register_manual_validation_trigger(manual_validation_consumer)
 
     except Exception as e:
         webhook_handler = StateTracker.get_webhook_handler()

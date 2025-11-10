@@ -5549,6 +5549,12 @@ function trainerComponent() {
                 </div>
                 <div class="event-dock-actions">
                     <button type="button" class="btn btn-sm btn-outline-light"
+                            x-show="showTrainingProgress"
+                            title="Trigger validation run after next gradient sync"
+                            @click="window.triggerManualValidation()">
+                        <i class="fas fa-check-circle"></i> Trigger Validation
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light"
                             title="Clear events"
                             @click="if (window.EventRenderer) { document.getElementById('eventList').innerHTML = ''; }">
                         <i class="fas fa-trash"></i>
@@ -5768,6 +5774,24 @@ document.addEventListener('DOMContentLoaded', function() {
 // Global functions for toast notifications (already defined in base_htmx.html)
 window.showToast = window.showToast || function(message, type) {
     // Fallback toast notification (silent)
+};
+
+// Function to trigger manual validation
+window.triggerManualValidation = async function() {
+    try {
+        const response = await fetch('/api/training/validation/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        if (response.ok) {
+            window.showToast(data.result || 'Validation queued successfully', 'success');
+        } else {
+            window.showToast(data.detail || 'Failed to queue validation', 'error');
+        }
+    } catch (error) {
+        window.showToast('Error triggering validation: ' + error.message, 'error');
+    }
 };
 </script>
 
