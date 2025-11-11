@@ -72,19 +72,21 @@ class LycorisBuilderSessionTests(unittest.TestCase):
     def test_override_management_flow(self) -> None:
         session = self._session("overrides.json")
         session.set_algorithm("lokr", reset=True)
-        session.upsert_override("module", "Attention")
-        session.set_override_algo("module", "Attention", "lokr")
-        session.set_override_option("module", "Attention", "factor", 8)
+        baseline = set(session.get_override_entries("module").keys())
+        key = "__unittest_override__"
+        session.upsert_override("module", key)
+        session.set_override_algo("module", key, "lokr")
+        session.set_override_option("module", key, "factor", 8)
         entries = session.get_override_entries("module")
-        self.assertIn("Attention", entries)
-        self.assertEqual(entries["Attention"].get("factor"), 8)
+        self.assertEqual(entries[key].get("factor"), 8)
 
-        session.rename_override("module", "Attention", "Attn")
+        renamed_key = f"{key}_renamed"
+        session.rename_override("module", key, renamed_key)
         renamed = session.get_override_entries("module")
-        self.assertIn("Attn", renamed)
-        self.assertNotIn("Attention", renamed)
-        session.delete_override("module", "Attn")
-        self.assertFalse(session.get_override_entries("module"))
+        self.assertIn(renamed_key, renamed)
+        self.assertNotIn(key, renamed)
+        session.delete_override("module", renamed_key)
+        self.assertEqual(set(session.get_override_entries("module").keys()), baseline)
 
 
 if __name__ == "__main__":
