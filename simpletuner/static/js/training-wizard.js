@@ -1196,6 +1196,11 @@ function trainingWizardComponent() {
 
             console.log('[TRAINING WIZARD] Applying answers to trainer store...', this.answers);
 
+            // Apply default for tracker_project_name if empty
+            if (!this.answers.tracker_project_name || !this.answers.tracker_project_name.trim()) {
+                this.answers.tracker_project_name = this.trackerFieldDefaults.project.defaultValue || 'simpletuner';
+            }
+
             this.syncTrainingDuration();
             this.updateDeepSpeedConfig();
             const uiOnlySet = new Set(this.uiOnlyAnswerKeys || []);
