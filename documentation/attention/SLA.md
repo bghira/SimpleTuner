@@ -19,7 +19,7 @@ SimpleTuner exposes SLA through the regular `--attention_mechanism` flag, so you
 
 - Pass `--attention_mechanism=sla` (or set `attention_mechanism: "sla"` in configs).
 - No extra flags are required; SimpleTuner injects SLA by wrapping PyTorch’s SDPA entrypoint.
-- Override SLA settings (top-k ratio, block sizes, feature map type, whether query/key feature maps are tied) via `--sla_config` / `sla_config` in JSON/Python dict form. Example: `--sla_config '{"topk":0.15,"blkq":32,"tie_feature_map_qk":false}'`. Defaults follow the paper (top 5 %, block size 64, tied feature maps).
+- Override SLA settings (top-k ratio, block sizes, feature map type, whether query/key feature maps are tied) via `--sla_config` / `sla_config` in JSON/Python dict form. Example: `--sla_config '{"topk":0.15,"blkq":32,"tie_feature_map_qk":false}'`. Defaults: top 20 %, block size 64, tied feature maps.
 
 ## Training Behaviour
 

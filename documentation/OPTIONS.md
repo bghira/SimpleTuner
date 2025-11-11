@@ -530,7 +530,7 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
 - **Choices**: wandb, tensorboard, comet_ml
 
-# Environment configuration variables
+## Environment configuration variables
 
 The above options apply for the most part, to `config.json` - but some entries must be set inside `config.env` instead.
 
