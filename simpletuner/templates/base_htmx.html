@@ -19,29 +19,27 @@
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
 
-    <!-- Non-critical CSS (loaded asynchronously) -->
+    <!-- External CSS (loaded asynchronously) -->
     <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="/static/css/base.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-base">
+
+    <!-- Local CSS (loaded directly to avoid preload warnings) -->
+    <link href="/static/css/base.css" rel="stylesheet" id="css-base">
     <script>document.getElementById('css-base').href = '/static/css/base.css?t=' + cssTimestamp;</script>
-    <link rel="preload" href="/static/css/trainer.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-trainer">
+    <link href="/static/css/trainer.css" rel="stylesheet" id="css-trainer">
     <script>document.getElementById('css-trainer').href = '/static/css/trainer.css?t=' + cssTimestamp;</script>
-    <link rel="preload" href="/static/css/browser-compat.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-browser-compat">
+    <link href="/static/css/browser-compat.css" rel="stylesheet" id="css-browser-compat">
     <script>document.getElementById('css-browser-compat').href = '/static/css/browser-compat.css?t=' + cssTimestamp;</script>
-    <link rel="preload" href="/static/css/dataset-card.css" as="style" onload="this.onload=null;this.rel='stylesheet'" id="css-dataset-card">
+    <link href="/static/css/dataset-card.css" rel="stylesheet" id="css-dataset-card">
     <script>document.getElementById('css-dataset-card').href = '/static/css/dataset-card.css?t=' + cssTimestamp;</script>
 
     <!-- Fallback for browsers without JS -->
     <noscript>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-        <link href="/static/css/base.css" rel="stylesheet">
-        <link href="/static/css/trainer.css" rel="stylesheet">
-        <link href="/static/css/browser-compat.css" rel="stylesheet">
-        <link href="/static/css/dataset-card.css" rel="stylesheet">
     </noscript>
 
-    <!-- CSS loading helper -->
+    <!-- CSS loading helper for external resources -->
     <script>
         // Helper for CSS preloading
         !function(r){"use strict";r.loadCSS||(r.loadCSS=function(){});var o=loadCSS.relpreload={};if(o.support=function(){var e;try{e=r.document.createElement("link").relList.supports("preload")}catch(t){e=!1}return function(){return e}}(),o.bindMediaToggle=function(t){var e=t.media||"all";function a(){t.addEventListener?t.removeEventListener("load",a):t.attachEvent&&t.detachEvent("onload",a),t.setAttribute("onload",null),t.media=e}t.addEventListener?t.addEventListener("load",a):t.attachEvent&&t.attachEvent("onload",a),setTimeout(function(){t.rel="stylesheet",t.media="only x"}),setTimeout(a,3e3)},o.poly=function(){if(!o.support())for(var t=r.document.getElementsByTagName("link"),e=0;e<t.length;e++){var a=t[e];"preload"!==a.rel||"style"!==a.getAttribute("as")||a.getAttribute("data-loadcss")||(a.setAttribute("data-loadcss",!0),o.bindMediaToggle(a))}},!o.support()){o.poly();var t=r.setInterval(o.poly,500);r.addEventListener?r.addEventListener("load",function(){o.poly(),r.clearInterval(t)}):r.attachEvent&&r.attachEvent("onload",function(){o.poly(),r.clearInterval(t)})}"undefined"!=typeof exports?exports.loadCSS=loadCSS:r.loadCSS=loadCSS}("undefined"!=typeof global?global:this);
@@ -269,7 +267,7 @@
 
         // Mark styles as loaded when all CSS files are ready
         var loadedStyles = 0;
-        var totalStyles = 6; // bootstrap, fontawesome, base, trainer, browser-compat, dataset-card
+        var totalStyles = 6; // 2 external (bootstrap, fontawesome) + 4 local (base, trainer, browser-compat, dataset-card)
 
         function checkStylesLoaded() {
             loadedStyles++;
@@ -278,10 +276,21 @@
             }
         }
 
-        // Monitor preloaded stylesheets
+        // Monitor stylesheets
         document.addEventListener('DOMContentLoaded', function() {
+            // Monitor external preloaded stylesheets
             var preloadLinks = document.querySelectorAll('link[rel="preload"][as="style"]');
             preloadLinks.forEach(function(link) {
+                if (link.sheet) {
+                    checkStylesLoaded();
+                } else {
+                    link.addEventListener('load', checkStylesLoaded);
+                }
+            });
+
+            // Monitor local stylesheets (loaded directly)
+            var localLinks = document.querySelectorAll('link[rel="stylesheet"][id^="css-"]');
+            localLinks.forEach(function(link) {
                 if (link.sheet) {
                     checkStylesLoaded();
                 } else {
