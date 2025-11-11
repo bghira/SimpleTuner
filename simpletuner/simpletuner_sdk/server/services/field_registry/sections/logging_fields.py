@@ -144,7 +144,6 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Identifies this specific run in WandB/TensorBoard. If not set, uses a generated name.",
             importance=ImportanceLevel.ESSENTIAL,
             order=2,
-            dependencies=[FieldDependency(field="report_to", operator="not_equals", value="none", action="show")],
         )
     )
 

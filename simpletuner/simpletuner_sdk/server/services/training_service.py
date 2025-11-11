@@ -919,7 +919,7 @@ def validate_training_config(
 
     required_text_fields = {
         "--output_dir": "Output directory is required.",
-        "--tracker_project_name": "Model name is required.",
+        "--tracker_project_name": "Project name is required.",
     }
     for _field, message in required_text_fields.items():
         value = _read_required(_field)
