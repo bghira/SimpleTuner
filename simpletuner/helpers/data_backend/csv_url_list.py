@@ -4,15 +4,17 @@ import logging
 import os
 from io import BytesIO
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, Optional, Union
+from typing import Any, BinaryIO, Dict, List, Optional, Union
 
 import pandas as pd
 import requests
 import torch
 
+from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
-from simpletuner.helpers.training import image_file_extensions, video_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger("CSVDataBackend")
@@ -145,6 +147,8 @@ class CSVDataBackend(BaseDataBackend):
         List all files matching the file extensions.
         Creates Path objects of each file found.
         """
+        if not file_extensions:
+            file_extensions = self._default_file_extensions()
 
         if instance_data_dir is None:
             filtered_paths = set(self.df.index)
@@ -179,6 +183,14 @@ class CSVDataBackend(BaseDataBackend):
         results += [("", [], filtered_ids - filtered_paths)]
         return results
 
+    def _default_file_extensions(self) -> List[str]:
+        dataset_type = getattr(self, "dataset_type", DatasetType.IMAGE)
+        try:
+            normalized = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        except ValueError:
+            normalized = DatasetType.IMAGE
+        return list(audio_file_extensions) if normalized is DatasetType.AUDIO else list(image_file_extensions)
+
     def get_abs_path(self, sample_path: str) -> str:
         """
         Given a relative path of a sample, return the absolute path.
@@ -202,12 +214,14 @@ class CSVDataBackend(BaseDataBackend):
         if isinstance(filepath, str):
             filepath = filepath.replace("\x00", "")
         try:
-            image_data = self.read(filepath, as_byteIO=True)
+            file_data = self.read(filepath, as_byteIO=True)
             ext = os.path.splitext(filepath)[1].lower().strip(".")
-            if ext in video_file_extensions:
-                image = load_video(image_data)
+            if ext in audio_file_extensions:
+                image = load_audio(file_data)
+            elif ext in video_file_extensions:
+                image = load_video(file_data)
             else:
-                image = load_image(image_data)
+                image = load_image(file_data)
             return image
         except Exception as e:
             import traceback

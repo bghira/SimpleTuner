@@ -71,6 +71,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -160,6 +161,7 @@ def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
     """Return True when backend participates in the core training dataloader."""
     primary_types = {
         DatasetType.IMAGE,
+        DatasetType.AUDIO,
         DatasetType.CONDITIONING,
         DatasetType.EVAL,
         DatasetType.VIDEO,
@@ -254,6 +256,35 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         logger.setLevel(logging.ERROR)
     dataset_type = _backend_dataset_type(backend)
     output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
+    is_audio_dataset = dataset_type is DatasetType.AUDIO
+
+    def _prepare_audio_settings(source: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize audio configuration settings from backend definitions."""
+        audio_block = deepcopy(source.get("audio", {}) or {})
+        alias_map = {
+            "sample_rate": ["audio_sample_rate"],
+            "resample_rate": ["audio_resample_rate"],
+            "target_duration_seconds": ["audio_target_duration_seconds"],
+            "max_duration_seconds": ["audio_max_duration_seconds"],
+            "pad_to_seconds": ["audio_pad_to_seconds", "audio_padding_seconds"],
+            "padding_mode": ["audio_padding_mode"],
+            "padding_value": ["audio_padding_value"],
+            "channels": ["audio_channels"],
+        }
+        for target_key, aliases in alias_map.items():
+            if target_key in audio_block:
+                continue
+            for alias in aliases:
+                if alias in source:
+                    audio_block[target_key] = source[alias]
+                    break
+
+        padding_mode = audio_block.get("padding_mode")
+        if isinstance(padding_mode, str):
+            audio_block["padding_mode"] = padding_mode.lower()
+
+        return {key: value for key, value in audio_block.items() if value is not None}
+
     if dataset_type is DatasetType.TEXT_EMBEDS:
         if "caption_filter_list" in backend:
             output["config"]["caption_filter_list"] = backend["caption_filter_list"]
@@ -282,6 +313,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     )
     choices = [
         DatasetType.IMAGE,
+        DatasetType.AUDIO,
         DatasetType.CONDITIONING,
         DatasetType.EVAL,
         DatasetType.VIDEO,
@@ -309,8 +341,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         logger.error("ignore_epochs is deprecated, and will do nothing. This can be safely removed from your configuration.")
     if "repeats" in backend:
         output["config"]["repeats"] = int(backend["repeats"]) if backend["repeats"] else 0
-    if "crop" in backend:
-        output["config"]["crop"] = backend["crop"]
+    if not is_audio_dataset:
+        if "crop" in backend:
+            output["config"]["crop"] = backend["crop"]
+        else:
+            output["config"]["crop"] = False
     else:
         output["config"]["crop"] = False
     if backend.get("type") == "csv":
@@ -322,81 +357,90 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["csv_caption_column"] = backend["csv_caption_column"]
         if "csv_url_column" in backend:
             output["config"]["csv_url_column"] = backend["csv_url_column"]
-    if "crop_aspect" in backend:
-        choices = ["square", "preserve", "random", "closest"]
-        if backend.get("crop_aspect", None) not in choices:
-            raise ValueError(f"(id={backend['id']}) crop_aspect must be one of {choices}.")
-        output["config"]["crop_aspect"] = backend["crop_aspect"]
-        if output["config"]["crop_aspect"] == "random" or output["config"]["crop_aspect"] == "closest":
-            if "crop_aspect_buckets" not in backend or not isinstance(backend["crop_aspect_buckets"], list):
-                raise ValueError(
-                    f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
-                    " This should be a list of float values or a list of dictionaries following the format: {{'aspect_bucket': float, 'weight': float}}."
-                    " The weight represents how likely this bucket is to be chosen, and all weights should add up to 1.0 collectively."
-                )
-            for bucket in backend.get("crop_aspect_buckets"):
-                if type(bucket) not in [float, int, dict]:
+    if not is_audio_dataset:
+        if "crop_aspect" in backend:
+            choices = ["square", "preserve", "random", "closest"]
+            if backend.get("crop_aspect", None) not in choices:
+                raise ValueError(f"(id={backend['id']}) crop_aspect must be one of {choices}.")
+            output["config"]["crop_aspect"] = backend["crop_aspect"]
+            if output["config"]["crop_aspect"] in {"random", "closest"}:
+                if "crop_aspect_buckets" not in backend or not isinstance(backend["crop_aspect_buckets"], list):
                     raise ValueError(
-                        f"(id={backend['id']}) crop_aspect_buckets must be a list of float values or a list of dictionaries following the format: {{'aspect_bucket': float, 'weight': float}}."
+                        f"(id={backend['id']}) crop_aspect_buckets must be provided when crop_aspect is set to 'random'."
+                        " This should be a list of float values or a list of dictionaries following the format: {{'aspect_bucket': float, 'weight': float}}."
                         " The weight represents how likely this bucket is to be chosen, and all weights should add up to 1.0 collectively."
                     )
+                for bucket in backend.get("crop_aspect_buckets"):
+                    if type(bucket) not in [float, int, dict]:
+                        raise ValueError(
+                            f"(id={backend['id']}) crop_aspect_buckets must be a list of float values or a list of dictionaries following the format: {{'aspect_bucket': float, 'weight': float}}."
+                            " The weight represents how likely this bucket is to be chosen, and all weights should add up to 1.0 collectively."
+                        )
 
-        output["config"]["crop_aspect_buckets"] = backend.get("crop_aspect_buckets")
+            output["config"]["crop_aspect_buckets"] = backend.get("crop_aspect_buckets")
+        else:
+            output["config"]["crop_aspect"] = "square"
+        if "crop_style" in backend:
+            crop_styles = ["random", "corner", "center", "centre", "face"]
+            if backend["crop_style"] not in crop_styles:
+                raise ValueError(f"(id={backend['id']}) crop_style must be one of {crop_styles}.")
+            output["config"]["crop_style"] = backend["crop_style"]
+        else:
+            output["config"]["crop_style"] = "random"
     else:
-        output["config"]["crop_aspect"] = "square"
-    if "crop_style" in backend:
-        crop_styles = ["random", "corner", "center", "centre", "face"]
-        if backend["crop_style"] not in crop_styles:
-            raise ValueError(f"(id={backend['id']}) crop_style must be one of {crop_styles}.")
-        output["config"]["crop_style"] = backend["crop_style"]
-    else:
-        output["config"]["crop_style"] = "random"
+        output["config"]["crop_aspect"] = None
+        output["config"]["crop_aspect_buckets"] = None
+        output["config"]["crop_style"] = None
     output["config"]["disable_validation"] = backend.get("disable_validation", False)
     if "source_dataset_id" in backend:
         output["config"]["source_dataset_id"] = backend["source_dataset_id"]
-    if "resolution" in backend:
-        output["config"]["resolution"] = backend["resolution"]
-    else:
-        output["config"]["resolution"] = _get_arg_value(args, "resolution")
-    if "resolution_type" in backend:
-        output["config"]["resolution_type"] = backend["resolution_type"]
-    else:
-        output["config"]["resolution_type"] = _get_arg_value(args, "resolution_type")
+    if not is_audio_dataset:
+        if "resolution" in backend:
+            output["config"]["resolution"] = backend["resolution"]
+        else:
+            output["config"]["resolution"] = _get_arg_value(args, "resolution")
+        if "resolution_type" in backend:
+            output["config"]["resolution_type"] = backend["resolution_type"]
+        else:
+            output["config"]["resolution_type"] = _get_arg_value(args, "resolution_type")
 
-    if output["config"]["resolution_type"] == "pixel_area":
-        pixel_edge_length = output["config"].get("resolution")
-        if pixel_edge_length is None:
-            pixel_edge_length = _get_arg_value(args, "resolution")
+        if output["config"]["resolution_type"] == "pixel_area":
+            pixel_edge_length = output["config"].get("resolution")
+            if pixel_edge_length is None:
+                pixel_edge_length = _get_arg_value(args, "resolution")
 
-        base_resolution = _get_arg_value(args, "resolution", 1.0) or 1.0
-        try:
-            edge_value = float(pixel_edge_length)
-            base_value = float(base_resolution) if base_resolution else 1.0
-        except (TypeError, ValueError):
-            raise ValueError(
-                f"Resolution type 'pixel_area' requires a numeric 'resolution' value. Received {pixel_edge_length}."
-            )
-
-        if base_value == 0:
-            base_value = 1.0
-
-        output["config"]["resolution"] = (edge_value * edge_value) / base_value
-        output["config"]["resolution_type"] = "area"
-
-        def _maybe_convert_pixel_edge(field_name: str) -> None:
-            raw_value = output["config"].get(field_name)
-            if raw_value in (None, ""):
-                return
+            base_resolution = _get_arg_value(args, "resolution", 1.0) or 1.0
             try:
-                numeric_value = float(raw_value)
+                edge_value = float(pixel_edge_length)
+                base_value = float(base_resolution) if base_resolution else 1.0
             except (TypeError, ValueError):
-                return
-            if numeric_value <= 0 or numeric_value <= 10:
-                return
-            output["config"][field_name] = (numeric_value * numeric_value) / 1_000_000.0
+                raise ValueError(
+                    f"Resolution type 'pixel_area' requires a numeric 'resolution' value. Received {pixel_edge_length}."
+                )
 
-        for field in ("maximum_image_size", "minimum_image_size", "target_downsample_size"):
-            _maybe_convert_pixel_edge(field)
+            if base_value == 0:
+                base_value = 1.0
+
+            output["config"]["resolution"] = (edge_value * edge_value) / base_value
+            output["config"]["resolution_type"] = "area"
+
+            def _maybe_convert_pixel_edge(field_name: str) -> None:
+                raw_value = output["config"].get(field_name)
+                if raw_value in (None, ""):
+                    return
+                try:
+                    numeric_value = float(raw_value)
+                except (TypeError, ValueError):
+                    return
+                if numeric_value <= 0 or numeric_value <= 10:
+                    return
+                output["config"][field_name] = (numeric_value * numeric_value) / 1_000_000.0
+
+            for field in ("maximum_image_size", "minimum_image_size", "target_downsample_size"):
+                _maybe_convert_pixel_edge(field)
+    else:
+        output["config"]["resolution"] = None
+        output["config"]["resolution_type"] = None
 
     if "parquet" in backend:
         output["config"]["parquet"] = backend["parquet"]
@@ -444,8 +488,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 f"(id={backend['id']}) When using a huggingface data backend, caption_strategy must be set to 'huggingface'."
             )
 
-    maximum_image_size = backend.get("maximum_image_size", _get_arg_value(args, "maximum_image_size"))
-    target_downsample_size = backend.get("target_downsample_size", _get_arg_value(args, "target_downsample_size"))
+    if not is_audio_dataset:
+        maximum_image_size = backend.get("maximum_image_size", _get_arg_value(args, "maximum_image_size"))
+        target_downsample_size = backend.get("target_downsample_size", _get_arg_value(args, "target_downsample_size"))
+    else:
+        maximum_image_size = None
+        target_downsample_size = None
     output["config"]["maximum_image_size"] = maximum_image_size
     output["config"]["target_downsample_size"] = target_downsample_size
     bucket_report.set_constraints(
@@ -456,47 +504,50 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     )
     output["config"]["dataset_type"] = output["dataset_type"]
 
-    if maximum_image_size and not target_downsample_size:
-        raise ValueError(
-            "When a data backend is configured to use `maximum_image_size`, you must also provide a value for `target_downsample_size`."
-        )
-    if (
-        maximum_image_size
-        and output["config"]["resolution_type"] == "area"
-        and maximum_image_size >= 20
-        and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
-    ):
-        raise ValueError(
-            f"(id={backend['id']}) maximum_image_size must be less than 20 megapixels when resolution_type is 'area'."
-        )
-    elif (
-        maximum_image_size
-        and output["config"]["resolution_type"] == "pixel"
-        and maximum_image_size < 512
-        and "deepfloyd" not in (_get_arg_value(args, "model_type", "") or "")
-    ):
-        raise ValueError(
-            f"(id={backend['id']}) maximum_image_size must be at least 512 pixels when resolution_type is 'pixel'."
-        )
-    if (
-        target_downsample_size
-        and output["config"]["resolution_type"] == "area"
-        and target_downsample_size >= 20
-        and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
-    ):
-        raise ValueError(
-            f"(id={backend['id']}) target_downsample_size must be less than 20 megapixels when resolution_type is 'area'."
-        )
-    elif (
-        target_downsample_size
-        and output["config"]["resolution_type"] == "pixel"
-        and target_downsample_size < 512
-        and "deepfloyd" not in (_get_arg_value(args, "model_type", "") or "")
-    ):
-        raise ValueError(
-            f"(id={backend['id']}) target_downsample_size must be at least 512 pixels when resolution_type is 'pixel'."
-        )
+    if not is_audio_dataset:
+        if maximum_image_size and not target_downsample_size:
+            raise ValueError(
+                "When a data backend is configured to use `maximum_image_size`, you must also provide a value for `target_downsample_size`."
+            )
+        if (
+            maximum_image_size
+            and output["config"]["resolution_type"] == "area"
+            and maximum_image_size >= 20
+            and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
+        ):
+            raise ValueError(
+                f"(id={backend['id']}) maximum_image_size must be less than 20 megapixels when resolution_type is 'area'."
+            )
+        elif (
+            maximum_image_size
+            and output["config"]["resolution_type"] == "pixel"
+            and maximum_image_size < 512
+            and "deepfloyd" not in (_get_arg_value(args, "model_type", "") or "")
+        ):
+            raise ValueError(
+                f"(id={backend['id']}) maximum_image_size must be at least 512 pixels when resolution_type is 'pixel'."
+            )
+        if (
+            target_downsample_size
+            and output["config"]["resolution_type"] == "area"
+            and target_downsample_size >= 20
+            and not os.environ.get("SIMPLETUNER_MAXIMUM_IMAGE_SIZE_OVERRIDE", False)
+        ):
+            raise ValueError(
+                f"(id={backend['id']}) target_downsample_size must be less than 20 megapixels when resolution_type is 'area'."
+            )
+        elif (
+            target_downsample_size
+            and output["config"]["resolution_type"] == "pixel"
+            and target_downsample_size < 512
+            and "deepfloyd" not in (_get_arg_value(args, "model_type", "") or "")
+        ):
+            raise ValueError(
+                f"(id={backend['id']}) target_downsample_size must be at least 512 pixels when resolution_type is 'pixel'."
+            )
 
+    if is_audio_dataset:
+        output["config"]["audio"] = _prepare_audio_settings(backend)
     if backend.get("dataset_type", None) == "video":
         output["config"]["video"] = {}
         if "video" in backend:
@@ -1103,6 +1154,40 @@ class FactoryRegistry:
 
         metrics_logger.info(f"Factory metrics - {stage}: {log_data}")
 
+    def _default_vae_cache_dir(self, dataset_id: str, dataset_type: DatasetType) -> str:
+        """Return a cache directory path namespaced per media type to avoid collisions."""
+        cache_root = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
+        model_family = getattr(self.args, "model_family", "unknown_model") or "unknown_model"
+        if dataset_type is DatasetType.AUDIO:
+            return os.path.join(cache_root, "audio", "vae", dataset_id)
+        return os.path.join(cache_root, "vae", model_family, dataset_id)
+
+    def _attach_audio_backend(self, init_backend: Dict[str, Any], dataset_type: DatasetType) -> None:
+        """Attach audio-specific runtime helpers when configuring audio datasets."""
+        if dataset_type is not DatasetType.AUDIO:
+            return
+
+        audio_settings = deepcopy(init_backend.get("config", {}).get("audio") or {})
+        cache_root = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
+        default_cache = os.path.join(cache_root, "audio", init_backend["id"])
+        audio_cache_dir = audio_settings.get("cache_dir", default_cache)
+        audio_settings["cache_dir"] = audio_cache_dir
+        init_backend.setdefault("config", {}).setdefault("audio", audio_settings)
+
+        resample_rate = audio_settings.get("resample_rate") or audio_settings.get("sample_rate")
+        init_backend["audio_data_backend"] = {
+            "reader": load_audio,
+            "sample_rate": audio_settings.get("sample_rate"),
+            "resample_rate": resample_rate,
+            "target_duration_seconds": audio_settings.get("target_duration_seconds"),
+            "max_duration_seconds": audio_settings.get("max_duration_seconds"),
+            "pad_to_seconds": audio_settings.get("pad_to_seconds"),
+            "padding_mode": audio_settings.get("padding_mode", "silence"),
+            "padding_value": audio_settings.get("padding_value", 0.0),
+            "channels": audio_settings.get("channels"),
+            "cache_dir": audio_cache_dir,
+        }
+
     def _requires_conditioning_dataset(self) -> bool:
         """Return whether the active model truly requires a conditioning dataset."""
         try:
@@ -1164,7 +1249,8 @@ class FactoryRegistry:
             return False
 
         return not any(
-            profile.requires_dataset_type(dataset_type) for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO)
+            profile.requires_dataset_type(dataset_type)
+            for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO)
         )
 
     def _finalize_metrics(self) -> None:
@@ -1765,7 +1851,7 @@ class FactoryRegistry:
     def _prevalidate_backend_ids(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Validate that data backends provide unique, non-empty identifiers before configuration."""
         try:
-            existing_backends = StateTracker.get_data_backends(_types=["image", "video"])
+            existing_backends = StateTracker.get_data_backends(_types=["image", "video", "audio"])
         except Exception:
             existing_backends = {}
 
@@ -1780,6 +1866,7 @@ class FactoryRegistry:
 
         allowed_types = {
             DatasetType.IMAGE,
+            DatasetType.AUDIO,
             DatasetType.CONDITIONING,
             DatasetType.EVAL,
             DatasetType.VIDEO,
@@ -1833,6 +1920,7 @@ class FactoryRegistry:
             dataset_type = _backend_dataset_type(backend)
             if dataset_type not in {
                 DatasetType.IMAGE,
+                DatasetType.AUDIO,
                 DatasetType.CONDITIONING,
                 DatasetType.EVAL,
                 DatasetType.VIDEO,
@@ -1882,6 +1970,9 @@ class FactoryRegistry:
 
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
         """Handle resolution type conversion from pixel_area to area."""
+        dataset_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+        if dataset_type is DatasetType.AUDIO:
+            return
         resolution_type = backend.get("resolution_type", self.args.resolution_type)
         if resolution_type == "pixel_area":
             pixel_edge_length = backend.get("resolution", int(self.args.resolution))
@@ -1907,6 +1998,11 @@ class FactoryRegistry:
         builder = create_backend_builder(backend["type"], self.accelerator, self.args)
 
         init_backend["data_backend"] = builder.build(config)
+        dataset_type_value = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
+        try:
+            setattr(init_backend["data_backend"], "dataset_type", dataset_type_value)
+        except Exception:
+            pass
 
         if backend["type"] == "local":
             raw_instance_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
@@ -1935,7 +2031,7 @@ class FactoryRegistry:
             init_backend["bucket_report"].set_instance_data_dir(init_backend["instance_data_dir"])
 
             if "cache_dir_vae" not in backend:
-                backend["cache_dir_vae"] = os.path.join(self.args.cache_dir, "vae", self.args.model_family, backend["id"])
+                backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_value)
         else:
             raise ValueError(f"Unknown data backend type: {backend['type']}")
 
@@ -2257,14 +2353,14 @@ class FactoryRegistry:
             bucket_report = init_backend.get("bucket_report")
 
             # Build error message with context
-            if bucket_report and dataset_type in ("image", "video", "conditioning"):
+            if bucket_report and dataset_type in ("image", "video", "conditioning", "audio"):
                 message = bucket_report.format_empty_dataset_message()
                 error_details = f"\n{message}"
             else:
                 error_details = ""
 
             # Raise error for all dataset types that should have data
-            if dataset_type in ("image", "video", "conditioning"):
+            if dataset_type in ("image", "video", "conditioning", "audio"):
                 raise ValueError(
                     f"(id={init_backend['id']}) Dataset produced no usable samples. "
                     f"This typically happens when:\n"
@@ -2275,7 +2371,7 @@ class FactoryRegistry:
                     f"  - Reduce batch_size or gradient_accumulation_steps\n"
                     f"  - Increase repeats\n"
                     f"  - Use fewer GPUs\n"
-                    f"  - Add more images to the dataset"
+                    f"  - Add more samples to the dataset"
                     f"{error_details}"
                 )
             else:
@@ -2291,6 +2387,12 @@ class FactoryRegistry:
         dataset_type = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
         if dataset_type is DatasetType.CAPTION:
             self._create_caption_dataloader(backend, init_backend)
+            return
+        if dataset_type is DatasetType.AUDIO:
+            info_log(f"(id={init_backend['id']}) Audio dataset detected; skipping MultiAspect dataset creation.")
+            init_backend["train_dataset"] = None
+            init_backend["sampler"] = None
+            init_backend["train_dataloader"] = None
             return
 
         caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
@@ -2747,7 +2849,7 @@ class FactoryRegistry:
         }
         for backend in data_backend_config:
             dataset_type = backend.get("dataset_type", "image")
-            if dataset_type is not None and dataset_type not in ["image", "video"]:
+            if dataset_type is not None and dataset_type not in ["image", "video", "audio"]:
                 continue
             if backend.get("disabled", False) or backend.get("disable", False):
                 info_log(f"Skipping disabled data backend {backend['id']} in config file.")
@@ -2818,6 +2920,7 @@ class FactoryRegistry:
         config.validate(vars(self.args))
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
+        dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
         built_backend = build_backend_from_config(config, self.accelerator, vars(self.args))
@@ -2908,7 +3011,7 @@ class FactoryRegistry:
         if (
             "id" not in backend
             or backend["id"] == ""
-            or backend["id"] in StateTracker.get_data_backends(_types=["image", "video"])
+            or backend["id"] in StateTracker.get_data_backends(_types=["image", "video", "audio"])
         ):
             raise ValueError("Each dataset needs a unique 'id' field.")
 
@@ -2920,6 +3023,7 @@ class FactoryRegistry:
         self._handle_resolution_conversion(backend)
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
+        dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
         if init_backend.get("bucket_report"):
             StateTracker.attach_bucket_report(init_backend["id"], init_backend["bucket_report"])
         StateTracker.set_data_backend_config(
@@ -2933,9 +3037,10 @@ class FactoryRegistry:
                 data_backend_id=init_backend["id"],
                 preserve_data_backend_cache=preserve_data_backend_cache,
             )
-        StateTracker.load_aspect_resolution_map(
-            dataloader_resolution=init_backend["config"]["resolution"],
-        )
+        if dataset_type_enum is not DatasetType.AUDIO:
+            StateTracker.load_aspect_resolution_map(
+                dataloader_resolution=init_backend["config"]["resolution"],
+            )
 
         self._configure_backend_by_type(backend, init_backend)
 
@@ -2947,6 +3052,7 @@ class FactoryRegistry:
         conditioning_image_embed_backend = self._get_conditioning_image_embed_backend(backend, init_backend)
 
         self._configure_metadata_backend(backend, init_backend)
+        self._attach_audio_backend(init_backend, dataset_type_enum)
 
         metadata_backend_is_mock = hasattr(init_backend["metadata_backend"], "_mock_children")
 
@@ -2967,6 +3073,12 @@ class FactoryRegistry:
             return
 
         self._handle_bucket_operations(backend, init_backend, conditioning_type)
+
+        if dataset_type_enum is DatasetType.AUDIO:
+            self._process_text_embeddings(backend, init_backend, conditioning_type)
+            init_backend["metadata_backend"].save_cache()
+            self.data_backends[init_backend["id"]] = init_backend
+            return
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
@@ -3403,7 +3515,9 @@ def get_backend_weight(backend_id, backend, step):
     elif sampling_method == "auto-weighting":
         dataset_length = StateTracker.get_dataset_size(backend_id)
         try:
-            total = sum(StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends(_types=["image", "video"]))
+            total = sum(
+                StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends(_types=["image", "video", "audio"])
+            )
         except Exception:
             total = 0
         if not total:

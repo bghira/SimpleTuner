@@ -16,6 +16,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -70,6 +71,11 @@ class MetadataBackend:
         self.seen_images = {}
         self.config = {}
         self.dataset_config = StateTracker.get_data_backend_config(self.id)
+        dataset_type_value = self.dataset_config.get("dataset_type")
+        try:
+            self.dataset_type = ensure_dataset_type(dataset_type_value, default=DatasetType.IMAGE)
+        except ValueError:
+            self.dataset_type = DatasetType.IMAGE
         self.reload_cache()
         self.resolution = float(resolution)
         self.resolution_type = resolution_type
@@ -683,6 +689,8 @@ class MetadataBackend:
     ):
         """check if image meets resolution and frame count requirements"""
         if self.dataset_config.get("dataset_type", None) in ["conditioning"]:
+            return True
+        if self.dataset_type is DatasetType.AUDIO:
             return True
         if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)

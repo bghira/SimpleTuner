@@ -61,6 +61,7 @@ def create_backend_config(backend_dict: dict, args: dict) -> BaseBackendConfig:
         DatasetType.EVAL,
         DatasetType.VIDEO,
         DatasetType.CAPTION,
+        DatasetType.AUDIO,
     }:
         return ImageBackendConfig.from_dict(backend_dict, args)
     else:

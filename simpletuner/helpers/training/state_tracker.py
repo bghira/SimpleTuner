@@ -563,7 +563,7 @@ class StateTracker:
     def get_data_backends(
         cls,
         _type: object = DatasetType.IMAGE,
-        _types: object = (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CAPTION),
+        _types: object = (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CAPTION, DatasetType.AUDIO),
     ):
         target_type = ensure_dataset_type(_type, default=DatasetType.IMAGE)
         allowed_types = set()

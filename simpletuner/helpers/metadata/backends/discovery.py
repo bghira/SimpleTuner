@@ -3,13 +3,16 @@ import logging
 import os
 import traceback
 from io import BytesIO
+from typing import Optional
 
+from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
-from simpletuner.helpers.training import image_file_extensions, video_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -83,9 +86,10 @@ class DiscoveryMetadataBackend(MetadataBackend):
             return list(all_image_files.keys())
         if all_image_files is None:
             logger.debug("No image file cache available, retrieving fresh")
+            extension_pool = audio_file_extensions if self.dataset_type is DatasetType.AUDIO else image_file_extensions
             all_image_files = self.data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
-                file_extensions=image_file_extensions,
+                file_extensions=extension_pool,
             )
             all_image_files = StateTracker.set_image_files(all_image_files, data_backend_id=self.data_backend.id)
         else:
@@ -187,6 +191,15 @@ class DiscoveryMetadataBackend(MetadataBackend):
         delete_problematic_images: bool = False,
         statistics: dict = {},
     ):
+        if self.dataset_type is DatasetType.AUDIO:
+            return self._process_audio_sample(
+                image_path_str=image_path_str,
+                aspect_ratio_bucket_indices=aspect_ratio_bucket_indices,
+                metadata_updates=metadata_updates,
+                delete_problematic_images=delete_problematic_images,
+                statistics=statistics,
+            )
+
         try:
             image_metadata = {}
             image_data = self.data_backend.read(image_path_str)
@@ -247,6 +260,66 @@ class DiscoveryMetadataBackend(MetadataBackend):
             logger.error(f"Error traceback: {traceback.format_exc()}")
             if delete_problematic_images:
                 logger.error(f"Deleting image {image_path_str}.")
+                self.data_backend.delete(image_path_str)
+
+        return aspect_ratio_bucket_indices
+
+    def _process_audio_sample(
+        self,
+        image_path_str: str,
+        aspect_ratio_bucket_indices: dict,
+        metadata_updates=None,
+        delete_problematic_images: bool = False,
+        statistics: Optional[dict] = None,
+    ):
+        if statistics is None:
+            statistics = {}
+        try:
+            audio_payload = self.data_backend.read(image_path_str)
+            if audio_payload is None:
+                logger.debug(f"Audio sample {image_path_str} was not found on the backend. Skipping.")
+                statistics.setdefault("skipped", {}).setdefault("not_found", 0)
+                statistics["skipped"]["not_found"] += 1
+                return aspect_ratio_bucket_indices
+
+            buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
+            buffer.seek(0)
+            waveform, sample_rate = load_audio(buffer)
+            if waveform is None or waveform.numel() == 0:
+                logger.debug(f"Audio sample {image_path_str} is empty. Skipping.")
+                statistics.setdefault("skipped", {}).setdefault("other", 0)
+                statistics["skipped"]["other"] += 1
+                return aspect_ratio_bucket_indices
+
+            if not hasattr(waveform, "shape") or len(waveform.shape) < 2:
+                logger.debug(
+                    f"Audio sample {image_path_str} has malformed shape {getattr(waveform, 'shape', None)}. Skipping."
+                )
+                statistics.setdefault("skipped", {}).setdefault("malformed_shape", 0)
+                statistics["skipped"]["malformed_shape"] += 1
+                return aspect_ratio_bucket_indices
+
+            num_channels, num_samples = waveform.shape[0], waveform.shape[1]
+            duration_seconds = float(num_samples) / float(sample_rate) if sample_rate else None
+            audio_metadata = {
+                "audio_path": image_path_str,
+                "sample_rate": sample_rate,
+                "num_channels": num_channels,
+                "num_samples": num_samples,
+                "duration_seconds": duration_seconds,
+            }
+
+            bucket_key = "audio"
+            if duration_seconds:
+                bucket_key = f"{round(duration_seconds, 2)}s"
+            aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(image_path_str)
+
+            if metadata_updates is not None:
+                metadata_updates[image_path_str] = audio_metadata
+        except Exception as exc:
+            logger.error(f"Error processing audio sample {image_path_str}: {exc}", exc_info=True)
+            if delete_problematic_images:
+                logger.error(f"Deleting audio sample {image_path_str}.")
                 self.data_backend.delete(image_path_str)
 
         return aspect_ratio_bucket_indices
