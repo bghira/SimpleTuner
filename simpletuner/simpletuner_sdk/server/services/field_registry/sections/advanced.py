@@ -390,6 +390,17 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         "sageattention-int8-fp16-triton",
         "sageattention-int8-fp16-cuda",
         "sageattention-int8-fp8-cuda",
+        "flash-attn",
+        "flash-attn-2",
+        "flash-attn-3",
+        "flash-attn-3-varlen",
+        "flex",
+        "cudnn",
+        "native-efficient",
+        "native-flash",
+        "native-math",
+        "native-npu",
+        "native-xla",
     ]
     registry._add_field(
         ConfigField(
@@ -2040,6 +2051,17 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         "sageattention-int8-fp16-triton",
         "sageattention-int8-fp16-cuda",
         "sageattention-int8-fp8-cuda",
+        "flash-attn",
+        "flash-attn-2",
+        "flash-attn-3",
+        "flash-attn-3-varlen",
+        "flex",
+        "cudnn",
+        "native-efficient",
+        "native-flash",
+        "native-math",
+        "native-npu",
+        "native-xla",
     ]
     registry._add_field(
         ConfigField(

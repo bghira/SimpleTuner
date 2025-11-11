@@ -5,6 +5,7 @@ import unittest
 
 import torch
 
+from simpletuner.helpers.training import attention_backend as attention_backend_module
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
 
 
@@ -27,6 +28,8 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController._sink_param_ids = set()
         AttentionBackendController._optimizer_param_ids = set()
         AttentionBackendController._sla_state_store = {}
+        AttentionBackendController._diffusers_backend_context = None
+        AttentionBackendController._diffusers_backend_name = None
 
     def test_save_checkpoint_no_state(self):
         AttentionBackendController._active_backend = "sla"
@@ -76,3 +79,13 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController._force_proj_fp32(module)
         self.assertEqual(module.proj_l.weight.dtype, torch.float32)
         self.assertEqual(module.proj_l.bias.dtype, torch.float32)
+
+    def test_enable_diffusers_backend_context(self):
+        if not attention_backend_module._DIFFUSERS_BACKEND_ALIASES:
+            self.skipTest("Diffusers attention backend helpers unavailable in this environment.")
+
+        config = type("Config", (object,), {"attention_mechanism": "native-math"})()
+        AttentionBackendController.apply(config, AttentionPhase.TRAIN)
+        self.assertEqual(AttentionBackendController._diffusers_backend_name, "native-math")
+        AttentionBackendController.restore_default()
+        self.assertIsNone(AttentionBackendController._diffusers_backend_name)
