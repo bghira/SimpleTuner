@@ -19,6 +19,7 @@ environ["ACCELERATE_LOG_LEVEL"] = "WARNING"
 
 from simpletuner.helpers import log_format
 from simpletuner.helpers.logging import get_logger
+from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.trainer import Trainer
@@ -66,9 +67,9 @@ if __name__ == "__main__":
         trainer.move_models(destination="accelerator")
         trainer.init_distillation()
         trainer.init_validations()
-        trainer.enable_sageattention_inference()
+        AttentionBackendController.apply(trainer.config, AttentionPhase.EVAL)
         trainer.init_benchmark_base_model()
-        trainer.disable_sageattention_inference()
+        AttentionBackendController.apply(trainer.config, AttentionPhase.TRAIN)
 
         trainer.resume_and_prepare()
 

@@ -385,6 +385,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
     attention_mechanisms = [
         "diffusers",
         "xformers",
+        "sla",
         "sageattention",
         "sageattention-int8-fp16-triton",
         "sageattention-int8-fp16-cuda",
@@ -405,6 +406,24 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Xformers saves memory. SageAttention is faster but experimental. Diffusers is default.",
             importance=ImportanceLevel.ADVANCED,
             order=10,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="sla_config",
+            arg_name="--sla_config",
+            ui_label="SLA Configuration",
+            field_type=FieldType.TEXTAREA,
+            tab="model",
+            section="memory_optimization",
+            subsection="advanced",
+            default_value=None,
+            help_text="JSON/dict overrides for SLA (e.g. {'topk':0.2,'tie_feature_map_qk':true}).",
+            tooltip="Advanced overrides for Sparse–Linear Attention. See documentation/attention/SLA.md for details.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=11,
+            dependencies=[FieldDependency(field="attention_mechanism", operator="equals", value="sla")],
         )
     )
 
@@ -2016,6 +2035,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
     attention_mechanisms = [
         "diffusers",
         "xformers",
+        "sla",
         "sageattention",
         "sageattention-int8-fp16-triton",
         "sageattention-int8-fp16-cuda",

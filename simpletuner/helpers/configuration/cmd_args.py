@@ -17,6 +17,7 @@ from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.logging import get_logger
+from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -525,6 +526,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 logger.error(f"Could not load tread_config: {e}")
                 raise
 
+    if args.sla_config is not None and isinstance(args.sla_config, str):
+        candidate = args.sla_config.strip()
+        if candidate.startswith("{"):
+            try:
+                args.sla_config = ast.literal_eval(candidate)
+            except Exception as e:
+                logger.error(f"Could not load sla_config: {e}")
+                raise
+
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
         if not torch.backends.mps.is_available():
             raise ValueError("You cannot use --adam_bfloat16 without --mixed_precision=bf16.")
@@ -967,6 +977,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
         warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
+
+    if hasattr(args, "sageattention_usage"):
+        args.sageattention_usage = AttentionBackendMode.from_raw(args.sageattention_usage)
 
     deprecated_options = {
         # how to deprecate options:
