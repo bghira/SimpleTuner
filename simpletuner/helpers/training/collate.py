@@ -1,6 +1,7 @@
 import concurrent.futures
 import logging
-from collections import defaultdict
+import os
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from os import environ
 
@@ -72,6 +73,83 @@ def extract_filepaths(examples):
     for example in examples:
         filepaths.append(example["image_path"])
     return filepaths
+
+
+def _normalize_training_identifier(path, root=None):
+    if not path:
+        return None
+    candidate_path = path
+    if root and not os.path.isabs(candidate_path):
+        candidate_path = os.path.join(root, candidate_path)
+    abs_path = os.path.abspath(os.path.normpath(candidate_path))
+    if root:
+        abs_root = os.path.abspath(os.path.normpath(root))
+        try:
+            if os.path.commonpath([abs_path, abs_root]) == abs_root:
+                return os.path.normcase(os.path.relpath(abs_path, abs_root))
+        except ValueError:
+            pass
+    return os.path.normcase(abs_path)
+
+
+def describe_missing_conditioning_pairs(
+    examples,
+    conditioning_examples,
+    conditioning_backends,
+    training_backend_id,
+    training_root=None,
+):
+    if not examples or not conditioning_backends or not training_backend_id:
+        return []
+    if any(example.get("data_backend_id") != training_backend_id for example in examples):
+        return ["Unable to list missing pairs because multiple training data backends are present in the batch."]
+
+    expected_counter = Counter()
+    for example in examples:
+        identifier = _normalize_training_identifier(example.get("image_path"), training_root)
+        if identifier is not None:
+            expected_counter[identifier] += 1
+    if not expected_counter:
+        return []
+
+    actual_counts = defaultdict(Counter)
+    resolution_errors = []
+    for cond_example in conditioning_examples:
+        backend_id = getattr(cond_example, "_source_dataset_id", getattr(cond_example, "data_backend_id", None))
+        if backend_id is None:
+            continue
+        identifier = None
+        if hasattr(cond_example, "training_sample_path"):
+            try:
+                identifier = _normalize_training_identifier(
+                    cond_example.training_sample_path(training_backend_id),
+                    training_root,
+                )
+            except Exception as exc:
+                resolution_errors.append(
+                    f"{backend_id}: failed to resolve training pair for "
+                    f"{getattr(cond_example, '_image_path', 'unknown')}: {exc}"
+                )
+        if identifier is not None:
+            actual_counts[backend_id][identifier] += 1
+
+    messages = []
+    for backend_cfg in conditioning_backends:
+        backend_id = backend_cfg.get("id")
+        backend_actual = actual_counts.get(backend_id, Counter())
+        missing_paths = []
+        for identifier, expected_count in expected_counter.items():
+            actual_count = backend_actual.get(identifier, 0)
+            if actual_count < expected_count:
+                missing_paths.extend([identifier] * (expected_count - actual_count))
+        if missing_paths:
+            preview = ", ".join(missing_paths[:3])
+            if len(missing_paths) > 3:
+                preview += ", ..."
+            messages.append(f"{backend_id} missing {len(missing_paths)} pair(s): {preview}")
+
+    messages.extend(resolution_errors)
+    return messages
 
 
 def fetch_pixel_values(fp, data_backend_id: str, model):
@@ -422,6 +500,7 @@ def collate_fn(batch):
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     data_backend = StateTracker.get_data_backend(data_backend_id)
+    training_data_root = data_backend.get("config", {}).get("instance_data_dir")
 
     debug_log("Compute latents")
     model = StateTracker.get_model()
@@ -471,8 +550,26 @@ def collate_fn(batch):
         # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
 
-        if len(conditioning_examples) != len(examples) * len(conditioning_backends):
-            raise ValueError("The number of conditioning examples must be divisible by the number of training samples.")
+        expected_conditioning_total = len(examples) * len(conditioning_backends)
+        if len(conditioning_examples) != expected_conditioning_total:
+            missing_pairs = describe_missing_conditioning_pairs(
+                examples,
+                conditioning_examples,
+                conditioning_backends,
+                data_backend_id,
+                training_data_root,
+            )
+            detail_suffix = ""
+            if missing_pairs:
+                preview = "; ".join(missing_pairs[:3])
+                if len(missing_pairs) > 3:
+                    preview += "; ..."
+                detail_suffix = f" Missing pairs: {preview}"
+            raise ValueError(
+                "Each conditioning backend must supply one sample per training example "
+                f"(expected {expected_conditioning_total}, got {len(conditioning_examples)})."
+                f"{detail_suffix}"
+            )
 
         conditioning_map = defaultdict(list)
         for i, cond_example in enumerate(conditioning_examples):

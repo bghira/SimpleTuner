@@ -104,6 +104,46 @@ class SaveHookManager:
             if rank > 0:
                 self.training_state_path = f"training_state-rank{rank}.json"
 
+    @contextmanager
+    def _offload_models_during_save(self, is_main_process: bool):
+        """
+        Temporarily move models to CPU when saving to reduce GPU memory pressure.
+        """
+        if not is_main_process or not getattr(self.args, "offload_during_save", False):
+            yield
+            return
+        if self.accelerator is None or self.model is None:
+            yield
+            return
+
+        device = getattr(self.accelerator, "device", None)
+        if isinstance(device, torch.device):
+            target_device = device
+        elif isinstance(device, str) and device:
+            target_device = torch.device(device)
+        else:
+            target_device = None
+
+        if target_device is None or target_device.type == "cpu":
+            yield
+            return
+
+        logger.info("Offloading models to CPU to reduce VRAM usage during checkpoint save.")
+        try:
+            self.model.move_models("cpu")
+        except Exception as exc:
+            logger.warning("Could not offload models before saving: %s", exc)
+            yield
+            return
+
+        try:
+            yield
+        finally:
+            try:
+                self.model.move_models(target_device)
+            except Exception as exc:
+                logger.warning("Failed to restore models after offload save: %s", exc)
+
     def _save_lora(self, models, weights, output_dir):
         # for SDXL/others, there are only two options here. Either are just the unet attn processor layers
         # or there are the unet and text encoder atten layers.
@@ -315,42 +355,43 @@ class SaveHookManager:
             distributed_type = getattr(self.accelerator, "distributed_type", DistributedType.NO)
             is_main_process = getattr(self.accelerator, "is_main_process", True)
 
-        if self.args.use_ema and is_main_process:
-            # we'll save this EMA checkpoint for restoring the state easier.
-            ema_model_path = os.path.join(output_dir, self.ema_model_subdir, "ema_model.pt")
-            logger.info(f"Saving EMA model to {ema_model_path}")
-            try:
-                self.ema_model.save_state_dict(ema_model_path)
-            except Exception as e:
-                logger.error(f"Error saving EMA model: {e}")
+        with self._offload_models_during_save(is_main_process):
+            if self.args.use_ema and is_main_process:
+                # we'll save this EMA checkpoint for restoring the state easier.
+                ema_model_path = os.path.join(output_dir, self.ema_model_subdir, "ema_model.pt")
+                logger.info(f"Saving EMA model to {ema_model_path}")
+                try:
+                    self.ema_model.save_state_dict(ema_model_path)
+                except Exception as e:
+                    logger.error(f"Error saving EMA model: {e}")
 
-        # For Accelerate-managed FSDP v2 checkpoints, rely on Accelerate's native sharded save.
-        if (
-            distributed_type == DistributedType.FSDP
-            and getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None) is not None
-            and getattr(self.accelerator.state.fsdp_plugin, "fsdp_version", 1) == 2
-        ):
-            logger.info("Detected FSDP v2; skipping custom full-model save and relying on Accelerate shards.")
-            if self.accelerator is not None and distributed_type != DistributedType.NO:
-                self.accelerator.wait_for_everyone()
-            return
-        if not is_main_process:
-            return
+            # For Accelerate-managed FSDP v2 checkpoints, rely on Accelerate's native sharded save.
+            if (
+                distributed_type == DistributedType.FSDP
+                and getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None) is not None
+                and getattr(self.accelerator.state.fsdp_plugin, "fsdp_version", 1) == 2
+            ):
+                logger.info("Detected FSDP v2; skipping custom full-model save and relying on Accelerate shards.")
+                if self.accelerator is not None and distributed_type != DistributedType.NO:
+                    self.accelerator.wait_for_everyone()
+                return
+            if not is_main_process:
+                return
 
-        if "lora" in self.args.model_type and self.args.lora_type == "standard":
-            self._save_lora(models=models, weights=weights, output_dir=output_dir)
-            return
-        elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
-            self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
-            return
-        else:
-            self._save_full_model(
-                models=models,
-                weights=weights,
-                output_dir=output_dir,
-                is_main_process=is_main_process,
-                distributed_type=distributed_type,
-            )
+            if "lora" in self.args.model_type and self.args.lora_type == "standard":
+                self._save_lora(models=models, weights=weights, output_dir=output_dir)
+                return
+            elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
+                self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
+                return
+            else:
+                self._save_full_model(
+                    models=models,
+                    weights=weights,
+                    output_dir=output_dir,
+                    is_main_process=is_main_process,
+                    distributed_type=distributed_type,
+                )
 
     def _load_lora(self, models, input_dir):
         logger.info(f"Loading LoRA weights from Path: {input_dir}")

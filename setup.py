@@ -203,7 +203,7 @@ base_deps = [
     "tensorboard>=2.18.0",
     "sentencepiece>=0.2.0",
     "optimum-quanto>=0.2.7",
-    "lycoris-lora>=3.2.0.post2",
+    "lycoris-lora @ git+https://github.com/KohakuBlueleaf/LyCORIS@dev",
     "torch-optimi>=0.2.1",
     "torchaudio>=2.4.1",
     "toml>=0.10.2",

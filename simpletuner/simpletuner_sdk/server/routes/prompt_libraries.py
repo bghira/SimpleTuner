@@ -1,0 +1,52 @@
+"""Routes for managing validation prompt libraries."""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from typing import Dict, Optional
+
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel
+
+from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryError, PromptLibraryService
+
+router = APIRouter(prefix="/api/prompt-libraries", tags=["prompt_libraries"])
+
+
+class PromptLibraryPayload(BaseModel):
+    entries: Dict[str, str]
+    previous_filename: Optional[str] = None
+
+
+def _call_service(func, *args, **kwargs):
+    try:
+        return func(*args, **kwargs)
+    except PromptLibraryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+
+
+def _get_service() -> PromptLibraryService:
+    return PromptLibraryService()
+
+
+@router.get("/")
+async def list_prompt_libraries() -> Dict[str, object]:
+    service = _get_service()
+    records = _call_service(service.list_libraries)
+    return {"libraries": [asdict(record) for record in records], "count": len(records)}
+
+
+@router.get("/{filename}")
+async def get_prompt_library(filename: str) -> Dict[str, object]:
+    service = _get_service()
+    result = _call_service(service.read_library, filename)
+    return {"entries": result["entries"], "library": asdict(result["library"])}
+
+
+@router.put("/{filename}")
+async def save_prompt_library(filename: str, payload: PromptLibraryPayload) -> Dict[str, object]:
+    service = _get_service()
+    result = _call_service(service.save_library, filename, payload.entries, payload.previous_filename)
+    return {"entries": result["entries"], "library": asdict(result["library"])}

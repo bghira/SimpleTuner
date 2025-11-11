@@ -209,7 +209,7 @@ class TrainerPage(BasePage):
                         : '';
                       const errors = [];
                       if (!String(trackerProject || '').trim()) {
-                        errors.push('Model name is required.');
+                        errors.push('Project name is required.');
                       }
                       if (!String(outputDir || '').trim()) {
                         errors.push('Output directory is required.');
@@ -294,7 +294,7 @@ class TrainerPage(BasePage):
                 "      const nameValue = typeof overrides.modelName === 'string' ? overrides.modelName : readValue(['tracker_project_name', '--tracker_project_name', 'job_id', '--job_id']);"
                 "      const outputValue = typeof overrides.outputDir === 'string' ? overrides.outputDir : readValue(['output_dir', '--output_dir']);"
                 "      const errors = [];"
-                "      if (!(nameValue || '').trim()) { errors.push('Model name is required.'); }"
+                "      if (!(nameValue || '').trim()) { errors.push('Project name is required.'); }"
                 "      if (!(outputValue || '').trim()) { errors.push('Output directory is required.'); }"
                 "      const trainingStatus = document.getElementById('training-status');"
                 "      if (trainingStatus) {"
@@ -699,7 +699,7 @@ class TrainerPage(BasePage):
         if missing_fields.get("run") or missing_fields.get("output"):
             issues = []
             if missing_fields.get("run"):
-                issues.append("Model name is required.")
+                issues.append("Project name is required.")
             if missing_fields.get("output"):
                 issues.append("Output directory is required.")
             message = " ".join(issues) or "Invalid configuration."

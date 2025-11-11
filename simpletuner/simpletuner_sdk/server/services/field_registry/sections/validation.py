@@ -512,10 +512,10 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="prompt_management",
             placeholder="/path/to/prompt_library.json",
-            help_text="Path to custom JSON prompt library",
             tooltip="See user_prompt_library.json.example for format",
             importance=ImportanceLevel.ADVANCED,
             order=4,
+            custom_component="prompt_library_path",
         )
     )
 

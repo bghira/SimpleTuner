@@ -6,7 +6,7 @@
 }
 
 /* Modal Backdrop - ensure proper z-index */
-.modal-backdrop {
+.training-wizard-backdrop {
     position: fixed;
     top: 0;
     left: 0;

@@ -902,12 +902,20 @@ class EventHandler {
                         currentValue = Number.isFinite(percentValue) ? percentValue : 0;
                         totalValue = 100;
                     }
-                    this.updateProgressBar(
+                    const stageStatus = this.extractLifecycleStatus(stageInfo);
+
+                    // Clear completed lifecycle events when a Running lifecycle event arrives
+                    if (stageStatus === 'running') {
+                        this.clearCompletedLifecycleEvents();
+                    }
+
+                    const progressElement = this.updateProgressBar(
                         String(progressType),
                         currentValue,
                         totalValue,
                         stageInfo.readable_type || stageInfo.label || this.prettifyLabel(progressType)
                     );
+                    this.updateLifecycleProgressState(progressElement, stageStatus);
                 }
                 break;
             }
@@ -967,6 +975,96 @@ class EventHandler {
         }
     }
 
+    clearCompletedLifecycleEvents() {
+        const progressBars = document.getElementById('progressBars');
+        if (!progressBars) {
+            return;
+        }
+
+        // Find all progress items that are at 100% and remove them
+        const progressItems = Array.from(progressBars.querySelectorAll('.progress-item'));
+        for (const item of progressItems) {
+            const lifecycleStatus = String(item.dataset.lifecycleStatus || '').toLowerCase();
+            if (this.isTerminalLifecycleStatus(lifecycleStatus)) {
+                item.remove();
+                continue;
+            }
+
+            const current = Number(item.dataset.current);
+            const total = Number(item.dataset.total);
+
+            if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+                const percent = (current / total) * 100;
+                if (percent >= 99.9) {
+                    item.remove();
+                }
+            }
+        }
+    }
+
+    isTerminalLifecycleStatus(status) {
+        if (!status) {
+            return false;
+        }
+        const normalized = String(status).toLowerCase();
+        return ['completed', 'complete', 'failed', 'error', 'fatal', 'cancelled', 'canceled', 'stopped', 'terminated'].includes(normalized);
+    }
+
+    extractLifecycleStatus(stageInfo) {
+        if (!stageInfo || typeof stageInfo !== 'object') {
+            return '';
+        }
+
+        const candidates = [
+            stageInfo.status,
+            stageInfo.state,
+            stageInfo.progress_status,
+            stageInfo.progress?.status,
+            stageInfo.stage?.status,
+        ];
+
+        for (const candidate of candidates) {
+            if (typeof candidate === 'string' && candidate.trim()) {
+                return candidate.trim().toLowerCase();
+            }
+        }
+        return '';
+    }
+
+    updateLifecycleProgressState(progressElement, status) {
+        if (!progressElement) {
+            return;
+        }
+        const normalizedStatus = status ? String(status).toLowerCase() : '';
+        if (normalizedStatus) {
+            progressElement.dataset.lifecycleStatus = normalizedStatus;
+        }
+
+        if (this.isTerminalLifecycleStatus(normalizedStatus)) {
+            this.scheduleProgressItemRemoval(progressElement);
+        }
+    }
+
+    scheduleProgressItemRemoval(progressElement) {
+        if (!progressElement || progressElement.dataset.removalScheduled === 'true') {
+            return;
+        }
+        progressElement.dataset.removalScheduled = 'true';
+        progressElement.classList.add('progress-complete');
+        setTimeout(() => {
+            if (!progressElement.parentNode) {
+                return;
+            }
+            progressElement.style.transition = 'opacity 0.5s';
+            progressElement.style.opacity = '0';
+            setTimeout(() => {
+                if (progressElement && progressElement.parentNode) {
+                    progressElement.remove();
+                }
+            }, 500);
+        }, 3000);
+    }
+
     shouldDisplayEvent(event) {
         // Determine if an event without a message should still be displayed
         return ['train', 'validation', 'checkpoint'].includes(event.message_type);
@@ -1016,6 +1114,12 @@ class EventHandler {
         const activeStatuses = new Set(['running', 'starting', 'initializing', 'initialising', 'configuring']);
         const isTraining = options.forceTraining === true || activeStatuses.has(normalizedStatus);
         const shouldResetProgress = options.resetProgress === true || terminalStatuses.has(normalizedStatus);
+
+        // Clear completed lifecycle events when training enters running state
+        // Do this before the early return so it happens on every 'running' event
+        if (normalizedStatus === 'running') {
+            this.clearCompletedLifecycleEvents();
+        }
 
         if (this.lastReportedStatus === normalizedStatus && !options.force && jobId === this.lastKnownJobId && !shouldResetProgress) {
             return;
@@ -1289,18 +1393,13 @@ class EventHandler {
 
             // Remove completed progress bars after a delay
             if (current >= total && percent >= 99.9) {
-                progressElement.classList.add('progress-complete');
-                setTimeout(() => {
-                    progressElement.style.transition = 'opacity 0.5s';
-                    progressElement.style.opacity = '0';
-                    setTimeout(() => {
-                        if (progressElement && progressElement.parentNode) {
-                            progressElement.remove();
-                        }
-                    }, 500);
-                }, 3000);
+                this.scheduleProgressItemRemoval(progressElement);
             }
+
+            return progressElement;
         }
+
+        return null;
     }
 
     handleSpecialEvents(event) {

@@ -7,7 +7,7 @@ field organization, template rendering, and tab-specific customizations.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -20,6 +20,7 @@ from ..services.webui_state import WebUIStateStore
 from .custom_section_service import CUSTOM_SECTION_SERVICE
 from .dataset_service import build_data_backend_choices
 from .hardware_service import detect_gpu_inventory
+from .prompt_library_service import PromptLibraryService
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,12 @@ class TabService:
                     "description": context["tab_config"].get("description"),
                 }
             ]
+        try:
+            libraries = PromptLibraryService().list_libraries()
+            context["prompt_libraries"] = [asdict(record) for record in libraries]
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.debug("Failed to load prompt libraries for validation tab: %s", exc)
+            context["prompt_libraries"] = []
         return context
 
     def _publishing_tab_context(
@@ -367,6 +374,12 @@ class TabService:
         """Customize context for environments tab."""
         # Add environment-specific context
         context["available_accelerators"] = ["cuda", "mps", "cpu"]
+        try:
+            libraries = PromptLibraryService().list_libraries()
+            context["prompt_libraries"] = [asdict(record) for record in libraries]
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.debug("Failed to load prompt libraries for environments tab: %s", exc)
+            context["prompt_libraries"] = []
         return context
 
     def get_all_tabs(self) -> List[Dict[str, str]]:

@@ -406,6 +406,20 @@ class ConfigsServiceEnvironmentTests(unittest.TestCase):
         self.assertFalse(stray_root.exists())
         self.assertFalse(stray_root.with_suffix(".metadata.json").exists())
 
+    def test_prompt_library_paths_are_saved_absolute(self) -> None:
+        service = ConfigsService()
+        libraries_dir = self.config_root / "validation_prompt_libraries"
+        libraries_dir.mkdir(parents=True, exist_ok=True)
+        library_path = libraries_dir / "user_prompt_library-smoke.json"
+        library_path.write_text("{}", encoding="utf-8")
+
+        form_data = {
+            "user_prompt_library": f"validation_prompt_libraries/{library_path.name}",
+        }
+
+        normalized = service.normalize_form_to_config(form_data, configs_dir=str(self.config_root))
+        self.assertEqual(normalized.get("--user_prompt_library"), str(library_path))
+
     def test_example_environment_copies_dataloader_payload(self) -> None:
         service = ConfigsService()
 

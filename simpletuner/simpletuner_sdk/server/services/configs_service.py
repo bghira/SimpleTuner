@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import status
+from lycoris.config_sdk import PresetValidationError
 
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.simpletuner_sdk.server.dependencies.common import _load_active_config_cached
@@ -18,6 +19,7 @@ from simpletuner.simpletuner_sdk.server.services.dataset_service import normaliz
 from simpletuner.simpletuner_sdk.server.services.example_configs_service import EXAMPLE_CONFIGS_SERVICE, ExampleConfigInfo
 from simpletuner.simpletuner_sdk.server.services.field_registry import FieldType
 from simpletuner.simpletuner_sdk.server.services.field_registry_wrapper import lazy_field_registry
+from simpletuner.simpletuner_sdk.server.services.lycoris_builder_service import LYCORIS_BUILDER_SERVICE
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root, resolve_config_path
 
@@ -929,17 +931,21 @@ class ConfigsService:
                 "warnings": list[str]
             }
         """
-        errors = []
-        warnings = []
+        errors: List[str] = []
+        warnings: List[str] = []
+        metadata = LYCORIS_BUILDER_SERVICE.get_metadata()
+        known_algos = {algo["name"].lower() for algo in metadata.get("algorithms", [])}
 
-        # Check required field: algo
-        if "algo" not in lycoris_config:
+        algo_raw = lycoris_config.get("algo")
+        algo = str(algo_raw).strip().lower() if isinstance(algo_raw, str) else algo_raw
+        if not algo:
             errors.append("Missing required field: 'algo'")
         else:
-            algo = lycoris_config.get("algo")
-            valid_algos = ["lora", "loha", "lokr", "locon", "oft", "boft", "glora", "full"]
-            if algo not in valid_algos:
-                warnings.append(f"Unknown algo '{algo}'. Known algorithms: {', '.join(valid_algos)}")
+            if isinstance(algo, str) and algo in known_algos:
+                algo_name = algo
+            else:
+                algo_name = algo if isinstance(algo, str) else str(algo)
+                warnings.append(f"Unknown algo '{algo_name}'. Known algorithms: {', '.join(sorted(known_algos)) or 'none'}")
 
         # Check multiplier
         multiplier = lycoris_config.get("multiplier")
@@ -950,8 +956,9 @@ class ConfigsService:
                 errors.append("Field 'multiplier' must be greater than 0")
 
         # Check linear_dim and linear_alpha for most algos (except full)
-        algo = lycoris_config.get("algo")
-        if algo and algo != "full":
+        algo_name = algo if isinstance(algo, str) else None
+        requires_dim = bool(algo_name) and algo_name not in {"full", "ia3"}
+        if requires_dim:
             linear_dim = lycoris_config.get("linear_dim")
             if linear_dim is not None and not isinstance(linear_dim, int):
                 errors.append("Field 'linear_dim' must be an integer")
@@ -965,7 +972,7 @@ class ConfigsService:
                 errors.append("Field 'linear_alpha' must be positive")
 
         # Check factor for lokr algo
-        if algo == "lokr":
+        if algo_name == "lokr":
             factor = lycoris_config.get("factor")
             if factor is not None:
                 if not isinstance(factor, int):
@@ -979,13 +986,41 @@ class ConfigsService:
             if not isinstance(apply_preset, dict):
                 errors.append("Field 'apply_preset' must be a dictionary")
             else:
-                target_module = apply_preset.get("target_module")
-                if target_module is not None and not isinstance(target_module, list):
-                    errors.append("Field 'apply_preset.target_module' must be a list")
+                list_fields = (
+                    "target_module",
+                    "target_name",
+                    "unet_target_module",
+                    "unet_target_name",
+                    "text_encoder_target_module",
+                    "text_encoder_target_name",
+                    "exclude_name",
+                )
+                for field in list_fields:
+                    value = apply_preset.get(field)
+                    if value is not None and not isinstance(value, list):
+                        errors.append(f"Field 'apply_preset.{field}' must be a list")
 
-                module_algo_map = apply_preset.get("module_algo_map")
-                if module_algo_map is not None and not isinstance(module_algo_map, dict):
-                    errors.append("Field 'apply_preset.module_algo_map' must be a dictionary")
+                def _validate_override_map(name: str) -> bool:
+                    value = apply_preset.get(name)
+                    if value is None:
+                        return True
+                    if not isinstance(value, dict):
+                        errors.append(f"Field 'apply_preset.{name}' must be a dictionary")
+                        return False
+                    for override_key, override_value in value.items():
+                        if not isinstance(override_value, dict):
+                            errors.append(f"Override '{override_key}' within 'apply_preset.{name}' must be a dictionary")
+                            return False
+                    return True
+
+                overrides_valid = _validate_override_map("module_algo_map")
+                names_valid = _validate_override_map("name_algo_map")
+
+                if overrides_valid and names_valid:
+                    try:
+                        LYCORIS_BUILDER_SERVICE.validate_preset(apply_preset)
+                    except PresetValidationError as exc:
+                        errors.append(str(exc))
 
         return {
             "valid": len(errors) == 0,
@@ -1120,6 +1155,7 @@ class ConfigsService:
             "--data_backend_config",
             "--webhook_config",
             "--lycoris_config",
+            "--user_prompt_library",
         }
 
         numeric_fields = {
