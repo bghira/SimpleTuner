@@ -291,7 +291,15 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 statistics["skipped"]["other"] += 1
                 return aspect_ratio_bucket_indices
 
-            num_channels, num_samples = waveform.shape
+            if not hasattr(waveform, "shape") or len(waveform.shape) < 2:
+                logger.debug(
+                    f"Audio sample {image_path_str} has malformed shape {getattr(waveform, 'shape', None)}. Skipping."
+                )
+                statistics.setdefault("skipped", {}).setdefault("malformed_shape", 0)
+                statistics["skipped"]["malformed_shape"] += 1
+                return aspect_ratio_bucket_indices
+
+            num_channels, num_samples = waveform.shape[0], waveform.shape[1]
             duration_seconds = float(num_samples) / float(sample_rate) if sample_rate else None
             audio_metadata = {
                 "audio_path": image_path_str,

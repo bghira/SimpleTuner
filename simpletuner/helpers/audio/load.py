@@ -45,8 +45,5 @@ def load_audio(source: AudioSource) -> Tuple[torch.Tensor, int]:
         Tuple of waveform tensor shaped (channels, samples) and the sample rate.
     """
     stream = _coerce_to_stream(source)
-    if isinstance(stream, str):
-        waveform, sample_rate = torchaudio.load(stream)
-    else:
-        waveform, sample_rate = torchaudio.load(stream)
+    waveform, sample_rate = torchaudio.load(stream)
     return waveform, sample_rate

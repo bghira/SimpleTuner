@@ -4,7 +4,7 @@ import logging
 import os
 from io import BytesIO
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, Optional, Union
+from typing import Any, BinaryIO, Dict, List, Optional, Union
 
 import pandas as pd
 import requests
@@ -183,7 +183,7 @@ class CSVDataBackend(BaseDataBackend):
         results += [("", [], filtered_ids - filtered_paths)]
         return results
 
-    def _default_file_extensions(self) -> list[str]:
+    def _default_file_extensions(self) -> List[str]:
         dataset_type = getattr(self, "dataset_type", DatasetType.IMAGE)
         try:
             normalized = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)

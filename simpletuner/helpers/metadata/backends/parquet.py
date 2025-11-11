@@ -549,7 +549,7 @@ class ParquetMetadataBackend(MetadataBackend):
 
         return aspect_ratio_bucket_indices
 
-    def _extract_audio_value(self, database_row, column_name: str | None):
+    def _extract_audio_value(self, database_row, column_name: Optional[str]):
         if not column_name:
             return None
         value = database_row.get(column_name, None)
@@ -589,11 +589,11 @@ class ParquetMetadataBackend(MetadataBackend):
                 waveform, inferred_sample_rate = load_audio(buffer)
                 if sample_rate is None:
                     sample_rate = inferred_sample_rate
-                if num_samples is None and waveform is not None:
+                if num_samples is None and waveform is not None and hasattr(waveform, "shape") and len(waveform.shape) >= 2:
                     num_samples = waveform.shape[1]
 
             if duration_seconds is None and sample_rate and num_samples:
-                duration_seconds = float(num_samples) / float(sample_rate) if sample_rate else None
+                duration_seconds = float(num_samples) / float(sample_rate)
 
             audio_metadata = {
                 "audio_path": image_path_str,
