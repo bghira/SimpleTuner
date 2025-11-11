@@ -13,9 +13,11 @@ from botocore.config import Config
 from botocore.exceptions import NoCredentialsError, PartialCredentialsError
 from torch import Tensor
 
+from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
-from simpletuner.helpers.training import image_file_extensions, video_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 
 loggers_to_silence = [
@@ -232,6 +234,8 @@ class S3DataBackend(BaseDataBackend):
 
     def list_files(self, file_extensions: list, instance_data_dir: str = None):
         results = []
+        if not file_extensions:
+            file_extensions = self._default_file_extensions()
 
         def splitext_(path):
             ext = splitext(path)[1].lower()
@@ -269,9 +273,17 @@ class S3DataBackend(BaseDataBackend):
             logger.debug(f"Completed file list in {total_time} seconds.")
         return results
 
+    def _default_file_extensions(self) -> list:
+        dataset_type = getattr(self, "dataset_type", DatasetType.IMAGE)
+        try:
+            normalized = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        except ValueError:
+            normalized = DatasetType.IMAGE
+        return list(audio_file_extensions) if normalized is DatasetType.AUDIO else list(image_file_extensions)
+
     def read_image(self, s3_key):
         """
-        Read an image OR a video from S3.
+        Read an image, video, or audio file from S3.
         """
         data = self.read(s3_key)
         if data is None:
@@ -280,6 +292,8 @@ class S3DataBackend(BaseDataBackend):
 
         # Check extension
         ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
+        if ext in audio_file_extensions:
+            return load_audio(buffer)
         if ext in video_file_extensions:
             return load_video(buffer)
         else:
@@ -302,7 +316,9 @@ class S3DataBackend(BaseDataBackend):
                 # Check extension to decide loader
                 ext = s3_key.rsplit(".", 1)[-1].lower() if "." in s3_key else ""
                 buffer = BytesIO(data)
-                if ext in video_file_extensions:
+                if ext in audio_file_extensions:
+                    image_data = load_audio(buffer)
+                elif ext in video_file_extensions:
                     image_data = load_video(buffer)
                 else:
                     image_data = load_image(buffer)

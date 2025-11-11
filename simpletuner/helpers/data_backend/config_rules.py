@@ -137,12 +137,14 @@ def _validate_dataloader_specific(config: dict) -> List[ValidationResult]:
                     )
                 )
         dataset_types = [_dataset_type_from_entry(dataset) for dataset in datasets if isinstance(dataset, dict)]
-        has_image_dataset = any(dataset_type is DatasetType.IMAGE for dataset_type in dataset_types)
+        has_primary_dataset = any(
+            dataset_type in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO} for dataset_type in dataset_types
+        )
         text_embeds = [d for d in datasets if d.get("dataset_type") == "text_embeds"]
 
         missing_chunks = []
-        if not relax_training_requirement and not has_image_dataset:
-            missing_chunks.append("an image dataset")
+        if not relax_training_requirement and not has_primary_dataset:
+            missing_chunks.append("a primary dataset (image, video, or audio)")
         if len(text_embeds) == 0:
             missing_chunks.append("a text_embed dataset")
 
@@ -215,7 +217,10 @@ def _relaxes_training_requirement(profile: DistillerRequirementProfile) -> bool:
         return False
     if not profile.is_data_generator:
         return False
-    return not any(profile.requires_dataset_type(dataset_type) for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO))
+    return not any(
+        profile.requires_dataset_type(dataset_type)
+        for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO)
+    )
 
 
 # Register dataloader rules when module is imported

@@ -3,15 +3,19 @@ import logging
 import os
 import time
 import traceback
+from io import BytesIO
+from typing import Optional
 
 import numpy
 from tqdm import tqdm
 
+from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.training import image_file_extensions, video_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("ParquetMetadataBackend")
@@ -197,9 +201,10 @@ class ParquetMetadataBackend(MetadataBackend):
     def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
         all_image_files = StateTracker.get_image_files(data_backend_id=self.data_backend.id)
         if all_image_files is None:
+            extension_pool = audio_file_extensions if self.dataset_type is DatasetType.AUDIO else image_file_extensions
             all_image_files = self.data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
-                file_extensions=image_file_extensions,
+                file_extensions=extension_pool,
             )
             # Flatten nested lists
             if any(isinstance(i, list) for i in all_image_files):
@@ -414,6 +419,16 @@ class ParquetMetadataBackend(MetadataBackend):
                 statistics["skipped"]["metadata_missing"] += 1
                 return aspect_ratio_bucket_indices
 
+            if self.dataset_type is DatasetType.AUDIO:
+                return self._process_audio_bucket(
+                    image_path_str=image_path_str,
+                    database_row=database_row,
+                    aspect_ratio_bucket_indices=aspect_ratio_bucket_indices,
+                    metadata_updates=metadata_updates,
+                    delete_problematic_images=delete_problematic_images,
+                    statistics=statistics,
+                )
+
             # 2. Check if it's image or video by extension
             extension = os.path.splitext(image_path_str)[1].lower().strip(".")
             is_video = extension in video_file_extensions
@@ -530,6 +545,74 @@ class ParquetMetadataBackend(MetadataBackend):
             logger.error(traceback.format_exc())
             if delete_problematic_images:
                 logger.error(f"Deleting file {image_path_str} after error.")
+                self.data_backend.delete(image_path_str)
+
+        return aspect_ratio_bucket_indices
+
+    def _extract_audio_value(self, database_row, column_name: str | None):
+        if not column_name:
+            return None
+        value = database_row.get(column_name, None)
+        if value is None:
+            return None
+        return self._get_first_value(value)
+
+    def _process_audio_bucket(
+        self,
+        image_path_str: str,
+        database_row,
+        aspect_ratio_bucket_indices: dict,
+        metadata_updates=None,
+        delete_problematic_images: bool = False,
+        statistics: Optional[dict] = None,
+    ):
+        if statistics is None:
+            statistics = {}
+        if database_row is None:
+            statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
+            statistics["skipped"]["metadata_missing"] += 1
+            return aspect_ratio_bucket_indices
+
+        try:
+            sample_rate = self._extract_audio_value(database_row, self.parquet_config.get("audio_sample_rate_column"))
+            num_samples = self._extract_audio_value(database_row, self.parquet_config.get("audio_num_samples_column"))
+            duration_seconds = self._extract_audio_value(database_row, self.parquet_config.get("audio_duration_column"))
+
+            if (sample_rate is None or num_samples is None) and self.data_backend.exists(image_path_str):
+                audio_payload = self.data_backend.read(image_path_str)
+                if audio_payload is None:
+                    statistics.setdefault("skipped", {}).setdefault("not_found", 0)
+                    statistics["skipped"]["not_found"] += 1
+                    return aspect_ratio_bucket_indices
+                buffer = BytesIO(audio_payload) if not isinstance(audio_payload, BytesIO) else audio_payload
+                buffer.seek(0)
+                waveform, inferred_sample_rate = load_audio(buffer)
+                if sample_rate is None:
+                    sample_rate = inferred_sample_rate
+                if num_samples is None and waveform is not None:
+                    num_samples = waveform.shape[1]
+
+            if duration_seconds is None and sample_rate and num_samples:
+                duration_seconds = float(num_samples) / float(sample_rate) if sample_rate else None
+
+            audio_metadata = {
+                "audio_path": image_path_str,
+                "sample_rate": sample_rate,
+                "num_samples": num_samples,
+                "duration_seconds": duration_seconds,
+            }
+
+            bucket_key = "audio"
+            if duration_seconds:
+                bucket_key = f"{round(duration_seconds, 2)}s"
+            aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(image_path_str)
+
+            if metadata_updates is not None:
+                metadata_updates[image_path_str] = audio_metadata
+        except Exception as exc:
+            logger.error(f"Error processing audio metadata for {image_path_str}: {exc}", exc_info=True)
+            if delete_problematic_images:
+                logger.error(f"Deleting audio sample {image_path_str}.")
                 self.data_backend.delete(image_path_str)
 
         return aspect_ratio_bucket_indices

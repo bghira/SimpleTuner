@@ -8,9 +8,11 @@ import torch
 from atomicwrites import atomic_write
 from PIL import Image
 
+from simpletuner.helpers.audio import load_audio
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
-from simpletuner.helpers.training import image_file_extensions, video_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 
 logger = logging.getLogger("LocalDataBackend")
 from simpletuner.helpers.training.multi_process import should_log
@@ -134,6 +136,9 @@ class LocalDataBackend(BaseDataBackend):
         if not instance_data_dir:
             raise ValueError("instance_data_dir must be specified.")
 
+        if not file_extensions:
+            file_extensions = self._default_file_extensions()
+
         def _rglob_follow_symlinks(path: Path, extensions: List[str]):
             # Skip Spotlight and Jupyter directories
             forbidden_directories = {
@@ -194,10 +199,34 @@ class LocalDataBackend(BaseDataBackend):
 
         return abs_path
 
+    def _default_file_extensions(self) -> List[str]:
+        """Return default file extensions for this backend based on dataset type."""
+        dataset_type = getattr(self, "dataset_type", DatasetType.IMAGE)
+        try:
+            normalized = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        except ValueError:
+            normalized = DatasetType.IMAGE
+        return list(audio_file_extensions) if normalized is DatasetType.AUDIO else list(image_file_extensions)
+
     def read_image(self, filepath: str, delete_problematic_images: bool = False) -> Any:
-        """Read an image from the specified filepath."""
+        """Read an image/video/audio sample from the specified filepath."""
         filepath = filepath.replace("\x00", "")
         file_extension = os.path.splitext(filepath)[1].lower().strip(".")
+        if file_extension in audio_file_extensions:
+            try:
+                return load_audio(filepath)
+            except Exception as exc:
+                logger.error(f"Encountered error opening audio sample {filepath}: {exc}", exc_info=True)
+                if delete_problematic_images:
+                    try:
+                        logger.error("Deleting audio sample due to --delete_problematic_images.")
+                        self.delete(filepath)
+                    except Exception as del_err:
+                        logger.error(f"Failed to delete problematic audio sample {filepath}: {del_err}")
+                else:
+                    raise
+                return None
+
         file_loader = load_image
         if file_extension in video_file_extensions:
             file_loader = load_video

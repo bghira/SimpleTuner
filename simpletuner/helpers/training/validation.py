@@ -272,7 +272,7 @@ def retrieve_validation_images():
     )
     dataset_type = StateTracker.get_model().conditioning_validation_dataset_type() if requires_cond_input else "image"
     data_backends = StateTracker.get_data_backends(
-        _type=dataset_type, _types=None if requires_cond_input else ["image", "video"]
+        _type=dataset_type, _types=None if requires_cond_input else ["image", "video", "audio"]
     )
     dataset_type_name = getattr(dataset_type, "value", str(dataset_type))
     selected_eval_backend_ids = _assert_eval_dataset_exists(

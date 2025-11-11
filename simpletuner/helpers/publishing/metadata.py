@@ -432,7 +432,7 @@ def save_model_card(
         optimizer_config = ""
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
-    datasettypes = ["image", "video"]
+    datasettypes = ["image", "video", "audio"]
     for dataset in StateTracker.get_data_backends(_types=datasettypes).keys():
         if "sampler" in StateTracker.get_data_backends(_types=datasettypes)[dataset]:
             datasets_str += f"### {dataset}\n"
