@@ -266,6 +266,7 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.datasets import router as datasets_router
     from .routes.fields import router as fields_router
     from .routes.hardware import router as hardware_router
+    from .routes.lycoris import router as lycoris_router
     from .routes.models import router as models_router
     from .routes.prompt_libraries import router as prompt_libraries_router
     from .routes.publishing import router as publishing_router
@@ -282,6 +283,7 @@ def _add_trainer_routes(app: FastAPI):
         caption_filters_router,
         checkpoints_router,
         configs_router,
+        lycoris_router,
         prompt_libraries_router,
         validation_router,
         training_router,

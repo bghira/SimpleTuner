@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import curses
 import json
 import os
@@ -16,6 +17,19 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import simpletuner.helpers.models  # noqa: F401  # Ensure model registry population
 from simpletuner.helpers.models.registry import ModelRegistry
+
+try:  # Lazy import so the configurator still works without LyCORIS extras
+    from lycoris.config_sdk import PresetValidationError
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    PresetValidationError = RuntimeError  # type: ignore[assignment]
+
+try:
+    from simpletuner.simpletuner_sdk.server.services.lycoris_builder_service import LYCORIS_BUILDER_SERVICE
+except Exception as _lycoris_exc:  # pragma: no cover - optional dependency
+    LYCORIS_BUILDER_SERVICE = None  # type: ignore[assignment]
+    _LYCORIS_IMPORT_ERROR = str(_lycoris_exc)
+else:  # pragma: no cover - passthrough for tests
+    _LYCORIS_IMPORT_ERROR = ""
 
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
@@ -131,6 +145,396 @@ learning_rates_by_rank = {
     256: "5.09e-5",
 }
 
+DEFAULT_LYCORIS_CONFIG_PATH = "config/lycoris_config.json"
+_LYCORIS_LIST_FIELDS: Tuple[str, ...] = (
+    "target_module",
+    "target_name",
+    "unet_target_module",
+    "unet_target_name",
+    "text_encoder_target_module",
+    "text_encoder_target_name",
+    "exclude_name",
+)
+
+
+def _split_csv(value: str) -> List[str]:
+    if not value:
+        return []
+    tokens: List[str] = []
+    for chunk in value.replace("\n", ",").split(","):
+        cleaned = chunk.strip()
+        if cleaned:
+            tokens.append(cleaned)
+    return tokens
+
+
+def _normalize_override_value(value: str) -> Any:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    lowered = text.lower()
+    if lowered in {"true", "false"}:
+        return lowered == "true"
+    try:
+        if any(token in text for token in [".", "e", "E"]):
+            return float(text)
+        return int(text)
+    except ValueError:
+        return text
+
+
+class LycorisBuilderSession:
+    """Stateful helper for editing LyCORIS configurations via the CLI."""
+
+    def __init__(self, service: Any, path: str | Path):
+        self.service = service
+        self.metadata = service.get_metadata()
+        self.defaults: Dict[str, Any] = copy.deepcopy(self.metadata.get("defaults", {}))
+        self.presets: List[Dict[str, Any]] = copy.deepcopy(self.metadata.get("presets", []))
+        self.algorithms: List[Dict[str, Any]] = copy.deepcopy(self.metadata.get("algorithms", []))
+        self.suggestions: Dict[str, List[str]] = copy.deepcopy(self.metadata.get("suggestions", {}))
+        self.path = Path(path)
+        self._last_loaded_path: Optional[str] = None
+        self.config: Dict[str, Any] = self._initial_config()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _determine_default_algo(self) -> str:
+        if "lora" in self.defaults:
+            return "lora"
+        if self.defaults:
+            return next(iter(self.defaults.keys()))
+        for algo in self.algorithms:
+            name = algo.get("name")
+            if isinstance(name, str) and name:
+                return name
+        return "lora"
+
+    def _initial_config(self) -> Dict[str, Any]:
+        algo = self._determine_default_algo()
+        template = copy.deepcopy(self.defaults.get(algo)) or {}
+        template.setdefault("algo", algo)
+        template.setdefault("multiplier", 1.0)
+        template.setdefault("linear_dim", 64)
+        template.setdefault("linear_alpha", 32)
+        return self._prepare_config(template)
+
+    def _prepare_config(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        config = copy.deepcopy(payload) if isinstance(payload, dict) else {}
+        config.setdefault("algo", self._determine_default_algo())
+        apply_preset = config.get("apply_preset")
+        if not isinstance(apply_preset, dict):
+            apply_preset = {}
+        config["apply_preset"] = copy.deepcopy(apply_preset)
+        self._normalize_apply_preset(config["apply_preset"])
+        return config
+
+    def _normalize_apply_preset(self, preset: Dict[str, Any]) -> None:
+        if not isinstance(preset, dict):
+            return
+        for field in _LYCORIS_LIST_FIELDS:
+            values = preset.get(field)
+            if values is None:
+                continue
+            if isinstance(values, (list, tuple, set)):
+                cleaned = [str(item).strip() for item in values if str(item).strip()]
+            else:
+                cleaned = _split_csv(str(values))
+            if cleaned:
+                preset[field] = cleaned
+            else:
+                preset.pop(field, None)
+
+        for map_key in ("module_algo_map", "name_algo_map"):
+            mapping = preset.get(map_key)
+            if not isinstance(mapping, dict):
+                if map_key in preset:
+                    preset[map_key] = {}
+                continue
+            cleaned_map: Dict[str, Dict[str, Any]] = {}
+            for raw_key, raw_payload in mapping.items():
+                key = (raw_key or "").strip()
+                if not key:
+                    continue
+                payload = raw_payload if isinstance(raw_payload, dict) else {}
+                cleaned_map[key] = copy.deepcopy(payload)
+            preset[map_key] = cleaned_map
+
+    def _apply_defaults(self, algo: str) -> None:
+        template = copy.deepcopy(self.defaults.get(algo))
+        if not template:
+            return
+        template.setdefault("algo", algo)
+        self.config = self._prepare_config(template)
+
+    def _preset_dict(self) -> Dict[str, Any]:
+        preset = self.config.get("apply_preset")
+        if not isinstance(preset, dict):
+            preset = {}
+            self.config["apply_preset"] = preset
+        return preset
+
+    def _override_key(self, scope: str) -> str:
+        return "module_algo_map" if scope == "module" else "name_algo_map"
+
+    def _override_map(self, scope: str, create: bool = True) -> Dict[str, Dict[str, Any]]:
+        preset = self._preset_dict()
+        map_key = self._override_key(scope)
+        mapping = preset.get(map_key)
+        if not isinstance(mapping, dict):
+            if not create:
+                return {}
+            mapping = {}
+            preset[map_key] = mapping
+        return mapping
+
+    def _clean_apply_preset(self, preset: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(preset, dict):
+            return {}
+        cleaned: Dict[str, Any] = {}
+        for field in _LYCORIS_LIST_FIELDS:
+            values = preset.get(field)
+            if not values:
+                continue
+            if isinstance(values, (list, tuple, set)):
+                normalized = [str(item).strip() for item in values if str(item).strip()]
+            else:
+                normalized = _split_csv(str(values))
+            if normalized:
+                cleaned[field] = normalized
+
+        for map_key in ("module_algo_map", "name_algo_map"):
+            mapping = preset.get(map_key)
+            if not isinstance(mapping, dict):
+                continue
+            encoded: Dict[str, Dict[str, Any]] = {}
+            for raw_key, raw_payload in mapping.items():
+                key = (raw_key or "").strip()
+                if not key or not isinstance(raw_payload, dict):
+                    continue
+                entry: Dict[str, Any] = {}
+                algo = raw_payload.get("algo")
+                if isinstance(algo, str) and algo.strip():
+                    entry["algo"] = algo.strip()
+                for opt_key, opt_value in raw_payload.items():
+                    if opt_key == "algo":
+                        continue
+                    if opt_value in (None, ""):
+                        continue
+                    entry[opt_key] = opt_value
+                if entry:
+                    encoded[key] = entry
+            if encoded:
+                cleaned[map_key] = encoded
+
+        for key, value in preset.items():
+            if key in cleaned:
+                continue
+            if key in _LYCORIS_LIST_FIELDS:
+                continue
+            if key in {"module_algo_map", "name_algo_map"}:
+                continue
+            cleaned[key] = value
+        return cleaned
+
+    # ------------------------------------------------------------------
+    # Public helpers used by the curses UI
+    # ------------------------------------------------------------------
+    def set_path(self, path: str | Path) -> None:
+        self.path = Path(path)
+
+    def get_path_display(self) -> str:
+        return str(self.path)
+
+    def load_from_file(self, path: str | Path | None = None) -> bool:
+        target = Path(path) if path is not None else self.path
+        if not target.exists():
+            raise FileNotFoundError(f"LyCORIS config not found: {target}")
+        with target.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, dict):
+            raise ValueError("LyCORIS config must be a JSON object")
+        self.config = self._prepare_config(payload)
+        self.path = target
+        self._last_loaded_path = str(target)
+        return True
+
+    def try_load_from_disk(self) -> bool:
+        try:
+            return self.load_from_file(self.path)
+        except Exception:
+            return False
+
+    def to_serializable(self) -> Dict[str, Any]:
+        payload = copy.deepcopy(self.config)
+        preset = self._clean_apply_preset(payload.get("apply_preset") or {})
+        if preset:
+            payload["apply_preset"] = preset
+        elif "apply_preset" in payload:
+            payload.pop("apply_preset")
+        return payload
+
+    def validate(self) -> tuple[bool, Optional[str]]:
+        algo = self.config.get("algo")
+        if not isinstance(algo, str) or not algo.strip():
+            return False, "Algorithm is required"
+        preset = self._clean_apply_preset(self.config.get("apply_preset") or {})
+        if preset:
+            try:
+                self.service.validate_preset(preset)
+            except PresetValidationError as exc:  # type: ignore[misc]
+                return False, str(exc)
+        return True, None
+
+    def save_to_file(self, path: str | Path | None = None) -> Path:
+        valid, error = self.validate()
+        if not valid:
+            raise ValueError(error or "Invalid LyCORIS configuration")
+        target = Path(path) if path is not None else self.path
+        payload = self.to_serializable()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+        self.path = target
+        self._last_loaded_path = str(target)
+        return target
+
+    def get_algorithm_names(self) -> List[str]:
+        names: List[str] = []
+        for algo in self.algorithms:
+            name = algo.get("name")
+            if isinstance(name, str) and name:
+                names.append(name)
+        if not names:
+            names.append(self._determine_default_algo())
+        return names
+
+    def get_algorithm_description(self, name: str) -> str:
+        for algo in self.algorithms:
+            if algo.get("name") == name:
+                return algo.get("description") or ""
+        return ""
+
+    def set_algorithm(self, algorithm: str, *, reset: bool = False) -> None:
+        normalized = algorithm.strip().lower()
+        if not normalized:
+            return
+        self.config["algo"] = normalized
+        if reset:
+            self._apply_defaults(normalized)
+
+    def set_numeric(self, field: str, value: Optional[float | int]) -> None:
+        if value is None:
+            self.config.pop(field, None)
+            return
+        self.config[field] = value
+
+    def set_bool(self, field: str, value: Optional[bool]) -> None:
+        if value is None:
+            self.config.pop(field, None)
+            return
+        self.config[field] = bool(value)
+
+    def get_list(self, field: str) -> List[str]:
+        preset = self._preset_dict()
+        values = preset.get(field)
+        if isinstance(values, list):
+            return [str(item) for item in values]
+        return []
+
+    def set_list(self, field: str, values: List[str]) -> None:
+        preset = self._preset_dict()
+        cleaned = [value.strip() for value in values if value.strip()]
+        if cleaned:
+            preset[field] = cleaned
+        else:
+            preset.pop(field, None)
+
+    def get_override_entries(self, scope: str) -> Dict[str, Dict[str, Any]]:
+        mapping = self._override_map(scope, create=False)
+        return copy.deepcopy(mapping)
+
+    def upsert_override(self, scope: str, key: str) -> Dict[str, Any]:
+        key = key.strip()
+        if not key:
+            raise ValueError("Override key cannot be empty")
+        mapping = self._override_map(scope, create=True)
+        entry = mapping.get(key)
+        if not isinstance(entry, dict):
+            entry = {}
+            mapping[key] = entry
+        return entry
+
+    def rename_override(self, scope: str, old_key: str, new_key: str) -> None:
+        new_key = new_key.strip()
+        if not new_key:
+            return
+        mapping = self._override_map(scope, create=True)
+        payload = mapping.pop(old_key, None)
+        if payload is None:
+            return
+        mapping[new_key] = payload
+
+    def delete_override(self, scope: str, key: str) -> None:
+        mapping = self._override_map(scope, create=True)
+        mapping.pop(key, None)
+        if not mapping:
+            preset = self._preset_dict()
+            preset.pop(self._override_key(scope), None)
+
+    def set_override_algo(self, scope: str, key: str, algo: Optional[str]) -> None:
+        entry = self.upsert_override(scope, key)
+        if algo and algo.strip():
+            entry["algo"] = algo.strip()
+        else:
+            entry.pop("algo", None)
+
+    def set_override_option(self, scope: str, key: str, option: str, value: Any) -> None:
+        entry = self.upsert_override(scope, key)
+        if value in (None, ""):
+            entry.pop(option, None)
+        else:
+            entry[option] = value
+
+    def get_override_option(self, scope: str, key: str, option: str) -> Any:
+        mapping = self._override_map(scope, create=False)
+        entry = mapping.get(key) or {}
+        return entry.get(option)
+
+    def apply_preset(self, preset_name: str) -> bool:
+        for preset in self.presets:
+            if preset.get("name") == preset_name:
+                config = copy.deepcopy(preset.get("config") or {})
+                self.config["apply_preset"] = config
+                self._normalize_apply_preset(self.config["apply_preset"])
+                return True
+        return False
+
+    def get_preset_names(self) -> List[str]:
+        return sorted([preset.get("name") for preset in self.presets if preset.get("name")])
+
+    def get_summary(self) -> str:
+        algo = self.config.get("algo", "?")
+        multiplier = self.config.get("multiplier", "?")
+        linear_dim = self.config.get("linear_dim", "?")
+        return f"{algo} | mult={multiplier} dim={linear_dim}"
+
+    def get_target_summary(self) -> str:
+        preset = self._preset_dict()
+        populated = [field for field in _LYCORIS_LIST_FIELDS if preset.get(field)]
+        return f"{len(populated)} lists" if populated else "none"
+
+    def get_override_summary(self, scope: str) -> str:
+        mapping = self._override_map(scope, create=False)
+        count = len(mapping)
+        return f"{count} entr{'y' if count == 1 else 'ies'}" if count else "none"
+
+    def last_loaded(self) -> Optional[str]:
+        return self._last_loaded_path
+
 
 class ConfigState:
     """Holds configuration values and interacts with the FieldRegistry."""
@@ -197,6 +601,12 @@ class ConfigState:
         if field and not getattr(field, "webui_only", False):
             return field.default_value
         return None
+
+    def get_lycoris_config_path(self) -> str:
+        path = self.get_value("lycoris_config")
+        if isinstance(path, str) and path.strip():
+            return path
+        return DEFAULT_LYCORIS_CONFIG_PATH
 
     def set_value(self, field_name: str, value: Any) -> None:
         """Persist a value for a field."""
@@ -448,11 +858,23 @@ class SimpleTunerNCurses:
             ) from exc
 
         self.state = ConfigState(self.field_service)
+        self.lycoris_service = LYCORIS_BUILDER_SERVICE
+        self._lycoris_support_error = _LYCORIS_IMPORT_ERROR
+        self._lycoris_session: Optional[LycorisBuilderSession] = None
+        self._lycoris_menu_index = 0
         self.tab_entries = self._build_tab_entries()
         self.tab_lookup = {entry.name: entry for entry in self.tab_entries}
         self.menu_items = [
             (entry.title, partial(self.edit_tab, tab_name=entry.name), entry.description or "") for entry in self.tab_entries
         ]
+        if self.lycoris_service is not None:
+            self.menu_items.append(
+                (
+                    "LyCORIS Builder",
+                    self.edit_lycoris_config,
+                    "Interactively edit LyCORIS algorithm presets and overrides",
+                )
+            )
         self.menu_items.append(("Review & Save", self.review_and_save, "Review the configuration and write it to disk"))
         self._menu_index = 0
         self._section_menu_indices: Dict[str, int] = {}
@@ -931,6 +1353,472 @@ class SimpleTunerNCurses:
 
         if self._validate_and_set_field(stdscr, field_name, new_value):
             self.show_message(stdscr, "Field updated.")
+
+    # ------------------------------------------------------------------
+    # LyCORIS builder support
+    # ------------------------------------------------------------------
+
+    def _get_lycoris_session(self) -> LycorisBuilderSession:
+        if self.lycoris_service is None:
+            raise RuntimeError("LyCORIS builder is unavailable in this environment")
+        target_path = self.state.get_lycoris_config_path()
+        if self._lycoris_session is None:
+            self._lycoris_session = LycorisBuilderSession(self.lycoris_service, target_path)
+            self._lycoris_session.try_load_from_disk()
+        elif str(self._lycoris_session.path) != target_path:
+            self._lycoris_session.set_path(target_path)
+            self._lycoris_session.try_load_from_disk()
+        return self._lycoris_session
+
+    def edit_lycoris_config(self, stdscr) -> None:
+        if self.lycoris_service is None:
+            message = self._lycoris_support_error or "Install LyCORIS extras to enable this feature."
+            self.show_error(stdscr, f"LyCORIS builder unavailable: {message}")
+            return
+
+        session = self._get_lycoris_session()
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            menu_items = [
+                ("Change target file", partial(self._lycoris_change_path, stdscr, session)),
+                ("Reload from disk", partial(self._lycoris_reload_config, stdscr, session)),
+                ("Base settings", partial(self._lycoris_edit_base_settings, stdscr, session)),
+                ("Advanced parameters", partial(self._lycoris_edit_advanced_settings, stdscr, session)),
+                ("Target lists", partial(self._lycoris_edit_targets, stdscr, session)),
+                (
+                    "Module overrides",
+                    partial(self._lycoris_manage_overrides, stdscr, session, "module"),
+                ),
+                (
+                    "Name overrides",
+                    partial(self._lycoris_manage_overrides, stdscr, session, "name"),
+                ),
+                ("Apply built-in preset", partial(self._lycoris_apply_preset, stdscr, session)),
+                ("Preview JSON", partial(self._lycoris_preview_json, stdscr, session)),
+                ("Save LyCORIS config", partial(self._lycoris_save_config, stdscr, session)),
+                ("Back", None),
+            ]
+
+            current_values = {
+                "Change target file": session.get_path_display(),
+                "Reload from disk": session.last_loaded() or "not loaded",
+                "Base settings": session.get_summary(),
+                "Advanced parameters": ", ".join(
+                    str(session.config.get(key))
+                    for key in ("factor", "block_size", "constraint", "rescaled")
+                    if session.config.get(key) not in (None, "")
+                )
+                or "none",
+                "Target lists": session.get_target_summary(),
+                "Module overrides": session.get_override_summary("module"),
+                "Name overrides": session.get_override_summary("name"),
+                "Apply built-in preset": f"{len(session.get_preset_names())} available",
+                "Preview JSON": session.get_path_display(),
+                "Save LyCORIS config": session.get_path_display(),
+            }
+
+            choice = nav.show_menu(
+                "LyCORIS Builder",
+                menu_items,
+                current_values,
+                selected=self._lycoris_menu_index,
+            )
+            self._lycoris_menu_index = nav.last_selection
+
+            if choice == -1:
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+                continue
+            if choice == -2 or menu_items[choice][1] is None:
+                return
+
+            handler = menu_items[choice][1]
+            if handler:
+                handler()
+
+    def _lycoris_change_path(self, stdscr, session: LycorisBuilderSession) -> None:
+        new_path = self.get_input(stdscr, "Enter path for LyCORIS config:", session.get_path_display())
+        if not new_path:
+            return
+        session.set_path(new_path)
+        self.state.set_value("lycoris_config", new_path)
+        self.show_message(stdscr, f"LyCORIS config path set to {new_path}")
+
+    def _lycoris_reload_config(self, stdscr, session: LycorisBuilderSession) -> None:
+        try:
+            session.load_from_file()
+            self.show_message(stdscr, f"Reloaded LyCORIS config from {session.get_path_display()}")
+        except Exception as exc:
+            self.show_error(stdscr, f"Failed to load LyCORIS config: {exc}")
+
+    def _lycoris_save_config(self, stdscr, session: LycorisBuilderSession) -> None:
+        try:
+            target = session.save_to_file()
+            self.state.set_value("lycoris_config", str(target))
+            self.show_message(stdscr, f"LyCORIS config written to {target}")
+        except Exception as exc:
+            self.show_error(stdscr, f"Failed to save LyCORIS config: {exc}")
+
+    def _lycoris_preview_json(self, stdscr, session: LycorisBuilderSession) -> None:
+        self._display_json(stdscr, session.to_serializable())
+
+    # -- Base settings -----------------------------------------------------
+
+    def _lycoris_edit_base_settings(self, stdscr, session: LycorisBuilderSession) -> None:
+        nav = MenuNavigator(stdscr)
+        options = [
+            ("Algorithm", partial(self._lycoris_choose_algorithm, stdscr, session)),
+            ("Multiplier", partial(self._lycoris_prompt_numeric, stdscr, session, "multiplier", True, 0.0)),
+            ("Linear dimension", partial(self._lycoris_prompt_numeric, stdscr, session, "linear_dim", False, 1)),
+            ("Linear alpha", partial(self._lycoris_prompt_numeric, stdscr, session, "linear_alpha", False, 0)),
+            ("Back", None),
+        ]
+
+        while True:
+            current_values = {
+                "Algorithm": session.config.get("algo", "unknown"),
+                "Multiplier": str(session.config.get("multiplier", "unset")),
+                "Linear dimension": str(session.config.get("linear_dim", "unset")),
+                "Linear alpha": str(session.config.get("linear_alpha", "unset")),
+            }
+            choice = nav.show_menu("LyCORIS Base Settings", options, current_values)
+            if choice == -1 or choice == -2 or options[choice][1] is None:
+                return
+            options[choice][1]()
+
+    def _lycoris_choose_algorithm(self, stdscr, session: LycorisBuilderSession) -> None:
+        algorithms = session.get_algorithm_names()
+        if not algorithms:
+            self.show_error(stdscr, "No LyCORIS algorithms available.")
+            return
+        current = session.config.get("algo")
+        default_idx = algorithms.index(current) if current in algorithms else 0
+        selection = self.show_options(stdscr, "Select LyCORIS algorithm:", algorithms, default_idx)
+        if selection == -1:
+            return
+        chosen = algorithms[selection]
+        if chosen == current:
+            return
+        reset = self.show_options(
+            stdscr,
+            "Reset to algorithm defaults?",
+            ["Yes", "No"],
+            1,
+        )
+        session.set_algorithm(chosen, reset=reset == 0)
+
+    def _lycoris_prompt_numeric(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        field: str,
+        allow_float: bool,
+        minimum: Optional[float],
+    ) -> None:
+        label = field.replace("_", " ").title()
+        current_value = session.config.get(field)
+        default = "" if current_value in (None, "") else str(current_value)
+        while True:
+            response = self.get_input(stdscr, f"Enter value for {label}:", default)
+            if not response.strip():
+                if minimum is None:
+                    session.set_numeric(field, None)
+                    return
+                self.show_error(stdscr, f"{label} is required.")
+                continue
+            try:
+                value = float(response) if allow_float else int(float(response))
+            except ValueError:
+                self.show_error(stdscr, "Invalid numeric value")
+                continue
+            if minimum is not None and value < minimum:
+                self.show_error(stdscr, f"Value must be >= {minimum}")
+                continue
+            if not allow_float:
+                value = int(value)
+            session.set_numeric(field, value)
+            return
+
+    # -- Advanced settings -------------------------------------------------
+
+    def _lycoris_edit_advanced_settings(self, stdscr, session: LycorisBuilderSession) -> None:
+        nav = MenuNavigator(stdscr)
+        options = [
+            ("LoKr factor", partial(self._lycoris_prompt_numeric, stdscr, session, "factor", False, 1)),
+            ("DyLoRA block size", partial(self._lycoris_prompt_numeric, stdscr, session, "block_size", False, 1)),
+            ("Constraint", partial(self._lycoris_prompt_bool, stdscr, session, "constraint")),
+            ("Rescaled", partial(self._lycoris_prompt_bool, stdscr, session, "rescaled")),
+            ("Back", None),
+        ]
+
+        while True:
+            current_values = {
+                "LoKr factor": str(session.config.get("factor", "unset")),
+                "DyLoRA block size": str(session.config.get("block_size", "unset")),
+                "Constraint": str(session.config.get("constraint", "inherit")),
+                "Rescaled": str(session.config.get("rescaled", "inherit")),
+            }
+            choice = nav.show_menu("LyCORIS Advanced", options, current_values)
+            if choice == -1 or choice == -2 or options[choice][1] is None:
+                return
+            options[choice][1]()
+
+    def _lycoris_prompt_bool(self, stdscr, session: LycorisBuilderSession, field: str) -> None:
+        label = field.replace("_", " ").title()
+        current = session.config.get(field)
+        if current is True:
+            default = 0
+        elif current is False:
+            default = 1
+        else:
+            default = 2
+        choice = self.show_options(
+            stdscr,
+            f"Set {label}:",
+            ["Enabled", "Disabled", "Inherit"],
+            default,
+        )
+        if choice == -1:
+            return
+        if choice == 2:
+            session.set_bool(field, None)
+        else:
+            session.set_bool(field, choice == 0)
+
+    # -- Target lists ------------------------------------------------------
+
+    def _lycoris_edit_targets(self, stdscr, session: LycorisBuilderSession) -> None:
+        fields = [
+            ("target_module", "Target modules"),
+            ("target_name", "Target names"),
+            ("unet_target_module", "UNet modules"),
+            ("unet_target_name", "UNet names"),
+            ("text_encoder_target_module", "Text encoder modules"),
+            ("text_encoder_target_name", "Text encoder names"),
+            ("exclude_name", "Exclude list"),
+        ]
+        nav = MenuNavigator(stdscr)
+        while True:
+            menu = [
+                (label, partial(self._lycoris_edit_target_field, stdscr, session, field, label)) for field, label in fields
+            ]
+            menu.append(("Back", None))
+            current_values = {label: ", ".join(session.get_list(field)) or "none" for field, label in fields}
+            choice = nav.show_menu("LyCORIS Target Lists", menu, current_values)
+            if choice == -1 or choice == -2 or menu[choice][1] is None:
+                return
+            menu[choice][1]()
+
+    def _lycoris_edit_target_field(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        field: str,
+        label: str,
+    ) -> None:
+        current = ", ".join(session.get_list(field))
+        suggestions = session.suggestions.get(field, [])
+        hint = f"\nSuggestions: {', '.join(suggestions[:6])}" if suggestions else ""
+        prompt = f"Enter comma-separated values for {label}.{hint}\nLeave blank to clear."
+        response = self.get_input(stdscr, prompt, current)
+        session.set_list(field, _split_csv(response))
+
+    # -- Overrides ---------------------------------------------------------
+
+    def _lycoris_manage_overrides(self, stdscr, session: LycorisBuilderSession, scope: str) -> None:
+        title = "Module Overrides" if scope == "module" else "Name Overrides"
+        nav = MenuNavigator(stdscr)
+        while True:
+            overrides = session.get_override_entries(scope)
+            menu_items = [
+                (
+                    f"{key} ({payload.get('algo', 'inherit')})",
+                    partial(self._lycoris_edit_override, stdscr, session, scope, key),
+                )
+                for key, payload in sorted(overrides.items())
+            ]
+            menu_items.append(("Add override", partial(self._lycoris_add_override, stdscr, session, scope)))
+            menu_items.append(("Back", None))
+            choice = nav.show_menu(title, menu_items, None)
+            if choice == -1 or choice == -2 or menu_items[choice][1] is None:
+                return
+            menu_items[choice][1]()
+
+    def _lycoris_add_override(self, stdscr, session: LycorisBuilderSession, scope: str) -> None:
+        key = self.get_input(stdscr, "Enter module/name to override:", "")
+        if not key.strip():
+            return
+        try:
+            session.upsert_override(scope, key.strip())
+            self.show_message(stdscr, f"Added override '{key.strip()}'")
+        except ValueError as exc:
+            self.show_error(stdscr, str(exc))
+
+    def _lycoris_edit_override(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        scope: str,
+        key: str,
+    ) -> None:
+        nav = MenuNavigator(stdscr)
+        options = [
+            ("Rename", partial(self._lycoris_rename_override, stdscr, session, scope, key)),
+            ("Set override algorithm", partial(self._lycoris_override_algo, stdscr, session, scope, key)),
+            ("Edit options", partial(self._lycoris_edit_override_options, stdscr, session, scope, key)),
+            ("Delete", partial(self._lycoris_delete_override, stdscr, session, scope, key)),
+            ("Back", None),
+        ]
+        while True:
+            choice = nav.show_menu(f"Override: {key}", options, None)
+            if choice == -1 or choice == -2 or options[choice][1] is None:
+                return
+            options[choice][1]()
+
+    def _lycoris_rename_override(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        scope: str,
+        key: str,
+    ) -> None:
+        new_name = self.get_input(stdscr, "Enter new override name:", key)
+        if not new_name.strip() or new_name.strip() == key:
+            return
+        session.rename_override(scope, key, new_name.strip())
+        self.show_message(stdscr, f"Renamed override to '{new_name.strip()}'")
+
+    def _lycoris_override_algo(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        scope: str,
+        key: str,
+    ) -> None:
+        algorithms = session.get_algorithm_names()
+        display = algorithms + ["Inherit (clear)"]
+        current = session.get_override_option(scope, key, "algo")
+        default = display.index(current) if isinstance(current, str) and current in display else len(display) - 1
+        choice = self.show_options(stdscr, "Select override algorithm:", display, default)
+        if choice == -1:
+            return
+        if choice == len(display) - 1:
+            session.set_override_algo(scope, key, None)
+        else:
+            session.set_override_algo(scope, key, display[choice])
+
+    def _lycoris_delete_override(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        scope: str,
+        key: str,
+    ) -> None:
+        confirm = self.show_options(stdscr, f"Delete override '{key}'?", ["No", "Yes"], 0)
+        if confirm == 1:
+            session.delete_override(scope, key)
+            self.show_message(stdscr, f"Deleted override '{key}'")
+
+    def _lycoris_edit_override_options(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        scope: str,
+        key: str,
+    ) -> None:
+        nav = MenuNavigator(stdscr)
+        while True:
+            entry = session.get_override_entries(scope).get(key, {})
+            option_keys = [opt for opt in entry.keys() if opt != "algo"]
+            menu_items = [
+                (
+                    f"{opt} = {entry.get(opt)}",
+                    partial(self._lycoris_edit_single_option, stdscr, session, scope, key, opt),
+                )
+                for opt in sorted(option_keys)
+            ]
+            menu_items.append(("Add option", partial(self._lycoris_add_option, stdscr, session, scope, key)))
+            menu_items.append(("Back", None))
+            choice = nav.show_menu(f"Override options: {key}", menu_items, None)
+            if choice == -1 or choice == -2 or menu_items[choice][1] is None:
+                return
+            menu_items[choice][1]()
+
+    def _lycoris_add_option(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        scope: str,
+        key: str,
+    ) -> None:
+        option = self.get_input(stdscr, "Enter option name:", "")
+        if not option.strip():
+            return
+        raw_value = self.get_input(stdscr, f"Value for {option.strip()}:", "")
+        value = _normalize_override_value(raw_value)
+        session.set_override_option(scope, key, option.strip(), value)
+
+    def _lycoris_edit_single_option(
+        self,
+        stdscr,
+        session: LycorisBuilderSession,
+        scope: str,
+        key: str,
+        option: str,
+    ) -> None:
+        current = session.get_override_option(scope, key, option)
+        choice = self.show_options(
+            stdscr,
+            f"Option '{option}':",
+            ["Rename", "Set value", "Delete", "Back"],
+            1,
+        )
+        if choice == -1 or choice == 3:
+            return
+        if choice == 2:
+            session.set_override_option(scope, key, option, None)
+            self.show_message(stdscr, f"Removed option '{option}'")
+            return
+        if choice == 0:
+            new_name = self.get_input(stdscr, "New option name:", option)
+            if not new_name.strip() or new_name.strip() == option:
+                return
+            value = session.get_override_option(scope, key, option)
+            session.set_override_option(scope, key, option, None)
+            session.set_override_option(scope, key, new_name.strip(), value)
+            self.show_message(stdscr, f"Renamed option to '{new_name.strip()}'")
+            return
+        raw_value = self.get_input(
+            stdscr,
+            f"Enter value for {option} (current: {current}):",
+            str(current or ""),
+        )
+        value = _normalize_override_value(raw_value)
+        session.set_override_option(scope, key, option, value)
+
+    # -- Presets -----------------------------------------------------------
+
+    def _lycoris_apply_preset(self, stdscr, session: LycorisBuilderSession) -> None:
+        presets = session.get_preset_names()
+        if not presets:
+            self.show_message(stdscr, "No built-in presets available.")
+            return
+        choice = self.show_options(stdscr, "Select a preset to apply:", presets, 0)
+        if choice == -1:
+            return
+        preset_name = presets[choice]
+        confirm = self.show_options(
+            stdscr,
+            f"Apply preset '{preset_name}'? This replaces target lists and overrides.",
+            ["Apply", "Cancel"],
+            1,
+        )
+        if confirm == 0:
+            if session.apply_preset(preset_name):
+                self.show_message(stdscr, f"Applied preset '{preset_name}'")
+            else:
+                self.show_error(stdscr, f"Failed to apply preset '{preset_name}'")
 
     def _prompt_checkbox(self, stdscr, prompt: str, current_value: Any) -> Optional[bool]:
         options = ["Enabled", "Disabled"]
