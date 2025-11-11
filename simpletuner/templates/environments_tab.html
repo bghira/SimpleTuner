@@ -61,7 +61,7 @@ const buildLycorisCollapsedDefaults = () => ({
     algorithm: false,
     core: false,
     algoSpecific: true,
-    presets: false,
+    presets: true,
     targets: true,
     moduleOverrides: true,
     nameOverrides: true,
@@ -2378,7 +2378,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 <button type="button" class="btn-close" aria-label="Close" @click="closeLycorisEditor()"></button>
             </div>
             <form @submit.prevent="saveLycorisConfig()">
-                <div class="modal-body">
+                <div class="modal-body" style="overscroll-behavior: contain;">
                     <div x-show="lycorisEditor.loading" class="text-center py-4">
                         <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
                         <p class="mt-2 text-muted">Loading configuration...</p>
@@ -2594,16 +2594,21 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                             </div>
                             <div class="card-body" x-show="!lycorisCollapsedSections.moduleOverrides" x-cloak>
                                 <template x-for="(override, index) in lycorisModuleOverrides" :key="`module-${index}`">
-                                    <div class="border rounded p-3 mb-3">
+                                    <div class="border rounded p-3 mb-3 position-relative">
+                                        <button type="button" class="btn btn-link text-danger btn-sm position-absolute top-0 end-0 mt-2 me-2"
+                                                @click="removeLycorisOverride('module', index)"
+                                                title="Remove Override">
+                                            <i class="fas fa-trash-alt"></i>
+                                        </button>
                                         <div class="row g-2 align-items-end">
-                                            <div class="col-md-4">
+                                            <div class="col-md-6">
                                                 <label class="form-label">Module name</label>
                                                 <input type="text" class="form-control form-control-sm"
                                                        x-model="override.key"
                                                        placeholder="Attention, FeedForward, ...">
                                                 <small class="form-text text-muted">Module class name to override (e.g., Attention)</small>
                                             </div>
-                                            <div class="col-md-4">
+                                            <div class="col-md-6">
                                                 <label class="form-label">Algorithm override</label>
                                                 <select class="form-select form-select-sm" x-model="override.algo">
                                                     <option value="">Inherit primary algorithm</option>
@@ -2613,31 +2618,22 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                                 </select>
                                                 <small class="form-text text-muted">Use different algorithm for this module type</small>
                                             </div>
-                                            <div class="col-md-4 text-end">
-                                                <button type="button" class="btn btn-link text-danger btn-sm"
-                                                        @click="removeLycorisOverride('module', index)">
-                                                    <i class="fas fa-times"></i> Remove
-                                                </button>
-                                            </div>
                                         </div>
                                         <div class="mt-3">
                                             <label class="form-label">Options</label>
                                             <template x-for="(option, optIndex) in override.options" :key="`module-${index}-opt-${optIndex}`">
-                                                <div class="row g-2 align-items-center mb-2">
-                                                    <div class="col-md-5">
-                                                        <input type="text" class="form-control form-control-sm"
-                                                               x-model="option.key" placeholder="Option key (e.g. factor)">
-                                                    </div>
-                                                    <div class="col-md-5">
-                                                        <input type="text" class="form-control form-control-sm"
-                                                               x-model="option.value" placeholder="Value">
-                                                    </div>
-                                                    <div class="col-md-2 text-end">
-                                                        <button type="button" class="btn btn-link text-danger btn-sm"
-                                                                @click="removeLycorisOption('module', index, optIndex)">
-                                                            Remove
-                                                        </button>
-                                                    </div>
+                                                <div class="d-flex gap-2 align-items-center mb-2">
+                                                    <input type="text" class="form-control form-control-sm flex-grow-1"
+                                                           x-model="option.key" placeholder="Option key (e.g. factor)"
+                                                           style="min-width: 0;">
+                                                    <input type="text" class="form-control form-control-sm flex-grow-1"
+                                                           x-model="option.value" placeholder="Value"
+                                                           style="min-width: 0;">
+                                                    <button type="button" class="btn btn-link text-danger btn-sm p-1 flex-shrink-0"
+                                                            @click="removeLycorisOption('module', index, optIndex)"
+                                                            title="Remove Option">
+                                                        <i class="fas fa-minus-circle"></i>
+                                                    </button>
                                                 </div>
                                             </template>
                                             <button type="button" class="btn btn-outline-secondary btn-sm"
@@ -2673,16 +2669,21 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                             </div>
                             <div class="card-body" x-show="!lycorisCollapsedSections.nameOverrides" x-cloak>
                                 <template x-for="(override, index) in lycorisNameOverrides" :key="`name-${index}`">
-                                    <div class="border rounded p-3 mb-3">
+                                    <div class="border rounded p-3 mb-3 position-relative">
+                                        <button type="button" class="btn btn-link text-danger btn-sm position-absolute top-0 end-0 mt-2 me-2"
+                                                @click="removeLycorisOverride('name', index)"
+                                                title="Remove Override">
+                                            <i class="fas fa-trash-alt"></i>
+                                        </button>
                                         <div class="row g-2 align-items-end">
-                                            <div class="col-md-4">
+                                            <div class="col-md-6">
                                                 <label class="form-label">Layer name</label>
                                                 <input type="text" class="form-control form-control-sm"
                                                        x-model="override.key"
                                                        placeholder="e.g. attn1.to_q">
                                                 <small class="form-text text-muted">Specific layer path to override (e.g., attn1.to_q)</small>
                                             </div>
-                                            <div class="col-md-4">
+                                            <div class="col-md-6">
                                                 <label class="form-label">Algorithm override</label>
                                                 <select class="form-select form-select-sm" x-model="override.algo">
                                                     <option value="">Inherit primary algorithm</option>
@@ -2692,31 +2693,22 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                                 </select>
                                                 <small class="form-text text-muted">Use different algorithm for this specific layer</small>
                                             </div>
-                                            <div class="col-md-4 text-end">
-                                                <button type="button" class="btn btn-link text-danger btn-sm"
-                                                        @click="removeLycorisOverride('name', index)">
-                                                    <i class="fas fa-times"></i> Remove
-                                                </button>
-                                            </div>
                                         </div>
                                         <div class="mt-3">
                                             <label class="form-label">Options</label>
                                             <template x-for="(option, optIndex) in override.options" :key="`name-${index}-opt-${optIndex}`">
-                                                <div class="row g-2 align-items-center mb-2">
-                                                    <div class="col-md-5">
-                                                        <input type="text" class="form-control form-control-sm"
-                                                               x-model="option.key" placeholder="Option key">
-                                                    </div>
-                                                    <div class="col-md-5">
-                                                        <input type="text" class="form-control form-control-sm"
-                                                               x-model="option.value" placeholder="Value">
-                                                    </div>
-                                                    <div class="col-md-2 text-end">
-                                                        <button type="button" class="btn btn-link text-danger btn-sm"
-                                                                @click="removeLycorisOption('name', index, optIndex)">
-                                                            Remove
-                                                        </button>
-                                                    </div>
+                                                <div class="d-flex gap-2 align-items-center mb-2">
+                                                    <input type="text" class="form-control form-control-sm flex-grow-1"
+                                                           x-model="option.key" placeholder="Option key"
+                                                           style="min-width: 0;">
+                                                    <input type="text" class="form-control form-control-sm flex-grow-1"
+                                                           x-model="option.value" placeholder="Value"
+                                                           style="min-width: 0;">
+                                                    <button type="button" class="btn btn-link text-danger btn-sm p-1 flex-shrink-0"
+                                                            @click="removeLycorisOption('name', index, optIndex)"
+                                                            title="Remove Option">
+                                                        <i class="fas fa-minus-circle"></i>
+                                                    </button>
                                                 </div>
                                             </template>
                                             <button type="button" class="btn btn-outline-secondary btn-sm"
