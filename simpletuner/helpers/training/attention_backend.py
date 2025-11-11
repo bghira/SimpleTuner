@@ -9,10 +9,54 @@ import torch
 
 from simpletuner.helpers.logging import get_logger
 
+try:
+    from diffusers.models.attention_dispatch import AttentionBackendName, _check_attention_backend_requirements
+    from diffusers.models.attention_dispatch import attention_backend as diffusers_attention_backend
+except Exception:  # pragma: no cover - diffusers is a hard dependency but we guard for older installs
+    AttentionBackendName = None
+    diffusers_attention_backend = None
+    _check_attention_backend_requirements = None
+
 if TYPE_CHECKING:
     from sparse_linear_attention import SparseLinearAttention
 
 logger = get_logger("AttentionBackend")
+
+_DIFFUSERS_BACKEND_TARGETS: Dict[str, str] = {
+    "flash": "flash",
+    "flash-attn": "flash",
+    "flash_attn": "flash",
+    "flash-attn-2": "flash_varlen",
+    "flash_attn_2": "flash_varlen",
+    "flash-attn-varlen": "flash_varlen",
+    "flash_attn_varlen": "flash_varlen",
+    "flash-varlen": "flash_varlen",
+    "flash-attn-3": "_flash_3",
+    "flash_attn_3": "_flash_3",
+    "flash3": "_flash_3",
+    "flash-attn-3-varlen": "_flash_varlen_3",
+    "flash_attn_3_varlen": "_flash_varlen_3",
+    "flash3-varlen": "_flash_varlen_3",
+    "flash_attn3": "_flash_3",
+    "flash_attn3_varlen": "_flash_varlen_3",
+    "flex": "flex",
+    "flex-attn": "flex",
+    "cudnn": "_native_cudnn",
+    "native-cudnn": "_native_cudnn",
+    "native-efficient": "_native_efficient",
+    "native-flash": "_native_flash",
+    "native-math": "_native_math",
+    "native-npu": "_native_npu",
+    "native-xla": "_native_xla",
+}
+
+_DIFFUSERS_BACKEND_ALIASES: Dict[str, AttentionBackendName] = {}
+if AttentionBackendName is not None:
+    for alias, target in _DIFFUSERS_BACKEND_TARGETS.items():
+        try:
+            _DIFFUSERS_BACKEND_ALIASES[alias] = AttentionBackendName(target)
+        except Exception:
+            continue
 
 
 class AttentionBackendMode(str, Enum):
@@ -63,6 +107,8 @@ class AttentionBackendController:
     _optimizer_param_ids: set[int] = set()
     _sla_state_store: Dict[Tuple[int, str], Dict[str, torch.Tensor]] = {}
     _sla_state_filename: str = "sla_attention.pt"
+    _diffusers_backend_context = None
+    _diffusers_backend_name: Optional[str] = None
 
     @classmethod
     def apply(cls, config, phase: AttentionPhase) -> None:
@@ -70,7 +116,18 @@ class AttentionBackendController:
         backend_value = getattr(config, "attention_mechanism", "diffusers")
         if not isinstance(backend_value, str):
             backend_value = "diffusers"
-        backend = (backend_value or "diffusers").lower()
+        backend = (backend_value or "diffusers").strip().lower()
+        if not backend:
+            backend = "diffusers"
+        backend_alias = backend.replace("_", "-")
+
+        if AttentionBackendName is None and backend_alias in _DIFFUSERS_BACKEND_TARGETS:
+            message = (
+                f"Attention backend '{backend_alias}' requires a newer diffusers release. "
+                "Please upgrade diffusers to use this backend."
+            )
+            logger.error(message)
+            raise RuntimeError(message)
 
         if cls._is_sageattention_backend(backend):
             cls._configure_sageattention(config, backend, phase)
@@ -80,10 +137,16 @@ class AttentionBackendController:
             cls._enable_sla(config, phase)
             return
 
+        diffusers_backend = cls._resolve_diffusers_backend(backend_alias)
+        if diffusers_backend is not None:
+            cls._enable_diffusers_backend(backend_alias, diffusers_backend)
+            return
+
         cls.restore_default()
 
     @classmethod
     def restore_default(cls) -> None:
+        cls._disable_diffusers_backend()
         functional = torch.nn.functional
         if hasattr(functional, "scaled_dot_product_attention_sdpa"):
             functional.scaled_dot_product_attention = functional.scaled_dot_product_attention_sdpa
@@ -103,11 +166,64 @@ class AttentionBackendController:
         return original(query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
 
     @staticmethod
+    def _normalize_backend_key(value: str) -> str:
+        return value.replace("_", "-")
+
+    @classmethod
+    def _resolve_diffusers_backend(cls, backend: str) -> Optional[AttentionBackendName]:
+        if AttentionBackendName is None or not _DIFFUSERS_BACKEND_ALIASES:
+            return None
+        normalized = cls._normalize_backend_key(backend)
+        return _DIFFUSERS_BACKEND_ALIASES.get(normalized)
+
+    @classmethod
+    def _enable_diffusers_backend(cls, backend_key: str, backend_enum: AttentionBackendName) -> None:
+        if cls._diffusers_backend_name == backend_key:
+            return
+        if diffusers_attention_backend is None or _check_attention_backend_requirements is None:
+            message = f"Diffusers attention backend helpers are unavailable. Upgrade diffusers to at least 0.35 to use {backend_key}."
+            logger.error(message)
+            raise RuntimeError(message)
+
+        try:
+            _check_attention_backend_requirements(backend_enum)
+        except Exception as exc:  # pragma: no cover - exercised only when backend requirements fail
+            message = f"Attention backend '{backend_key}' is unavailable: {exc}"
+            logger.error(message)
+            raise RuntimeError(message) from exc
+
+        cls._disable_diffusers_backend()
+        try:
+            context = diffusers_attention_backend(backend_enum)
+            context.__enter__()
+        except Exception as exc:
+            message = f"Failed to enable attention backend '{backend_key}': {exc}"
+            logger.error(message)
+            raise RuntimeError(message) from exc
+
+        cls._diffusers_backend_context = context
+        cls._diffusers_backend_name = backend_key
+        cls._active_backend = backend_key
+
+    @classmethod
+    def _disable_diffusers_backend(cls) -> None:
+        if cls._diffusers_backend_context is None:
+            return
+        try:
+            cls._diffusers_backend_context.__exit__(None, None, None)
+        except Exception as exc:  # pragma: no cover - defensive logging only
+            logger.debug("Failed to exit attention backend context cleanly (%s). Ignoring.", exc)
+        finally:
+            cls._diffusers_backend_context = None
+            cls._diffusers_backend_name = None
+
+    @staticmethod
     def _is_sageattention_backend(backend: str) -> bool:
         return backend.startswith("sageattention")
 
     @classmethod
     def _configure_sageattention(cls, config, backend: str, phase: AttentionPhase) -> None:
+        cls._disable_diffusers_backend()
         usage_value = getattr(config, "sageattention_usage", AttentionBackendMode.INFERENCE)
         usage = AttentionBackendMode.from_raw(usage_value)
         setattr(config, "sageattention_usage", usage)
@@ -133,6 +249,8 @@ class AttentionBackendController:
         if cls._active_backend == backend:
             return
 
+        cls._disable_diffusers_backend()
+
         try:
             from sageattention import (
                 sageattn,
@@ -141,9 +259,10 @@ class AttentionBackendController:
                 sageattn_qk_int8_pv_fp16_triton,
             )
         except ImportError as exc:
-            logger.error("Could not import SageAttention. Please install it to use --attention_mechanism=%s.", backend)
+            message = f"Could not import SageAttention. Please install it to use --attention_mechanism={backend}."
+            logger.error(message)
             logger.error(repr(exc))
-            sys.exit(1)
+            raise RuntimeError(message) from exc
 
         sageattn_functions = {
             "sageattention": sageattn,
@@ -153,8 +272,9 @@ class AttentionBackendController:
         }
 
         if backend not in sageattn_functions:
-            logger.error("Unsupported SageAttention backend '%s'.", backend)
-            sys.exit(1)
+            message = f"Unsupported SageAttention backend '{backend}'."
+            logger.error(message)
+            raise ValueError(message)
 
         selected_impl = sageattn_functions[backend]
         cls._store_sdpa_reference()
@@ -197,12 +317,15 @@ class AttentionBackendController:
         if cls._active_backend == "sla":
             return
 
+        cls._disable_diffusers_backend()
+
         try:
             from sparse_linear_attention import SparseLinearAttention
         except ImportError as exc:
-            logger.error("Could not import SparseLinearAttention. Install it to use --attention_mechanism=sla.")
+            message = "Could not import SparseLinearAttention. Install it to use --attention_mechanism=sla."
+            logger.error(message)
             logger.error(repr(exc))
-            sys.exit(1)
+            raise RuntimeError(message) from exc
 
         cls._store_sdpa_reference()
         defaults = {
