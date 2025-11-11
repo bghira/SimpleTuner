@@ -569,6 +569,7 @@ wandb_module.config = {}
 sys.modules.setdefault("wandb", wandb_module)
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.trainer import Trainer
 
 # Import test configuration to suppress logging/warnings
@@ -1013,6 +1014,8 @@ class TestTrainer(unittest.TestCase):
         mock_config.base_model_precision = "no_change"
         mock_config.torch_num_threads = 2
         mock_config.weight_dtype = torch.bfloat16
+        mock_config.attention_mechanism = "diffusers"
+        mock_config.sageattention_usage = AttentionBackendMode.INFERENCE
         mock_load_config.return_value = mock_config
 
         with test_config.QuietLogs():
