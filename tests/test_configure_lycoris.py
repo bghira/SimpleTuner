@@ -4,14 +4,12 @@ import unittest
 from pathlib import Path
 
 from simpletuner.configure import LycorisBuilderSession
+from simpletuner.simpletuner_sdk.server.services.lycoris_builder_service import LYCORIS_BUILDER_SERVICE
 
-try:  # Optional dependency
-    from simpletuner.simpletuner_sdk.server.services.lycoris_builder_service import LYCORIS_BUILDER_SERVICE
-except ModuleNotFoundError:  # pragma: no cover - fallback when lycoris extras missing
-    LYCORIS_BUILDER_SERVICE = None  # type: ignore[assignment]
+if LYCORIS_BUILDER_SERVICE is None:  # pragma: no cover - guardrail for misconfigured envs
+    raise RuntimeError("LyCORIS builder service is required for these tests")
 
 
-@unittest.skipUnless(LYCORIS_BUILDER_SERVICE is not None, "LyCORIS metadata service unavailable")
 class LycorisBuilderSessionTests(unittest.TestCase):
     """Exercise the interactive LyCORIS builder helpers without mocking."""
 
