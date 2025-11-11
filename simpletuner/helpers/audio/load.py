@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from io import BytesIO
 from typing import IO, Tuple, Union
 
@@ -45,5 +47,24 @@ def load_audio(source: AudioSource) -> Tuple[torch.Tensor, int]:
         Tuple of waveform tensor shaped (channels, samples) and the sample rate.
     """
     stream = _coerce_to_stream(source)
-    waveform, sample_rate = torchaudio.load(stream)
+    format_hint = None
+    if isinstance(stream, str):
+        _, ext = os.path.splitext(stream)
+        if ext:
+            format_hint = ext.lstrip(".")
+    try:
+        waveform, sample_rate = torchaudio.load(stream, format=format_hint)
+    except RuntimeError:
+        if hasattr(stream, "read"):
+            stream.seek(0)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                tmp_file.write(stream.read())
+                tmp_path = tmp_file.name
+            try:
+                waveform, sample_rate = torchaudio.load(tmp_path, format="wav")
+            finally:
+                stream.seek(0)
+                os.unlink(tmp_path)
+        else:
+            raise
     return waveform, sample_rate
