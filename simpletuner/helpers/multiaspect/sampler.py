@@ -314,7 +314,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             bucket_report = getattr(self.metadata_backend, "bucket_report", None)
             if bucket_report:
                 bucket_report.add_note("Sampler attempted to reset buckets but none were available.")
-                bucket_report.record_stage("sampler_batches", image_count=len(self.metadata_backend))
+                bucket_report.record_stage("sampler_batches", sample_count=len(self.metadata_backend))
                 message = bucket_report.format_empty_dataset_message()
             else:
                 message = (

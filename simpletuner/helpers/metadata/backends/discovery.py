@@ -307,11 +307,24 @@ class DiscoveryMetadataBackend(MetadataBackend):
                 "num_channels": num_channels,
                 "num_samples": num_samples,
                 "duration_seconds": duration_seconds,
+                "truncation_mode": self.audio_truncation_mode,
             }
 
-            bucket_key = "audio"
-            if duration_seconds:
-                bucket_key = f"{round(duration_seconds, 2)}s"
+            max_duration = self.audio_max_duration_seconds
+            if max_duration is not None and duration_seconds and duration_seconds > max_duration:
+                logger.debug(
+                    f"Audio sample {image_path_str} duration {duration_seconds:.2f}s exceeds "
+                    f"limit {max_duration:.2f}s. Skipping."
+                )
+                statistics.setdefault("skipped", {}).setdefault("too_long", 0)
+                statistics["skipped"]["too_long"] += 1
+                return aspect_ratio_bucket_indices
+
+            bucket_key, truncated_duration = self._compute_audio_bucket(duration_seconds)
+            audio_metadata["original_duration_seconds"] = duration_seconds
+            if truncated_duration is not None:
+                audio_metadata["duration_seconds"] = truncated_duration
+                audio_metadata["bucket_duration_seconds"] = truncated_duration
             aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(image_path_str)
 
             if metadata_updates is not None:

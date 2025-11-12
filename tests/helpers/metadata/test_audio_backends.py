@@ -1,24 +1,16 @@
-import io
 import json
 import math
 import os
 import struct
-import sys
 import tempfile
 import unittest
 import wave
 from io import BytesIO
-from typing import Tuple
-from unittest import mock
-
-import torch
-
-STUB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "stubs")
-if STUB_DIR not in sys.path:
-    sys.path.insert(0, STUB_DIR)
+from typing import Optional, Tuple
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -124,11 +116,6 @@ class TestAudioMetadataBackends(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         StateTracker.clear_data_backends()
-        self._torchaudio_patch = mock.patch(
-            "simpletuner.helpers.audio.load.torchaudio.load", side_effect=self._load_with_wave
-        )
-        self._torchaudio_patch.start()
-        self.addCleanup(self._torchaudio_patch.stop)
 
     def tearDown(self) -> None:
         self.tempdir.cleanup()
@@ -137,35 +124,16 @@ class TestAudioMetadataBackends(unittest.TestCase):
     def _build_backend(self, dataset_id: str) -> FilesystemDataBackend:
         return FilesystemDataBackend(self.tempdir.name, dataset_id)
 
-    def _register_dataset_config(self, dataset_id: str) -> None:
-        StateTracker.set_data_backend_config(dataset_id, {"dataset_type": DatasetType.AUDIO.value})
-
-    @staticmethod
-    def _load_with_wave(uri, format=None):
-        if isinstance(uri, (bytes, bytearray)):
-            data = bytes(uri)
-        elif isinstance(uri, str):
-            with open(uri, "rb") as file:
-                data = file.read()
-        elif hasattr(uri, "read"):
-            if hasattr(uri, "seek"):
-                current_pos = uri.tell()
-                uri.seek(0)
-                data = uri.read()
-                uri.seek(current_pos)
-            else:
-                data = uri.read()
-        else:
-            raise TypeError(f"Unsupported uri type: {type(uri)}")
-
-        buffer = BytesIO(data)
-        with wave.open(buffer, "rb") as wav_file:
-            sample_rate = wav_file.getframerate()
-            frames = wav_file.readframes(wav_file.getnframes())
-
-        mutable_frames = bytearray(frames)
-        waveform = torch.frombuffer(mutable_frames, dtype=torch.int16).clone().to(torch.float32).view(1, -1) / 32767.0
-        return waveform, sample_rate
+    def _register_dataset_config(self, dataset_id: str, audio_config: Optional[dict] = None) -> None:
+        default_audio = {"bucket_strategy": "duration", "duration_interval": 15.0}
+        merged_audio = default_audio if audio_config is None else {**default_audio, **audio_config}
+        StateTracker.set_data_backend_config(
+            dataset_id,
+            {
+                "dataset_type": DatasetType.AUDIO.value,
+                "audio": merged_audio,
+            },
+        )
 
     def _parquet_backend(
         self,
@@ -181,11 +149,13 @@ class TestAudioMetadataBackends(unittest.TestCase):
             "audio_sample_rate_column": "sample_rate",
             "audio_num_samples_column": "num_samples",
             "audio_duration_column": "duration",
+            "audio_channels_column": "channels",
         }
         if not include_audio_columns:
             parquet_config.pop("audio_sample_rate_column", None)
             parquet_config.pop("audio_num_samples_column", None)
             parquet_config.pop("audio_duration_column", None)
+            parquet_config.pop("audio_channels_column", None)
         return ParquetMetadataBackend(
             id=dataset_id,
             instance_data_dir=self.tempdir.name,
@@ -222,6 +192,7 @@ class TestAudioMetadataBackends(unittest.TestCase):
             "sample_rate": sample_rate,
             "num_samples": num_samples,
             "duration": duration_seconds,
+            "channels": 2,
         }
         with open(manifest_path, "w", encoding="utf-8") as manifest_file:
             manifest_file.write(json.dumps(record) + "\n")
@@ -244,6 +215,8 @@ class TestAudioMetadataBackends(unittest.TestCase):
         self.assertEqual(audio_metadata["sample_rate"], sample_rate)
         self.assertEqual(audio_metadata["num_samples"], num_samples)
         self.assertEqual(audio_metadata["duration_seconds"], duration_seconds)
+        self.assertEqual(audio_metadata["num_channels"], 2)
+        self.assertEqual(audio_metadata["truncation_mode"], "beginning")
 
     def test_parquet_audio_bucket_reads_from_audio_when_manifest_missing_values(self):
         dataset_id = "audio_parquet_fallback"
@@ -276,3 +249,210 @@ class TestAudioMetadataBackends(unittest.TestCase):
             num_samples / sample_rate,
             places=4,
         )
+        self.assertEqual(audio_metadata["num_channels"], 1)
+        self.assertEqual(audio_metadata["truncation_mode"], "beginning")
+
+    def test_parquet_audio_bucket_enforces_max_duration(self):
+        dataset_id = "audio_parquet_max_duration"
+        audio_path = os.path.join(self.tempdir.name, "too_long.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=100, num_samples=10000)  # 100s clip
+        duration_seconds = num_samples / sample_rate
+
+        manifest_path = os.path.join(self.tempdir.name, "too_long.jsonl")
+        record = {
+            "filepath": os.path.basename(audio_path),
+            "sample_rate": sample_rate,
+            "num_samples": num_samples,
+            "duration": duration_seconds,
+        }
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            manifest_file.write(json.dumps(record) + "\n")
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id, audio_config={"max_duration_seconds": 30})
+        parquet_backend = self._parquet_backend(dataset_id, backend, manifest_path)
+
+        stats = {}
+        metadata_updates = {}
+        bucket_indices = parquet_backend._process_for_bucket(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics=stats,
+        )
+
+        self.assertEqual(bucket_indices, {})
+        self.assertEqual(metadata_updates, {})
+        self.assertEqual(stats.get("skipped", {}).get("too_long"), 1)
+
+    def test_parquet_audio_bucket_honours_truncation_mode(self):
+        dataset_id = "audio_parquet_truncation_mode"
+        audio_path = os.path.join(self.tempdir.name, "trunc.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=16000, num_samples=16000)
+        duration_seconds = num_samples / sample_rate
+
+        manifest_path = os.path.join(self.tempdir.name, "trunc.jsonl")
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            manifest_file.write(
+                json.dumps(
+                    {
+                        "filepath": os.path.basename(audio_path),
+                        "sample_rate": sample_rate,
+                        "num_samples": num_samples,
+                        "duration": duration_seconds,
+                    }
+                )
+                + "\n"
+            )
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id, audio_config={"truncation_mode": "random", "duration_interval": 1.0})
+        parquet_backend = self._parquet_backend(dataset_id, backend, manifest_path)
+
+        metadata_updates = {}
+        parquet_backend._process_for_bucket(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics={},
+        )
+        audio_metadata = metadata_updates[audio_path]
+        self.assertEqual(audio_metadata["truncation_mode"], "random")
+
+    def test_parquet_audio_bucket_quantizes_duration_interval(self):
+        dataset_id = "audio_parquet_duration_bucket"
+        audio_path = os.path.join(self.tempdir.name, "duration.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=100, num_samples=7700)
+        duration_seconds = num_samples / sample_rate
+        manifest_path = os.path.join(self.tempdir.name, "duration.jsonl")
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            manifest_file.write(
+                json.dumps(
+                    {
+                        "filepath": os.path.basename(audio_path),
+                        "sample_rate": sample_rate,
+                        "num_samples": num_samples,
+                        "duration": duration_seconds,
+                        "channels": 1,
+                    }
+                )
+                + "\n"
+            )
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id, audio_config={"duration_interval": 15.0})
+        parquet_backend = self._parquet_backend(dataset_id, backend, manifest_path)
+
+        metadata_updates = {}
+        stats = {}
+        bucket_indices = parquet_backend._process_for_bucket(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics=stats,
+        )
+        self.assertIn("75s", bucket_indices)
+        self.assertIn(audio_path, bucket_indices["75s"])
+        audio_metadata = metadata_updates[audio_path]
+        self.assertAlmostEqual(audio_metadata["original_duration_seconds"], duration_seconds, places=6)
+        self.assertEqual(audio_metadata["duration_seconds"], 75.0)
+        self.assertEqual(audio_metadata["bucket_duration_seconds"], 75.0)
+        self.assertEqual(audio_metadata["truncation_mode"], "beginning")
+
+    def test_discovery_audio_bucket_respects_duration_interval(self):
+        dataset_id = "audio_discovery_bucket"
+        audio_path = os.path.join(self.tempdir.name, "discovery.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=50, num_samples=3250)
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id, audio_config={"duration_interval": 20.0})
+        discovery_backend = DiscoveryMetadataBackend(
+            id=dataset_id,
+            instance_data_dir=self.tempdir.name,
+            cache_file=os.path.join(self.tempdir.name, "cache_discovery"),
+            metadata_file=os.path.join(self.tempdir.name, "metadata_discovery"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=1.0,
+            resolution_type="pixel",
+        )
+
+        metadata_updates = {}
+        bucket_indices = discovery_backend._process_audio_sample(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics={},
+        )
+        self.assertIn("60s", bucket_indices)
+        self.assertIn(audio_path, bucket_indices["60s"])
+        audio_metadata = metadata_updates[audio_path]
+        self.assertEqual(audio_metadata["sample_rate"], sample_rate)
+        self.assertEqual(audio_metadata["num_samples"], num_samples)
+        self.assertAlmostEqual(audio_metadata["original_duration_seconds"], num_samples / sample_rate, places=4)
+        self.assertEqual(audio_metadata["duration_seconds"], 60.0)
+        self.assertEqual(audio_metadata["bucket_duration_seconds"], 60.0)
+        self.assertEqual(audio_metadata["num_channels"], 1)
+        self.assertEqual(audio_metadata["truncation_mode"], "beginning")
+
+    def test_discovery_audio_bucket_enforces_max_duration(self):
+        dataset_id = "audio_discovery_max_duration"
+        audio_path = os.path.join(self.tempdir.name, "discovery_long.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=50, num_samples=5000)  # 100s clip
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id, audio_config={"max_duration_seconds": 20})
+        discovery_backend = DiscoveryMetadataBackend(
+            id=dataset_id,
+            instance_data_dir=self.tempdir.name,
+            cache_file=os.path.join(self.tempdir.name, "cache_discovery"),
+            metadata_file=os.path.join(self.tempdir.name, "metadata_discovery"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=1.0,
+            resolution_type="pixel",
+        )
+
+        metadata_updates = {}
+        stats = {}
+        bucket_indices = discovery_backend._process_audio_sample(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics=stats,
+        )
+
+        self.assertEqual(bucket_indices, {})
+        self.assertEqual(metadata_updates, {})
+        self.assertEqual(stats.get("skipped", {}).get("too_long"), 1)
+
+    def test_discovery_audio_bucket_honours_truncation_mode(self):
+        dataset_id = "audio_discovery_truncation_mode"
+        audio_path = os.path.join(self.tempdir.name, "disc_trunc.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=16000, num_samples=8000)
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id, audio_config={"truncation_mode": "end", "duration_interval": 2.0})
+        discovery_backend = DiscoveryMetadataBackend(
+            id=dataset_id,
+            instance_data_dir=self.tempdir.name,
+            cache_file=os.path.join(self.tempdir.name, "cache_discovery"),
+            metadata_file=os.path.join(self.tempdir.name, "metadata_discovery"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=1.0,
+            resolution_type="pixel",
+        )
+
+        metadata_updates = {}
+        discovery_backend._process_audio_sample(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics={},
+        )
+        audio_metadata = metadata_updates[audio_path]
+        self.assertEqual(audio_metadata["truncation_mode"], "end")

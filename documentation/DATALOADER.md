@@ -49,8 +49,8 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `dataset_type`
 
-- **Values:** `image` | `video` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
-- **Description:** `image` and `video` datasets contain your training data. `text_embeds` contain the outputs of the text encoder cache, `image_embeds` contain the VAE latents (when a model uses one), and `conditioning_image_embeds` store cached conditioning image embeddings (such as CLIP vision features). When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
+- **Values:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **Description:** `image`, `video`, and `audio` datasets contain primary training samples. `text_embeds` contain the outputs of the text encoder cache, `image_embeds` contain the VAE latents (when a model uses one), and `conditioning_image_embeds` store cached conditioning image embeddings (such as CLIP vision features). When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
 - **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 - **Note:** Don't combine images and video in a **single** dataset. Split them out.
 
@@ -84,6 +84,28 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 - **Optional override for the batch size used while generating conditioning image embeds.**
 - Defaults to the `conditioning_image_embed_batch_size` trainer argument or the VAE batch size when not explicitly provided.
+
+### Audio dataset configuration (`dataset_type=audio`)
+
+Audio backends support a dedicated `audio` block so metadata and bucket math stays duration-aware. Example:
+
+```json
+"audio": {
+  "max_duration_seconds": 90,
+  "channels": 2,
+  "bucket_strategy": "duration",
+  "duration_interval": 15,
+  "truncation_mode": "beginning"
+}
+```
+
+- **`bucket_strategy`** – currently `duration` is the default and truncates clips into evenly spaced buckets so per-GPU sampling respects batch math.
+- **`duration_interval`** – bucket rounding in seconds (defaults to **3** when unset). With `15`, a 77 s clip is bucketed at 75 s. This prevents single long clips from starving other ranks and forces truncation to the same interval.
+- **`max_duration_seconds`** – clips longer than this are skipped entirely during metadata discovery so exceptionally long tracks don't consume buckets unexpectedly.
+- **`truncation_mode`** – determines which portion of the clip is retained when we snap to the bucket interval. Options: `beginning`, `end`, or `random` (default: `beginning`).
+- Standard audio settings (channel count, cache directory) map directly to the runtime audio backend created by `simpletuner.helpers.data_backend.factory`. Padding is intentionally avoided—clips are truncated instead of extended to keep behaviour consistent with diffusion trainers like ACE-Step.
+
+During metadata discovery the loader records `sample_rate`, `num_samples`, `num_channels`, and `duration_seconds` for each file. Bucket reports in the CLI now speak in **samples** rather than **images**, and empty-dataset diagnostics will list the active `bucket_strategy`/`duration_interval` (plus any `max_duration_seconds` limit) so you can tune intervals without diving into logs.
 
 ### `type`
 

@@ -208,12 +208,12 @@ class StateTracker:
             "all_image_files_{}".format(data_backend_id),
             cls.all_image_files[data_backend_id],
         )
-        logger.debug(f"set_image_files found {len(cls.all_image_files[data_backend_id])} images.")
+        logger.debug(f"set_image_files found {len(cls.all_image_files[data_backend_id])} samples.")
         bucket_report = cls.data_backends.get(data_backend_id, {}).get("bucket_report")
         if bucket_report:
             bucket_report.record_stage(
                 "file_discovery",
-                image_count=len(cls.all_image_files[data_backend_id]),
+                sample_count=len(cls.all_image_files[data_backend_id]),
                 directories=len(raw_file_list),
             )
         return cls.all_image_files[data_backend_id]
