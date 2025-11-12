@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from diffusers import AutoencoderKLQwenImage, QwenImagePipeline
 from diffusers.models.attention_processor import Attention
-from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.qwen_image.pipeline import QwenImageEditPipeline
@@ -277,104 +277,28 @@ class QwenImage(ImageModelFoundation):
         return False
 
     def requires_conditioning_image_embeds(self) -> bool:
-        if self._is_edit_flavour():
-            return True
-        return False
+        return self._is_edit_v1_flavour()
 
-    class _ConditioningImageEmbedder:
-        def __init__(self, processor, vision_model, device, dtype):
-            self.processor = processor
-            self.vision_model = vision_model
-            self.device = device
-            self.dtype = dtype
-
-            self.vision_model.eval()
-            self.vision_model.to(device=self.device, dtype=self.dtype)
-            for param in self.vision_model.parameters():
-                param.requires_grad_(False)
-
-        @torch.no_grad()
-        def encode(self, images):
-            processed = self.processor(images=images, return_tensors="pt")
-            pixel_values = processed.get("pixel_values")
-            if pixel_values is None:
-                vision_inputs = processed.get("vision_inputs")
-                pixel_values = None
-                if isinstance(vision_inputs, dict):
-                    pixel_values = vision_inputs.get("pixel_values")
-                if pixel_values is None:
-                    raise ValueError("Processor did not return 'pixel_values' for conditioning image encoding.")
-            pixel_values = pixel_values.to(device=self.device, dtype=self.dtype)
-            outputs = self.vision_model(pixel_values=pixel_values, return_dict=True)
-            hidden = getattr(outputs, "last_hidden_state", None)
-            if hidden is None:
-                hidden = outputs[0]
-            hidden = hidden.to(device="cpu")
-            return [hidden[i] for i in range(hidden.shape[0])]
+    def conditioning_image_embeds_use_reference_dataset(self) -> bool:
+        return self._is_edit_v1_flavour()
 
     def _get_conditioning_image_embedder(self):
-        if self._is_edit_v1_flavour():
-            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG)
-            processor = getattr(pipeline, "processor", None)
-            if processor is None:
-                raise ValueError("Qwen edit pipeline does not expose a processor for conditioning embeds.")
-            text_encoder = getattr(pipeline, "text_encoder", None)
-            dtype = getattr(text_encoder, "dtype", torch.float32)
-
-            return self._EditV1ConditioningImageEmbedder(
-                processor=processor,
-                device=self.accelerator.device,
-                dtype=dtype,
-            )
+        if not self._is_edit_v1_flavour():
+            raise ValueError("Conditioning image embeds are only supported for Qwen edit-v1 flavours.")
 
         if self._conditioning_image_embedder is not None:
             return self._conditioning_image_embedder
 
-        if not self.text_encoders:
-            self.load_text_encoder()
-        if not self.text_encoders:
-            raise ValueError("Qwen Image conditioning requires the text encoder to be loaded.")
-
-        text_encoder = self.text_encoders[0]
-
-        vision_model = None
-        getter = getattr(text_encoder, "get_vision_tower", None)
-        if callable(getter):
-            try:
-                vision_model = getter()
-            except Exception:
-                vision_model = None
-        if vision_model is None:
-            vision_model = getattr(text_encoder, "vision_model", None)
-        if vision_model is None:
-            vision_model = getattr(text_encoder, "vision_tower", None)
-        if vision_model is None and hasattr(text_encoder, "model"):
-            vision_model = getattr(text_encoder.model, "vision_tower", None)
-        if vision_model is None:
-            raise ValueError("Unable to locate a vision tower on the loaded Qwen text encoder for conditioning embeds.")
-
-        processor = self._conditioning_processor
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG)
+        processor = getattr(pipeline, "processor", None)
         if processor is None:
-            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG)
-            processor = getattr(pipeline, "processor", None)
-            if processor is None:
-                processor_id = getattr(self.config, "conditioning_image_processor_name_or_path", None) or getattr(
-                    self.config, "pretrained_model_name_or_path", None
-                )
-                if processor_id is None:
-                    processor_id = "Qwen/Qwen-Image"
-                processor = AutoProcessor.from_pretrained(processor_id)
-            self._conditioning_processor = processor
+            raise ValueError("Qwen edit pipeline does not expose a processor for conditioning embeds.")
+        text_encoder = getattr(pipeline, "text_encoder", None)
+        dtype = getattr(text_encoder, "dtype", torch.float32)
 
-        device = getattr(self.accelerator, "device", torch.device("cpu"))
-        dtype = getattr(self.config, "weight_dtype", torch.float32)
-        if isinstance(dtype, str):
-            dtype = getattr(torch, dtype, torch.float32)
-
-        self._conditioning_image_embedder = self._ConditioningImageEmbedder(
+        self._conditioning_image_embedder = self._EditV1ConditioningImageEmbedder(
             processor=processor,
-            vision_model=vision_model,
-            device=device,
+            device=self.accelerator.device,
             dtype=dtype,
         )
         return self._conditioning_image_embedder
@@ -654,10 +578,31 @@ class QwenImage(ImageModelFoundation):
             self.processor = processor
             self.device = device
             self.dtype = dtype
+            self.image_processor = getattr(processor, "image_processor", None) or processor
+            if not callable(getattr(self.image_processor, "__call__", None)):
+                raise ValueError("Conditioning processor does not expose a callable image processor.")
 
         @torch.no_grad()
-        def encode(self, images):
-            processed = self.processor(images=images, return_tensors="pt")
+        def encode(self, images, captions=None):
+            text_inputs: List[str] | None = None
+            if captions is not None:
+                text_inputs = []
+                image_token = getattr(self.processor, "image_token", "<|image_pad|>")
+                for caption in captions:
+                    caption_text = (caption or "").strip()
+                    if caption_text:
+                        composed = f"{caption_text} {image_token}"
+                    else:
+                        composed = image_token
+                    text_inputs.append(composed)
+            if text_inputs is None:
+                image_token = getattr(self.processor, "image_token", "<|image_pad|>")
+                text_inputs = [image_token] * len(images)
+            processed = self.image_processor(
+                images=images,
+                text=text_inputs,
+                return_tensors="pt",
+            )
             pixel_values = processed["pixel_values"].to(device=self.device, dtype=self.dtype)
             image_grid_thw = processed.get("image_grid_thw", None)
 

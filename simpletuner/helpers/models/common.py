@@ -318,6 +318,13 @@ class ModelFoundation(ABC):
     def requires_conditioning_image_embeds(self) -> bool:
         return False
 
+    def conditioning_image_embeds_use_reference_dataset(self) -> bool:
+        """
+        Override to True when conditioning image embeds should be generated from the reference datasets
+        instead of the primary training dataset.
+        """
+        return False
+
     def requires_validation_edit_captions(self) -> bool:
         """
         Some edit / in-painting models want the *reference* image plus the
