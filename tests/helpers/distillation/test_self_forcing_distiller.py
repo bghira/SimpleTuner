@@ -105,7 +105,7 @@ class _StubModel:
         self.accelerator = SimpleNamespace(device=torch.device("cpu"))
         self.noise_schedule = scheduler
 
-    def encode_text_batch(self, text_batch, is_negative_prompt=False):
+    def encode_text_batch(self, text_batch, is_negative_prompt=False, prompt_contexts=None):
         batch_size = len(text_batch)
         prompt_embeds = torch.zeros((batch_size, 2, 4), dtype=torch.float32)
         attention_masks = torch.ones((batch_size, 2), dtype=torch.float32)

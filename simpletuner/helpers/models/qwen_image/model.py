@@ -12,7 +12,13 @@ from diffusers import AutoencoderKLQwenImage, QwenImagePipeline
 from diffusers.models.attention_processor import Attention
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    ImageModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    TextEmbedCacheKey,
+)
 from simpletuner.helpers.models.qwen_image.pipeline import QwenImageEditPipeline
 from simpletuner.helpers.models.qwen_image.pipeline_edit_plus import (
     CONDITION_IMAGE_SIZE,
@@ -22,6 +28,7 @@ from simpletuner.helpers.models.qwen_image.pipeline_edit_plus import (
 from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
 from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -211,14 +218,80 @@ class QwenImage(ImageModelFoundation):
         # Get the pipeline for encoding
         pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
 
+        prompt_image_tensor = None
+        prompt_contexts = getattr(self, "_current_prompt_contexts", None)
+        if self.requires_text_embed_image_context():
+            if not prompt_contexts or len(prompt_contexts) != len(prompts):
+                raise ValueError(
+                    "Qwen edit text encoding requires prompt image context for each caption, but none was provided."
+                )
+            prompt_image_tensor = self._prepare_prompt_image_batch(prompt_contexts, len(prompts), pipeline)
+            if prompt_image_tensor is None:
+                raise ValueError("Failed to resolve prompt image tensors for Qwen edit text encoding.")
+
         # Use pipeline's encode_prompt method
         prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(
             prompts,
+            image=prompt_image_tensor,
             device=self.accelerator.device,
             num_images_per_prompt=1,
         )
 
         return prompt_embeds, prompt_embeds_mask
+
+    def _prepare_prompt_image_batch(self, prompt_contexts, batch_size: int, pipeline):
+        if not prompt_contexts or len(prompt_contexts) != batch_size:
+            return None
+        image_tensors = []
+        for context in prompt_contexts:
+            tensor = self._extract_prompt_image_from_context(context)
+            if tensor is None:
+                return None
+            if tensor.dim() == 4 and tensor.size(0) == 1:
+                tensor = tensor.squeeze(0)
+            if tensor.dim() != 3:
+                raise ValueError(f"Expected conditioning tensor with shape (C, H, W); received {tensor.shape}.")
+            image_tensors.append(tensor)
+        pixel_dtype = getattr(pipeline.text_encoder, "dtype", torch.float32)
+        stacked = torch.stack(image_tensors, dim=0)
+        return stacked.to(device=self.accelerator.device, dtype=pixel_dtype)
+
+    def _extract_prompt_image_from_context(self, context: dict):
+        if not isinstance(context, dict):
+            return None
+        embed = context.get("conditioning_image_embeds")
+        tensor = None
+        if isinstance(embed, dict):
+            tensor = embed.get("pixel_values")
+        elif torch.is_tensor(embed):
+            tensor = embed
+        if tensor is None:
+            tensor = context.get("conditioning_pixel_values")
+        if tensor is not None:
+            return tensor
+        return self._load_prompt_image_from_backend(context)
+
+    def _load_prompt_image_from_backend(self, context: dict):
+        if not self._is_edit_v1_flavour():
+            return None
+        image_path = context.get("image_path")
+        data_backend_id = context.get("data_backend_id")
+        if not image_path or not data_backend_id:
+            return None
+        backend_entry = StateTracker.get_data_backend(data_backend_id)
+        if backend_entry is None:
+            return None
+        data_backend = backend_entry.get("data_backend")
+        if data_backend is None:
+            return None
+        image = data_backend.read_image(image_path)
+        embedder = self._get_conditioning_image_embedder()
+        prompt_caption = context.get("prompt")
+        embeds = embedder.encode([image], captions=[prompt_caption])
+        if embeds:
+            entry = embeds[0]
+            return entry.get("pixel_values")
+        return None
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -275,6 +348,14 @@ class QwenImage(ImageModelFoundation):
         if self._is_edit_flavour():
             return True
         return False
+
+    def text_embed_cache_key(self) -> TextEmbedCacheKey:
+        if self._is_edit_v1_flavour():
+            return TextEmbedCacheKey.DATASET_AND_FILENAME
+        return super().text_embed_cache_key()
+
+    def requires_text_embed_image_context(self) -> bool:
+        return self._is_edit_v1_flavour()
 
     def requires_conditioning_image_embeds(self) -> bool:
         return self._is_edit_v1_flavour()

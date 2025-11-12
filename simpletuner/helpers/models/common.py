@@ -5,7 +5,7 @@ import os
 import random
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -106,6 +106,12 @@ class ModelTypes(Enum):
     TRANSFORMER = "transformer"
     VAE = "vae"
     TEXT_ENCODER = "text_encoder"
+
+
+class TextEmbedCacheKey(Enum):
+    CAPTION = "caption"
+    FILENAME = "filename"
+    DATASET_AND_FILENAME = "dataset_and_filename"
 
 
 class PipelineConditioningImageEmbedder:
@@ -310,6 +316,20 @@ class ModelFoundation(ABC):
     def requires_conditioning_dataset(self) -> bool:
         if self.config.controlnet or self.config.control:
             return True
+        return False
+
+    def text_embed_cache_key(self) -> TextEmbedCacheKey:
+        """
+        Controls how prompt embeddings are keyed inside the cache. Most models can
+        key by caption text; edit models can override to use filenames.
+        """
+        return TextEmbedCacheKey.CAPTION
+
+    def requires_text_embed_image_context(self) -> bool:
+        """
+        Returns True when encode_text_batch must be supplied with per-prompt image
+        context (e.g., reference pixels). Defaults to False.
+        """
         return False
 
     def requires_conditioning_latents(self) -> bool:
@@ -1641,14 +1661,24 @@ class ModelFoundation(ABC):
 
         return batch
 
-    def encode_text_batch(self, text_batch: list, is_negative_prompt: bool = False):
+    def encode_text_batch(
+        self,
+        text_batch: list,
+        is_negative_prompt: bool = False,
+        prompt_contexts: Optional[List[dict]] = None,
+    ):
         """
         Encodes a batch of text using the text encoder.
         """
         if not self.TEXT_ENCODER_CONFIGURATION:
             raise ValueError("No text encoder configuration found.")
-        encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
-        return self._format_text_embedding(encoded_text)
+        previous_context = getattr(self, "_current_prompt_contexts", None)
+        self._current_prompt_contexts = prompt_contexts
+        try:
+            encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
+            return self._format_text_embedding(encoded_text)
+        finally:
+            self._current_prompt_contexts = previous_context
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """

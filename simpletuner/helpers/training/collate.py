@@ -10,8 +10,10 @@ import torch
 from PIL import Image
 
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.training.multi_process import _get_rank, rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
@@ -75,23 +77,6 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def _normalize_training_identifier(path, root=None):
-    if not path:
-        return None
-    candidate_path = path
-    if root and not os.path.isabs(candidate_path):
-        candidate_path = os.path.join(root, candidate_path)
-    abs_path = os.path.abspath(os.path.normpath(candidate_path))
-    if root:
-        abs_root = os.path.abspath(os.path.normpath(root))
-        try:
-            if os.path.commonpath([abs_path, abs_root]) == abs_root:
-                return os.path.normcase(os.path.relpath(abs_path, abs_root))
-        except ValueError:
-            pass
-    return os.path.normcase(abs_path)
-
-
 def describe_missing_conditioning_pairs(
     examples,
     conditioning_examples,
@@ -106,7 +91,7 @@ def describe_missing_conditioning_pairs(
 
     expected_counter = Counter()
     for example in examples:
-        identifier = _normalize_training_identifier(example.get("image_path"), training_root)
+        identifier = normalize_data_path(example.get("image_path"), training_root)
         if identifier is not None:
             expected_counter[identifier] += 1
     if not expected_counter:
@@ -121,7 +106,7 @@ def describe_missing_conditioning_pairs(
         identifier = None
         if hasattr(cond_example, "training_sample_path"):
             try:
-                identifier = _normalize_training_identifier(
+                identifier = normalize_data_path(
                     cond_example.training_sample_path(training_backend_id),
                     training_root,
                 )
@@ -284,15 +269,18 @@ def compute_latents(filepaths, data_backend_id: str, model):
     return latents
 
 
-def compute_single_embedding(caption, text_embed_cache):
+def compute_single_embedding(prompt_entry, text_embed_cache):
     """Worker function to compute embedding for a single caption."""
-    if caption == "" or not caption:
+    if not isinstance(prompt_entry, dict):
+        prompt_entry = {"prompt": prompt_entry, "key": prompt_entry, "metadata": {}}
+    prompt_value = prompt_entry.get("prompt")
+    if prompt_value == "" or not prompt_value:
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
         debug_log(
-            f"Hashing caption '{caption}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
+            f"Hashing caption '{prompt_value}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
         )
-    text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(prompts=[caption])
+    text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(prompt_records=[prompt_entry])
     logger.debug(f"Keys: {text_encoder_output.keys()}")
     for key, val in text_encoder_output.items():
         if isinstance(val, torch.Tensor):
@@ -302,11 +290,11 @@ def compute_single_embedding(caption, text_embed_cache):
     return text_encoder_output
 
 
-def compute_prompt_embeddings(captions, text_embed_cache, model):
+def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
     """
     Retrieve / compute text embeds in parallel.
     Args:
-        captions: List of strings
+        prompt_entries: List of strings or prompt records
         text_embed_cache: TextEmbedCache instance
 
     Returns:
@@ -315,12 +303,18 @@ def compute_prompt_embeddings(captions, text_embed_cache, model):
     """
     debug_log(" -> get embed from cache")
     # Use a thread pool to compute embeddings concurrently
+    normalized_entries = []
+    for entry in prompt_entries:
+        if isinstance(entry, dict):
+            normalized_entries.append(entry)
+        else:
+            normalized_entries.append({"prompt": entry, "key": entry, "metadata": {}})
     with ThreadPoolExecutor() as executor:
         text_encoder_output = list(
             executor.map(
                 compute_single_embedding,
-                captions,
-                [text_embed_cache] * len(captions),
+                normalized_entries,
+                [text_embed_cache] * len(normalized_entries),
             )
         )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
@@ -691,8 +685,61 @@ def collate_fn(batch):
         captions = [example["instance_prompt_text"] for example in examples]
         debug_log(f"Pull cached text embeds. Using training set captions: {captions}")
         text_embed_cache = StateTracker.get_data_backend(data_backend_id)["text_embed_cache"]
+    prompt_requests = []
+    key_type = TextEmbedCacheKey.CAPTION
+    getter = getattr(model, "text_embed_cache_key", None)
+    if callable(getter):
+        try:
+            key_type = getter()
+        except Exception as exc:
+            debug_log(f"text_embed_cache_key() lookup failed on model {type(model)}: {exc}")
+
+    def _conditioning_embed_for_index(idx: int):
+        if conditioning_image_embeds is None:
+            return None
+        if isinstance(conditioning_image_embeds, list):
+            if idx < len(conditioning_image_embeds):
+                return conditioning_image_embeds[idx]
+            return None
+        if isinstance(conditioning_image_embeds, dict):
+            processed = {}
+            for key, value in conditioning_image_embeds.items():
+                if torch.is_tensor(value) and value.shape[0] == len(examples):
+                    processed[key] = value[idx]
+                else:
+                    processed[key] = value
+            return processed
+        if torch.is_tensor(conditioning_image_embeds) and conditioning_image_embeds.shape[0] == len(examples):
+            return conditioning_image_embeds[idx]
+        return conditioning_image_embeds
+
+    for idx, caption in enumerate(captions):
+        example = examples[idx]
+        example_path = example.get("image_path")
+        data_backend_id = example.get("data_backend_id")
+        backend_config = StateTracker.get_data_backend_config(data_backend_id) if data_backend_id else {}
+        backend_config = backend_config or {}
+        dataset_root = backend_config.get("instance_data_dir")
+        normalized_identifier = normalize_data_path(example_path, dataset_root)
+        metadata = {
+            "image_path": example_path,
+            "data_backend_id": data_backend_id,
+            "prompt": caption,
+            "dataset_relative_path": normalized_identifier,
+        }
+        conditioning_embed = _conditioning_embed_for_index(idx)
+        if conditioning_embed is not None:
+            metadata["conditioning_image_embeds"] = conditioning_embed
+        if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and data_backend_id and example_path:
+            key_value = f"{data_backend_id}:{normalized_identifier}"
+        elif key_type is TextEmbedCacheKey.FILENAME and example_path:
+            key_value = normalize_data_path(example_path, None)
+        else:
+            key_value = caption
+        prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
+
     if not text_embed_cache.disabled:
-        all_text_encoder_outputs = compute_prompt_embeddings(captions, text_embed_cache, StateTracker.get_model())
+        all_text_encoder_outputs = compute_prompt_embeddings(prompt_requests, text_embed_cache, StateTracker.get_model())
     else:
         all_text_encoder_outputs = {}
     # TODO: Remove model-specific logic from collate.

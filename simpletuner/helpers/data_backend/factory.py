@@ -95,7 +95,7 @@ from simpletuner.helpers.distillation.requirements import (
 )
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
-from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.models.common import ModelFoundation, TextEmbedCacheKey
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
@@ -106,6 +106,7 @@ from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 from .builders import build_backend_from_config, create_backend_builder
 from .config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig, create_backend_config
@@ -2561,13 +2562,14 @@ class FactoryRegistry:
                 use_captions = False
 
             try:
-                captions, images_missing_captions = PromptHandler.get_all_captions(
+                captions, images_missing_captions, caption_image_paths = PromptHandler.get_all_captions(
                     data_backend=init_backend["data_backend"],
                     instance_data_dir=init_backend["instance_data_dir"],
                     prepend_instance_prompt=prepend_instance_prompt,
                     instance_prompt=instance_prompt,
                     use_captions=use_captions,
                     caption_strategy=caption_strategy,
+                    return_image_paths=True,
                 )
             except AttributeError:
                 logger.debug("Skipping text embedding processing due to incomplete StateTracker configuration.")
@@ -2581,8 +2583,28 @@ class FactoryRegistry:
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
             self.model.get_pipeline()
+            prompt_records = []
+            key_type = self.model.text_embed_cache_key()
+            dataset_id = init_backend["id"]
+            dataset_root = init_backend.get("instance_data_dir")
+            for caption, image_path in zip(captions, caption_image_paths):
+                image_path_str = str(image_path)
+                normalized_identifier = normalize_data_path(image_path_str, dataset_root)
+                metadata = {
+                    "image_path": image_path_str,
+                    "data_backend_id": dataset_id,
+                    "prompt": caption,
+                    "dataset_relative_path": normalized_identifier,
+                }
+                if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
+                    key_value = f"{dataset_id}:{normalized_identifier}"
+                elif key_type is TextEmbedCacheKey.FILENAME:
+                    key_value = normalize_data_path(image_path_str, None)
+                else:
+                    key_value = caption
+                prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                captions, return_concat=False, load_from_cache=False
+                prompt_records, return_concat=False, load_from_cache=False
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 

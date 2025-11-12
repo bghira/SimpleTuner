@@ -381,12 +381,14 @@ class PromptHandler:
         data_backend: BaseDataBackend,
         caption_strategy: str,
         instance_prompt: str = None,
+        return_image_paths: bool = False,
     ) -> list:
         logger.debug(
             "Gathering captions for data backend. "
             f"Parameters: {instance_data_dir=} {use_captions=} {prepend_instance_prompt=} {data_backend=} {caption_strategy=} {instance_prompt=}"
         )
         captions = []
+        caption_image_paths = []
         images_missing_captions = []
         all_image_files = StateTracker.get_image_files(data_backend_id=data_backend.id) or data_backend.list_files(
             instance_data_dir=instance_data_dir, file_extensions=image_file_extensions
@@ -459,16 +461,18 @@ class PromptHandler:
                 images_missing_captions.append(image_path)
                 continue
 
-            if type(caption) not in [tuple, list, dict]:
-                captions.append(caption)
-            else:
-                # allow caching of multiple captions, if returned by the backend.
-                captions.extend(caption)
+                caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
+                for value in caption_values:
+                    captions.append(value)
+                    if return_image_paths:
+                        caption_image_paths.append(image_path)
 
         # Deduplicate captions
         # TODO: Investigate why this prevents captions from processing on multigpu systems.
         # captions = list(set(captions))
 
+        if return_image_paths:
+            return captions, images_missing_captions, caption_image_paths
         return captions, images_missing_captions
 
     @staticmethod
