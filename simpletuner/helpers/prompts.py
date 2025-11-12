@@ -461,11 +461,11 @@ class PromptHandler:
                 images_missing_captions.append(image_path)
                 continue
 
-                caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
-                for value in caption_values:
-                    captions.append(value)
-                    if return_image_paths:
-                        caption_image_paths.append(image_path)
+            caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
+            for value in caption_values:
+                captions.append(value)
+                if return_image_paths:
+                    caption_image_paths.append(image_path)
 
         # Deduplicate captions
         # TODO: Investigate why this prevents captions from processing on multigpu systems.

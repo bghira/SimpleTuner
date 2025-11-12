@@ -512,7 +512,7 @@ def collate_fn(batch):
         (
             sample.caption
             if getattr(sample, "caption", None)
-            else (getattr(sample, "image_metadata", {}) or {}).get("instance_prompt_text", "")
+            else getattr(sample, "image_metadata", {}).get("instance_prompt_text", "")
         )
         for sample in conditioning_examples
     ]

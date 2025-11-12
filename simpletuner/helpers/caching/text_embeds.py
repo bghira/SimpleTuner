@@ -114,6 +114,7 @@ class TextEmbeddingCache(WebhookMixin):
             if "://" not in normalized:
                 normalized = os.path.normcase(os.path.abspath(os.path.normpath(normalized)))
         elif self.key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
+            # Keys already include dataset identifiers; leave as-is.
             normalized = normalized
         return normalized
 

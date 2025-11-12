@@ -189,7 +189,11 @@ class ImageEmbedCache(WebhookMixin):
         self._ensure_embedder()
         valid_paths: List[str] = []
         images: List[Image.Image] = []
-        captions_for_batch: Optional[List[Optional[str]]] = [] if captions is not None else None
+        captions_for_batch: Optional[List[Optional[str]]]
+        if captions is not None:
+            captions_for_batch = []
+        else:
+            captions_for_batch = None
         for idx, fp in enumerate(filepaths):
             try:
                 images.append(self._load_image_for_embedding(fp))

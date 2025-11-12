@@ -665,7 +665,7 @@ class QwenImage(ImageModelFoundation):
 
         @torch.no_grad()
         def encode(self, images, captions=None):
-            text_inputs: List[str] | None = None
+            text_inputs: Optional[List[str]] = None
             if captions is not None:
                 text_inputs = []
                 image_token = getattr(self.processor, "image_token", "<|image_pad|>")
