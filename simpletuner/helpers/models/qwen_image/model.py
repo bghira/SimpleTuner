@@ -688,10 +688,27 @@ class QwenImage(ImageModelFoundation):
             image_grid_thw = processed.get("image_grid_thw", None)
 
             embeds = []
-            for idx in range(pixel_values.shape[0]):
+            expected_images = len(images)
+            available_pixels = pixel_values.shape[0]
+            entry_count = min(expected_images, available_pixels)
+            if available_pixels != expected_images:
+                logger.warning(
+                    "Conditioning processor returned %s pixel tensors for %s images; truncating to %s entries.",
+                    available_pixels,
+                    expected_images,
+                    entry_count,
+                )
+            grid_count = image_grid_thw.shape[0] if image_grid_thw is not None else 0
+            for idx in range(entry_count):
                 entry = {"pixel_values": pixel_values[idx]}
-                if image_grid_thw is not None:
+                if image_grid_thw is not None and idx < grid_count:
                     entry["image_grid_thw"] = image_grid_thw[idx]
+                elif image_grid_thw is not None and idx >= grid_count:
+                    logger.warning(
+                        "Skipping image_grid_thw for index %s; processor produced only %s grid entries.",
+                        idx,
+                        grid_count,
+                    )
                 embeds.append(entry)
             return embeds
 
