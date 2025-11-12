@@ -301,14 +301,13 @@ class DiscoveryMetadataBackend(MetadataBackend):
 
             num_channels, num_samples = waveform.shape[0], waveform.shape[1]
             duration_seconds = float(num_samples) / float(sample_rate) if sample_rate else None
-            audio_metadata = {
-                "audio_path": image_path_str,
-                "sample_rate": sample_rate,
-                "num_channels": num_channels,
-                "num_samples": num_samples,
-                "duration_seconds": duration_seconds,
-                "truncation_mode": self.audio_truncation_mode,
-            }
+            audio_metadata = self._build_audio_metadata_entry(
+                sample_path=image_path_str,
+                sample_rate=sample_rate,
+                num_channels=num_channels,
+                num_samples=num_samples,
+                duration_seconds=duration_seconds,
+            )
 
             max_duration = self.audio_max_duration_seconds
             if max_duration is not None and duration_seconds and duration_seconds > max_duration:

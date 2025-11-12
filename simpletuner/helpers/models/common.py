@@ -24,6 +24,7 @@ try:
 except ImportError:
     FSDP_AVAILABLE = False
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.custom_schedule import (
@@ -739,6 +740,13 @@ class ModelFoundation(ABC):
         By default this simply forwards to the provided VAE.
         """
         return vae.encode(samples)
+
+    def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
+        """
+        Hook invoked by VAECache so models can consume per-sample metadata (e.g. lyrics)
+        while performing VAE encoding. Default implementation ignores metadata.
+        """
+        return self.encode_with_vae(vae, samples)
 
     def post_vae_encode_transform_sample(self, sample):
         """
@@ -2147,3 +2155,75 @@ class VideoModelFoundation(ImageModelFoundation):
         You can reshape or permute as needed for the underlying model.
         """
         return tensor
+
+
+class AudioModelFoundation(ModelFoundation):
+    """
+    Base class for audio-first models. Provides minimal audio transform helpers
+    and ensures autoencoders that return auxiliary metadata (e.g. sample lengths)
+    are wrapped in a cache-friendly structure.
+    """
+
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+
+    def get_transforms(self, dataset_type: str = "image"):
+        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
+
+            def _audio_transform(sample):
+                waveform = sample
+                if isinstance(sample, dict):
+                    waveform = sample.get("waveform")
+                if waveform is None:
+                    raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
+                if isinstance(waveform, np.ndarray):
+                    waveform = torch.from_numpy(waveform)
+                if not torch.is_tensor(waveform):
+                    raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
+                waveform = waveform.detach().clone()
+                if waveform.ndim == 1:
+                    waveform = waveform.unsqueeze(0)
+                return waveform
+
+            return _audio_transform
+        return super().get_transforms(dataset_type=dataset_type)
+
+    def encode_with_vae(self, vae, samples):
+        """
+        Music-focused autoencoders often return both latents and accompanying
+        sequence lengths. Wrap both into a dict so downstream caches retain the metadata.
+        """
+        if samples is None:
+            raise ValueError("Audio VAE received no samples to encode.")
+        audio = samples
+        if not torch.is_tensor(audio):
+            raise ValueError(f"Audio encoder expected a Tensor input, received {type(audio)}.")
+        if audio.ndim == 2:
+            audio = audio.unsqueeze(0)
+        audio = audio.to(device=self.accelerator.device, dtype=torch.float32)
+        result = vae.encode(audio)
+        latent_lengths = None
+        latents = result
+        if isinstance(result, tuple):
+            latents, *extras = result
+            latent_lengths = extras[0] if extras else None
+        elif isinstance(result, dict):
+            latents = result.get("latents")
+            latent_lengths = result.get("latent_lengths")
+        payload = {"latents": latents}
+        if latent_lengths is not None:
+            payload["latent_lengths"] = latent_lengths
+        return payload
+
+    def expand_sigmas(self, batch: dict) -> dict:
+        """
+        Broadcast sampled sigmas to match the latent dimensionality expected by audio
+        transformers (batch, channels, height, width).
+        """
+        sigmas = batch.get("sigmas")
+        latents = batch.get("latents")
+        if sigmas is None or latents is None:
+            return batch
+        view_shape = [sigmas.shape[0]] + [1] * (latents.ndim - 1)
+        batch["sigmas"] = sigmas.view(*view_shape)
+        return batch

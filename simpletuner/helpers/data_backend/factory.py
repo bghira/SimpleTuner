@@ -2415,13 +2415,6 @@ class FactoryRegistry:
         if dataset_type is DatasetType.CAPTION:
             self._create_caption_dataloader(backend, init_backend)
             return
-        if dataset_type is DatasetType.AUDIO:
-            info_log(f"(id={init_backend['id']}) Audio dataset detected; skipping MultiAspect dataset creation.")
-            init_backend["train_dataset"] = None
-            init_backend["sampler"] = None
-            init_backend["train_dataloader"] = None
-            return
-
         caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
         prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
         instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
@@ -3100,12 +3093,6 @@ class FactoryRegistry:
             return
 
         self._handle_bucket_operations(backend, init_backend, conditioning_type)
-
-        if dataset_type_enum is DatasetType.AUDIO:
-            self._process_text_embeddings(backend, init_backend, conditioning_type)
-            init_backend["metadata_backend"].save_cache()
-            self.data_backends[init_backend["id"]] = init_backend
-            return
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 

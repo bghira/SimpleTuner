@@ -236,6 +236,52 @@ class VAECache(WebhookMixin):
                 return None
             raise e
 
+    def _clone_metadata_value(self, value):
+        if torch.is_tensor(value):
+            return value.clone()
+        if isinstance(value, list):
+            return [self._clone_metadata_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._clone_metadata_value(item) for item in value)
+        if isinstance(value, dict):
+            return {k: self._clone_metadata_value(v) for k, v in value.items()}
+        return value
+
+    def _slice_per_sample_metadata(self, value, index: int, batch_size: int):
+        if torch.is_tensor(value):
+            if value.shape[0] == batch_size:
+                return value[index].clone()
+            return value.clone()
+        if isinstance(value, (list, tuple)):
+            if len(value) == batch_size:
+                entry = value[index]
+                return self._clone_metadata_value(entry)
+            return self._clone_metadata_value(value)
+        return value
+
+    def _gather_sample_metadata(self, filepaths):
+        metadata_entries = []
+        for filepath in filepaths:
+            resolved_metadata = None
+            try:
+                resolved_metadata = StateTracker.get_metadata_by_filepath(filepath, data_backend_id=self.id)
+            except Exception as exc:
+                logger.debug(f"StateTracker metadata lookup failed for {filepath}: {exc}")
+            if resolved_metadata is None and self.metadata_backend:
+                try:
+                    resolved_metadata = self.metadata_backend.get_metadata_by_filepath(filepath)
+                except Exception as exc:
+                    logger.debug(f"Metadata backend lookup failed for {filepath}: {exc}")
+                    resolved_metadata = None
+            metadata_entries.append(
+                {
+                    "filepath": filepath,
+                    "data_backend_id": self.id,
+                    "metadata": resolved_metadata or {},
+                }
+            )
+        return metadata_entries
+
     def _normalise_loaded_sample(self, sample):
         if self.dataset_type_enum is DatasetType.AUDIO:
             return sample
@@ -576,7 +622,12 @@ class VAECache(WebhookMixin):
                 )
                 processed_images = self.prepare_video_latents(processed_images)
                 processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
-                latents_uncached = self.model.encode_with_vae(self.vae, processed_images)
+                metadata_for_batch = self._gather_sample_metadata([filepaths[i] for i in uncached_image_indices])
+                latents_uncached = self.model.encode_cache_batch(
+                    self.vae,
+                    processed_images,
+                    metadata_entries=metadata_for_batch,
+                )
                 latents_uncached = self.model.post_vae_encode_transform_sample(latents_uncached)
 
                 if StateTracker.get_model_family() in ["wan"]:
@@ -610,14 +661,12 @@ class VAECache(WebhookMixin):
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
+                extra_fields = {k: v for k, v in latents_uncached.items() if k != "latents"}
                 for i in range(num_samples):
                     single_latent = raw_latents[i : i + 1].squeeze(0)
-                    chunk = {
-                        "latents": single_latent,
-                        "num_frames": latents_uncached["num_frames"],
-                        "height": latents_uncached["height"],
-                        "width": latents_uncached["width"],
-                    }
+                    chunk = {"latents": single_latent}
+                    for key, value in extra_fields.items():
+                        chunk[key] = self._slice_per_sample_metadata(value, i, num_samples)
                     latents.append(chunk)
             elif hasattr(latents_uncached, "latent"):
                 raw_latents = latents_uncached["latent"]
@@ -661,8 +710,13 @@ class VAECache(WebhookMixin):
             filepaths.append(output_file)
             # pytorch will hold onto all of the tensors in the list if we do not use clone()
             if isinstance(latent_vector, dict):
-                latent_vector["latents"] = latent_vector["latents"].clone()
-                latents.append(latent_vector)
+                cloned_entry = {}
+                for key, value in latent_vector.items():
+                    if key == "latents":
+                        cloned_entry[key] = value.clone()
+                    else:
+                        cloned_entry[key] = self._clone_metadata_value(value)
+                latents.append(cloned_entry)
             else:
                 latents.append(latent_vector.clone())
 

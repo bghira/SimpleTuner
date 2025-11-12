@@ -601,14 +601,21 @@ class ParquetMetadataBackend(MetadataBackend):
             if duration_seconds is None and sample_rate and num_samples:
                 duration_seconds = float(num_samples) / float(sample_rate)
 
-            audio_metadata = {
-                "audio_path": image_path_str,
-                "sample_rate": sample_rate,
-                "num_samples": num_samples,
-                "duration_seconds": duration_seconds,
-                "num_channels": num_channels,
-                "truncation_mode": self.audio_truncation_mode,
-            }
+            overrides = {}
+            lyrics_column = self.parquet_config.get("lyrics_column")
+            if lyrics_column:
+                lyrics_value = self._extract_audio_value(database_row, lyrics_column)
+                if lyrics_value:
+                    overrides["lyrics"] = lyrics_value
+
+            audio_metadata = self._build_audio_metadata_entry(
+                sample_path=image_path_str,
+                sample_rate=sample_rate,
+                num_channels=num_channels,
+                num_samples=num_samples,
+                duration_seconds=duration_seconds,
+                overrides=overrides,
+            )
 
             max_duration = self.audio_max_duration_seconds
             if max_duration is not None and duration_seconds and duration_seconds > max_duration:

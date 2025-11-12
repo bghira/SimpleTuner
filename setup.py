@@ -206,6 +206,8 @@ base_deps = [
     "lycoris-lora @ git+https://github.com/KohakuBlueleaf/LyCORIS@dev",
     "torch-optimi>=0.2.1",
     "torchaudio>=2.4.1",
+    "librosa>=0.10.2",
+    "loguru>=0.7.2",
     "toml>=0.10.2",
     "fastapi[standard]>=0.115.0",
     "sse-starlette>=1.6.5",

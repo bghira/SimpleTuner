@@ -505,7 +505,14 @@ def collate_fn(batch):
     debug_log("Compute latents")
     model = StateTracker.get_model()
     batch_data = compute_latents(filepaths, data_backend_id, model)
+    latent_metadata = None
     if isinstance(batch_data[0], dict):
+        latent_metadata = []
+        for idx, entry in enumerate(batch_data):
+            metadata_entry = {k: v for k, v in entry.items() if k != "latents"}
+            metadata_entry.setdefault("filepath", filepaths[idx])
+            metadata_entry.setdefault("data_backend_id", examples[idx]["data_backend_id"])
+            latent_metadata.append(metadata_entry)
         latent_batch = [v["latents"] for v in batch_data]
     else:
         latent_batch = batch_data
@@ -686,6 +693,7 @@ def collate_fn(batch):
 
     return {
         "latent_batch": latent_batch,
+        "latent_metadata": latent_metadata,
         "prompts": captions,
         "text_encoder_output": all_text_encoder_outputs,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),

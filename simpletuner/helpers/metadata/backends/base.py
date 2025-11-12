@@ -84,6 +84,8 @@ class MetadataBackend:
         self.audio_duration_interval = self._resolve_audio_duration_interval()
         self.audio_max_duration_seconds = self._resolve_audio_max_duration()
         self.audio_truncation_mode = self._resolve_audio_truncation_mode()
+        self.audio_lyrics_extension = self._resolve_audio_lyrics_extension()
+        self.audio_lyrics_suffix = self._resolve_audio_lyrics_suffix()
         self.reload_cache()
         self.resolution = float(resolution)
         self.resolution_type = resolution_type
@@ -1118,3 +1120,85 @@ class MetadataBackend:
             )
             mode = "beginning"
         return mode
+
+    def _resolve_audio_lyrics_extension(self) -> Optional[str]:
+        if self.dataset_type is not DatasetType.AUDIO:
+            return None
+        extension = (self.audio_config or {}).get("lyrics_extension")
+        if extension is None:
+            return None
+        extension = str(extension).strip()
+        if not extension:
+            return None
+        return extension.lstrip(".")
+
+    def _resolve_audio_lyrics_suffix(self) -> Optional[str]:
+        if self.dataset_type is not DatasetType.AUDIO:
+            return None
+        suffix = (self.audio_config or {}).get("lyrics_suffix")
+        if suffix is None:
+            return None
+        suffix = str(suffix)
+        return suffix if suffix else None
+
+    def _discover_audio_lyrics(self, sample_path: str) -> Optional[str]:
+        if not self.audio_lyrics_extension and not self.audio_lyrics_suffix:
+            return None
+        try:
+            path = Path(sample_path)
+        except Exception:
+            return None
+        candidate = path
+        if self.audio_lyrics_suffix:
+            candidate = candidate.with_name(candidate.stem + self.audio_lyrics_suffix)
+        if self.audio_lyrics_extension:
+            extension = self.audio_lyrics_extension
+            if not extension.startswith("."):
+                extension = f".{extension}"
+            candidate = candidate.with_suffix(extension)
+        if not candidate.exists():
+            return None
+        try:
+            content = candidate.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            logger.debug(f"(id={self.id}) Failed reading lyrics for {sample_path}: {exc}")
+            return None
+        return content or None
+
+    def _build_audio_metadata_entry(
+        self,
+        sample_path: str,
+        sample_rate: Optional[float],
+        num_channels: Optional[int],
+        num_samples: Optional[int],
+        duration_seconds: Optional[float],
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a canonical audio metadata payload so downstream components can reuse the same schema
+        regardless of the discovery backend.
+        """
+        safe_samples = int(num_samples) if num_samples is not None else 0
+        raw_channels = int(num_channels) if num_channels is not None else 0
+        safe_channels = max(raw_channels, 1)
+        placeholder_size = (safe_samples, safe_channels)
+        payload = {
+            "audio_path": sample_path,
+            "image_path": sample_path,
+            "sample_rate": sample_rate,
+            "num_channels": num_channels,
+            "num_samples": num_samples,
+            "duration_seconds": duration_seconds,
+            "truncation_mode": self.audio_truncation_mode,
+            "original_size": placeholder_size,
+            "intermediary_size": placeholder_size,
+            "target_size": placeholder_size,
+            "crop_coordinates": (0, 0),
+            "aspect_ratio": 1.0,
+        }
+        lyrics_text = self._discover_audio_lyrics(sample_path)
+        if lyrics_text:
+            payload["lyrics"] = lyrics_text
+        if overrides:
+            payload.update(overrides)
+        return payload
