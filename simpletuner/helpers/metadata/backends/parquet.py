@@ -285,7 +285,7 @@ class ParquetMetadataBackend(MetadataBackend):
         if self.bucket_report:
             self.bucket_report.record_stage(
                 "existing_cache",
-                image_count=len(existing_files_set),
+                sample_count=len(existing_files_set),
                 bucket_count=len(self.aspect_ratio_bucket_indices),
             )
         statistics = {
@@ -295,13 +295,14 @@ class ParquetMetadataBackend(MetadataBackend):
                 "metadata_missing": 0,
                 "not_found": 0,
                 "too_small": 0,
+                "too_long": 0,
                 "other": 0,
             },
         }
         if self.bucket_report:
             self.bucket_report.record_stage(
                 "new_files_to_process",
-                image_count=len(new_files),
+                sample_count=len(new_files),
                 ignore_existing_cache=ignore_existing_cache,
             )
         if not new_files:
@@ -361,7 +362,7 @@ class ParquetMetadataBackend(MetadataBackend):
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)
 
-        logger.info(f"Image processing statistics: {statistics}")
+        logger.info(f"Sample processing statistics: {statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         if self.bucket_report:
@@ -577,6 +578,7 @@ class ParquetMetadataBackend(MetadataBackend):
             sample_rate = self._extract_audio_value(database_row, self.parquet_config.get("audio_sample_rate_column"))
             num_samples = self._extract_audio_value(database_row, self.parquet_config.get("audio_num_samples_column"))
             duration_seconds = self._extract_audio_value(database_row, self.parquet_config.get("audio_duration_column"))
+            num_channels = self._extract_audio_value(database_row, self.parquet_config.get("audio_channels_column"))
 
             if (sample_rate is None or num_samples is None) and self.data_backend.exists(image_path_str):
                 audio_payload = self.data_backend.read(image_path_str)
@@ -589,8 +591,12 @@ class ParquetMetadataBackend(MetadataBackend):
                 waveform, inferred_sample_rate = load_audio(buffer)
                 if sample_rate is None:
                     sample_rate = inferred_sample_rate
-                if num_samples is None and waveform is not None and hasattr(waveform, "shape") and len(waveform.shape) >= 2:
-                    num_samples = waveform.shape[1]
+                if waveform is not None and hasattr(waveform, "shape") and len(waveform.shape) >= 2:
+                    inferred_channels = waveform.shape[0]
+                    if num_samples is None:
+                        num_samples = waveform.shape[1]
+                    if num_channels is None:
+                        num_channels = inferred_channels
 
             if duration_seconds is None and sample_rate and num_samples:
                 duration_seconds = float(num_samples) / float(sample_rate)
@@ -600,11 +606,25 @@ class ParquetMetadataBackend(MetadataBackend):
                 "sample_rate": sample_rate,
                 "num_samples": num_samples,
                 "duration_seconds": duration_seconds,
+                "num_channels": num_channels,
+                "truncation_mode": self.audio_truncation_mode,
             }
 
-            bucket_key = "audio"
-            if duration_seconds:
-                bucket_key = f"{round(duration_seconds, 2)}s"
+            max_duration = self.audio_max_duration_seconds
+            if max_duration is not None and duration_seconds and duration_seconds > max_duration:
+                logger.debug(
+                    f"Audio sample {image_path_str} duration {duration_seconds:.2f}s exceeds "
+                    f"limit {max_duration:.2f}s. Skipping."
+                )
+                skipped = statistics.setdefault("skipped", {})
+                skipped["too_long"] = skipped.get("too_long", 0) + 1
+                return aspect_ratio_bucket_indices
+
+            bucket_key, truncated_duration = self._compute_audio_bucket(duration_seconds)
+            audio_metadata["original_duration_seconds"] = duration_seconds
+            if truncated_duration is not None:
+                audio_metadata["duration_seconds"] = truncated_duration
+                audio_metadata["bucket_duration_seconds"] = truncated_duration
             aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(image_path_str)
 
             if metadata_updates is not None:

@@ -592,7 +592,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         if self.bucket_report:
             self.bucket_report.record_stage(
                 "existing_cache",
-                image_count=len(existing_files),
+                sample_count=len(existing_files),
                 bucket_count=len(self.aspect_ratio_bucket_indices),
             )
         last_save_time = time.time()
@@ -604,7 +604,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             pending_items = max(total_items - len(existing_files), 0)
             self.bucket_report.record_stage(
                 "new_files_to_process",
-                image_count=pending_items,
+                sample_count=pending_items,
                 ignore_existing_cache=ignore_existing_cache,
             )
         for idx in tqdm(

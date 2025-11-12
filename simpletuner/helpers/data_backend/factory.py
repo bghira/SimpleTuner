@@ -152,6 +152,10 @@ def _log_with_state(level: str, message: str) -> None:
         getattr(logger, level)(message)
 
 
+AUDIO_DEFAULT_BUCKET_STRATEGY = "duration"
+AUDIO_DEFAULT_DURATION_INTERVAL = 3.0
+
+
 def _backend_dataset_type(backend: Dict[str, Any], *, default: DatasetType = DatasetType.IMAGE) -> DatasetType:
     """Extract the dataset type enum from a backend declaration."""
     return ensure_dataset_type(backend.get("dataset_type"), default=default)
@@ -262,14 +266,14 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         """Normalize audio configuration settings from backend definitions."""
         audio_block = deepcopy(source.get("audio", {}) or {})
         alias_map = {
-            "sample_rate": ["audio_sample_rate"],
-            "resample_rate": ["audio_resample_rate"],
-            "target_duration_seconds": ["audio_target_duration_seconds"],
             "max_duration_seconds": ["audio_max_duration_seconds"],
-            "pad_to_seconds": ["audio_pad_to_seconds", "audio_padding_seconds"],
-            "padding_mode": ["audio_padding_mode"],
-            "padding_value": ["audio_padding_value"],
             "channels": ["audio_channels"],
+            "bucket_strategy": ["audio_bucket_strategy"],
+            "duration_interval": [
+                "audio_duration_interval",
+                "audio_duration_interval_seconds",
+                "audio_bucket_interval",
+            ],
         }
         for target_key, aliases in alias_map.items():
             if target_key in audio_block:
@@ -279,9 +283,38 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                     audio_block[target_key] = source[alias]
                     break
 
-        padding_mode = audio_block.get("padding_mode")
-        if isinstance(padding_mode, str):
-            audio_block["padding_mode"] = padding_mode.lower()
+        bucket_strategy_raw = audio_block.get("bucket_strategy") or AUDIO_DEFAULT_BUCKET_STRATEGY
+        if isinstance(bucket_strategy_raw, str):
+            bucket_strategy = bucket_strategy_raw.lower()
+        else:
+            bucket_strategy = AUDIO_DEFAULT_BUCKET_STRATEGY
+        audio_block["bucket_strategy"] = bucket_strategy
+
+        interval_value = audio_block.get("duration_interval", AUDIO_DEFAULT_DURATION_INTERVAL)
+        try:
+            interval_numeric = float(interval_value)
+        except (TypeError, ValueError):
+            warning_log(
+                f"Invalid audio.duration_interval '{interval_value}' supplied; "
+                f"falling back to {AUDIO_DEFAULT_DURATION_INTERVAL}s."
+            )
+            interval_numeric = AUDIO_DEFAULT_DURATION_INTERVAL
+        if interval_numeric <= 0:
+            warning_log(f"audio.duration_interval must be positive; " f"falling back to {AUDIO_DEFAULT_DURATION_INTERVAL}s.")
+            interval_numeric = AUDIO_DEFAULT_DURATION_INTERVAL
+        audio_block["duration_interval"] = interval_numeric
+
+        truncation_mode = source.get("truncation_mode") or audio_block.get("truncation_mode") or "beginning"
+        if isinstance(truncation_mode, str):
+            truncation_mode = truncation_mode.lower()
+        valid_truncation_modes = {"beginning", "end", "random"}
+        if truncation_mode not in valid_truncation_modes:
+            warning_log(
+                f"Unsupported audio truncation_mode '{source.get('truncation_mode')}'. "
+                f"Supported values: {', '.join(sorted(valid_truncation_modes))}. Defaulting to 'beginning'."
+            )
+            truncation_mode = "beginning"
+        audio_block["truncation_mode"] = truncation_mode
 
         return {key: value for key, value in audio_block.items() if value is not None}
 
@@ -613,17 +646,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 def print_bucket_info(metadata_backend, dataset_type: str = "image"):
     # Print table header
     if get_rank() == 0:
-        tqdm.write(f"{rank_info()} | {'bucket':<10} | {f'{dataset_type} count (per-GPU)':<12}")
+        tqdm.write(f"{rank_info()} | {'bucket':<10} | {'sample count (per-GPU)':<20}")
 
         # Print separator
-        tqdm.write("-" * 30)
+        tqdm.write("-" * 40)
 
         # Print each bucket's information
         for bucket in metadata_backend.aspect_ratio_bucket_indices:
-            image_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
-            if image_count == 0:
+            sample_count = len(metadata_backend.aspect_ratio_bucket_indices[bucket])
+            if sample_count == 0:
                 continue
-            tqdm.write(f"{rank_info()} | {bucket:<10} | {image_count:<12}")
+            tqdm.write(f"{rank_info()} | {bucket:<10} | {sample_count:<20}")
 
 
 def configure_parquet_database(backend: dict, args, data_backend: BaseDataBackend):
@@ -1174,18 +1207,12 @@ class FactoryRegistry:
         audio_settings["cache_dir"] = audio_cache_dir
         init_backend.setdefault("config", {}).setdefault("audio", audio_settings)
 
-        resample_rate = audio_settings.get("resample_rate") or audio_settings.get("sample_rate")
         init_backend["audio_data_backend"] = {
             "reader": load_audio,
-            "sample_rate": audio_settings.get("sample_rate"),
-            "resample_rate": resample_rate,
-            "target_duration_seconds": audio_settings.get("target_duration_seconds"),
             "max_duration_seconds": audio_settings.get("max_duration_seconds"),
-            "pad_to_seconds": audio_settings.get("pad_to_seconds"),
-            "padding_mode": audio_settings.get("padding_mode", "silence"),
-            "padding_value": audio_settings.get("padding_value", 0.0),
             "channels": audio_settings.get("channels"),
             "cache_dir": audio_cache_dir,
+            "truncation_mode": audio_settings.get("truncation_mode"),
         }
 
     def _requires_conditioning_dataset(self) -> bool:
@@ -2347,7 +2374,7 @@ class FactoryRegistry:
         dataset_type = init_backend.get("dataset_type")
         dataset_empty = len(init_backend["metadata_backend"]) == 0
         if bucket_report := init_backend.get("bucket_report"):
-            bucket_report.record_stage("sampler_batches", image_count=len(init_backend["metadata_backend"]))
+            bucket_report.record_stage("sampler_batches", sample_count=len(init_backend["metadata_backend"]))
 
         if dataset_empty and not missing_instance_dir:
             bucket_report = init_backend.get("bucket_report")
@@ -2366,7 +2393,7 @@ class FactoryRegistry:
                     f"This typically happens when:\n"
                     f"  - batch_size * num_gpus * gradient_accumulation_steps is too large for the dataset size\n"
                     f"  - repeats is too low\n"
-                    f"  - images were filtered out due to resolution/aspect ratio constraints\n"
+                    f"  - samples were filtered out due to resolution/aspect ratio constraints\n"
                     f"\nSuggestions:\n"
                     f"  - Reduce batch_size or gradient_accumulation_steps\n"
                     f"  - Increase repeats\n"
