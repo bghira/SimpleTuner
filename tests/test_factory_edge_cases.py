@@ -843,7 +843,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         error_msg = str(context.exception)
         # Check that error message contains key information
         self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
-        self.assertIn("Total images: 4", error_msg)
+        self.assertIn("Total samples: 4", error_msg)
         self.assertIn("Repeats: 0", error_msg)
         self.assertIn("Batch size: 4", error_msg)
         self.assertIn("Number of GPUs: 8", error_msg)
