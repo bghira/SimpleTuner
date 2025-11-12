@@ -1,12 +1,44 @@
+import importlib.machinery
+import sys
+import types
 import unittest
 from hashlib import sha256
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
+import torch
 from PIL import Image
+
+if "trainingsample" not in sys.modules:
+    trainingsample_stub = types.ModuleType("trainingsample")
+    trainingsample_stub.batch_resize_images = lambda *args, **kwargs: []
+    trainingsample_stub.batch_center_crop_images = lambda *args, **kwargs: []
+    trainingsample_stub.batch_random_crop_images = lambda *args, **kwargs: []
+    trainingsample_stub.batch_calculate_luminance = lambda *args, **kwargs: []
+    trainingsample_stub.batch_resize_videos = lambda *args, **kwargs: []
+    trainingsample_stub.__spec__ = importlib.machinery.ModuleSpec("trainingsample", loader=None)
+    sys.modules["trainingsample"] = trainingsample_stub
+
+if "imageio" not in sys.modules:
+
+    class _DummyWriter:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def append_data(self, *args, **kwargs):
+            return None
+
+    imageio_stub = types.ModuleType("imageio")
+    imageio_stub.get_writer = lambda *args, **kwargs: _DummyWriter()
+    imageio_stub.__spec__ = importlib.machinery.ModuleSpec("imageio", loader=None)
+    sys.modules["imageio"] = imageio_stub
 
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.training import audio_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -73,6 +105,143 @@ class TestVaeCache(unittest.TestCase):
             )
             generated = vae_cache.generate_vae_cache_filename(filepath)[0]
             self.assertEqual(generated, expected, f"Test {i} failed: {generated} != {expected}")
+
+
+class DummyAccelerator:
+    def __init__(self):
+        self.device = torch.device("cpu")
+        self.is_local_main_process = True
+        self.is_main_process = True
+
+    def wait_for_everyone(self):
+        return None
+
+
+class DummyMetadataBackend:
+    def __init__(self, metadata: dict):
+        self._metadata = metadata
+        self.image_metadata_loaded = True
+
+    def load_image_metadata(self):
+        self.image_metadata_loaded = True
+
+    def get_metadata_by_filepath(self, filepath, data_backend_id=None):
+        return self._metadata.get(filepath, {})
+
+    def get_metadata_attribute_by_filepath(self, filepath, attribute):
+        if attribute == "aspect_bucket":
+            return self._metadata.get(filepath, {}).get("aspect_bucket", "audio")
+        return None
+
+
+class DummyModel:
+    def __init__(self):
+        self.transform_calls = []
+
+    def get_transforms(self, dataset_type: str = "image"):
+        def _transform(sample):
+            self.transform_calls.append(sample)
+            return sample["waveform"] * 2
+
+        return _transform
+
+
+class TestVaeCacheAudio(unittest.TestCase):
+    @patch("simpletuner.helpers.caching.vae.StateTracker.set_vae_cache_files")
+    @patch("simpletuner.helpers.caching.vae.StateTracker.get_vae_cache_files", return_value=[])
+    @patch("simpletuner.helpers.caching.vae.StateTracker.set_image_files", return_value={})
+    @patch("simpletuner.helpers.caching.vae.StateTracker.get_image_files", return_value=None)
+    def test_discover_all_files_audio_extensions(
+        self,
+        mock_get_image_files,
+        mock_set_image_files,
+        mock_get_vae_cache_files,
+        mock_set_vae_cache_files,
+    ):
+        image_backend = MagicMock()
+        image_backend.id = "audio-cache"
+        image_backend.list_files.return_value = []
+        cache_backend = MagicMock()
+        cache_backend.type = "local"
+        cache_backend.list_files.return_value = []
+        cache_backend.create_directory = MagicMock()
+        accelerator = DummyAccelerator()
+        vae = MagicMock()
+        vae.dtype = torch.float32
+        model = MagicMock()
+        model.get_transforms.return_value = MagicMock(return_value=torch.zeros(1))
+        metadata_backend = DummyMetadataBackend(metadata={})
+
+        vae_cache = VAECache(
+            id="audio-cache",
+            model=model,
+            vae=vae,
+            accelerator=accelerator,
+            metadata_backend=metadata_backend,
+            instance_data_dir="/tmp/audio",
+            image_data_backend=image_backend,
+            cache_data_backend=cache_backend,
+            dataset_type="audio",
+        )
+
+        vae_cache.discover_all_files()
+
+        self.assertTrue(image_backend.list_files.called)
+        kwargs = image_backend.list_files.call_args.kwargs
+        self.assertTrue(set(kwargs["file_extensions"]).issuperset(audio_file_extensions))
+        cache_backend.create_directory.assert_called_once()
+        mock_get_image_files.assert_called_once_with(data_backend_id="audio-cache")
+        mock_set_image_files.assert_called_once()
+        mock_get_vae_cache_files.assert_called_once_with(data_backend_id="audio-cache")
+        mock_set_vae_cache_files.assert_called_once()
+
+    def test_process_audio_samples_in_batch(self):
+        metadata = {
+            "/tmp/audio.wav": {
+                "sample_rate": 48000,
+                "aspect_bucket": "duration_0_5",
+            }
+        }
+        metadata_backend = DummyMetadataBackend(metadata)
+        accelerator = DummyAccelerator()
+        image_backend = MagicMock()
+        image_backend.id = "audio-test"
+        cache_backend = MagicMock()
+        cache_backend.type = "local"
+        cache_backend.create_directory = MagicMock()
+        cache_backend.list_files.return_value = []
+        model = DummyModel()
+        vae = MagicMock()
+        vae.dtype = torch.float32
+
+        vae_cache = VAECache(
+            id="audio-test",
+            model=model,
+            vae=vae,
+            accelerator=accelerator,
+            metadata_backend=metadata_backend,
+            instance_data_dir="/tmp/audio",
+            image_data_backend=image_backend,
+            cache_data_backend=cache_backend,
+            dataset_type="audio",
+        )
+
+        waveform = torch.ones(2, 4)
+        outputs = vae_cache._process_images_in_batch(
+            image_paths=["/tmp/audio.wav"],
+            image_data=[(waveform, 48000)],
+            disable_queue=True,
+        )
+
+        self.assertEqual(len(outputs), 1)
+        pixel_values, filepath, aspect_bucket, is_final = outputs[0]
+        self.assertEqual(filepath, "/tmp/audio.wav")
+        self.assertEqual(aspect_bucket, "duration_0_5")
+        self.assertTrue(is_final)
+        self.assertTrue(torch.equal(pixel_values, (waveform * 2).to(dtype=torch.float32)))
+        self.assertEqual(len(model.transform_calls), 1)
+        self.assertEqual(model.transform_calls[0]["metadata"]["sample_rate"], 48000)
+        self.assertEqual(vae_cache.vae_input_queue.qsize(), 0)
 
 
 if __name__ == "__main__":
