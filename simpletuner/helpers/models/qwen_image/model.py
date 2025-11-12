@@ -6,10 +6,12 @@ import os
 import random
 from typing import List, Optional
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from diffusers import AutoencoderKLQwenImage, QwenImagePipeline
 from diffusers.models.attention_processor import Attention
+from PIL import Image
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
 from simpletuner.helpers.models.common import (
@@ -259,14 +261,8 @@ class QwenImage(ImageModelFoundation):
     def _extract_prompt_image_from_context(self, context: dict):
         if not isinstance(context, dict):
             return None
-        embed = context.get("conditioning_image_embeds")
-        tensor = None
-        if isinstance(embed, dict):
-            tensor = embed.get("pixel_values")
-        elif torch.is_tensor(embed):
-            tensor = embed
-        if tensor is None:
-            tensor = context.get("conditioning_pixel_values")
+        tensor = context.get("conditioning_pixel_values")
+        tensor = self._coerce_prompt_tensor(tensor)
         if tensor is not None:
             return tensor
         return self._load_prompt_image_from_backend(context)
@@ -285,13 +281,49 @@ class QwenImage(ImageModelFoundation):
         if data_backend is None:
             return None
         image = data_backend.read_image(image_path)
-        embedder = self._get_conditioning_image_embedder()
-        prompt_caption = context.get("prompt")
-        embeds = embedder.encode([image], captions=[prompt_caption])
-        if embeds:
-            entry = embeds[0]
-            return entry.get("pixel_values")
-        return None
+        tensor = self._convert_image_to_tensor(image)
+        if tensor is None:
+            return None
+        return tensor.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+
+    def _coerce_prompt_tensor(self, tensor):
+        if tensor is None:
+            return None
+        if isinstance(tensor, torch.Tensor):
+            coerced = tensor
+        elif isinstance(tensor, np.ndarray):
+            coerced = torch.from_numpy(tensor)
+        else:
+            return None
+        if coerced.dim() == 4 and coerced.size(0) == 1:
+            coerced = coerced.squeeze(0)
+        if coerced.dim() != 3:
+            return None
+        return coerced.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+
+    def _convert_image_to_tensor(self, image):
+        if isinstance(image, torch.Tensor):
+            tensor = image.clone().detach()
+        elif isinstance(image, Image.Image):
+            array = np.array(image.convert("RGB"), copy=True)
+            tensor = torch.from_numpy(array)
+        elif isinstance(image, np.ndarray):
+            array = image
+            if array.ndim == 4:
+                array = array[0]
+            if array.ndim == 3 and array.shape[2] == 4:
+                array = array[:, :, :3]
+            tensor = torch.from_numpy(array)
+        else:
+            return None
+        if tensor.dim() == 3 and tensor.shape[0] not in (1, 3):
+            tensor = tensor.permute(2, 0, 1)
+        elif tensor.dim() == 4 and tensor.size(0) == 1:
+            tensor = tensor.squeeze(0)
+        tensor = tensor.to(dtype=torch.float32)
+        if tensor.max() > 1.0 or tensor.min() < 0.0:
+            tensor = tensor / 255.0
+        return tensor.clamp_(0.0, 1.0)
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """

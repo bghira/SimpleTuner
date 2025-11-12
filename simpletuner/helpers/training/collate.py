@@ -658,6 +658,21 @@ def collate_fn(batch):
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
 
+    def _conditioning_pixel_value_for_example(example_idx: int):
+        if not conditioning_pixel_values:
+            return None
+        first_backend = conditioning_pixel_values[0]
+        if not torch.is_tensor(first_backend):
+            return None
+        if example_idx >= first_backend.shape[0]:
+            return None
+        pixel_tensor = first_backend[example_idx]
+        if pixel_tensor.dim() == 4 and pixel_tensor.size(0) == 1:
+            pixel_tensor = pixel_tensor.squeeze(0)
+        if pixel_tensor.dim() != 3:
+            return None
+        return pixel_tensor.detach().to("cpu")
+
     # Check if we're in combined mode with multiple conditioning datasets
     sampling_mode = getattr(StateTracker.get_args(), "conditioning_multidataset_sampling")
     is_combined_mode = sampling_mode == "combined"
@@ -694,25 +709,6 @@ def collate_fn(batch):
         except Exception as exc:
             debug_log(f"text_embed_cache_key() lookup failed on model {type(model)}: {exc}")
 
-    def _conditioning_embed_for_index(idx: int):
-        if conditioning_image_embeds is None:
-            return None
-        if isinstance(conditioning_image_embeds, list):
-            if idx < len(conditioning_image_embeds):
-                return conditioning_image_embeds[idx]
-            return None
-        if isinstance(conditioning_image_embeds, dict):
-            processed = {}
-            for key, value in conditioning_image_embeds.items():
-                if torch.is_tensor(value) and value.shape[0] == len(examples):
-                    processed[key] = value[idx]
-                else:
-                    processed[key] = value
-            return processed
-        if torch.is_tensor(conditioning_image_embeds) and conditioning_image_embeds.shape[0] == len(examples):
-            return conditioning_image_embeds[idx]
-        return conditioning_image_embeds
-
     for idx, caption in enumerate(captions):
         example = examples[idx]
         example_path = example.get("image_path")
@@ -727,9 +723,9 @@ def collate_fn(batch):
             "prompt": caption,
             "dataset_relative_path": normalized_identifier,
         }
-        conditioning_embed = _conditioning_embed_for_index(idx)
-        if conditioning_embed is not None:
-            metadata["conditioning_image_embeds"] = conditioning_embed
+        pixel_value = _conditioning_pixel_value_for_example(idx)
+        if pixel_value is not None:
+            metadata["conditioning_pixel_values"] = pixel_value
         if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and data_backend_id and example_path:
             key_value = f"{data_backend_id}:{normalized_identifier}"
         elif key_type is TextEmbedCacheKey.FILENAME and example_path:
