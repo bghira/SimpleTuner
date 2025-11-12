@@ -67,12 +67,11 @@ def _load_with_wave(source: AudioSource) -> Tuple[torch.Tensor, int]:
         frames = wav_file.readframes(num_frames)
 
     frame_buffer = bytearray(frames)
-    waveform = torch.frombuffer(frame_buffer, dtype=torch.int16).to(torch.float32)
+    waveform = torch.frombuffer(frame_buffer, dtype=torch.int16).to(torch.float32) / 32767.0
     if num_channels > 1:
         waveform = waveform.view(-1, num_channels).t()
     else:
         waveform = waveform.view(1, -1)
-    waveform /= 32767.0
     return waveform.contiguous(), sample_rate
 
 
@@ -99,6 +98,7 @@ def load_audio(source: AudioSource) -> Tuple[torch.Tensor, int]:
             try:
                 stream.seek(0)
             except (AttributeError, OSError):
+                # Some streams are not seekable; continue from current position.
                 pass
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
                 tmp_file.write(stream.read())
@@ -112,6 +112,7 @@ def load_audio(source: AudioSource) -> Tuple[torch.Tensor, int]:
                     try:
                         stream.seek(0)
                     except (AttributeError, OSError):
+                        # Safe to ignore failing to reset non-seekable streams.
                         pass
                 os.unlink(tmp_path)
         else:

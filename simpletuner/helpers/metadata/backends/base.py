@@ -29,7 +29,6 @@ else:
     logger.setLevel("ERROR")
 
 DEFAULT_AUDIO_BUCKET_INTERVAL = 3.0
-AUDIO_CROP_LOCATIONS = {"beginning", "end", "random", "center"}
 
 
 class MetadataBackend:

@@ -153,9 +153,7 @@ def _log_with_state(level: str, message: str) -> None:
 
 
 AUDIO_DEFAULT_BUCKET_STRATEGY = "duration"
-AUDIO_DEFAULT_DURATION_INTERVAL = 15.0
-VALID_AUDIO_CROP_LOCATIONS = {"beginning", "end", "random", "center"}
-VALID_AUDIO_CROP_MODES = {"truncate"}
+AUDIO_DEFAULT_DURATION_INTERVAL = 3.0
 
 
 def _backend_dataset_type(backend: Dict[str, Any], *, default: DatasetType = DatasetType.IMAGE) -> DatasetType:

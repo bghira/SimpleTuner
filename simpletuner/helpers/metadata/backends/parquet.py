@@ -616,8 +616,8 @@ class ParquetMetadataBackend(MetadataBackend):
                     f"Audio sample {image_path_str} duration {duration_seconds:.2f}s exceeds "
                     f"limit {max_duration:.2f}s. Skipping."
                 )
-                statistics.setdefault("skipped", {}).setdefault("too_long", 0)
-                statistics["skipped"]["too_long"] += 1
+                skipped = statistics.setdefault("skipped", {})
+                skipped["too_long"] = skipped.get("too_long", 0) + 1
                 return aspect_ratio_bucket_indices
 
             bucket_key, truncated_duration = self._compute_audio_bucket(duration_seconds)
