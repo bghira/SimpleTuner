@@ -559,7 +559,7 @@ def collate_fn(batch):
             else:
                 conditioning_image_embeds = torch.stack(embed_tensors, dim=0)
 
-    training_filepaths = []
+    conditioning_pairs_by_backend: dict[str, list[tuple[TrainingSample, str]]] = defaultdict(list)
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
@@ -591,27 +591,41 @@ def collate_fn(batch):
                 f"{detail_suffix}"
             )
 
-        conditioning_map = defaultdict(list)
-        for i, cond_example in enumerate(conditioning_examples):
-            train_example = examples[i % len(examples)]
-            cond_backend = conditioning_backends[i // len(examples)]
-            # Ensure conditioning types match
+        backend_lookup = {backend["id"]: backend for backend in conditioning_backends}
+        training_resolution_errors: list[str] = []
+        for cond_example in conditioning_examples:
+            backend_id = getattr(cond_example, "_source_dataset_id", getattr(cond_example, "data_backend_id", None))
+            if backend_id is None or backend_id not in backend_lookup:
+                logger.debug(f"Skipping conditioning sample because backend {backend_id} is not registered for this batch.")
+                continue
+
             cond_type = cond_example.get_conditioning_type()
             if conditioning_type is None:
                 conditioning_type = cond_type
             elif cond_type != conditioning_type:
-                # todo: allow each cond backend to have a different type?
                 raise ValueError(
                     f"Conditioning type mismatch: {conditioning_type} != {cond_type}"
                     "\n-> Ensure all conditioning samples are of the same type."
                 )
 
-            # Collect conditioning and training file paths
-            conditioning_map[cond_backend["id"]].append(cond_example)
-            training_filepaths.append(train_example["image_path"])
-        debug_log(
-            f"Counted {len(conditioning_map)} conditioning filepaths and {len(training_filepaths)} training filepaths."
-        )
+            try:
+                training_pair_path = cond_example.training_sample_path(training_dataset_id=data_backend_id)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                training_resolution_errors.append(
+                    f"{backend_id}: unable to resolve training pair for {cond_example.image_path(basename_only=False)} ({exc})"
+                )
+                continue
+
+            conditioning_pairs_by_backend[backend_id].append((cond_example, training_pair_path))
+
+        if training_resolution_errors:
+            preview = "; ".join(training_resolution_errors[:3])
+            if len(training_resolution_errors) > 3:
+                preview += "; ..."
+            raise ValueError(f"Failed to resolve conditioning pairs: {preview}")
+
+        backend_pair_counts = {backend_id: len(pairs) for backend_id, pairs in conditioning_pairs_by_backend.items()}
+        debug_log(f"Counted conditioning pairs per backend: {backend_pair_counts}")
 
         assert model is not None
         if conditioning_type is not None or model.requires_conditioning_dataset():
@@ -624,11 +638,16 @@ def collate_fn(batch):
             if model.requires_conditioning_latents():
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
-                for _backend_id, _examples in conditioning_map.items():
-                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                for backend_cfg in conditioning_backends:
+                    backend_id = backend_cfg["id"]
+                    backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
+                    if not backend_pairs:
+                        continue
+                    _examples = [pair[0] for pair in backend_pairs]
+                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
                     _latents = compute_latents(
                         _filepaths,
-                        _backend_id,
+                        backend_id,
                         model,
                     )
                     debug_log(
@@ -642,7 +661,7 @@ def collate_fn(batch):
                     _latents = check_latent_shapes(
                         _latents,
                         _filepaths,
-                        _backend_id,
+                        backend_id,
                         _examples,
                     )
                     conditioning_latents.append(_latents)
@@ -652,12 +671,18 @@ def collate_fn(batch):
             if needs_conditioning_pixels:
                 debug_log("Collect conditioning pixel values for prompt encoding.")
                 conditioning_pixel_values = []
-                for _backend_id, _examples in conditioning_map.items():
-                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                for backend_cfg in conditioning_backends:
+                    backend_id = backend_cfg["id"]
+                    backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
+                    if not backend_pairs:
+                        continue
+                    _examples = [pair[0] for pair in backend_pairs]
+                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
+                    paired_training_paths = [pair[1] for pair in backend_pairs]
                     _pixel_values = conditioning_pixels(
                         _filepaths,
-                        training_filepaths,
-                        _backend_id,
+                        paired_training_paths,
+                        backend_id,
                         data_backend_id,
                     )
                     debug_log(f"Found {len(_pixel_values)} conditioning pixel values.")

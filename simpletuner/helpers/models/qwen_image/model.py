@@ -697,42 +697,33 @@ class QwenImage(ImageModelFoundation):
 
     class _EditV1ConditioningImageEmbedder:
         def __init__(self, processor, device, dtype):
+            # keep processor reference for future use even if we currently only cache raw pixels
             self.processor = processor
             self.device = device
             self.dtype = dtype
-            self.image_processor = getattr(processor, "image_processor", None) or processor
-            if not callable(getattr(self.image_processor, "__call__", None)):
-                raise ValueError("Conditioning processor does not expose a callable image processor.")
 
         @torch.no_grad()
         def encode(self, images, captions=None):
-            text_inputs: Optional[List[str]] = None
-            if captions is not None:
-                text_inputs = []
-                image_token = getattr(self.processor, "image_token", "<|image_pad|>")
-                for caption in captions:
-                    caption_text = (caption or "").strip()
-                    if caption_text:
-                        composed = f"{caption_text} {image_token}"
-                    else:
-                        composed = image_token
-                    text_inputs.append(composed)
-            if text_inputs is None:
-                image_token = getattr(self.processor, "image_token", "<|image_pad|>")
-                text_inputs = [image_token] * len(images)
             embeds: List[dict] = []
-            for idx, (image, text_input) in enumerate(zip(images, text_inputs)):
-                processed = self.image_processor(
-                    images=[image],
-                    text=[text_input],
-                    return_tensors="pt",
-                )
-                pixel_values = processed["pixel_values"][0].to(device=self.device, dtype=self.dtype)
-                entry = {"pixel_values": pixel_values}
-                image_grid_thw = processed.get("image_grid_thw", None)
-                if image_grid_thw is not None and image_grid_thw.shape[0] > 0:
-                    entry["image_grid_thw"] = image_grid_thw[0]
-                embeds.append(entry)
+            for image in images:
+                if not isinstance(image, Image.Image):
+                    # convert tensors/arrays back to PIL for consistent processing
+                    if isinstance(image, torch.Tensor):
+                        tensor = image.detach().cpu()
+                        if tensor.dim() == 4 and tensor.size(0) == 1:
+                            tensor = tensor.squeeze(0)
+                        if tensor.dim() == 3:
+                            array = tensor.permute(1, 2, 0).numpy()
+                            image = Image.fromarray((np.clip(array, 0.0, 1.0) * 255.0).astype(np.uint8))
+                    elif isinstance(image, np.ndarray):
+                        image = Image.fromarray(image.astype(np.uint8))
+                    else:
+                        raise ValueError(f"Unsupported conditioning image type: {type(image)}")
+
+                array = np.array(image.convert("RGB"), copy=True)
+                tensor = torch.from_numpy(array).permute(2, 0, 1).to(dtype=self.dtype)
+                tensor = tensor / 255.0
+                embeds.append({"pixel_values": tensor})
             return embeds
 
     def _model_predict_edit_v1(self, prepared_batch):
