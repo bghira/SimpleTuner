@@ -616,6 +616,11 @@ def collate_fn(batch):
         assert model is not None
         if conditioning_type is not None or model.requires_conditioning_dataset():
             conditioning_latents = []
+            needs_conditioning_pixels = (
+                not model.requires_conditioning_latents()
+                or getattr(model, "requires_text_embed_image_context", lambda: False)()
+            )
+
             if model.requires_conditioning_latents():
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
@@ -642,7 +647,10 @@ def collate_fn(batch):
                     )
                     conditioning_latents.append(_latents)
             else:
-                debug_log("Model may require conditioning pixels.")
+                needs_conditioning_pixels = True
+
+            if needs_conditioning_pixels:
+                debug_log("Collect conditioning pixel values for prompt encoding.")
                 conditioning_pixel_values = []
                 for _backend_id, _examples in conditioning_map.items():
                     _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
@@ -653,7 +661,6 @@ def collate_fn(batch):
                         data_backend_id,
                     )
                     debug_log(f"Found {len(_pixel_values)} conditioning pixel values.")
-                    # stack up that pixel values list
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
@@ -671,6 +678,16 @@ def collate_fn(batch):
             pixel_tensor = pixel_tensor.squeeze(0)
         if pixel_tensor.dim() != 3:
             return None
+        pixel_tensor = pixel_tensor.to(torch.float32)
+        tensor_max = pixel_tensor.max().item()
+        tensor_min = pixel_tensor.min().item()
+        if tensor_max > 1.0 or tensor_min < 0.0:
+            # Most datasets store conditioning pixels in [-1, 1]
+            if tensor_max <= 1.0 and tensor_min >= -1.0:
+                pixel_tensor = (pixel_tensor + 1.0) / 2.0
+            else:
+                pixel_tensor = pixel_tensor / 255.0
+        pixel_tensor = pixel_tensor.clamp_(0.0, 1.0)
         return pixel_tensor.detach().to("cpu")
 
     # Check if we're in combined mode with multiple conditioning datasets

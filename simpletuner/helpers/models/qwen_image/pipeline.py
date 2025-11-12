@@ -652,10 +652,18 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             [`~pipelines.qwenimage.QwenImagePipelineOutput`] if `return_dict` is True, otherwise a `tuple`. When
             returning a tuple, the first element is a list with the generated images.
         """
-        image_size = image[0].size if isinstance(image, list) else image.size
-        calculated_width, calculated_height, _ = calculate_dimensions(1024 * 1024, image_size[0] / image_size[1])
-        height = height or calculated_height
-        width = width or calculated_width
+        prompt_image = image
+        if image is None:
+            default_edge = self.default_sample_size * self.vae_scale_factor
+            calculated_width = width or default_edge
+            calculated_height = height or default_edge
+            height = height or calculated_height
+            width = width or calculated_width
+        else:
+            image_size = image[0].size if isinstance(image, list) else image.size
+            calculated_width, calculated_height, _ = calculate_dimensions(1024 * 1024, image_size[0] / image_size[1])
+            height = height or calculated_height
+            width = width or calculated_width
 
         multiple_of = self.vae_scale_factor * 2
         width = width // multiple_of * multiple_of

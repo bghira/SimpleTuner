@@ -261,6 +261,15 @@ class QwenImage(ImageModelFoundation):
     def _extract_prompt_image_from_context(self, context: dict):
         if not isinstance(context, dict):
             return None
+        embed = context.get("conditioning_image_embeds")
+        tensor = None
+        if isinstance(embed, dict):
+            tensor = self._coerce_prompt_tensor(embed.get("pixel_values"))
+        elif torch.is_tensor(embed):
+            tensor = self._coerce_prompt_tensor(embed)
+        if tensor is not None:
+            return tensor
+
         tensor = context.get("conditioning_pixel_values")
         tensor = self._coerce_prompt_tensor(tensor)
         if tensor is not None:
@@ -711,36 +720,18 @@ class QwenImage(ImageModelFoundation):
             if text_inputs is None:
                 image_token = getattr(self.processor, "image_token", "<|image_pad|>")
                 text_inputs = [image_token] * len(images)
-            processed = self.image_processor(
-                images=images,
-                text=text_inputs,
-                return_tensors="pt",
-            )
-            pixel_values = processed["pixel_values"].to(device=self.device, dtype=self.dtype)
-            image_grid_thw = processed.get("image_grid_thw", None)
-
-            embeds = []
-            expected_images = len(images)
-            available_pixels = pixel_values.shape[0]
-            entry_count = min(expected_images, available_pixels)
-            if available_pixels != expected_images:
-                logger.warning(
-                    "Conditioning processor returned %s pixel tensors for %s images; truncating to %s entries.",
-                    available_pixels,
-                    expected_images,
-                    entry_count,
+            embeds: List[dict] = []
+            for idx, (image, text_input) in enumerate(zip(images, text_inputs)):
+                processed = self.image_processor(
+                    images=[image],
+                    text=[text_input],
+                    return_tensors="pt",
                 )
-            grid_count = image_grid_thw.shape[0] if image_grid_thw is not None else 0
-            for idx in range(entry_count):
-                entry = {"pixel_values": pixel_values[idx]}
-                if image_grid_thw is not None and idx < grid_count:
-                    entry["image_grid_thw"] = image_grid_thw[idx]
-                elif image_grid_thw is not None and idx >= grid_count:
-                    logger.warning(
-                        "Skipping image_grid_thw for index %s; processor produced only %s grid entries.",
-                        idx,
-                        grid_count,
-                    )
+                pixel_values = processed["pixel_values"][0].to(device=self.device, dtype=self.dtype)
+                entry = {"pixel_values": pixel_values}
+                image_grid_thw = processed.get("image_grid_thw", None)
+                if image_grid_thw is not None and image_grid_thw.shape[0] > 0:
+                    entry["image_grid_thw"] = image_grid_thw[0]
                 embeds.append(entry)
             return embeds
 
