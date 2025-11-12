@@ -521,13 +521,17 @@ def collate_fn(batch):
         latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
 
     conditioning_image_embeds = None
+    conditioning_captions = [
+        (
+            sample.caption
+            if getattr(sample, "caption", None)
+            else (getattr(sample, "image_metadata", {}) or {}).get("instance_prompt_text", "")
+        )
+        for sample in conditioning_examples
+    ]
     if model.requires_conditioning_image_embeds():
-        cache = data_backend.get("conditioning_image_embed_cache")
-        if cache is None:
-            raise ValueError("Conditioning image embed cache is required but was not configured.")
-        embed_tensors = []
-        for path in filepaths:
-            embed_tensor = cache.retrieve_from_cache(path)
+
+        def _prepare_embed_tensor(embed_tensor):
             if isinstance(embed_tensor, dict):
                 processed_entry = {}
                 for key, value in embed_tensor.items():
@@ -535,11 +539,33 @@ def collate_fn(batch):
                         processed_entry[key] = value.to("cpu").pin_memory()
                     else:
                         processed_entry[key] = value
-                embed_tensors.append(processed_entry)
-                continue
-            if not torch.backends.mps.is_available():
-                embed_tensor = embed_tensor.to("cpu").pin_memory()
-            embed_tensors.append(embed_tensor)
+                return processed_entry
+            if torch.is_tensor(embed_tensor) and not torch.backends.mps.is_available():
+                return embed_tensor.to("cpu").pin_memory()
+            return embed_tensor
+
+        embed_tensors = []
+        use_reference_embeds = bool(
+            conditioning_examples and getattr(model, "conditioning_image_embeds_use_reference_dataset", lambda: False)()
+        )
+        if use_reference_embeds:
+            for sample, caption in zip(conditioning_examples, conditioning_captions):
+                cond_backend = StateTracker.get_data_backend(sample.data_backend_id)
+                cache = cond_backend.get("conditioning_image_embed_cache")
+                if cache is None:
+                    raise ValueError(
+                        f"Conditioning dataset {sample.data_backend_id} is missing a conditioning image embed cache."
+                    )
+                embed_tensor = cache.retrieve_from_cache(sample.image_path(basename_only=False), caption=caption or None)
+                embed_tensors.append(_prepare_embed_tensor(embed_tensor))
+        else:
+            cache = data_backend.get("conditioning_image_embed_cache")
+            if cache is None:
+                raise ValueError("Conditioning image embed cache is required but was not configured.")
+            for path in filepaths:
+                embed_tensor = cache.retrieve_from_cache(path, caption=None)
+                embed_tensors.append(_prepare_embed_tensor(embed_tensor))
+
         if embed_tensors:
             if isinstance(embed_tensors[0], dict):
                 conditioning_image_embeds = embed_tensors
@@ -703,6 +729,7 @@ def collate_fn(batch):
         "conditioning_pixel_values": conditioning_pixel_values,
         "conditioning_latents": conditioning_latents,
         "conditioning_image_embeds": conditioning_image_embeds,
+        "conditioning_captions": conditioning_captions,
         "encoder_attention_mask": all_text_encoder_outputs.get("attention_masks"),
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,
