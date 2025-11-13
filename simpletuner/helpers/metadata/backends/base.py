@@ -892,6 +892,17 @@ class MetadataBackend:
         metadata[attribute] = value
         return self.set_metadata_by_filepath(filepath, metadata, update_json)
 
+    def update_metadata_attribute(self, filepath: str, attribute: str, value: any, update_json: bool = False) -> bool:
+        """
+        Lightweight helper used by batch utilities to amend cached metadata without
+        requiring every backend to implement its own setter.
+        """
+        if getattr(self, "read_only", False):
+            logger.debug(f"Skipping metadata update for {filepath}:{attribute} because backend is read-only.")
+            return False
+        self.set_metadata_attribute_by_filepath(filepath, attribute, value, update_json=update_json)
+        return True
+
     def set_metadata_by_filepath(self, filepath: str, metadata: dict, update_json: bool = True):
         with self.metadata_semaphor:
             logger.debug(f"Setting metadata for {filepath} to {metadata}.")
