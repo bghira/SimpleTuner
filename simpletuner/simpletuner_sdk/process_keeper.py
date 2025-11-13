@@ -427,6 +427,14 @@ logger.info("Subprocess exiting")
 '''
 
         env = os.environ.copy()
+
+        # Force colors to be enabled in subprocess (stdout is piped so TTY detection fails)
+        # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
+        env.pop("SIMPLETUNER_WEB_MODE", None)
+        env.pop("SIMPLETUNER_DISABLE_COLORS", None)
+        env["FORCE_COLOR"] = "1"
+        env["CLICOLOR_FORCE"] = "1"
+
         env.setdefault("WANDB_CONSOLE", "off")
         env.setdefault("WANDB_SILENT", "true")
         env.setdefault("WANDB_DISABLE_SERVICE", "true")

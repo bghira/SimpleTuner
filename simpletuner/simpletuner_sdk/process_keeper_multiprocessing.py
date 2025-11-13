@@ -190,6 +190,13 @@ class TrainerProcess:
 
 def _run_trainer_process(target_func, serialized_config: str, command_queue: Queue, event_pipe: Any):
     """Run the trainer in subprocess context (standalone function for pickling)."""
+    # Force colors to be enabled in subprocess (stdout is piped so TTY detection fails)
+    # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
+    os.environ.pop("SIMPLETUNER_WEB_MODE", None)
+    os.environ.pop("SIMPLETUNER_DISABLE_COLORS", None)
+    os.environ["FORCE_COLOR"] = "1"
+    os.environ["CLICOLOR_FORCE"] = "1"
+
     try:
         # Deserialize config
         config = json.loads(serialized_config)
