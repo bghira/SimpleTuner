@@ -402,6 +402,23 @@ class PromptHandler:
         #         sampler_backend_id=data_backend.id
         #     )
 
+        if caption_strategy == "instanceprompt":
+            if instance_prompt is None or instance_prompt == "":
+                raise ValueError("caption_strategy='instanceprompt' requires an instance_prompt value.")
+            instance_prompts = instance_prompt
+            if isinstance(instance_prompts, str):
+                instance_prompts = [instance_prompts.strip()]
+            else:
+                instance_prompts = [str(p).strip() for p in instance_prompts]
+            for image_path in all_image_files:
+                for prompt in instance_prompts:
+                    captions.append(prompt)
+                    if return_image_paths:
+                        caption_image_paths.append(image_path)
+            if return_image_paths:
+                return captions, images_missing_captions, caption_image_paths
+            return captions, images_missing_captions
+
         for image_path in tqdm(
             all_image_files,
             desc="Loading captions",
@@ -444,12 +461,6 @@ class PromptHandler:
                         data_backend=data_backend,
                         sampler_backend_id=data_backend.id,
                     )
-                elif caption_strategy == "instanceprompt":
-                    instance_prompts = instance_prompt
-                    if type(instance_prompt) == str:
-                        instance_prompt = instance_prompt.strip()
-                        instance_prompts = [instance_prompt]
-                    return instance_prompts, []
                 elif caption_strategy == "csv":
                     caption = data_backend.get_caption(image_path)
                 else:
