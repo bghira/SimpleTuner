@@ -17,6 +17,10 @@ def normalize_data_path(path: str, root: str | None = None) -> str:
     if _is_uri(path):
         return path
 
+    if not root:
+        candidate_path = os.path.normpath(path)
+        return os.path.normcase(candidate_path)
+
     candidate_path = path
     if root and not os.path.isabs(candidate_path) and not _is_uri(root):
         candidate_path = os.path.join(root, candidate_path)
