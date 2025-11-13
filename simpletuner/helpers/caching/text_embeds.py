@@ -78,6 +78,10 @@ class TextEmbeddingCache(WebhookMixin):
         self.max_workers = max_workers
         self.rank_info = rank_info()
         self.key_type = model.text_embed_cache_key() if model is not None else TextEmbedCacheKey.CAPTION
+        self._requires_path_based_keys = self.key_type in (
+            TextEmbedCacheKey.FILENAME,
+            TextEmbedCacheKey.DATASET_AND_FILENAME,
+        )
         self.prompt_records: List[PromptCacheRecord] = []
         if self.data_backend.type == "local":
             self.cache_dir = os.path.abspath(self.cache_dir)
@@ -131,8 +135,28 @@ class TextEmbeddingCache(WebhookMixin):
         # logger.debug(f"-> {result}")
         return result
 
+    def _resolve_cache_key_value(self, prompt_record: PromptCacheRecord) -> str:
+        key_value = prompt_record.get("key")
+        if key_value:
+            return key_value
+
+        if self._requires_path_based_keys:
+            prompt_identifier = prompt_record.get("prompt")
+            message = (
+                "Prompt record is missing 'key' but model requires filename-based text embeddings. "
+                f"Record metadata: {prompt_record.get('metadata')} prompt={prompt_identifier}"
+            )
+            logger.error(f"{self.rank_info}{message}")
+            raise ValueError(message)
+
+        prompt_value = prompt_record.get("prompt")
+        if prompt_value:
+            return prompt_value
+
+        raise ValueError("Prompt record is missing both 'key' and 'prompt' values.")
+
     def hash_prompt_with_path(self, prompt_record: PromptCacheRecord):
-        key_value = prompt_record.get("key") or prompt_record.get("prompt")
+        key_value = self._resolve_cache_key_value(prompt_record)
         return os.path.join(self.cache_dir, self.create_hash(key_value) + ".pt")
 
     def hash_prompt(self, prompt_record: PromptCacheRecord):
@@ -146,8 +170,22 @@ class TextEmbeddingCache(WebhookMixin):
         for entry in prompts:
             if isinstance(entry, dict):
                 prompt = entry.get("prompt", "")
-                key_value = entry.get("key") or prompt
                 metadata = entry.get("metadata") or {}
+                key_value = entry.get("key")
+                if not key_value and self._requires_path_based_keys:
+                    dataset_id = metadata.get("data_backend_id")
+                    dataset_path = metadata.get("dataset_relative_path") or metadata.get("image_path")
+                    if dataset_id and dataset_path:
+                        key_value = f"{dataset_id}:{dataset_path}"
+                    else:
+                        logger.warning(
+                            f"{self.rank_info}(id={self.id}) Prompt record missing dataset metadata while "
+                            "path-based text embeddings are required. "
+                            f"metadata={metadata} prompt='{prompt}'"
+                        )
+                        key_value = prompt
+                elif not key_value:
+                    key_value = prompt
             else:
                 prompt = entry
                 key_value = entry
@@ -319,7 +357,7 @@ class TextEmbeddingCache(WebhookMixin):
         # If all prompts are cached and certain conditions are met, return None
         if not uncached_records and not return_concat:
             self.debug_log(
-                f"All prompts are cached, ignoring (is_validation={is_validation}, return_concat={return_concat})"
+                f"All prompts are cached, ignoring (is_validation={is_validation}, return_concat={return_concat}, existing={existing_cache_filenames})"
             )
             return None
         else:
@@ -334,8 +372,10 @@ class TextEmbeddingCache(WebhookMixin):
         if requires_context:
             contextless_records = [record for record in raw_records if not record.get("metadata")]
             if contextless_records:
-                self.debug_log(
-                    "Prompt records require image context but metadata was missing. Skipping text embed computation."
+                logger.warning(
+                    f"{self.rank_info}(id={self.id}) Prompt records require image context but metadata "
+                    f"was missing for {len(contextless_records)} entries. "
+                    f"Sample record: {contextless_records[0]}"
                 )
                 if not return_concat:
                     return None
@@ -421,14 +461,15 @@ class TextEmbeddingCache(WebhookMixin):
                 current_idx += 1
                 filename = self.hash_prompt_with_path(record)
                 prompt = record.get("prompt")
-                debug_msg = f"Processing file: {filename}, prompt: {prompt}"
+                debug_msg = f"Processing file: {filename}, prompt: {prompt}, records: {record}"
                 prompt = PromptHandler.filter_caption(self.data_backend, prompt)
                 debug_msg = f"{debug_msg}\n -> filtered prompt: {prompt}"
                 if prompt is None:
                     logger.error(f"Filename {filename} does not have a caption.")
                     continue
                 logger.debug(debug_msg)
-                if return_concat and load_from_cache:
+                encode_current_prompt = should_encode
+                if return_concat and load_from_cache and not encode_current_prompt:
                     try:
                         # We attempt to load.
                         text_encoder_output = self.load_from_cache(filename)
@@ -446,11 +487,12 @@ class TextEmbeddingCache(WebhookMixin):
                             f"\n-> error: {e}"
                             f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
                         )
-                        should_encode = True
                         raise Exception(
-                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is disabled or unset."
+                            "Cache retrieval for text embed file failed. Ensure your dataloader config value for "
+                            "skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is "
+                            "disabled or unset."
                         )
-                if should_encode:
+                if encode_current_prompt:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
                     self.debug_log(
                         f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}"
