@@ -125,7 +125,7 @@ def main():
     ssl_certfile = os.environ.get("SIMPLETUNER_SSL_CERTFILE")
 
     # Configure uvicorn
-    uvicorn_config = {"app": app, "host": "0.0.0.0", "port": 8001, "reload": True, "log_level": "info"}
+    uvicorn_config = {"app": app, "host": "0.0.0.0", "port": 8001, "reload": True, "log_level": "warning"}
 
     if ssl_enabled and ssl_keyfile and ssl_certfile:
         uvicorn_config.update({"ssl_keyfile": ssl_keyfile, "ssl_certfile": ssl_certfile})
