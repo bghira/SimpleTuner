@@ -87,6 +87,14 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("SimpleTuner server starting up...")
 
+    # Configure third-party loggers after imports
+    try:
+        from simpletuner.helpers import log_format
+        if hasattr(log_format, "configure_third_party_loggers"):
+            log_format.configure_third_party_loggers()
+    except Exception:
+        pass  # Don't fail startup if this fails
+
     # Initialize SSE manager for heartbeats and connection management
     from simpletuner.simpletuner_sdk.server.services.sse_manager import initialize_sse_manager, shutdown_sse_manager
 
