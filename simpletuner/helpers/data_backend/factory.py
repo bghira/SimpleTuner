@@ -426,6 +426,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop_aspect_buckets"] = None
         output["config"]["crop_style"] = None
     output["config"]["disable_validation"] = backend.get("disable_validation", False)
+    if "conditioning_data" in backend:
+        output["config"]["conditioning_data"] = backend["conditioning_data"]
     if "source_dataset_id" in backend:
         output["config"]["source_dataset_id"] = backend["source_dataset_id"]
     if not is_audio_dataset:
@@ -1657,8 +1659,9 @@ class FactoryRegistry:
                 with main_process_context:
                     self.model.get_pipeline()
                     logger.debug(f"rank {get_rank()} is computing the null embed")
+                    null_prompt_record = {"prompt": "", "key": "__null_prompt__", "metadata": {}}
                     init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                        [""], return_concat=False, load_from_cache=False
+                        [null_prompt_record], return_concat=False, load_from_cache=False
                     )
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
@@ -2263,7 +2266,11 @@ class FactoryRegistry:
             if source_dataset_id is None:
                 # other configuration style where the *source* dataset config has conditioning_data defined
                 for source_backend in self.data_backends:
-                    source_conditioning_data_config = source_backend.get("conditioning_data", None)
+                    if isinstance(source_backend, str):
+                        # we have to retrieve the config from the state tracker
+                        source_backend = StateTracker.get_data_backend(source_backend)
+                    logger.debug(f"Checking backend for strict conditioning source: {source_backend}")
+                    source_conditioning_data_config = source_backend.get("config", {}).get("conditioning_data", None)
                     if (
                         isinstance(source_conditioning_data_config, str)
                         and source_conditioning_data_config == target_dataset_id
@@ -3585,64 +3592,6 @@ def get_backend_weight(backend_id, backend, step):
         return adjusted_prob
     else:
         raise ValueError(f"Unknown sampling weighting method: {sampling_method}")
-
-
-def random_dataloader_iterator(step, backends: dict):
-    prefetch_log_debug("Random dataloader iterator launched.")
-    args = StateTracker.get_args()
-    grad_steps = getattr(args, "gradient_accumulation_steps", 1) if args is not None else 1
-    if isinstance(grad_steps, (int, float)):
-        gradient_accumulation_steps = max(1, int(grad_steps))
-    else:
-        gradient_accumulation_steps = 1
-    logger.debug(f"Backends to select from {backends}")
-    if backends == {}:
-        logger.debug("All dataloaders exhausted. Moving to next epoch in main training loop.")
-        StateTracker.clear_exhausted_buckets()
-        StateTracker.set_repeats(repeats=0)
-        return False
-    while backends:
-        epoch_step = int(step / gradient_accumulation_steps)
-        StateTracker.set_epoch_step(epoch_step)
-
-        chosen_backend_id = select_dataloader_index(step, backends)
-        if chosen_backend_id is None:
-            logger.debug("No dataloader iterators were available.")
-            break
-
-        backend_instance = backends[chosen_backend_id]
-
-        try:
-            if hasattr(backend_instance, "get_data_loader") and callable(backend_instance.get_data_loader):
-                return backend_instance.get_data_loader()
-
-            try:
-                chosen_iter = iter(backend_instance)
-            except TypeError:
-                if hasattr(backend_instance, "__next__"):
-                    return next(backend_instance)
-                raise
-
-            return next(chosen_iter)
-        except MultiDatasetExhausted:
-            repeats = StateTracker.get_data_backend_config(chosen_backend_id).get("repeats", False)
-            if repeats and repeats > 0 and StateTracker.get_repeats(chosen_backend_id) < repeats:
-                StateTracker.increment_repeats(chosen_backend_id)
-                logger.debug(
-                    f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
-                )
-                continue
-            logger.debug(
-                f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
-            )
-            del backends[chosen_backend_id]
-            StateTracker.backend_exhausted(chosen_backend_id)
-            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
-        finally:
-            if not backends:
-                logger.debug("All dataloaders exhausted. Moving to next epoch in main training loop.")
-                StateTracker.clear_exhausted_buckets()
-                return False
 
 
 def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> None:
