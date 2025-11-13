@@ -707,10 +707,14 @@ class QwenImageTransformer2DModel(
         hidden_states, patch_h, patch_w = self._tokenize_hidden_states(hidden_states)
 
         if (patch_h is None or patch_w is None) and img_shapes:
-            # img_shapes entries have the form (frame, height, width) where height/width are already scaled by patch
-            _, grid_h, grid_w = img_shapes[0]
-            patch_h = patch_h or grid_h
-            patch_w = patch_w or grid_w
+            # img_shapes entries have the form (frame, height, width) and may be wrapped per-sample.
+            primary_shape = img_shapes[0]
+            if isinstance(primary_shape, list):
+                primary_shape = primary_shape[0] if primary_shape else None
+            if primary_shape is not None:
+                _, grid_h, grid_w = primary_shape
+                patch_h = patch_h or grid_h
+                patch_w = patch_w or grid_w
 
         if img_shapes is None:
             if patch_h is None or patch_w is None:
