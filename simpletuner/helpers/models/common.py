@@ -974,7 +974,7 @@ class ModelFoundation(ABC):
 
         if (
             self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 0
+            and self.config.gradient_checkpointing_interval > 1
             and self.MODEL_TYPE is ModelTypes.UNET
         ):
             logger.warning(
