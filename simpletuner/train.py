@@ -24,6 +24,10 @@ from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.trainer import Trainer
 
+# Configure third-party loggers after imports
+if hasattr(log_format, "configure_third_party_loggers"):
+    log_format.configure_third_party_loggers()
+
 logger = get_logger("SimpleTuner")
 
 if __name__ == "__main__":
