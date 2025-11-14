@@ -1659,10 +1659,7 @@ class FactoryRegistry:
                 with main_process_context:
                     self.model.get_pipeline()
                     logger.debug(f"rank {get_rank()} is computing the null embed")
-                    null_prompt_record = {"prompt": "", "key": "__null_prompt__", "metadata": {}}
-                    init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                        [null_prompt_record], return_concat=False, load_from_cache=False
-                    )
+                    init_backend["text_embed_cache"].encode_dropout_caption()
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
