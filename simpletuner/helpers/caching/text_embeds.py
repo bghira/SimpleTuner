@@ -222,6 +222,33 @@ class TextEmbeddingCache(WebhookMixin):
             f"save_to_cache called for {filename}, write queue has {self.write_queue.qsize()} items, and the write thread's status: {self.batch_write_thread.is_alive()}"
         )
 
+    def encode_dropout_caption(self):
+        """Encode and cache the dropout (null/empty) caption embedding."""
+        # Use a special sentinel key for dropout captions with filename-based cache keys
+        # This ensures consistent retrieval during training collation
+        key = "__caption_dropout__" if self._requires_path_based_keys else ""
+        prompt_record: PromptCacheRecord = {"prompt": "", "key": key, "metadata": {}}
+        filename = self.hash_prompt_with_path(prompt_record)
+        logger.debug(f"Encoding dropout caption to {filename}")
+        dropout_embeds = self.model.encode_dropout_caption()
+        self.save_to_cache(filename, dropout_embeds)
+        logger.debug(f"Dropout caption encoded and saved to cache")
+
+    def encode_validation_negative_prompt(self, negative_prompt: str):
+        """Encode and cache the validation negative prompt embedding."""
+        logger.debug(f"Encoding validation negative prompt: {negative_prompt}")
+        negative_embeds = self.model.encode_validation_negative_prompt(negative_prompt)
+
+        # Use a special sentinel key for negative prompts with filename-based cache keys
+        # This ensures consistent retrieval during validation
+        key = f"__validation_negative__{negative_prompt}" if self._requires_path_based_keys else negative_prompt
+        prompt_record: PromptCacheRecord = {"prompt": negative_prompt, "key": key, "metadata": {}}
+        filename = self.hash_prompt_with_path(prompt_record)
+
+        self.save_to_cache(filename, negative_embeds)
+        logger.debug(f"Validation negative prompt encoded and saved to cache")
+        return negative_embeds
+
     def batch_write_embeddings(self):
         """Process write requests in batches."""
         batch = []
@@ -240,7 +267,8 @@ class TextEmbeddingCache(WebhookMixin):
                     logger.debug(f"Batch now contains {len(batch)} items.")
 
                 self.process_write_batch(batch)
-                self.write_thread_bar.update(len(batch))
+                if self.write_thread_bar is not None:
+                    self.write_thread_bar.update(len(batch))
                 logger.debug("Processed batch write.")
                 written_elements += len(batch)
 
@@ -249,7 +277,8 @@ class TextEmbeddingCache(WebhookMixin):
                 if not self.process_write_batches:
                     if len(batch) > 0:
                         self.process_write_batch(batch)
-                        self.write_thread_bar.update(len(batch))
+                        if self.write_thread_bar is not None:
+                            self.write_thread_bar.update(len(batch))
                     logger.debug(f"Exiting batch write thread, no more work to do after writing {written_elements} elements")
                     break
                 # logger.debug(
@@ -368,8 +397,10 @@ class TextEmbeddingCache(WebhookMixin):
         # Proceed with uncached prompts
         raw_records = uncached_records if uncached_records else prompt_records
 
+        # Only check for metadata if we're going to encode (not just load from cache)
         requires_context = self.model.requires_text_embed_image_context()
-        if requires_context:
+        should_encode = not load_from_cache
+        if requires_context and uncached_records and should_encode:
             contextless_records = [record for record in raw_records if not record.get("metadata")]
             if contextless_records:
                 logger.warning(
@@ -562,11 +593,16 @@ class TextEmbeddingCache(WebhookMixin):
                 return
 
             logger.debug(f"Returning all {(len(prompt_embeds_all))} prompt embeds")
-            if text_encoder_output is not None and "prompt_embeds" in text_encoder_output:
-                all_prompt_embeds = tuple([v for v in text_encoder_output["prompt_embeds"]])
+            # If only one embedding, return it directly without concatenation
+            if len(prompt_embeds_all) == 1:
+                return prompt_embeds_all[0]
+
+            # Concatenate multiple embeddings
+            if prompt_embeds_all and "prompt_embeds" in prompt_embeds_all[0]:
+                all_prompt_embeds = [embed["prompt_embeds"] for embed in prompt_embeds_all]
                 text_encoder_output["prompt_embeds"] = torch.cat(all_prompt_embeds, dim=0)
-            if text_encoder_output is not None and "add_text_embeds" in text_encoder_output:
-                all_pooled_embeds = tuple([v for v in text_encoder_output["add_text_embeds"]])
+            if prompt_embeds_all and "add_text_embeds" in prompt_embeds_all[0]:
+                all_pooled_embeds = [embed["add_text_embeds"] for embed in prompt_embeds_all]
                 text_encoder_output["add_text_embeds"] = torch.cat(all_pooled_embeds, dim=0)
 
         return text_encoder_output
