@@ -321,28 +321,76 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
             )
         )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
+
+    def _collate_tensors(tensors):
+        """
+        Intelligently collate a list of tensors, handling both 2D and 3D cases.
+
+        - If tensors are 2D [seq, dim], stack to get [batch, seq, dim]
+        - If tensors are 3D [1, seq, dim], concatenate along dim=0 to get [batch, seq, dim]
+        - If tensors have inconsistent dimensions, normalize them first
+        """
+        if not tensors:
+            return None
+
+        first_tensor = tensors[0]
+        dims = first_tensor.dim()
+
+        # Check if all tensors have the same number of dimensions
+        all_same_dims = all(t.dim() == dims for t in tensors)
+
+        if dims == 2:
+            # 2D tensors: [seq, dim] - use stack
+            return torch.stack(tensors)
+        elif dims == 3 and all_same_dims:
+            # 3D tensors: [batch, seq, dim] - use cat along batch dimension
+            # This handles cached embeddings that already include batch dimension
+            return torch.cat(tensors, dim=0)
+        elif dims == 1:
+            # 1D tensors - use stack
+            return torch.stack(tensors)
+        else:
+            # Mixed dimensions - normalize to 3D then concatenate
+            normalized = []
+            for t in tensors:
+                if t.dim() == 2:
+                    # Add batch dimension
+                    normalized.append(t.unsqueeze(0))
+                elif t.dim() == 3:
+                    normalized.append(t)
+                elif t.dim() == 1:
+                    # Add batch dimension
+                    normalized.append(t.unsqueeze(0))
+                else:
+                    raise ValueError(f"Unexpected tensor dimension: {t.dim()} with shape {t.shape}")
+            return torch.cat(normalized, dim=0)
+
     # Is there a better way to do this?
     transformed_encoder_output = model.collate_prompt_embeds(text_encoder_output)
     if transformed_encoder_output == {}:
         if "prompt_embeds" in text_encoder_output[0]:
-            transformed_encoder_output["prompt_embeds"] = torch.stack([t["prompt_embeds"] for t in text_encoder_output])
+            transformed_encoder_output["prompt_embeds"] = _collate_tensors([t["prompt_embeds"] for t in text_encoder_output])
         if "pooled_prompt_embeds" in text_encoder_output[0]:
-            transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
+            transformed_encoder_output["pooled_prompt_embeds"] = _collate_tensors(
                 [t["pooled_prompt_embeds"] for t in text_encoder_output]
             )
         # compatibility for old style
         if "attention_mask" in text_encoder_output[0]:
-            transformed_encoder_output["attention_masks"] = torch.stack([t["attention_mask"] for t in text_encoder_output])
+            transformed_encoder_output["attention_masks"] = _collate_tensors(
+                [t["attention_mask"] for t in text_encoder_output]
+            )
         if "prompt_attention_mask" in text_encoder_output[0]:
-            transformed_encoder_output["attention_masks"] = torch.stack(
+            transformed_encoder_output["attention_masks"] = _collate_tensors(
                 [t["prompt_attention_mask"] for t in text_encoder_output]
             )
         # new style
         if "attention_masks" in text_encoder_output[0]:
-            transformed_encoder_output["attention_masks"] = torch.stack([t["attention_masks"] for t in text_encoder_output])
+            transformed_encoder_output["attention_masks"] = _collate_tensors(
+                [t["attention_masks"] for t in text_encoder_output]
+            )
 
         if "time_ids" in text_encoder_output[0]:
-            transformed_encoder_output["time_ids"] = torch.stack([t["time_ids"] for t in text_encoder_output])
+            transformed_encoder_output["time_ids"] = _collate_tensors([t["time_ids"] for t in text_encoder_output])
 
     if transformed_encoder_output == {}:
         raise Exception(f"Could not compute text encoder output: {text_encoder_output}")
