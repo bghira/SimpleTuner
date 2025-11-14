@@ -173,6 +173,12 @@ def _coerce_validation_image_input(image_data):
     """
     Convert validation conditioning inputs into formats compatible with downstream pipelines.
     """
+    # Handle TrainingSample objects by extracting the image
+    if hasattr(image_data, 'image'):
+        from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+        if isinstance(image_data, TrainingSample):
+            image_data = image_data.image
+
     if isinstance(image_data, (list, tuple)):
         coerced = [_coerce_validation_image_input(item) for item in image_data]
         return coerced if isinstance(image_data, list) else tuple(coerced)
@@ -394,7 +400,8 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
                 if cond_sample is None:
                     continue
 
-                reference_imgs.append(cond_sample.image)
+                # Store the full TrainingSample so we can access image, path, and backend_id later
+                reference_imgs.append(cond_sample)
             if len(reference_imgs) != len(cond_backends):
                 logger.warning(f"Didn't find enough conditioning samples for {rel_path}.")
                 continue
@@ -435,17 +442,43 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             ):
                 validation_prompt = None
                 shortname = None
+                reference_images = None
                 if isinstance(_validation_sample, tuple):
                     if len(_validation_sample) == 3:
-                        shortname, validation_prompt, _ = _validation_sample
+                        shortname, validation_prompt, reference_images = _validation_sample
                     elif len(_validation_sample) == 4:
-                        shortname, validation_prompt, *_ = _validation_sample
+                        shortname, validation_prompt, reference_images, *_ = _validation_sample
                 if not validation_prompt:
                     logger.debug("Skipping validation sample without prompt while preparing embeds.")
                     continue
-                embed_cache.compute_embeddings_for_prompts([validation_prompt], load_from_cache=False)
+
                 if shortname is None:
                     shortname = f"validation_{len(sample_shortnames)}"
+
+                # For models that require image context for text encoding (e.g., Qwen edit-v1),
+                # pass the reference image path so the model can load it from the backend
+                # Use shortname as cache key for stable validation embedding lookup
+                if reference_images and model.requires_text_embed_image_context():
+                    # Extract the first reference TrainingSample (for Qwen edit-v1)
+                    reference_sample = reference_images[0] if isinstance(reference_images, list) else reference_images
+
+                    # Create prompt record with shortname as key and image metadata for encoding
+                    prompt_record = {
+                        "prompt": validation_prompt,
+                        "key": shortname,
+                        "metadata": {
+                            "image_path": reference_sample.image_path(),
+                            "data_backend_id": reference_sample.data_backend_id,
+                        }
+                    }
+                    embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
+                else:
+                    # For models that don't require image context, use shortname as key
+                    prompt_record = {
+                        "prompt": validation_prompt,
+                        "key": shortname,
+                    }
+                    embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
                 sample_prompts.append(validation_prompt)
                 sample_shortnames.append(shortname)
             if sample_prompts:
@@ -453,11 +486,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 validation_shortnames.extend(sample_shortnames)
             time.sleep(5)
 
-    allow_prompt_library = not (
-        isinstance(model, VideoModelFoundation)
-        and getattr(model, "requires_validation_i2v_samples", lambda: False)()
-        and StateTracker.get_validation_sample_images()
-    )
+    allow_prompt_library = not StateTracker.get_validation_sample_images()
 
     if allow_prompt_library and args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
@@ -498,11 +527,14 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         negative_prompt = StateTracker.get_args().validation_negative_prompt
         logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
         model.log_model_devices()
-        validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
-            [negative_prompt],
-            is_validation=True,
-            load_from_cache=False,
-        )
+        if model.should_precompute_validation_negative_prompt():
+            validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
+                [negative_prompt],
+                is_validation=True,
+                load_from_cache=False,
+            )
+        else:
+            validation_negative_prompt_text_encoder_output = embed_cache.encode_validation_negative_prompt(negative_prompt)
 
     logger.info("Completed validation prompt gathering.")
     return {
@@ -869,6 +901,7 @@ class ValidationPreviewer:
         latents = latents.to(device=device, dtype=torch.float32)
         if getattr(decoder, "requires_vae_rescaling", False):
             latents = self.model.denormalize_latents_for_preview(latents)
+        latents = self.model.pre_validation_preview_decode(latents)
         latents = latents.to(dtype=dtype)
         decoded = decoder.decode(latents)
         if self._decoder.is_video:
@@ -1104,9 +1137,16 @@ class Validation:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROL]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
-    def _gather_prompt_embeds(self, validation_prompt: str):
-        prompt_embed = self.embed_cache.compute_embeddings_for_prompts([validation_prompt])
+    def _gather_prompt_embeds(self, validation_prompt: str, validation_shortname: str, validation_input_image=None):
+        # For validation prompts, use shortname as cache key for lookup
+        prompt_record = {
+            "prompt": validation_prompt,
+            "key": validation_shortname,
+        }
+        prompt_embed = self.embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=True)
+
         if prompt_embed is None:
+            logger.warning(f"Model did not generate an embed for validation prompt: {validation_prompt}")
             return
 
         prompt_embed = {k: v.to(self.inference_device) if hasattr(v, "to") else v for k, v in prompt_embed.items()}
@@ -2354,7 +2394,7 @@ class Validation:
                 checkpoint_validation_images[validation_shortname] = []
                 ema_validation_images[validation_shortname] = []
             try:
-                _embed = self._gather_prompt_embeds(prompt)
+                _embed = self._gather_prompt_embeds(prompt, validation_shortname, validation_input_image)
                 if _embed is not None:
                     extra_validation_kwargs.update(_embed)
                 else:
@@ -2381,11 +2421,25 @@ class Validation:
                 if self.model.VALIDATION_USES_NEGATIVE_PROMPT:
                     if StateTracker.get_args().validation_negative_prompt is None:
                         StateTracker.get_args().validation_negative_prompt = ""
-                    _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
-                        [StateTracker.get_args().validation_negative_prompt],
-                        is_validation=True,
-                        load_from_cache=True,
-                    )
+                    # For models with filename-based cache keys, use sentinel key for negative prompts
+                    negative_prompt_text = StateTracker.get_args().validation_negative_prompt
+                    if self.embed_cache._requires_path_based_keys:
+                        negative_prompt_record = {
+                            "prompt": negative_prompt_text,
+                            "key": f"__validation_negative__{negative_prompt_text}",
+                            "metadata": {},
+                        }
+                        _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
+                            [negative_prompt_record],
+                            is_validation=True,
+                            load_from_cache=True,
+                        )
+                    else:
+                        _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
+                            [negative_prompt_text],
+                            is_validation=True,
+                            load_from_cache=True,
+                        )
                     if _negative_embed is not None:
                         negative_embed_data = {
                             k: (
