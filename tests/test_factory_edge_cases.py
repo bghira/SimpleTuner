@@ -1057,6 +1057,154 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     # Image embed setup should not instantiate the cache; the owning dataset does.
                     mock_vae_cache.assert_not_called()
 
+    def test_qwen_edit_model_invalid_conditioning_type(self):
+        """Test that Qwen edit models reject invalid conditioning_type values."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Set up args for Qwen edit model
+        self.args.model_family = "qwen_image"
+        self.args.model_flavour = "edit-v1"
+
+        # Mock the model's edit check methods
+        self.model.is_edit_v1_model = MagicMock(return_value=True)
+        self.model.is_edit_v2_model = MagicMock(return_value=False)
+        self.model.requires_conditioning_dataset.return_value = True
+
+        # Create config with invalid conditioning_type
+        config = [
+            {
+                "id": "test-images",
+                "type": "local",
+                "instance_data_dir": self.temp_dir,
+                "dataset_type": "image",
+                "conditioning_data": ["test-conditioning"],
+            },
+            {
+                "id": "test-conditioning",
+                "type": "local",
+                "instance_data_dir": self.temp_dir,
+                "dataset_type": "conditioning",
+                "conditioning_type": "controlnet",  # Invalid for Qwen edit!
+            },
+            {
+                "id": "test-text-embeds",
+                "type": "local",
+                "dataset_type": "text_embeds",
+                "default": True,
+            },
+        ]
+
+        config_path = self._create_temp_config(config)
+        self.args.data_backend_config = config_path
+
+        # Should raise ValueError about invalid conditioning_type
+        with self.assertRaises(ValueError) as context:
+            factory = FactoryRegistry(
+                self.args,
+                self.accelerator,
+                self.text_encoders,
+                self.tokenizers,
+                self.model,
+            )
+            # Call the validation method directly
+            factory._validate_edit_model_conditioning_type(config)
+
+        error_msg = str(context.exception)
+        self.assertIn("Invalid conditioning_type='controlnet'", error_msg)
+        self.assertIn("reference_strict", error_msg)
+        self.assertIn("reference_loose", error_msg)
+        self.assertIn("dimension mismatches", error_msg)
+
+    def test_qwen_edit_model_valid_conditioning_type(self):
+        """Test that Qwen edit models accept valid conditioning_type values."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Set up args for Qwen edit model
+        self.args.model_family = "qwen_image"
+        self.args.model_flavour = "edit-v2"
+
+        # Mock the model's edit check methods
+        self.model.is_edit_v1_model = MagicMock(return_value=False)
+        self.model.is_edit_v2_model = MagicMock(return_value=True)
+        self.model.requires_conditioning_dataset.return_value = True
+
+        # Test both valid conditioning_type values
+        for conditioning_type in ["reference_strict", "reference_loose"]:
+            config = [
+                {
+                    "id": "test-images",
+                    "type": "local",
+                    "instance_data_dir": self.temp_dir,
+                    "dataset_type": "image",
+                    "conditioning_data": ["test-conditioning"],
+                },
+                {
+                    "id": "test-conditioning",
+                    "type": "local",
+                    "instance_data_dir": self.temp_dir,
+                    "dataset_type": "conditioning",
+                    "conditioning_type": conditioning_type,  # Valid!
+                },
+                {
+                    "id": "test-text-embeds",
+                    "type": "local",
+                    "dataset_type": "text_embeds",
+                    "default": True,
+                },
+            ]
+
+            config_path = self._create_temp_config(config)
+            self.args.data_backend_config = config_path
+
+            # Should NOT raise with valid conditioning_type
+            try:
+                factory = FactoryRegistry(
+                    self.args,
+                    self.accelerator,
+                    self.text_encoders,
+                    self.tokenizers,
+                    self.model,
+                )
+                # Just call the validation method directly since full setup is complex
+                factory._validate_edit_model_conditioning_type(config)
+            except ValueError as e:
+                self.fail(f"Should not raise with conditioning_type='{conditioning_type}': {e}")
+
+    def test_qwen_non_edit_model_allows_any_conditioning_type(self):
+        """Test that non-edit Qwen models (e.g., v1.0) don't restrict conditioning_type."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Set up args for non-edit Qwen model
+        self.args.model_family = "qwen_image"
+        self.args.model_flavour = "v1.0"  # Not an edit model
+
+        # Mock the model's edit check methods
+        self.model.is_edit_v1_model = MagicMock(return_value=False)
+        self.model.is_edit_v2_model = MagicMock(return_value=False)
+
+        config = [
+            {
+                "id": "test-conditioning",
+                "type": "local",
+                "instance_data_dir": self.temp_dir,
+                "dataset_type": "conditioning",
+                "conditioning_type": "controlnet",  # Should be OK for non-edit models
+            },
+        ]
+
+        # Should NOT raise for non-edit models
+        try:
+            factory = FactoryRegistry(
+                self.args,
+                self.accelerator,
+                self.text_encoders,
+                self.tokenizers,
+                self.model,
+            )
+            factory._validate_edit_model_conditioning_type(config)
+        except ValueError as e:
+            self.fail(f"Non-edit Qwen model should allow any conditioning_type: {e}")
+
 
 if __name__ == "__main__":
     unittest.main()
