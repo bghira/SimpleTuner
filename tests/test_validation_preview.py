@@ -22,6 +22,9 @@ class _DummyModel:
     def denormalize_latents_for_preview(self, latents):
         return latents
 
+    def pre_validation_preview_decode(self, latents):
+        return latents
+
 
 class ValidationPreviewerTests(unittest.TestCase):
     @patch("simpletuner.helpers.training.validation.StateTracker")

@@ -136,9 +136,10 @@ class TextEmbeddingCache(WebhookMixin):
         return result
 
     def _resolve_cache_key_value(self, prompt_record: PromptCacheRecord) -> str:
-        key_value = prompt_record.get("key")
-        if key_value:
-            return key_value
+        # Check if 'key' exists in the record (not just if it's truthy)
+        # Empty strings are valid values for dropout captions
+        if "key" in prompt_record:
+            return prompt_record["key"]
 
         if self._requires_path_based_keys:
             prompt_identifier = prompt_record.get("prompt")
@@ -149,9 +150,10 @@ class TextEmbeddingCache(WebhookMixin):
             logger.error(f"{self.rank_info}{message}")
             raise ValueError(message)
 
-        prompt_value = prompt_record.get("prompt")
-        if prompt_value:
-            return prompt_value
+        # Check if 'prompt' exists in the record (not just if it's truthy)
+        # Empty strings are valid values for dropout captions
+        if "prompt" in prompt_record:
+            return prompt_record["prompt"]
 
         raise ValueError("Prompt record is missing both 'key' and 'prompt' values.")
 
