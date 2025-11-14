@@ -192,6 +192,87 @@ from collections.abc import Mapping
 # Add parent directories to path for imports
 import os
 
+# Wrap stdout to make it appear as a TTY for tqdm
+class TTYWrapper:
+    def __init__(self, stream):
+        self._stream = stream
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+    def isatty(self):
+        return True
+
+    def write(self, data):
+        return self._stream.write(data)
+
+    def flush(self):
+        return self._stream.flush()
+
+    def fileno(self):
+        # Return underlying fileno if available
+        if hasattr(self._stream, 'fileno'):
+            try:
+                return self._stream.fileno()
+            except Exception:
+                pass
+        return 1  # stdout fileno
+
+# Replace stdout with TTY wrapper so tqdm uses dynamic updates
+sys.stdout = TTYWrapper(sys.stdout)
+sys.stderr = TTYWrapper(sys.stderr)
+
+# Also set environment variables that tqdm checks
+os.environ['TERM'] = 'xterm-256color'
+
+# Monkey-patch tqdm to force dynamic mode after it's imported
+_original_tqdm = None
+_tqdm_patched = False
+
+def _patch_tqdm():
+    """Patch tqdm to force it to use dynamic updates even when piped."""
+    global _tqdm_patched
+    if _tqdm_patched:
+        return
+
+    try:
+        import tqdm.std
+
+        # Store original
+        original_init = tqdm.std.tqdm.__init__
+
+        def patched_init(self, *args, **kwargs):
+            # Force file to use our wrapped stdout
+            if 'file' not in kwargs:
+                kwargs['file'] = sys.stdout
+
+            # Call original init
+            original_init(self, *args, **kwargs)
+
+            # Override TTY detection - force dynamic mode
+            if hasattr(self, 'fp') and hasattr(self.fp, 'isatty'):
+                # Create a wrapper that always returns True for isatty
+                original_fp = self.fp
+
+                class ForceTTY:
+                    def __getattr__(self, name):
+                        if name == 'isatty':
+                            return lambda: True
+                        return getattr(original_fp, name)
+                    def write(self, *args, **kwargs):
+                        return original_fp.write(*args, **kwargs)
+                    def flush(self, *args, **kwargs):
+                        return original_fp.flush(*args, **kwargs) if hasattr(original_fp, 'flush') else None
+
+                self.fp = ForceTTY()
+
+        tqdm.std.tqdm.__init__ = patched_init
+        _tqdm_patched = True
+    except Exception as e:
+        # If patching fails, just continue - the TTYWrapper might still work
+        logger.debug(f"Failed to patch tqdm: {{e}}")
+        pass
+
 # Set up logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("SubprocessRunner")
@@ -373,6 +454,9 @@ class ConfigWrapper:
 
 wrapped_config = ConfigWrapper(config)
 
+# Patch tqdm to force dynamic mode before running target function
+_patch_tqdm()
+
 # Run the target function
 try:
     logger.info("Starting target function")
@@ -447,6 +531,7 @@ logger.info("Subprocess exiting")
             "stderr": subprocess.STDOUT,
             "text": True,
             "env": env,
+            "bufsize": 1,  # Line buffered
         }
 
         if os.name != "nt":
@@ -454,7 +539,8 @@ logger.info("Subprocess exiting")
         else:  # pragma: no cover - Windows specific
             popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
-        self.process = subprocess.Popen([sys.executable, "-c", runner_code], **popen_kwargs)
+        # Use -u flag for unbuffered output so tqdm updates appear in real-time
+        self.process = subprocess.Popen([sys.executable, "-u", "-c", runner_code], **popen_kwargs)
 
         self.status = "running"
 
@@ -638,6 +724,12 @@ logger.info("Subprocess exiting")
                 logger.debug(f"Unable to open log file for {self.job_id}: {exc}")
                 log_handle = None
 
+        # Track last progress bar line to enable dynamic updates
+        last_progress_line = None
+        import re
+
+        progress_pattern = re.compile(r".*\d+%\|[▏▎▍▌▋▊▉█\s]+\|.*\d+/\d+.*")
+
         try:
             for line in iter(self.process.stdout.readline, ""):
                 if line == "":
@@ -654,8 +746,22 @@ logger.info("Subprocess exiting")
                             pass
                         log_handle = None
                 try:
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
+                    # Check if this is a progress bar line
+                    is_progress = progress_pattern.match(line.strip())
+
+                    if is_progress:
+                        # Use carriage return to update the same line
+                        sys.stdout.write(f"\r{line.rstrip()}")
+                        sys.stdout.flush()
+                        last_progress_line = line
+                    else:
+                        # Regular line - print with newline
+                        # If we were showing a progress bar, print a newline first
+                        if last_progress_line:
+                            sys.stdout.write("\n")
+                            last_progress_line = None
+                        sys.stdout.write(line)
+                        sys.stdout.flush()
                 except Exception:
                     # If stdout is unavailable just log the line
                     logger.info(line.rstrip())
@@ -663,6 +769,13 @@ logger.info("Subprocess exiting")
             if not self.stop_event.is_set():
                 logger.debug(f"stdout streaming error for {self.job_id}: {exc}")
         finally:
+            # Print final newline if we ended on a progress bar
+            if last_progress_line:
+                try:
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                except Exception:
+                    pass
             if log_handle is not None:
                 try:
                     log_handle.close()

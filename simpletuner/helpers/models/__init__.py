@@ -3,7 +3,6 @@ import logging
 import os
 from pathlib import Path
 
-# Auto-discover and import all model modules
 model_dir = Path(__file__).parent
 logger = logging.getLogger(__name__)
 logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING"))

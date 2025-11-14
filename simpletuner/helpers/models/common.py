@@ -5,17 +5,17 @@ import os
 import random
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from diffusers import DiffusionPipeline
-from peft import LoraConfig
 from PIL import Image
 from torch.distributions import Beta
 from torchvision import transforms
-from transformers.utils import ContextManagers
 
 try:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -692,6 +692,8 @@ class ModelFoundation(ABC):
         return self.vae
 
     def load_vae(self, move_to_device: bool = True):
+        from transformers.utils import ContextManagers
+
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
 
@@ -806,6 +808,8 @@ class ModelFoundation(ABC):
             setattr(self, f"tokenizer_{tokenizer_idx}", tokenizer)
 
     def load_text_encoder(self, move_to_device: bool = True):
+        from transformers.utils import ContextManagers
+
         self.text_encoders = []
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
@@ -1390,7 +1394,7 @@ class ModelFoundation(ABC):
             ),
         )
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> "DiffusionPipeline":
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
         if self.model is not None and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None:
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
@@ -2037,6 +2041,8 @@ class ImageModelFoundation(ModelFoundation):
             raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def add_lora_adapter(self):
+        from peft import LoraConfig
+
         target_modules = self.get_lora_target_layers()
         save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []
