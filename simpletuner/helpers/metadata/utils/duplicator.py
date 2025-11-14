@@ -23,7 +23,20 @@ class DatasetDuplicator:
             bucket: list(paths) for bucket, paths in getattr(source_meta, "aspect_ratio_bucket_indices", {}).items()
         }
         prior_source_metadata = dict(source_meta.image_metadata) if getattr(source_meta, "image_metadata", None) else None
+        # Debug: Track metadata state before reload
+        logger.debug(
+            f"Before reload_cache: source_meta ({source_meta.id}) has "
+            f"{len(prior_source_buckets)} buckets with "
+            f"{sum(len(paths) for paths in prior_source_buckets.values())} total images"
+        )
         source_meta.reload_cache(set_config=False)
+        # Debug: Track metadata state after reload
+        current_source_buckets = source_meta.aspect_ratio_bucket_indices
+        logger.debug(
+            f"After reload_cache: source_meta ({source_meta.id}) has "
+            f"{len(current_source_buckets)} buckets with "
+            f"{sum(len(paths) for paths in current_source_buckets.values())} total images"
+        )
         if not source_meta.aspect_ratio_bucket_indices and prior_source_buckets:
             logger.warning(
                 "Source metadata cache reload returned no buckets; restoring in-memory snapshot to avoid data loss."

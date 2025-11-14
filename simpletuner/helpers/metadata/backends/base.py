@@ -69,7 +69,7 @@ class MetadataBackend:
             metadata_file = f"{metadata_file}_{cache_file_suffix}"
         self.cache_file = Path(f"{cache_file}.json")
         self.metadata_file = Path(f"{metadata_file}.json")
-        self.aspect_ratio_bucket_indices = {}
+        self._aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
         self.config = {}
@@ -131,6 +131,34 @@ class MetadataBackend:
                 max_duration_seconds=self.audio_max_duration_seconds if self.dataset_type is DatasetType.AUDIO else None,
                 truncation_mode=self.audio_truncation_mode if self.dataset_type is DatasetType.AUDIO else None,
             )
+
+    @property
+    def aspect_ratio_bucket_indices(self):
+        """Get aspect ratio bucket indices."""
+        return self._aspect_ratio_bucket_indices
+
+    @aspect_ratio_bucket_indices.setter
+    def aspect_ratio_bucket_indices(self, value):
+        """Set aspect ratio bucket indices with debug tracking."""
+        import traceback
+
+        if hasattr(self, "_aspect_ratio_bucket_indices"):
+            old_count = sum(len(v) for v in self._aspect_ratio_bucket_indices.values())
+            new_count = sum(len(v) for v in value.values()) if value else 0
+            if old_count != new_count:
+                logger.warning(
+                    f"aspect_ratio_bucket_indices changed for {self.id}: "
+                    f"{old_count} -> {new_count} images. "
+                    f"Old buckets: {list(self._aspect_ratio_bucket_indices.keys())}, "
+                    f"New buckets: {list(value.keys()) if value else []}"
+                )
+                if os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") == "DEBUG":
+                    # Only log full stack trace in DEBUG mode to avoid spam
+                    stack = traceback.format_stack()
+                    # Filter out property getter/setter frames for cleaner output
+                    relevant_stack = [frame for frame in stack if "aspect_ratio_bucket_indices" not in frame]
+                    logger.debug(f"Modification stack trace:\n{''.join(relevant_stack[-5:])}")
+        self._aspect_ratio_bucket_indices = value
 
     def _extract_audio_config(self) -> Dict[str, Any]:
         if self.dataset_config is None:
