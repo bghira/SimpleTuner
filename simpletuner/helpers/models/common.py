@@ -681,6 +681,21 @@ class ModelFoundation(ABC):
             latents = latents / scaling_factor
         return latents
 
+    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+        """
+        Pre-process latents before passing to validation preview decoder.
+
+        This is a hook for models that need to transform latents before decode.
+        For example, models using video decoders may need to add a frame dimension.
+
+        Args:
+            latents: The latents tensor to transform
+
+        Returns:
+            The transformed latents tensor
+        """
+        return latents
+
     def get_vae(self):
         """
         Returns the VAE model.
@@ -1961,6 +1976,38 @@ class ImageModelFoundation(ModelFoundation):
         Override for models that need to pair validation videos with their conditioning images.
         """
         return False
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        """
+        Whether to pre-encode negative prompts during validation setup.
+        Override for models that need per-sample negative prompt encoding (e.g., with reference images).
+        """
+        return True
+
+    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
+        """
+        Encode the negative prompt for validation.
+
+        Args:
+            negative_prompt: The negative prompt text to encode
+            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
+
+        Returns:
+            Dictionary of encoded negative prompt embeddings
+        """
+        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
+
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """
+        Encode the caption dropout (null) prompt.
+
+        Args:
+            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
+
+        Returns:
+            Dictionary of encoded null prompt embeddings
+        """
+        return self._encode_prompts([""], is_negative_prompt=False)
 
     @classmethod
     def _iter_pipeline_classes(cls):
