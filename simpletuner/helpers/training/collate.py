@@ -277,6 +277,9 @@ def compute_single_embedding(prompt_entry, text_embed_cache):
     if prompt_value == "" or not prompt_value:
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
+        # Use sentinel key for filename-based caches to match encode_dropout_caption()
+        if text_embed_cache._requires_path_based_keys:
+            prompt_entry["key"] = "__caption_dropout__"
         debug_log(
             f"Hashing caption '{prompt_value}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
         )
