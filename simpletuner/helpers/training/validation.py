@@ -907,6 +907,9 @@ class ValidationPreviewer:
         if self._decoder.is_video:
             frames = decoded[0]
             pil_frames = [self._tensor_to_pil(frame) for frame in frames]
+            # Single-frame videos should be returned as static images, not GIFs
+            if len(pil_frames) == 1:
+                return pil_frames, None
             video_payload = self._frames_to_gif(pil_frames)
             first_frame = pil_frames[0] if pil_frames else None
             images = [first_frame] if first_frame else []

@@ -889,7 +889,40 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
                 latents.device, latents.dtype
             )
             latents = latents / latents_std + latents_mean
-            image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+
+            # Try VAE decode with OOM handling
+            try:
+                image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+            except (RuntimeError, torch.cuda.OutOfMemoryError) as e:
+                if "out of memory" in str(e).lower():
+                    # Check if tiling is already enabled to avoid double-enabling
+                    tiling_already_enabled = getattr(self.vae, "use_tiling", False)
+                    slicing_already_enabled = getattr(self.vae, "use_slicing", False)
+
+                    if tiling_already_enabled and slicing_already_enabled:
+                        # Already using tiling and slicing, can't optimize further
+                        logger.error("VAE decode OOM even with tiling and slicing enabled")
+                        raise
+
+                    # Enable tiling and/or slicing if not already enabled
+                    if not tiling_already_enabled:
+                        logger.warning("VAE decode OOM - enabling tiling and retrying")
+                        self.vae.enable_tiling()
+                    if not slicing_already_enabled:
+                        logger.warning("VAE decode OOM - enabling slicing and retrying")
+                        self.vae.enable_slicing()
+
+                    # Retry decode with tiling/slicing enabled
+                    try:
+                        image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
+                    except (RuntimeError, torch.cuda.OutOfMemoryError) as retry_e:
+                        if "out of memory" in str(retry_e).lower():
+                            logger.error("VAE decode OOM even after enabling tiling and slicing")
+                        raise
+                else:
+                    # Not an OOM error, re-raise
+                    raise
+
             image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload all models
