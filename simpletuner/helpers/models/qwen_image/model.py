@@ -384,6 +384,34 @@ class QwenImage(ImageModelFoundation):
             "prompt_embeds_mask": (attention_mask.to(dtype=torch.int64) if attention_mask is not None else None),
         }
 
+    def collate_prompt_embeds(self, text_encoder_output: list) -> dict:
+        """
+        Collate prompt embeddings for Qwen models.
+
+        Qwen's cached embeddings already include a batch dimension, so we need to
+        concatenate along batch dimension instead of stacking.
+        """
+        if not text_encoder_output:
+            return {}
+
+        # Check if embeddings already have batch dimension
+        first_embed = text_encoder_output[0].get("prompt_embeds")
+        if first_embed is None:
+            return {}
+
+        # If batch size is 1 and embedding already has batch dim, just return as-is
+        if len(text_encoder_output) == 1:
+            return {
+                "prompt_embeds": first_embed,
+                "attention_masks": text_encoder_output[0].get("attention_masks"),
+            }
+
+        # For multiple samples, concatenate along batch dimension (dim=0)
+        return {
+            "prompt_embeds": torch.cat([t["prompt_embeds"] for t in text_encoder_output], dim=0),
+            "attention_masks": torch.cat([t["attention_masks"] for t in text_encoder_output], dim=0),
+        }
+
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
         """
         Convert negative text embeddings for pipeline use.
@@ -617,7 +645,7 @@ class QwenImage(ImageModelFoundation):
 
             prompt_embed, prompt_mask = pipeline.encode_prompt(
                 [prompt],
-                image=[processed_images],
+                image=processed_images,  # Don't wrap in list - already a list of PIL images
                 device=device,
                 num_images_per_prompt=1,
             )
