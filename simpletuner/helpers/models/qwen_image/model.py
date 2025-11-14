@@ -392,26 +392,56 @@ class QwenImage(ImageModelFoundation):
 
         Qwen's cached embeddings already include a batch dimension, so we need to
         concatenate along batch dimension instead of stacking.
+
+        Ensures returned tensors always have batch dimension even when batch size is 1.
         """
         if not text_encoder_output:
             return {}
 
         # Check if embeddings already have batch dimension
         first_embed = text_encoder_output[0].get("prompt_embeds")
+        first_mask = text_encoder_output[0].get("attention_masks")
+
         if first_embed is None:
             return {}
 
-        # If batch size is 1 and embedding already has batch dim, just return as-is
+        # If batch size is 1, ensure tensors have batch dimension
         if len(text_encoder_output) == 1:
+            # Ensure embeddings have batch dimension [batch_size, seq_len, hidden_dim]
+            if first_embed.dim() == 2:
+                first_embed = first_embed.unsqueeze(0)
+
+            # Ensure mask has batch dimension [batch_size, seq_len]
+            if first_mask is not None and first_mask.dim() == 1:
+                first_mask = first_mask.unsqueeze(0)
+
             return {
                 "prompt_embeds": first_embed,
-                "attention_masks": text_encoder_output[0].get("attention_masks"),
+                "attention_masks": first_mask,
             }
 
         # For multiple samples, concatenate along batch dimension (dim=0)
+        # First ensure all embeddings and masks have batch dimension
+        embeds = []
+        masks = []
+
+        for t in text_encoder_output:
+            embed = t["prompt_embeds"]
+            mask = t.get("attention_masks")
+
+            # Add batch dimension if missing
+            if embed.dim() == 2:
+                embed = embed.unsqueeze(0)
+            embeds.append(embed)
+
+            if mask is not None:
+                if mask.dim() == 1:
+                    mask = mask.unsqueeze(0)
+                masks.append(mask)
+
         return {
-            "prompt_embeds": torch.cat([t["prompt_embeds"] for t in text_encoder_output], dim=0),
-            "attention_masks": torch.cat([t["attention_masks"] for t in text_encoder_output], dim=0),
+            "prompt_embeds": torch.cat(embeds, dim=0),
+            "attention_masks": torch.cat(masks, dim=0) if masks else None,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
