@@ -215,9 +215,7 @@ class BatchedTrainingSamples:
                             elif isinstance(target_value, dict) and {"width", "height"} <= set(target_value.keys()):
                                 target_size = (int(target_value["width"]), int(target_value["height"]))
                             else:
-                                raise RuntimeError(
-                                    f"Unsupported target_size format for {filepath}: {target_value}"
-                                )
+                                raise RuntimeError(f"Unsupported target_size format for {filepath}: {target_value}")
                             # keep normalised tuple in metadata copy
                             metadata["target_size"] = target_size
                         else:

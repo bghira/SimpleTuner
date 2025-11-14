@@ -1,4 +1,3 @@
-from simpletuner.helpers import log_format  # noqa
 import ast
 import copy
 import glob
@@ -24,16 +23,17 @@ from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedState
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
 import wandb
+from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
-from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
     configure_multi_databackend,
     run_distillation_cache_generation,
 )
+from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry

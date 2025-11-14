@@ -2,7 +2,6 @@
 """
 SimpleTuner CLI - Command-line interface for SimpleTuner
 """
-import simpletuner.helpers.log_format # noqa: F401
 import argparse
 import datetime
 import json
@@ -15,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+import simpletuner.helpers.log_format  # noqa: F401
 from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_template_directory
 
 CONFIG_FILENAMES = {

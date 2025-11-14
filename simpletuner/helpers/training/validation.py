@@ -174,8 +174,9 @@ def _coerce_validation_image_input(image_data):
     Convert validation conditioning inputs into formats compatible with downstream pipelines.
     """
     # Handle TrainingSample objects by extracting the image
-    if hasattr(image_data, 'image'):
+    if hasattr(image_data, "image"):
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+
         if isinstance(image_data, TrainingSample):
             image_data = image_data.image
 
@@ -469,7 +470,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         "metadata": {
                             "image_path": reference_sample.image_path(),
                             "data_backend_id": reference_sample.data_backend_id,
-                        }
+                        },
                     }
                     embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
                 else:

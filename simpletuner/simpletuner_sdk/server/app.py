@@ -90,6 +90,7 @@ async def lifespan(app: FastAPI):
     # Configure third-party loggers after imports
     try:
         from simpletuner.helpers import log_format
+
         if hasattr(log_format, "configure_third_party_loggers"):
             log_format.configure_third_party_loggers()
     except Exception:

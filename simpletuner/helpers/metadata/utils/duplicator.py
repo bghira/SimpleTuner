@@ -74,9 +74,7 @@ class DatasetDuplicator:
                     else:
                         new_path = os.path.join(target_dir, os.path.basename(path))
                     target_meta.image_metadata[new_path] = metadata
-                logger.debug(
-                    f"Copied {len(target_meta.image_metadata)} image_metadata entries"
-                )
+                logger.debug(f"Copied {len(target_meta.image_metadata)} image_metadata entries")
             else:
                 logger.debug("No image_metadata to copy from source")
 
@@ -135,7 +133,7 @@ class DatasetDuplicator:
         target_meta.save_cache()
 
         # IMPORTANT: save_cache() only saves bucket indices, we must also save the image_metadata
-        if hasattr(target_meta, 'save_image_metadata'):
+        if hasattr(target_meta, "save_image_metadata"):
             target_meta.save_image_metadata()
             logger.debug("Saved image_metadata to disk")
         else:

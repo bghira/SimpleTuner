@@ -229,7 +229,9 @@ class QwenImage(ImageModelFoundation):
             logger.debug(f"Prompt image {idx} tensor shape: {tensor.shape}, dtype: {tensor.dtype}")
             image_tensors.append(tensor)
         pil_images = [self._tensor_to_pil(tensor) for tensor in image_tensors]
-        logger.debug(f"Converted {len(pil_images)} tensors to PIL images: {[img.size if isinstance(img, Image.Image) else type(img) for img in pil_images]}")
+        logger.debug(
+            f"Converted {len(pil_images)} tensors to PIL images: {[img.size if isinstance(img, Image.Image) else type(img) for img in pil_images]}"
+        )
         return pil_images
 
     def _extract_prompt_image_from_context(self, context: dict):
@@ -284,9 +286,7 @@ class QwenImage(ImageModelFoundation):
         elif tensor_batch.dim() == 4:
             tensor_list = [tensor_batch[i] for i in range(tensor_batch.shape[0])]
         else:
-            raise ValueError(
-                f"Unexpected conditioning tensor rank {tensor_batch.dim()} for prompt image conversion."
-            )
+            raise ValueError(f"Unexpected conditioning tensor rank {tensor_batch.dim()} for prompt image conversion.")
         return [self._tensor_to_pil(entry) for entry in tensor_list]
 
     def _load_prompt_image_from_backend(self, context: dict):
@@ -303,7 +303,9 @@ class QwenImage(ImageModelFoundation):
         if data_backend is None:
             return None
         image = data_backend.read_image(image_path)
-        logger.debug(f"Loaded prompt image from backend: path={image_path}, type={type(image)}, size={image.size if isinstance(image, Image.Image) else (image.shape if hasattr(image, 'shape') else 'unknown')}")
+        logger.debug(
+            f"Loaded prompt image from backend: path={image_path}, type={type(image)}, size={image.size if isinstance(image, Image.Image) else (image.shape if hasattr(image, 'shape') else 'unknown')}"
+        )
         tensor = self._convert_image_to_tensor(image)
         if tensor is None:
             return None
@@ -470,6 +472,7 @@ class QwenImage(ImageModelFoundation):
     def _create_dummy_image(self):
         """Create a small zero tensor for encoding prompts without real image context."""
         import torch
+
         return torch.zeros((1, 3, 224, 224), device=self.accelerator.device, dtype=self.config.weight_dtype)
 
     def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
@@ -1113,9 +1116,7 @@ class QwenImage(ImageModelFoundation):
 
             try:
                 # Unpack the latents to spatial format
-                latents = pipeline_class._unpack_latents(
-                    latents, pixel_height, pixel_width, self.vae_scale_factor
-                )
+                latents = pipeline_class._unpack_latents(latents, pixel_height, pixel_width, self.vae_scale_factor)
 
                 # Now latents should be [B, C, H, W] - add frame dimension
                 if latents.dim() == 4:

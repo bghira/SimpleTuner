@@ -12,12 +12,9 @@ FORCE_COLORS = os.environ.get("FORCE_COLOR", "").lower() in ("1", "true", "yes")
 
 # Check if we're in web server mode - disable colors for web responses
 # FORCE_COLORS overrides DISABLE_COLORS
-DISABLE_COLORS = (
-    not FORCE_COLORS
-    and (
-        os.environ.get("SIMPLETUNER_WEB_MODE", "").lower() in ("1", "true", "yes")
-        or os.environ.get("SIMPLETUNER_DISABLE_COLORS", "").lower() in ("1", "true", "yes")
-    )
+DISABLE_COLORS = not FORCE_COLORS and (
+    os.environ.get("SIMPLETUNER_WEB_MODE", "").lower() in ("1", "true", "yes")
+    or os.environ.get("SIMPLETUNER_DISABLE_COLORS", "").lower() in ("1", "true", "yes")
 )
 
 if not DISABLE_COLORS:
@@ -125,6 +122,7 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
     if include_library_utils:
         try:
             import transformers.utils.logging as transformers_logging
+
             if hasattr(transformers_logging, "set_verbosity_warning"):
                 transformers_logging.set_verbosity_warning()
         except (ImportError, AttributeError):
@@ -132,6 +130,7 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
 
         try:
             import diffusers.utils.logging as diffusers_logging
+
             if hasattr(diffusers_logging, "set_verbosity_warning"):
                 diffusers_logging.set_verbosity_warning()
         except (ImportError, AttributeError):
@@ -211,16 +210,30 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
         "diffusers.models.attention_dispatch",
         "diffusers.utils.dynamic_modules_utils",
         "diffusers.models.modeling_utils",
-        "PIL", "PIL.Image", "PIL.PngImagePlugin",
-        "transformers.configuration_utils", "transformers.processing_utils", "transformers.image_processing_base", "transformers.video_processing_utils", "transformers.utils.import_utils",
-        "transformers.tokenization_utils", "transformers.tokenization_utils_base",
-        "transformers.generation_utils", "transformers.generation.configuration_utils", "transformers.modeling_utils",
-        "diffusers.configuration_utils", "diffusers.pipelines.pipeline_utils",
-        "torch.distributed.nn.jit.instantiator", "diffusers.utils.torch_utils", "torchao.kernel.intmm",
-        "sse_starlette.sse", "python_multipart.multipart",
+        "PIL",
+        "PIL.Image",
+        "PIL.PngImagePlugin",
+        "transformers.configuration_utils",
+        "transformers.processing_utils",
+        "transformers.image_processing_base",
+        "transformers.video_processing_utils",
+        "transformers.utils.import_utils",
+        "transformers.tokenization_utils",
+        "transformers.tokenization_utils_base",
+        "transformers.generation_utils",
+        "transformers.generation.configuration_utils",
+        "transformers.modeling_utils",
+        "diffusers.configuration_utils",
+        "diffusers.pipelines.pipeline_utils",
+        "torch.distributed.nn.jit.instantiator",
+        "diffusers.utils.torch_utils",
+        "torchao.kernel.intmm",
+        "sse_starlette.sse",
+        "python_multipart.multipart",
         "urllib3.connectionpool",
         "huggingface_hub._login",
-        "uvicorn.access", "uvicorn.error",
+        "uvicorn.access",
+        "uvicorn.error",
     ]:
         third_party_logger = logging.getLogger(logger_name)
         # Remove any handlers added directly to this logger
@@ -244,13 +257,17 @@ def ensure_custom_handlers(verbose: bool = False) -> None:
     # Debug: print handler info if verbose
     if verbose and existing:
         import sys
+
         print(f"[log_format] Found {len(existing)} handlers before cleanup:", file=sys.stderr)
         for handler_id, handler in existing.items():
             handler_type = type(handler).__name__
-            handler_level = getattr(handler, 'level', 'NOTSET')
-            stream = getattr(handler, 'stream', None)
-            stream_name = getattr(stream, 'name', 'unknown') if stream else 'N/A'
-            print(f"  - {handler_type} (level={handler_level}, stream={stream_name}, id={handler_id}, is_custom={handler_id in _CUSTOM_HANDLERS})", file=sys.stderr)
+            handler_level = getattr(handler, "level", "NOTSET")
+            stream = getattr(handler, "stream", None)
+            stream_name = getattr(stream, "name", "unknown") if stream else "N/A"
+            print(
+                f"  - {handler_type} (level={handler_level}, stream={stream_name}, id={handler_id}, is_custom={handler_id in _CUSTOM_HANDLERS})",
+                file=sys.stderr,
+            )
 
     # Remove unknown handlers that would reformat our messages.
     removed_count = 0
@@ -261,6 +278,7 @@ def ensure_custom_handlers(verbose: bool = False) -> None:
 
     if verbose and removed_count > 0:
         import sys
+
         print(f"[log_format] Removed {removed_count} non-custom handlers", file=sys.stderr)
 
     # Ensure our handlers are present exactly once.
@@ -284,7 +302,11 @@ def ensure_custom_handlers(verbose: bool = False) -> None:
 
     if verbose:
         import sys
-        print(f"[log_format] After cleanup: {len(root_logger.handlers)} handlers, console level={console_handler.level}, root level={root_logger.level}", file=sys.stderr)
+
+        print(
+            f"[log_format] After cleanup: {len(root_logger.handlers)} handlers, console level={console_handler.level}, root level={root_logger.level}",
+            file=sys.stderr,
+        )
 
     # Always configure third-party loggers (including library utils after module import)
     configure_third_party_loggers(include_library_utils=True)

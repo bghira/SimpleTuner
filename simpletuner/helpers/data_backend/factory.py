@@ -1245,10 +1245,7 @@ class FactoryRegistry:
         # Check if this is an edit model variant
         is_edit_model = False
         try:
-            is_edit_model = (
-                self.model.is_edit_v1_model(model_flavour) or
-                self.model.is_edit_v2_model(model_flavour)
-            )
+            is_edit_model = self.model.is_edit_v1_model(model_flavour) or self.model.is_edit_v2_model(model_flavour)
         except (AttributeError, TypeError):
             # If we can't determine, check the flavour string
             is_edit_model = "edit" in str(model_flavour).lower()
