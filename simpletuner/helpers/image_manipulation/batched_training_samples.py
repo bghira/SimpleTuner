@@ -141,7 +141,14 @@ class BatchedTrainingSamples:
                             if metadata_backend:
                                 try:
                                     metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                                except Exception:
+                                    if self.debug_enabled:
+                                        logger.debug(
+                                            f"Retrieved metadata for {filepath}: "
+                                            f"{'found' if metadata else 'not found'}"
+                                            f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
+                                        )
+                                except Exception as e:
+                                    logger.debug(f"Exception getting metadata for {filepath}: {e}")
                                     metadata = None
                             batch_metadata.append(metadata or {})
                         else:
@@ -153,7 +160,14 @@ class BatchedTrainingSamples:
                         if metadata_backend:
                             try:
                                 metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                            except Exception:
+                                if self.debug_enabled:
+                                    logger.debug(
+                                        f"Retrieved metadata for {filepath}: "
+                                        f"{'found' if metadata else 'not found'}"
+                                        f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
+                                    )
+                            except Exception as e:
+                                logger.debug(f"Exception getting metadata for {filepath}: {e}")
                                 metadata = None
                         batch_metadata.append(metadata or {})
 
@@ -187,6 +201,12 @@ class BatchedTrainingSamples:
 
                 for i, (filepath, metadata) in enumerate(zip(batch_filepaths, batch_metadata)):
                     try:
+                        if self.debug_enabled:
+                            logger.debug(
+                                f"Checking metadata for resize: filepath={filepath}, "
+                                f"metadata_present={'yes' if metadata else 'no'}, "
+                                f"metadata_keys={list(metadata.keys()) if metadata else 'N/A'}"
+                            )
                         # target size from metadata or fallback
                         if metadata and "target_size" in metadata:
                             target_value = metadata["target_size"]
@@ -201,6 +221,12 @@ class BatchedTrainingSamples:
                             # keep normalised tuple in metadata copy
                             metadata["target_size"] = target_size
                         else:
+                            logger.error(
+                                f"No target_size in metadata, cannot continue. "
+                                f"Filename: {filepath}, "
+                                f"Metadata keys: {list(metadata.keys()) if metadata else 'empty/None'}, "
+                                f"Metadata: {metadata}"
+                            )
                             raise RuntimeError(
                                 f"No target_size in metadata, cannot continue. Filename: {filepath}, Metadata: {metadata}"
                             )

@@ -138,7 +138,7 @@ def safety_check(args, accelerator):
     gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3", "chroma"]
     if args.gradient_checkpointing_interval is not None:
         if args.model_family.lower() not in gradient_checkpointing_interval_supported_models:
-            logger.error(
+            logger.warning(
                 f"Gradient checkpointing interval is not supported with {args.model_family} models. Please disable --gradient_checkpointing_interval by setting it to None, or remove it from your configuration. Currently supported models: {gradient_checkpointing_interval_supported_models}"
             )
             args.gradient_checkpointing_interval = None

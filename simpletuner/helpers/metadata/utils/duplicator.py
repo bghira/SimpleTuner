@@ -1,11 +1,14 @@
 import logging
 import os
 
-from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.multi_process import _get_rank, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO if _get_rank() == 0 else logging.WARNING)
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
 
 
 class DatasetDuplicator:
@@ -18,25 +21,12 @@ class DatasetDuplicator:
         if source_meta is None or target_meta is None:
             raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
 
-        logger.info("Reloading metadata caches...")
+        logger.debug("Reloading metadata caches...")
         prior_source_buckets = {
             bucket: list(paths) for bucket, paths in getattr(source_meta, "aspect_ratio_bucket_indices", {}).items()
         }
         prior_source_metadata = dict(source_meta.image_metadata) if getattr(source_meta, "image_metadata", None) else None
-        # Debug: Track metadata state before reload
-        logger.debug(
-            f"Before reload_cache: source_meta ({source_meta.id}) has "
-            f"{len(prior_source_buckets)} buckets with "
-            f"{sum(len(paths) for paths in prior_source_buckets.values())} total images"
-        )
         source_meta.reload_cache(set_config=False)
-        # Debug: Track metadata state after reload
-        current_source_buckets = source_meta.aspect_ratio_bucket_indices
-        logger.debug(
-            f"After reload_cache: source_meta ({source_meta.id}) has "
-            f"{len(current_source_buckets)} buckets with "
-            f"{sum(len(paths) for paths in current_source_buckets.values())} total images"
-        )
         if not source_meta.aspect_ratio_bucket_indices and prior_source_buckets:
             logger.warning(
                 "Source metadata cache reload returned no buckets; restoring in-memory snapshot to avoid data loss."
@@ -84,6 +74,11 @@ class DatasetDuplicator:
                     else:
                         new_path = os.path.join(target_dir, os.path.basename(path))
                     target_meta.image_metadata[new_path] = metadata
+                logger.debug(
+                    f"Copied {len(target_meta.image_metadata)} image_metadata entries"
+                )
+            else:
+                logger.debug("No image_metadata to copy from source")
 
             # Copy any other attributes that need to be preserved
             for attr in ["metadata_update_interval", "cache_file_suffix"]:
@@ -138,6 +133,13 @@ class DatasetDuplicator:
 
         # Save the updated metadata
         target_meta.save_cache()
+
+        # IMPORTANT: save_cache() only saves bucket indices, we must also save the image_metadata
+        if hasattr(target_meta, 'save_image_metadata'):
+            target_meta.save_image_metadata()
+            logger.debug("Saved image_metadata to disk")
+        else:
+            logger.warning("target_meta does not have save_image_metadata method")
 
         logger.info("Metadata copied successfully.")
         source_meta.print_debug_info()

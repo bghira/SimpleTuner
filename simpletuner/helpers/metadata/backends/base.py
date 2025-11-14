@@ -140,24 +140,16 @@ class MetadataBackend:
     @aspect_ratio_bucket_indices.setter
     def aspect_ratio_bucket_indices(self, value):
         """Set aspect ratio bucket indices with debug tracking."""
-        import traceback
-
         if hasattr(self, "_aspect_ratio_bucket_indices"):
             old_count = sum(len(v) for v in self._aspect_ratio_bucket_indices.values())
             new_count = sum(len(v) for v in value.values()) if value else 0
             if old_count != new_count:
-                logger.warning(
+                logger.debug(
                     f"aspect_ratio_bucket_indices changed for {self.id}: "
                     f"{old_count} -> {new_count} images. "
                     f"Old buckets: {list(self._aspect_ratio_bucket_indices.keys())}, "
                     f"New buckets: {list(value.keys()) if value else []}"
                 )
-                if os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") == "DEBUG":
-                    # Only log full stack trace in DEBUG mode to avoid spam
-                    stack = traceback.format_stack()
-                    # Filter out property getter/setter frames for cleaner output
-                    relevant_stack = [frame for frame in stack if "aspect_ratio_bucket_indices" not in frame]
-                    logger.debug(f"Modification stack trace:\n{''.join(relevant_stack[-5:])}")
         self._aspect_ratio_bucket_indices = value
 
     def _extract_audio_config(self) -> Dict[str, Any]:
@@ -947,16 +939,13 @@ class MetadataBackend:
                 abs_path = self.data_backend.get_abs_path(path)
                 if path in self.image_metadata:
                     result = self.image_metadata.get(path, None)
-                    logger.debug(f"Retrieving metadata for path: {filepath}, result: {result}")
                     if result is not None:
                         return result
                 elif abs_path in self.image_metadata:
                     filepath = abs_path
                     result = self.image_metadata.get(filepath, None)
-                    logger.debug(f"Retrieving metadata for path: {filepath}, result: {result}")
                     if result is not None:
                         return result
-
             return None
 
         meta = self.image_metadata.get(filepath, None)
