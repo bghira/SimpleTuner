@@ -1227,6 +1227,54 @@ class FactoryRegistry:
 
         return result if isinstance(result, bool) else False
 
+    def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Validate that Qwen edit models use appropriate conditioning_type values.
+
+        For Qwen edit models (edit-v1 and edit-v2), conditioning datasets must use
+        conditioning_type of either 'reference_strict' or 'reference_loose'.
+        Using 'controlnet' or other values will cause dimension mismatches during training.
+        """
+        # Check if this is a Qwen edit model
+        model_family = _get_arg_value(self.args, "model_family", "")
+        model_flavour = _get_arg_value(self.args, "model_flavour", "")
+
+        if model_family != "qwen_image":
+            return
+
+        # Check if this is an edit model variant
+        is_edit_model = False
+        try:
+            is_edit_model = (
+                self.model.is_edit_v1_model(model_flavour) or
+                self.model.is_edit_v2_model(model_flavour)
+            )
+        except (AttributeError, TypeError):
+            # If we can't determine, check the flavour string
+            is_edit_model = "edit" in str(model_flavour).lower()
+
+        if not is_edit_model:
+            return
+
+        # Validate conditioning datasets
+        valid_conditioning_types = {"reference_strict", "reference_loose"}
+
+        for backend in data_backend_config:
+            dataset_type = backend.get("dataset_type", "image")
+            if dataset_type != "conditioning":
+                continue
+
+            conditioning_type = backend.get("conditioning_type", "")
+            backend_id = backend.get("id", "unknown")
+
+            if conditioning_type and conditioning_type not in valid_conditioning_types:
+                raise ValueError(
+                    f"Invalid conditioning_type='{conditioning_type}' for Qwen edit model in dataset '{backend_id}'. "
+                    f"Qwen edit models require conditioning_type to be either 'reference_strict' or 'reference_loose'. "
+                    f"Using 'controlnet' or other values will cause dimension mismatches during training. "
+                    f"Please update your dataset configuration."
+                )
+
     def _is_multi_process(self) -> bool:
         """Return True when accelerator reports multiple processes."""
         accelerator = getattr(self, "accelerator", None)
@@ -1995,6 +2043,9 @@ class FactoryRegistry:
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         if not has_conditioning_dataset and requires_conditioning_dataset:
             raise ValueError("Model requires a conditioning dataset, but none was found in the data backend config file.")
+
+        # Validate conditioning_type for edit models
+        self._validate_edit_model_conditioning_type(data_backend_config)
 
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
         """Handle resolution type conversion from pixel_area to area."""
