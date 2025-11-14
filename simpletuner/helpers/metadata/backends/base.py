@@ -861,13 +861,13 @@ class MetadataBackend:
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str, save_cache: bool = True):
         """move incorrectly bucketed image to proper bucket"""
-        logger.warning(f"Found an image in bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}")
+        logger.debug(f"Found an image in bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}")
         self.remove_image(image_path, bucket)
         if actual_bucket in self.aspect_ratio_bucket_indices:
-            logger.warning("Moved image to bucket, it already existed.")
+            logger.debug("Moved image to bucket, it already existed.")
             self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
         else:
-            logger.warning("Created new bucket for that pesky image.")
+            logger.debug("Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
         if save_cache:
             self.save_cache()
