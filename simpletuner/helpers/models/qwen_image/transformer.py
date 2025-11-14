@@ -815,7 +815,19 @@ class QwenImageTransformer2DModel(
             # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, lora_scale)
 
-        output_image = self._untokenize_hidden_states(output, patch_h, patch_w)
+        # Check if output token count matches expected dimensions for untokenization
+        # For edit models with concatenated inputs, the output will have more tokens than expected
+        # In that case, return packed tokens and let the pipeline handle slicing and untokenization
+        expected_tokens = patch_h * patch_w if (patch_h is not None and patch_w is not None) else None
+        actual_tokens = output.shape[1]
+
+        if expected_tokens is not None and actual_tokens != expected_tokens:
+            # Token count mismatch - likely concatenated inputs for edit model
+            # Return packed tokens without untokenization
+            output_image = output
+        else:
+            # Normal case - untokenize to image format
+            output_image = self._untokenize_hidden_states(output, patch_h, patch_w)
 
         if not return_dict:
             return (output_image,)

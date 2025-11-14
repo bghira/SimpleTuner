@@ -217,16 +217,20 @@ class QwenImage(ImageModelFoundation):
         if not prompt_contexts or len(prompt_contexts) != batch_size:
             return None
         image_tensors = []
-        for context in prompt_contexts:
+        for idx, context in enumerate(prompt_contexts):
             tensor = self._extract_prompt_image_from_context(context)
             if tensor is None:
+                logger.warning(f"Failed to extract image tensor from context {idx}: {context}")
                 return None
             if tensor.dim() == 4 and tensor.size(0) == 1:
                 tensor = tensor.squeeze(0)
             if tensor.dim() != 3:
                 raise ValueError(f"Expected conditioning tensor with shape (C, H, W); received {tensor.shape}.")
+            logger.debug(f"Prompt image {idx} tensor shape: {tensor.shape}, dtype: {tensor.dtype}")
             image_tensors.append(tensor)
-        return [self._tensor_to_pil(tensor) for tensor in image_tensors]
+        pil_images = [self._tensor_to_pil(tensor) for tensor in image_tensors]
+        logger.debug(f"Converted {len(pil_images)} tensors to PIL images: {[img.size if isinstance(img, Image.Image) else type(img) for img in pil_images]}")
+        return pil_images
 
     def _extract_prompt_image_from_context(self, context: dict):
         if not isinstance(context, dict):
@@ -299,10 +303,13 @@ class QwenImage(ImageModelFoundation):
         if data_backend is None:
             return None
         image = data_backend.read_image(image_path)
+        logger.debug(f"Loaded prompt image from backend: path={image_path}, type={type(image)}, size={image.size if isinstance(image, Image.Image) else (image.shape if hasattr(image, 'shape') else 'unknown')}")
         tensor = self._convert_image_to_tensor(image)
         if tensor is None:
             return None
-        return tensor.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        final_tensor = tensor.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        logger.debug(f"Converted image to tensor: shape={final_tensor.shape}, dtype={final_tensor.dtype}")
+        return final_tensor
 
     def _coerce_prompt_tensor(self, tensor):
         if tensor is None:
@@ -385,7 +392,7 @@ class QwenImage(ImageModelFoundation):
         if attention_mask is not None and attention_mask.dim() == 1:
             attention_mask = attention_mask.unsqueeze(0)
 
-        return {
+        result = {
             "negative_prompt_embeds": (
                 text_embedding["prompt_embeds"].unsqueeze(0)
                 if text_embedding["prompt_embeds"].dim() == 2
@@ -394,10 +401,90 @@ class QwenImage(ImageModelFoundation):
             "negative_prompt_embeds_mask": (attention_mask.to(dtype=torch.int64) if attention_mask is not None else None),
         }
 
+        # Map validation_guidance_real to true_cfg_scale for Qwen pipeline
+        if self.config.validation_guidance_real is not None and self.config.validation_guidance_real > 1.0:
+            result["true_cfg_scale"] = float(self.config.validation_guidance_real)
+
+        return result
+
+    def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        """
+        Update pipeline kwargs to ensure proper parameter mapping for Qwen pipelines.
+        """
+        # Map guidance_scale_real to true_cfg_scale for Qwen pipeline
+        if "guidance_scale_real" in pipeline_kwargs:
+            pipeline_kwargs["true_cfg_scale"] = pipeline_kwargs.pop("guidance_scale_real")
+
+        # If true_cfg_scale is not set but validation_guidance_real is configured, use it
+        if "true_cfg_scale" not in pipeline_kwargs and self.config.validation_guidance_real is not None:
+            if self.config.validation_guidance_real > 1.0:
+                pipeline_kwargs["true_cfg_scale"] = float(self.config.validation_guidance_real)
+
+        return pipeline_kwargs
+
     def requires_conditioning_dataset(self) -> bool:
         if self._is_edit_flavour():
             return True
         return False
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        """Whether this model requires conditioning inputs during validation."""
+        return self._is_edit_flavour()
+
+    def requires_validation_edit_captions(self) -> bool:
+        """Whether this model requires edit captions with reference images for validation."""
+        return self._is_edit_flavour()
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        """Qwen edit models need per-sample negative prompt encoding with reference images."""
+        return not self._is_edit_flavour()
+
+    def _create_dummy_image(self):
+        """Create a small zero tensor for encoding prompts without real image context."""
+        import torch
+        return torch.zeros((1, 3, 224, 224), device=self.accelerator.device, dtype=self.config.weight_dtype)
+
+    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
+        """For edit models, encode with dummy image."""
+        if not self._is_edit_flavour():
+            return super().encode_validation_negative_prompt(negative_prompt, positive_prompt_embeds)
+
+        if self.text_encoders is None or len(self.text_encoders) == 0:
+            self.load_text_encoder()
+
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        dummy_image = self._create_dummy_image()
+        prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(
+            [negative_prompt],
+            image=dummy_image,
+            device=self.accelerator.device,
+        )
+
+        return {
+            "prompt_embeds": prompt_embeds[0],
+            "attention_masks": prompt_embeds_mask[0],
+        }
+
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """For edit models, encode empty string with dummy image."""
+        if not self._is_edit_flavour():
+            return super().encode_dropout_caption(positive_prompt_embeds)
+
+        if self.text_encoders is None or len(self.text_encoders) == 0:
+            self.load_text_encoder()
+
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        dummy_image = self._create_dummy_image()
+        prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(
+            [""],
+            image=dummy_image,
+            device=self.accelerator.device,
+        )
+
+        return {
+            "prompt_embeds": prompt_embeds[0],
+            "attention_masks": prompt_embeds_mask[0],
+        }
 
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
         if self._is_edit_v1_flavour():
@@ -951,6 +1038,73 @@ class QwenImage(ImageModelFoundation):
         sample_latents = (sample_latents - latents_mean) * latents_std
 
         return sample_latents
+
+    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+        """
+        Pre-process latents before passing to validation preview decoder.
+
+        Qwen Image uses packed transformer latents that need to be untokenized/unpacked
+        to spatial format, and the Wan 2.1 decoder expects rank-5 tensors (video format),
+        so we need to unpack and add a frame dimension.
+
+        Args:
+            latents: The latents tensor to transform
+
+        Returns:
+            The transformed latents tensor unpacked and with frame dimension added (rank 5)
+        """
+        original_shape = latents.shape
+        if latents.dim() == 4:
+            # Already unpacked spatial latents: (B, C, H, W) -> (B, C, 1, H, W)
+            latents = latents.unsqueeze(2)
+            logger.debug(f"Validation preview: added frame dimension {original_shape} -> {latents.shape}")
+        elif latents.dim() == 3:
+            # Packed transformer latents - need to unpack to spatial format
+            # The packed format is [B, num_tokens, hidden_dim]
+            # We need to unpack using the pipeline's _unpack_latents method
+
+            # Get the pipeline class for unpacking
+            pipeline_class = self.PIPELINE_CLASSES.get(PipelineTypes.TEXT2IMG)
+            if pipeline_class is None:
+                raise ValueError("Cannot unpack latents without pipeline class")
+
+            # Try to infer the spatial dimensions from the number of tokens
+            # For Qwen, tokens = (H/2) * (W/2) where H,W are latent spatial dims
+            batch_size, num_tokens, hidden_dim = latents.shape
+
+            # Estimate spatial size: assume square aspect ratio for validation
+            # num_tokens = (H/2) * (W/2), so H = W = sqrt(num_tokens) * 2
+            estimated_side = int(math.sqrt(num_tokens)) * 2
+            pixel_height = estimated_side * self.vae_scale_factor
+            pixel_width = estimated_side * self.vae_scale_factor
+
+            logger.debug(
+                f"Validation preview: unpacking latents {original_shape} "
+                f"(estimated pixel size: {pixel_height}x{pixel_width})"
+            )
+
+            try:
+                # Unpack the latents to spatial format
+                latents = pipeline_class._unpack_latents(
+                    latents, pixel_height, pixel_width, self.vae_scale_factor
+                )
+
+                # Now latents should be [B, C, H, W] - add frame dimension
+                if latents.dim() == 4:
+                    latents = latents.unsqueeze(2)  # [B, C, 1, H, W]
+                elif latents.dim() == 5:
+                    # Already has frame dimension
+                    pass
+
+                logger.debug(f"Validation preview: unpacked to {latents.shape}")
+            except Exception as e:
+                logger.error(
+                    f"Failed to unpack validation preview latents with shape {original_shape}: {e}. "
+                    f"This may indicate non-square aspect ratio or unexpected latent format."
+                )
+                raise
+
+        return latents
 
     def check_user_config(self):
         """
