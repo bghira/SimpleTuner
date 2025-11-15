@@ -81,17 +81,35 @@ class Auraflow(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+        prompt_attention_mask = text_embedding["prompt_attention_mask"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if prompt_attention_mask.dim() == 1:  # Shape: [seq]
+            prompt_attention_mask = prompt_attention_mask.unsqueeze(0)  # Shape: [1, seq]
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
+            "prompt_attention_mask": prompt_attention_mask,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        negative_prompt_embeds = text_embedding["prompt_embeds"]
+        negative_prompt_attention_mask = text_embedding["prompt_attention_mask"]
+
+        # Add batch dimension if missing
+        if negative_prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            negative_prompt_embeds = negative_prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if negative_prompt_attention_mask.dim() == 1:  # Shape: [seq]
+            negative_prompt_attention_mask = negative_prompt_attention_mask.unsqueeze(0)  # Shape: [1, seq]
+
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_attention_mask": text_embedding["prompt_attention_mask"].unsqueeze(0),
+            "negative_prompt_embeds": negative_prompt_embeds,
+            "negative_prompt_attention_mask": negative_prompt_attention_mask,
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
