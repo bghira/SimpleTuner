@@ -1528,6 +1528,39 @@ class ModelFoundation(ABC):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
         return batch
 
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Sample flow-matching sigmas/timesteps for the current batch.
+
+        Subclasses can override to implement model-specific sampling strategies.
+        """
+        bsz = batch["latents"].shape[0]
+        if not self.config.flux_fast_schedule and not any(
+            [
+                self.config.flow_use_beta_schedule,
+                self.config.flow_use_uniform_schedule,
+            ]
+        ):
+            sigmas = torch.sigmoid(self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device))
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        elif self.config.flow_use_uniform_schedule:
+            sigmas = torch.rand((bsz,), device=self.accelerator.device)
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        elif self.config.flow_use_beta_schedule:
+            alpha = self.config.flow_beta_schedule_alpha
+            beta = self.config.flow_beta_schedule_beta
+            beta_dist = Beta(alpha, beta)
+            sigmas = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        else:
+            available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
+            sigmas = torch.tensor(
+                random.choices(available_sigmas, k=bsz),
+                device=self.accelerator.device,
+            )
+        timesteps = sigmas * 1000.0
+        return sigmas, timesteps
+
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         """
         Moves the batch to the proper device/dtype,
@@ -1622,38 +1655,7 @@ class ModelFoundation(ABC):
             batch["input_noise"] = noise
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            if not self.config.flux_fast_schedule and not any(
-                [
-                    self.config.flow_use_beta_schedule,
-                    self.config.flow_use_uniform_schedule,
-                ]
-            ):
-                batch["sigmas"] = torch.sigmoid(
-                    self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device)
-                )
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
-                )
-            elif self.config.flow_use_uniform_schedule:
-                batch["sigmas"] = torch.rand((bsz,), device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
-                )
-            elif self.config.flow_use_beta_schedule:
-                alpha = self.config.flow_beta_schedule_alpha
-                beta = self.config.flow_beta_schedule_beta
-                beta_dist = Beta(alpha, beta)
-                batch["sigmas"] = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
-                )
-            else:
-                available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
-                batch["sigmas"] = torch.tensor(
-                    random.choices(available_sigmas, k=bsz),
-                    device=self.accelerator.device,
-                )
-            batch["timesteps"] = batch["sigmas"] * 1000.0
+            batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
             self.expand_sigmas(batch)
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
         else:
