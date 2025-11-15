@@ -11,6 +11,13 @@ from diffusers.schedulers import KDPM2DiscreteScheduler
 from diffusers.utils import BaseOutput
 
 
+def _resolve_work_dtype(device: torch.device, preferred_dtype: torch.dtype) -> torch.dtype:
+    """MPS lacks fp64 support, so fall back to fp32 there."""
+    if device.type == "mps" and preferred_dtype == torch.float64:
+        return torch.float32
+    return preferred_dtype
+
+
 def _broadcast_like(reference: torch.Tensor, target_ndim: int) -> torch.Tensor:
     if reference.ndim >= target_ndim:
         return reference
@@ -25,13 +32,15 @@ def _batch_mul(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
 
 def _phi1(values: torch.Tensor) -> torch.Tensor:
     input_dtype = values.dtype
-    values = values.to(dtype=torch.float64)
+    work_dtype = _resolve_work_dtype(values.device, torch.float64)
+    values = values.to(dtype=work_dtype)
     return (torch.expm1(values) / values).to(dtype=input_dtype)
 
 
 def _phi2(values: torch.Tensor) -> torch.Tensor:
     input_dtype = values.dtype
-    values = values.to(dtype=torch.float64)
+    work_dtype = _resolve_work_dtype(values.device, torch.float64)
+    values = values.to(dtype=work_dtype)
     return ((_phi1(values) - 1.0) / values).to(dtype=input_dtype)
 
 
@@ -110,8 +119,13 @@ class RectifiedFlowAB2Scheduler(KDPM2DiscreteScheduler):
             **kpm2_kwargs,
         )
 
-    def _dtype(self) -> torch.dtype:
-        return torch.float64 if self._use_fp64 else torch.float32
+    def _dtype(self, device: torch.device | str | None = None) -> torch.dtype:
+        dtype = torch.float64 if self._use_fp64 else torch.float32
+        if device is not None and not isinstance(device, torch.device):
+            device = torch.device(device)
+        if device is not None:
+            dtype = _resolve_work_dtype(device, dtype)
+        return dtype
 
     def sample_sigma(
         self,
@@ -135,7 +149,7 @@ class RectifiedFlowAB2Scheduler(KDPM2DiscreteScheduler):
         **_,
     ):
         device = device or torch.device("cpu")
-        dtype = self._dtype()
+        dtype = self._dtype(device)
 
         if sigmas is None and num_inference_steps is None:
             num_inference_steps = num_train_timesteps
@@ -173,8 +187,8 @@ class RectifiedFlowAB2Scheduler(KDPM2DiscreteScheduler):
             raise RuntimeError("`set_timesteps` must be called before `step`.")
 
         dtype_target = sample.dtype
-        dtype_work = self._dtype()
         device = sample.device
+        dtype_work = self._dtype(device)
 
         x_t = sample.to(dtype=dtype_work)
         x0_t = x0_pred.to(dtype=dtype_work)
