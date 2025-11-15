@@ -201,6 +201,7 @@ base_deps = [
     "numpy>=2.2.0",
     "peft>=0.17.0",
     "tensorboard>=2.18.0",
+    "py3langid>=0.2.2",
     "sentencepiece>=0.2.0",
     "optimum-quanto>=0.2.7",
     "lycoris-lora>=3.4.0",
