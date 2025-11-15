@@ -194,6 +194,49 @@ def _parse_json_like_option(raw_value, option_name: str):
     return raw_value
 
 
+def _normalize_sana_complex_instruction(raw_value):
+    """
+    Normalize the Sana complex human instruction value so downstream code always receives a list of strings.
+    """
+
+    if raw_value in (None, "", "None"):
+        return None
+
+    if isinstance(raw_value, (list, tuple)):
+        normalized = []
+        for entry in raw_value:
+            if entry in (None, "", "None"):
+                continue
+            entry_str = str(entry).strip()
+            if entry_str:
+                normalized.append(entry_str)
+        return normalized or None
+
+    if not isinstance(raw_value, str):
+        raise ValueError(f"Unsupported type for sana_complex_human_instruction: {type(raw_value).__name__}")
+
+    candidate = raw_value.strip()
+    if not candidate or candidate == "None":
+        return None
+
+    expanded_path = os.path.expanduser(candidate)
+    if os.path.isfile(expanded_path):
+        with open(expanded_path, "r", encoding="utf-8") as handle:
+            file_contents = handle.read()
+        return _normalize_sana_complex_instruction(file_contents)
+
+    if candidate.startswith("{") or candidate.startswith("["):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as json_error:
+            logger.error(f"Could not parse sana_complex_human_instruction as JSON: {json_error}")
+            raise
+        return _normalize_sana_complex_instruction(parsed)
+
+    instructions = [line.strip() for line in candidate.splitlines() if line.strip()]
+    return instructions or [candidate]
+
+
 def _parse_bool_flag(value):
     if isinstance(value, bool):
         return value
@@ -918,18 +961,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error(f"Could not load validation_guidance_skip_layers: {e}")
             raise
 
-    if (
-        args.model_family == "sana"
-        and args.sana_complex_human_instruction is not None
-        and type(args.sana_complex_human_instruction) is str
-        and args.sana_complex_human_instruction not in ["", "None"]
-    ):
+    if args.model_family == "sana":
         try:
-            import json
-
-            args.sana_complex_human_instruction = json.loads(args.sana_complex_human_instruction)
-        except Exception as e:
-            logger.error(f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {e}")
+            args.sana_complex_human_instruction = _normalize_sana_complex_instruction(args.sana_complex_human_instruction)
+        except Exception as exc:
+            logger.error(f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {exc}")
             raise
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
