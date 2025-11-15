@@ -4,7 +4,6 @@ from math import sqrt
 from numbers import Real
 
 import numpy as np
-import torch
 from PIL import Image
 from torchvision import transforms
 

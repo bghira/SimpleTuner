@@ -1,7 +1,7 @@
 import logging
 import os
 
-from simpletuner.helpers.training.multi_process import _get_rank, should_log
+from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)

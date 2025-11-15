@@ -119,7 +119,7 @@ class TextEmbeddingCache(WebhookMixin):
                 normalized = os.path.normcase(os.path.abspath(os.path.normpath(normalized)))
         elif self.key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
             # Keys already include dataset identifiers; leave as-is.
-            normalized = normalized
+            pass
         return normalized
 
     def create_hash(self, key_value):

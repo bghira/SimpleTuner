@@ -542,13 +542,13 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
         model.log_model_devices()
         if model.should_precompute_validation_negative_prompt():
-            validation_negative_prompt_text_encoder_output = embed_cache.compute_embeddings_for_prompts(
+            embed_cache.compute_embeddings_for_prompts(
                 [negative_prompt],
                 is_validation=True,
                 load_from_cache=False,
             )
         else:
-            validation_negative_prompt_text_encoder_output = embed_cache.encode_validation_negative_prompt(negative_prompt)
+            embed_cache.encode_validation_negative_prompt(negative_prompt)
 
     logger.info("Completed validation prompt gathering.")
     return {

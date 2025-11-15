@@ -126,6 +126,7 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
             if hasattr(transformers_logging, "set_verbosity_warning"):
                 transformers_logging.set_verbosity_warning()
         except (ImportError, AttributeError):
+            # transformers is optional; skip configuration if not installed or if logging API is missing
             pass
 
         try:
@@ -134,6 +135,7 @@ def configure_third_party_loggers(include_library_utils: bool = True) -> None:
             if hasattr(diffusers_logging, "set_verbosity_warning"):
                 diffusers_logging.set_verbosity_warning()
         except (ImportError, AttributeError):
+            # diffusers is optional; skip configuration if not installed or if logging API is missing
             pass
 
     # Configure individual loggers (safe to do at any time, no imports needed)

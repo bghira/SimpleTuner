@@ -775,6 +775,7 @@ logger.info("Subprocess exiting")
                     sys.stdout.write("\n")
                     sys.stdout.flush()
                 except Exception:
+                    # stdout may be unavailable; ignore errors during cleanup
                     pass
             if log_handle is not None:
                 try:

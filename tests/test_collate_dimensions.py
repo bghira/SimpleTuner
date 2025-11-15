@@ -12,9 +12,6 @@ from unittest.mock import MagicMock
 
 import torch
 
-from simpletuner.helpers.models.auraflow.model import Auraflow
-from simpletuner.helpers.models.chroma.model import Chroma
-from simpletuner.helpers.models.hidream.model import HiDream
 from simpletuner.helpers.models.qwen_image.model import QwenImage
 
 
@@ -166,7 +163,7 @@ class TestCollatePromptEmbedsDimensions(unittest.TestCase):
             def _encode_prompts(self, prompts, is_negative_prompt=False):
                 pass
 
-            def convert_text_embed_for_pipeline(self, text_embedding):
+            def convert_text_embed_for_pipeline(self, text_embedding, prompt):
                 pass
 
             def convert_negative_text_embed_for_pipeline(self, text_embedding, prompt):

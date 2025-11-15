@@ -4,7 +4,7 @@ import logging
 import math
 import os
 import random
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 import torch
