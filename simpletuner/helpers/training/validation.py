@@ -522,7 +522,12 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         # This will add a single prompt to the prompt library, if in use.
         validation_prompts = validation_prompts + [args.validation_prompt]
         validation_shortnames = validation_shortnames + ["validation"]
-        embed_cache.compute_embeddings_for_prompts([args.validation_prompt], is_validation=True, load_from_cache=False)
+        # Use the same key format as retrieval to ensure cache hit
+        prompt_record = {
+            "prompt": args.validation_prompt,
+            "key": "validation",
+        }
+        embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts:
         negative_prompt = StateTracker.get_args().validation_negative_prompt

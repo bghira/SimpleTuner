@@ -2007,7 +2007,8 @@ class ImageModelFoundation(ModelFoundation):
         Returns:
             Dictionary of encoded null prompt embeddings
         """
-        return self._encode_prompts([""], is_negative_prompt=False)
+        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        return self._format_text_embedding(encoded_text)
 
     @classmethod
     def _iter_pipeline_classes(cls):

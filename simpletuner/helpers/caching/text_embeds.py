@@ -303,6 +303,18 @@ class TextEmbeddingCache(WebhookMixin):
 
     def load_from_cache(self, filename):
         result = self.data_backend.torch_load(filename)
+
+        # Handle backward compatibility: old cache files stored tuples, new format uses dicts
+        if isinstance(result, tuple):
+            # Convert old tuple format to new dict format using model's _format_text_embedding
+            if hasattr(self.model, "_format_text_embedding"):
+                result = self.model._format_text_embedding(result)
+            else:
+                logger.warning(
+                    f"Loaded tuple format from cache but model doesn't have _format_text_embedding method. "
+                    f"This cache file may be incompatible: {filename}"
+                )
+
         return result
 
     def encode_wan_prompt(
