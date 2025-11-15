@@ -98,6 +98,8 @@ class CollateFunctionTests(unittest.TestCase):
                         "crop_coordinates": [0, 0, 32, 32],
                         "data_backend_id": "backend-1",
                         "aspect_ratio": 1.0,
+                        "target_size": (32, 32),
+                        "intermediary_size": (64, 64),
                     }
                 ],
                 "conditioning_samples": [],
@@ -206,7 +208,12 @@ class CollateFunctionTests(unittest.TestCase):
             "config": {"instance_data_dir": "/cond"},
         }
         model = _StubModel(requires_conditioning=True, use_reference_embeds=True)
-        conditioning_sample = _StubConditioningSample("/cond/sample.png", "cond-1", caption="reference caption")
+        conditioning_sample = _StubConditioningSample(
+            "/cond/sample.png",
+            "cond-1",
+            caption="reference caption",
+            paired_training_path="sample.png",
+        )
 
         batch = copy.deepcopy(self.base_batch)
         batch[0]["conditioning_samples"] = [conditioning_sample]
@@ -254,6 +261,7 @@ class CollateFunctionTests(unittest.TestCase):
             paired_training_path="/train/custom.png",
         )
         batch = copy.deepcopy(self.base_batch)
+        batch[0]["training_samples"][0]["image_path"] = "/train/custom.png"
         batch[0]["conditioning_samples"] = [conditioning_sample]
 
         patchers, _ = self._patch_state_tracker(
@@ -277,6 +285,54 @@ class CollateFunctionTests(unittest.TestCase):
 
         pixels_mock.assert_called_once()
         self.assertEqual(pixels_mock.call_args[0][1], ["/train/custom.png"])
+        self.assertEqual(pixels_mock.call_args[0][2][0]["image_path"], "/train/custom.png")
+        self.assertIsNotNone(result["conditioning_pixel_values"])
+        self.assertIsNotNone(result["conditioning_latents"])
+
+    def test_collate_fn_handles_slash_prefixed_training_pairs(self):
+        text_outputs = {"prompt_embeds": torch.zeros(1, 1)}
+        cond_backend = {
+            "id": "cond-1",
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/cond"},
+            "conditioning_image_embed_cache": SimpleNamespace(),
+        }
+        backend_dict = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "conditioning_data": [cond_backend],
+            "config": {"instance_data_dir": "/train"},
+            "data_backend": _make_stub_data_backend(),
+        }
+        model = _StubModel(
+            requires_conditioning=False,
+            requires_conditioning_latents=True,
+            requires_conditioning_dataset=True,
+            requires_text_embed_image_context=True,
+        )
+
+        conditioning_sample = _StubConditioningSample("/cond/ref.png", "cond-1", paired_training_path="/sample.png")
+        batch = copy.deepcopy(self.base_batch)
+        batch[0]["conditioning_samples"] = [conditioning_sample]
+
+        patchers, _ = self._patch_state_tracker(
+            model=model,
+            data_backend=backend_dict,
+            text_outputs=text_outputs,
+            backend_lookup={"backend-1": backend_dict, "cond-1": cond_backend},
+        )
+
+        fake_pixels = torch.stack([torch.zeros(3, 8, 8)], dim=0)
+
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            stack.enter_context(patch.object(torch.Tensor, "pin_memory", lambda self: self))
+            with patch(
+                "simpletuner.helpers.training.collate.conditioning_pixels",
+                return_value=fake_pixels,
+            ):
+                result = collate_fn(batch)
+
         self.assertIsNotNone(result["conditioning_pixel_values"])
         self.assertIsNotNone(result["conditioning_latents"])
 

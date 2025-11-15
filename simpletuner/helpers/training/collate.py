@@ -183,17 +183,60 @@ def deepfloyd_pixels(filepaths, data_backend_id: str, model):
     return pixels
 
 
-def fetch_conditioning_pixel_values(fp, training_fp, conditioning_data_backend_id: str, training_data_backend_id: str):
-    """Worker method to fetch pixel values for a single image."""
-    # Retrieve data backends
-    conditioning_data_backend = StateTracker.get_data_backend(conditioning_data_backend_id)
-    training_data_backend = StateTracker.get_data_backend(training_data_backend_id)
+_REQUIRED_GEOMETRY_KEYS = (
+    "original_size",
+    "target_size",
+    "intermediary_size",
+    "crop_coordinates",
+    "aspect_ratio",
+)
 
-    # Use the provided training file path directly
-    training_sample = TrainingSample.from_image_path(
+
+def _build_training_sample_for_conditioning(training_fp, training_example, training_data_backend_id: str) -> TrainingSample:
+    """Prefer metadata from the collated training example when preparing conditioning samples."""
+    metadata = None
+    if isinstance(training_example, dict):
+        metadata = training_example.copy()
+    elif isinstance(training_example, TrainingSample):
+        metadata = training_example.image_metadata.copy() if training_example.image_metadata else None
+        if metadata is None:
+            return training_example
+    elif hasattr(training_example, "image_metadata"):
+        metadata = getattr(training_example, "image_metadata")
+        if isinstance(metadata, dict):
+            metadata = metadata.copy()
+
+    if metadata and all(metadata.get(key) is not None for key in _REQUIRED_GEOMETRY_KEYS):
+        metadata.setdefault("image_path", training_fp)
+        return TrainingSample(
+            image=None,
+            data_backend_id=training_data_backend_id,
+            image_metadata=metadata,
+            image_path=metadata.get("image_path", training_fp),
+        )
+
+    if not training_fp:
+        raise ValueError("Training sample path was not provided for conditioning alignment.")
+
+    return TrainingSample.from_image_path(
         image_path=training_fp,
         data_backend_id=training_data_backend_id,
     )
+
+
+def fetch_conditioning_pixel_values(
+    fp,
+    training_fp,
+    training_example,
+    conditioning_data_backend_id: str,
+    training_data_backend_id: str,
+):
+    """Worker method to fetch pixel values for a single image."""
+    # Retrieve data backends
+    conditioning_data_backend = StateTracker.get_data_backend(conditioning_data_backend_id)
+
+    # Prefer metadata captured during the original training sample preparation
+    training_sample = _build_training_sample_for_conditioning(training_fp, training_example, training_data_backend_id)
 
     conditioning_sample = TrainingSample.from_image_path(
         image_path=fp,
@@ -224,6 +267,7 @@ def fetch_conditioning_pixel_values(fp, training_fp, conditioning_data_backend_i
 def conditioning_pixels(
     filepaths,
     training_filepaths,
+    training_examples,
     conditioning_data_backend_id: str,
     training_data_backend_id: str,
 ):
@@ -235,6 +279,7 @@ def conditioning_pixels(
                     fetch_conditioning_pixel_values,
                     filepaths,
                     training_filepaths,
+                    training_examples,
                     [conditioning_data_backend_id] * len(filepaths),
                     [training_data_backend_id] * len(filepaths),
                 )
@@ -610,7 +655,7 @@ def collate_fn(batch):
             else:
                 conditioning_image_embeds = torch.stack(embed_tensors, dim=0)
 
-    conditioning_pairs_by_backend: dict[str, list[tuple[TrainingSample, str]]] = defaultdict(list)
+    conditioning_pairs_by_backend: dict[str, list[tuple[TrainingSample, str, dict | TrainingSample]]] = defaultdict(list)
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
@@ -643,6 +688,38 @@ def collate_fn(batch):
             )
 
         backend_lookup = {backend["id"]: backend for backend in conditioning_backends}
+        normalized_training_examples: dict[str, list[dict | TrainingSample]] = defaultdict(list)
+        for training_example in examples:
+            training_image_path = (
+                training_example.get("image_path")
+                if isinstance(training_example, dict)
+                else getattr(training_example, "image_path", None)
+            )
+            identifier = normalize_data_path(training_image_path, training_data_root)
+            if identifier:
+                normalized_training_examples[identifier].append(training_example)
+
+        def _pop_training_example_for_path(match_path: str):
+            if not match_path:
+                return None
+            candidates = [match_path]
+            stripped = match_path.lstrip("/\\")
+            if stripped and stripped != match_path:
+                candidates.append(stripped)
+            if training_data_root and stripped:
+                joined = os.path.join(training_data_root, stripped)
+                candidates.append(joined)
+            seen_keys = set()
+            for candidate in candidates:
+                normalized_candidate = normalize_data_path(candidate, training_data_root)
+                if not normalized_candidate or normalized_candidate in seen_keys:
+                    continue
+                seen_keys.add(normalized_candidate)
+                entries = normalized_training_examples.get(normalized_candidate)
+                if entries:
+                    return entries.pop()
+            return None
+
         training_resolution_errors: list[str] = []
         for cond_example in conditioning_examples:
             backend_id = getattr(cond_example, "_source_dataset_id", getattr(cond_example, "data_backend_id", None))
@@ -667,7 +744,14 @@ def collate_fn(batch):
                 )
                 continue
 
-            conditioning_pairs_by_backend[backend_id].append((cond_example, training_pair_path))
+            paired_training_example = _pop_training_example_for_path(training_pair_path)
+            if paired_training_example is None:
+                training_resolution_errors.append(
+                    f"{backend_id}: missing training metadata for {cond_example.image_path(basename_only=False)} (paired path: {training_pair_path})"
+                )
+                continue
+
+            conditioning_pairs_by_backend[backend_id].append((cond_example, training_pair_path, paired_training_example))
 
         if training_resolution_errors:
             preview = "; ".join(training_resolution_errors[:3])
@@ -730,9 +814,11 @@ def collate_fn(batch):
                     _examples = [pair[0] for pair in backend_pairs]
                     _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
                     paired_training_paths = [pair[1] for pair in backend_pairs]
+                    paired_training_examples = [pair[2] for pair in backend_pairs]
                     _pixel_values = conditioning_pixels(
                         _filepaths,
                         paired_training_paths,
+                        paired_training_examples,
                         backend_id,
                         data_backend_id,
                     )

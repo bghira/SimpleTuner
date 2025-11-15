@@ -241,7 +241,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         we shall use this quick and dirty method to retrieve n samples from the exhausted bucket.
         the thing is we can have a batch size of 4 and 1 image. so we'll have to just return the same image 4 times.
         """
-        available_images = self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+        available_images = self._get_bucket_images(bucket)
         if len(available_images) == 0:
             self.debug_log(f"Bucket {bucket} is empty.")
             return []
@@ -271,7 +271,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
-        image_path = random.choice(self.metadata_backend.aspect_ratio_bucket_indices[bucket])
+        bucket_images = self._get_bucket_images(bucket)
+        if not bucket_images:
+            raise ValueError(f"Bucket {bucket} is empty")
+        image_path = random.choice(bucket_images)
         return image_path
 
     def yield_single_image(self, filepath: str):
@@ -338,13 +341,45 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if raise_exhaustion_signal:
             raise MultiDatasetExhausted()
 
+    def _get_bucket_images(self, bucket):
+        """
+        Safely retrieve bucket images, trying both original type and type conversion.
+
+        Args:
+            bucket: The bucket key (could be float or str)
+
+        Returns:
+            list: List of images in the bucket, or empty list if bucket not found
+        """
+        # Try the original bucket key first
+        if bucket in self.metadata_backend.aspect_ratio_bucket_indices:
+            return self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+
+        # Try converting between str and float
+        try:
+            if isinstance(bucket, str):
+                # Try converting str to float
+                bucket_as_float = float(bucket)
+                if bucket_as_float in self.metadata_backend.aspect_ratio_bucket_indices:
+                    return self.metadata_backend.aspect_ratio_bucket_indices[bucket_as_float]
+            elif isinstance(bucket, (float, int)):
+                # Try converting float/int to str
+                bucket_as_str = str(bucket)
+                if bucket_as_str in self.metadata_backend.aspect_ratio_bucket_indices:
+                    return self.metadata_backend.aspect_ratio_bucket_indices[bucket_as_str]
+        except (ValueError, TypeError):
+            pass
+
+        # Bucket not found with either type
+        return []
+
     def _get_unseen_images(self, bucket=None):
         """
         Get unseen {self.sample_type_strs} from the specified bucket.
         If bucket is None, get unseen {self.sample_type_strs} from all buckets.
         """
-        if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
-            bucket_images = self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+        if bucket:
+            bucket_images = self._get_bucket_images(bucket)
             # Debug: Track bucket contents
             self.debug_log(
                 f"_get_unseen_images(bucket={bucket}): "
@@ -384,10 +419,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Handle buckets with insufficient images. Return True if we changed or reset the bucket.
         """
-        if len(self.metadata_backend.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
-            self.debug_log(
-                f"Bucket {bucket} has insufficient ({len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])}) images."
-            )
+        bucket_images = self._get_bucket_images(bucket)
+        if len(bucket_images) < self.batch_size:
+            self.debug_log(f"Bucket {bucket} has insufficient ({len(bucket_images)}) images.")
             if bucket not in self.exhausted_buckets:
                 self.debug_log(
                     f"Bucket {bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
@@ -396,9 +430,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log("Changing bucket to another random selection.")
             self.change_bucket()
             return True
-        self.debug_log(
-            f"Bucket {bucket} has sufficient ({len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])}) images."
-        )
+        self.debug_log(f"Bucket {bucket} has sufficient ({len(bucket_images)}) images.")
         return False
 
     def _get_next_bucket(self):
@@ -724,7 +756,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Debug: Track bucket state at iteration start
         if self.buckets:
             first_bucket = self.buckets[0]
-            bucket_images = self.metadata_backend.aspect_ratio_bucket_indices.get(first_bucket, [])
+            bucket_images = self._get_bucket_images(first_bucket)
             all_bucket_keys = list(self.metadata_backend.aspect_ratio_bucket_indices.keys())
             self.debug_log(
                 f"__iter__ called. Bucket {first_bucket} (type={type(first_bucket).__name__}) has {len(bucket_images)} images. "

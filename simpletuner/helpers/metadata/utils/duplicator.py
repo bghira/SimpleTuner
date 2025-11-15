@@ -224,6 +224,15 @@ class DatasetDuplicator:
         target_cfg["conditioning_config"] = cond_cfg
         target_cfg["conditioning_type"] = cond_cfg.get("conditioning_type", "reference_strict")
 
+        # Auto-generated conditioning datasets must use local storage
+        # even if the source dataset is HuggingFace, because conditioning
+        # images are derived/generated data that need to be cached locally
+        target_cfg["type"] = "local"
+
+        # Auto-generated conditioning datasets must use discovery metadata backend
+        # to work with local storage, even if source used huggingface metadata backend
+        target_cfg["metadata_backend"] = "discovery"
+
         # Override for controlnet
         if global_cfg.controlnet:
             target_cfg["conditioning_type"] = "controlnet"
