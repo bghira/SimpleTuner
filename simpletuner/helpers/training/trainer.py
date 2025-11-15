@@ -31,9 +31,9 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_d
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
     configure_multi_databackend,
-    random_dataloader_iterator,
     run_distillation_cache_generation,
 )
+from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -153,11 +153,9 @@ def _setup_logger(name: str, *, env_var: str | None = None, default_level: str =
 
     logger_instance = logging.getLogger(name)
     logger_instance.setLevel(numeric_level)
-    if not logger_instance.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-        logger_instance.addHandler(handler)
-    logger_instance.propagate = False
+    # Don't add handlers - let the logger propagate to the root logger
+    # which has the properly configured handlers from log_format.py
+    logger_instance.propagate = True
     return logger_instance
 
 
@@ -238,6 +236,10 @@ if hasattr(transformers.utils, "logging"):
     transformers.utils.logging.set_verbosity_warning()
 if hasattr(diffusers_logging, "set_verbosity_warning"):
     diffusers_logging.set_verbosity_warning()
+
+# Configure third-party loggers after imports
+if hasattr(log_format, "configure_third_party_loggers"):
+    log_format.configure_third_party_loggers()
 
 
 class Trainer:
@@ -655,6 +657,9 @@ class Trainer:
                 os.environ["RANK"] = str(self.accelerator.process_index)
                 os.environ["WORLD_SIZE"] = str(self.accelerator.num_processes)
             self._setup_accelerator_barrier_guard()
+            # Clean up any handlers that Accelerate or DeepSpeed may have added
+            if hasattr(log_format, "ensure_custom_handlers"):
+                log_format.ensure_custom_handlers()
         fsdp_active = False
         if self.accelerator and hasattr(self.accelerator, "state"):
             fsdp_active = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
@@ -1727,6 +1732,10 @@ class Trainer:
                 raise e
 
     def init_preprocessing_models(self, move_to_accelerator: bool = True):
+        # Suppress verbose transformers/diffusers logging before loading models
+        if hasattr(log_format, "configure_third_party_loggers"):
+            log_format.configure_third_party_loggers()
+
         # image embeddings
         self.init_vae(move_to_accelerator=move_to_accelerator)
         # text embeds
@@ -1749,6 +1758,10 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def init_load_base_model(self):
+        # Suppress verbose transformers/diffusers logging before loading models
+        if hasattr(log_format, "configure_third_party_loggers"):
+            log_format.configure_third_party_loggers()
+
         webhook_msg = f"Loading model: `{self.config.pretrained_model_name_or_path}`..."
         # Send to Discord but don't emit event (lifecycle event below will handle that)
         self._send_webhook_msg(message=webhook_msg, emit_event=False)
@@ -4330,6 +4343,14 @@ def run_trainer_job(config):
             return None
 
         launch_env = os.environ.copy()
+
+        # Force colors to be enabled in subprocess (stdout is piped so TTY detection fails)
+        # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
+        launch_env.pop("SIMPLETUNER_WEB_MODE", None)
+        launch_env.pop("SIMPLETUNER_DISABLE_COLORS", None)
+        launch_env["FORCE_COLOR"] = "1"
+        launch_env["CLICOLOR_FORCE"] = "1"
+
         if job_id:
             launch_env["SIMPLETUNER_JOB_ID"] = job_id
         if hf_token:

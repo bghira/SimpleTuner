@@ -83,13 +83,27 @@ class StableDiffusion1(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "negative_prompt_embeds": prompt_embeds,
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):

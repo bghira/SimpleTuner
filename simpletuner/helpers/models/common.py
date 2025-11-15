@@ -5,17 +5,17 @@ import os
 import random
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from diffusers import DiffusionPipeline
-from peft import LoraConfig
 from PIL import Image
 from torch.distributions import Beta
 from torchvision import transforms
-from transformers.utils import ContextManagers
 
 try:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -106,6 +106,12 @@ class ModelTypes(Enum):
     TRANSFORMER = "transformer"
     VAE = "vae"
     TEXT_ENCODER = "text_encoder"
+
+
+class TextEmbedCacheKey(Enum):
+    CAPTION = "caption"
+    FILENAME = "filename"
+    DATASET_AND_FILENAME = "dataset_and_filename"
 
 
 class PipelineConditioningImageEmbedder:
@@ -312,10 +318,31 @@ class ModelFoundation(ABC):
             return True
         return False
 
+    def text_embed_cache_key(self) -> TextEmbedCacheKey:
+        """
+        Controls how prompt embeddings are keyed inside the cache. Most models can
+        key by caption text; edit models can override to use filenames.
+        """
+        return TextEmbedCacheKey.CAPTION
+
+    def requires_text_embed_image_context(self) -> bool:
+        """
+        Returns True when encode_text_batch must be supplied with per-prompt image
+        context (e.g., reference pixels). Defaults to False.
+        """
+        return False
+
     def requires_conditioning_latents(self) -> bool:
         return False
 
     def requires_conditioning_image_embeds(self) -> bool:
+        return False
+
+    def conditioning_image_embeds_use_reference_dataset(self) -> bool:
+        """
+        Override to True when conditioning image embeds should be generated from the reference datasets
+        instead of the primary training dataset.
+        """
         return False
 
     def requires_validation_edit_captions(self) -> bool:
@@ -654,6 +681,21 @@ class ModelFoundation(ABC):
             latents = latents / scaling_factor
         return latents
 
+    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+        """
+        Pre-process latents before passing to validation preview decoder.
+
+        This is a hook for models that need to transform latents before decode.
+        For example, models using video decoders may need to add a frame dimension.
+
+        Args:
+            latents: The latents tensor to transform
+
+        Returns:
+            The transformed latents tensor
+        """
+        return latents
+
     def get_vae(self):
         """
         Returns the VAE model.
@@ -665,6 +707,8 @@ class ModelFoundation(ABC):
         return self.vae
 
     def load_vae(self, move_to_device: bool = True):
+        from transformers.utils import ContextManagers
+
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
 
@@ -779,6 +823,8 @@ class ModelFoundation(ABC):
             setattr(self, f"tokenizer_{tokenizer_idx}", tokenizer)
 
     def load_text_encoder(self, move_to_device: bool = True):
+        from transformers.utils import ContextManagers
+
         self.text_encoders = []
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
@@ -947,7 +993,7 @@ class ModelFoundation(ABC):
 
         if (
             self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 0
+            and self.config.gradient_checkpointing_interval > 1
             and self.MODEL_TYPE is ModelTypes.UNET
         ):
             logger.warning(
@@ -1363,7 +1409,7 @@ class ModelFoundation(ABC):
             ),
         )
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> "DiffusionPipeline":
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
         if self.model is not None and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None:
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
@@ -1634,14 +1680,24 @@ class ModelFoundation(ABC):
 
         return batch
 
-    def encode_text_batch(self, text_batch: list, is_negative_prompt: bool = False):
+    def encode_text_batch(
+        self,
+        text_batch: list,
+        is_negative_prompt: bool = False,
+        prompt_contexts: Optional[List[dict]] = None,
+    ):
         """
         Encodes a batch of text using the text encoder.
         """
         if not self.TEXT_ENCODER_CONFIGURATION:
             raise ValueError("No text encoder configuration found.")
-        encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
-        return self._format_text_embedding(encoded_text)
+        previous_context = getattr(self, "_current_prompt_contexts", None)
+        self._current_prompt_contexts = prompt_contexts
+        try:
+            encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
+            return self._format_text_embedding(encoded_text)
+        finally:
+            self._current_prompt_contexts = previous_context
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -1921,6 +1977,39 @@ class ImageModelFoundation(ModelFoundation):
         """
         return False
 
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        """
+        Whether to pre-encode negative prompts during validation setup.
+        Override for models that need per-sample negative prompt encoding (e.g., with reference images).
+        """
+        return True
+
+    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
+        """
+        Encode the negative prompt for validation.
+
+        Args:
+            negative_prompt: The negative prompt text to encode
+            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
+
+        Returns:
+            Dictionary of encoded negative prompt embeddings
+        """
+        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
+
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """
+        Encode the caption dropout (null) prompt.
+
+        Args:
+            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
+
+        Returns:
+            Dictionary of encoded null prompt embeddings
+        """
+        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        return self._format_text_embedding(encoded_text)
+
     @classmethod
     def _iter_pipeline_classes(cls):
         pipelines = getattr(cls, "PIPELINE_CLASSES", {})
@@ -2000,6 +2089,8 @@ class ImageModelFoundation(ModelFoundation):
             raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def add_lora_adapter(self):
+        from peft import LoraConfig
+
         target_modules = self.get_lora_target_layers()
         save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []

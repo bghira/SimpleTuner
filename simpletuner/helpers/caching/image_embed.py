@@ -1,7 +1,7 @@
 import logging
 import os
 from hashlib import sha256
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -113,8 +113,10 @@ class ImageEmbedCache(WebhookMixin):
 
         subfolders = ""
         if self.instance_data_dir:
-            subfolders = os.path.dirname(filepath).replace(self.instance_data_dir, "", 1)
-            subfolders = subfolders.lstrip(os.sep)
+            normalized_filepath = os.path.abspath(os.path.dirname(filepath))
+            normalized_instance = os.path.abspath(self.instance_data_dir)
+            if normalized_filepath.startswith(normalized_instance):
+                subfolders = normalized_filepath.replace(normalized_instance, "", 1).lstrip(os.sep)
 
         if subfolders:
             full_filename = os.path.join(self.cache_dir, subfolders, base_filename)
@@ -181,14 +183,26 @@ class ImageEmbedCache(WebhookMixin):
             return Image.fromarray(first_frame).convert("RGB")
         raise ValueError(f"Unsupported sample type for conditioning embed: {type(sample)}")
 
-    def _encode_batch(self, filepaths: List[str]) -> Tuple[List[str], List[Any]]:
+    def _encode_batch(
+        self, filepaths: List[str], captions: Optional[List[Optional[str]]] = None
+    ) -> Tuple[List[str], List[Any]]:
         self._ensure_embedder()
         valid_paths: List[str] = []
         images: List[Image.Image] = []
-        for fp in filepaths:
+        captions_for_batch: Optional[List[Optional[str]]]
+        if captions is not None:
+            captions_for_batch = []
+        else:
+            captions_for_batch = None
+        for idx, fp in enumerate(filepaths):
             try:
                 images.append(self._load_image_for_embedding(fp))
                 valid_paths.append(fp)
+                if captions_for_batch is not None:
+                    caption_value = None
+                    if captions is not None and idx < len(captions):
+                        caption_value = captions[idx]
+                    captions_for_batch.append(caption_value)
             except FileNotFoundError:
                 self.debug_log(f"Skipping missing file during conditioning embed generation: {fp}")
             except ValueError as exc:
@@ -196,7 +210,10 @@ class ImageEmbedCache(WebhookMixin):
         if not images:
             return [], []
         with torch.no_grad():
-            embeddings = self.embedder.encode(images)
+            encode_kwargs = {}
+            if captions_for_batch is not None:
+                encode_kwargs["captions"] = captions_for_batch
+            embeddings = self.embedder.encode(images, **encode_kwargs)
         if embeddings is None:
             return [], []
 
@@ -254,12 +271,19 @@ class ImageEmbedCache(WebhookMixin):
         if isinstance(current_cache, dict):
             current_cache[cache_path] = True
 
-    def process_files(self, filepaths: List[str]) -> None:
+    def process_files(self, filepaths: List[str], captions: Optional[List[Optional[str]]] = None) -> None:
         if not filepaths:
+            self.debug_log("process_files called with empty filepaths list")
             return
+        self.debug_log(f"process_files processing {len(filepaths)} files in batches of {self.embed_batch_size}")
         for idx in range(0, len(filepaths), self.embed_batch_size):
             batch_paths = filepaths[idx : idx + self.embed_batch_size]
-            valid_paths, embeddings = self._encode_batch(batch_paths)
+            batch_captions = None
+            if captions is not None:
+                batch_captions = captions[idx : idx + self.embed_batch_size]
+            self.debug_log(f"Processing batch {idx // self.embed_batch_size + 1}: {len(batch_paths)} files")
+            valid_paths, embeddings = self._encode_batch(batch_paths, captions=batch_captions)
+            self.debug_log(f"Encoded {len(valid_paths)} valid embeddings from batch")
             for fp, embed in zip(valid_paths, embeddings):
                 self._write_embed(fp, embed)
         if self.cache_dir:
@@ -271,7 +295,7 @@ class ImageEmbedCache(WebhookMixin):
                 data_backend_id=self.id,
             )
 
-    def retrieve_from_cache(self, filepath: str) -> torch.Tensor:
+    def retrieve_from_cache(self, filepath: str, caption: Optional[str] = None) -> torch.Tensor:
         if filepath not in self.image_path_to_embed_path:
             cache_path, _ = self.generate_embed_filename(filepath)
             self.image_path_to_embed_path[filepath] = cache_path
@@ -279,5 +303,6 @@ class ImageEmbedCache(WebhookMixin):
 
         cache_path = self.image_path_to_embed_path[filepath]
         if not self.cache_data_backend.exists(cache_path):
-            self.process_files([filepath])
+            caption_batch = [caption] if caption is not None else None
+            self.process_files([filepath], captions=caption_batch)
         return self.cache_data_backend.torch_load(cache_path)

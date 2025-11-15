@@ -69,7 +69,7 @@ class MetadataBackend:
             metadata_file = f"{metadata_file}_{cache_file_suffix}"
         self.cache_file = Path(f"{cache_file}.json")
         self.metadata_file = Path(f"{metadata_file}.json")
-        self.aspect_ratio_bucket_indices = {}
+        self._aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
         self.config = {}
@@ -131,6 +131,26 @@ class MetadataBackend:
                 max_duration_seconds=self.audio_max_duration_seconds if self.dataset_type is DatasetType.AUDIO else None,
                 truncation_mode=self.audio_truncation_mode if self.dataset_type is DatasetType.AUDIO else None,
             )
+
+    @property
+    def aspect_ratio_bucket_indices(self):
+        """Get aspect ratio bucket indices."""
+        return self._aspect_ratio_bucket_indices
+
+    @aspect_ratio_bucket_indices.setter
+    def aspect_ratio_bucket_indices(self, value):
+        """Set aspect ratio bucket indices with debug tracking."""
+        if hasattr(self, "_aspect_ratio_bucket_indices"):
+            old_count = sum(len(v) for v in self._aspect_ratio_bucket_indices.values())
+            new_count = sum(len(v) for v in value.values()) if value else 0
+            if old_count != new_count:
+                logger.debug(
+                    f"aspect_ratio_bucket_indices changed for {self.id}: "
+                    f"{old_count} -> {new_count} images. "
+                    f"Old buckets: {list(self._aspect_ratio_bucket_indices.keys())}, "
+                    f"New buckets: {list(value.keys()) if value else []}"
+                )
+        self._aspect_ratio_bucket_indices = value
 
     def _extract_audio_config(self) -> Dict[str, Any]:
         if self.dataset_config is None:
@@ -841,13 +861,13 @@ class MetadataBackend:
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str, save_cache: bool = True):
         """move incorrectly bucketed image to proper bucket"""
-        logger.warning(f"Found an image in bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}")
+        logger.debug(f"Found an image in bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}")
         self.remove_image(image_path, bucket)
         if actual_bucket in self.aspect_ratio_bucket_indices:
-            logger.warning("Moved image to bucket, it already existed.")
+            logger.debug("Moved image to bucket, it already existed.")
             self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
         else:
-            logger.warning("Created new bucket for that pesky image.")
+            logger.debug("Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
         if save_cache:
             self.save_cache()
@@ -892,6 +912,17 @@ class MetadataBackend:
         metadata[attribute] = value
         return self.set_metadata_by_filepath(filepath, metadata, update_json)
 
+    def update_metadata_attribute(self, filepath: str, attribute: str, value: any, update_json: bool = False) -> bool:
+        """
+        Lightweight helper used by batch utilities to amend cached metadata without
+        requiring every backend to implement its own setter.
+        """
+        if getattr(self, "read_only", False):
+            logger.debug(f"Skipping metadata update for {filepath}:{attribute} because backend is read-only.")
+            return False
+        self.set_metadata_attribute_by_filepath(filepath, attribute, value, update_json=update_json)
+        return True
+
     def set_metadata_by_filepath(self, filepath: str, metadata: dict, update_json: bool = True):
         with self.metadata_semaphor:
             logger.debug(f"Setting metadata for {filepath} to {metadata}.")
@@ -908,16 +939,13 @@ class MetadataBackend:
                 abs_path = self.data_backend.get_abs_path(path)
                 if path in self.image_metadata:
                     result = self.image_metadata.get(path, None)
-                    logger.debug(f"Retrieving metadata for path: {filepath}, result: {result}")
                     if result is not None:
                         return result
                 elif abs_path in self.image_metadata:
                     filepath = abs_path
                     result = self.image_metadata.get(filepath, None)
-                    logger.debug(f"Retrieving metadata for path: {filepath}, result: {result}")
                     if result is not None:
                         return result
-
             return None
 
         meta = self.image_metadata.get(filepath, None)

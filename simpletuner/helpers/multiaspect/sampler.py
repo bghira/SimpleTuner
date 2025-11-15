@@ -344,9 +344,22 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         If bucket is None, get unseen {self.sample_type_strs} from all buckets.
         """
         if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
+            bucket_images = self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+            # Debug: Track bucket contents
+            self.debug_log(
+                f"_get_unseen_images(bucket={bucket}): "
+                f"bucket has {len(bucket_images)} total images, "
+                f"seen_images has {len(self.metadata_backend.seen_images)} entries"
+            )
+            if len(bucket_images) == 0:
+                self.logger.warning(
+                    f"BUCKET {bucket} IS EMPTY! aspect_ratio_bucket_indices keys: "
+                    f"{list(self.metadata_backend.aspect_ratio_bucket_indices.keys())}"
+                )
+
             return [
                 (os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image)
-                for image in self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+                for image in bucket_images
                 if not self.metadata_backend.is_seen(image)
             ]
         elif bucket is None:
@@ -708,6 +721,26 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Iterate over the sampler to yield image paths in batches.
         """
+        # Debug: Track bucket state at iteration start
+        if self.buckets:
+            first_bucket = self.buckets[0]
+            bucket_images = self.metadata_backend.aspect_ratio_bucket_indices.get(first_bucket, [])
+            all_bucket_keys = list(self.metadata_backend.aspect_ratio_bucket_indices.keys())
+            self.debug_log(
+                f"__iter__ called. Bucket {first_bucket} (type={type(first_bucket).__name__}) has {len(bucket_images)} images. "
+                f"Total buckets in sampler: {len(self.buckets)}. "
+                f"aspect_ratio_bucket_indices has {len(all_bucket_keys)} keys: {all_bucket_keys} "
+                f"(key types: {[type(k).__name__ for k in all_bucket_keys[:3]]}). "
+                f"seen_images count: {len(self.metadata_backend.seen_images)}"
+            )
+            if len(bucket_images) == 0 and len(all_bucket_keys) > 0:
+                self.logger.warning(
+                    f"BUCKET KEY MISMATCH! Looking for {first_bucket} ({type(first_bucket).__name__}) "
+                    f"but aspect_ratio_bucket_indices has keys: {all_bucket_keys}"
+                )
+        else:
+            self.logger.warning(f"__iter__ called but self.buckets is EMPTY!")
+
         self._clear_batch_accumulator()  # Initialize an empty list to accumulate images for a batch
         self.change_bucket()
         while True:

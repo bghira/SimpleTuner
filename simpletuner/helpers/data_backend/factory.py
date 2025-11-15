@@ -95,7 +95,7 @@ from simpletuner.helpers.distillation.requirements import (
 )
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
-from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.models.common import ModelFoundation, TextEmbedCacheKey
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
@@ -106,6 +106,7 @@ from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 from .builders import build_backend_from_config, create_backend_builder
 from .config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig, create_backend_config
@@ -425,6 +426,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["crop_aspect_buckets"] = None
         output["config"]["crop_style"] = None
     output["config"]["disable_validation"] = backend.get("disable_validation", False)
+    if "conditioning_data" in backend:
+        output["config"]["conditioning_data"] = backend["conditioning_data"]
     if "source_dataset_id" in backend:
         output["config"]["source_dataset_id"] = backend["source_dataset_id"]
     if not is_audio_dataset:
@@ -1224,6 +1227,51 @@ class FactoryRegistry:
 
         return result if isinstance(result, bool) else False
 
+    def _validate_edit_model_conditioning_type(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Validate that Qwen edit models use appropriate conditioning_type values.
+
+        For Qwen edit models (edit-v1 and edit-v2), conditioning datasets must use
+        conditioning_type of either 'reference_strict' or 'reference_loose'.
+        Using 'controlnet' or other values will cause dimension mismatches during training.
+        """
+        # Check if this is a Qwen edit model
+        model_family = _get_arg_value(self.args, "model_family", "")
+        model_flavour = _get_arg_value(self.args, "model_flavour", "")
+
+        if model_family != "qwen_image":
+            return
+
+        # Check if this is an edit model variant
+        is_edit_model = False
+        try:
+            is_edit_model = self.model.is_edit_v1_model(model_flavour) or self.model.is_edit_v2_model(model_flavour)
+        except (AttributeError, TypeError):
+            # If we can't determine, check the flavour string
+            is_edit_model = "edit" in str(model_flavour).lower()
+
+        if not is_edit_model:
+            return
+
+        # Validate conditioning datasets
+        valid_conditioning_types = {"reference_strict", "reference_loose"}
+
+        for backend in data_backend_config:
+            dataset_type = backend.get("dataset_type", "image")
+            if dataset_type != "conditioning":
+                continue
+
+            conditioning_type = backend.get("conditioning_type", "")
+            backend_id = backend.get("id", "unknown")
+
+            if conditioning_type and conditioning_type not in valid_conditioning_types:
+                raise ValueError(
+                    f"Invalid conditioning_type='{conditioning_type}' for Qwen edit model in dataset '{backend_id}'. "
+                    f"Qwen edit models require conditioning_type to be either 'reference_strict' or 'reference_loose'. "
+                    f"Using 'controlnet' or other values will cause dimension mismatches during training. "
+                    f"Please update your dataset configuration."
+                )
+
     def _is_multi_process(self) -> bool:
         """Return True when accelerator reports multiple processes."""
         accelerator = getattr(self, "accelerator", None)
@@ -1656,9 +1704,7 @@ class FactoryRegistry:
                 with main_process_context:
                     self.model.get_pipeline()
                     logger.debug(f"rank {get_rank()} is computing the null embed")
-                    init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                        [""], return_concat=False, load_from_cache=False
-                    )
+                    init_backend["text_embed_cache"].encode_dropout_caption()
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
@@ -1995,6 +2041,9 @@ class FactoryRegistry:
         if not has_conditioning_dataset and requires_conditioning_dataset:
             raise ValueError("Model requires a conditioning dataset, but none was found in the data backend config file.")
 
+        # Validate conditioning_type for edit models
+        self._validate_edit_model_conditioning_type(data_backend_config)
+
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
         """Handle resolution type conversion from pixel_area to area."""
         dataset_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
@@ -2262,7 +2311,11 @@ class FactoryRegistry:
             if source_dataset_id is None:
                 # other configuration style where the *source* dataset config has conditioning_data defined
                 for source_backend in self.data_backends:
-                    source_conditioning_data_config = source_backend.get("conditioning_data", None)
+                    if isinstance(source_backend, str):
+                        # we have to retrieve the config from the state tracker
+                        source_backend = StateTracker.get_data_backend(source_backend)
+                    logger.debug(f"Checking backend for strict conditioning source: {source_backend}")
+                    source_conditioning_data_config = source_backend.get("config", {}).get("conditioning_data", None)
                     if (
                         isinstance(source_conditioning_data_config, str)
                         and source_conditioning_data_config == target_dataset_id
@@ -2561,13 +2614,14 @@ class FactoryRegistry:
                 use_captions = False
 
             try:
-                captions, images_missing_captions = PromptHandler.get_all_captions(
+                captions, images_missing_captions, caption_image_paths = PromptHandler.get_all_captions(
                     data_backend=init_backend["data_backend"],
                     instance_data_dir=init_backend["instance_data_dir"],
                     prepend_instance_prompt=prepend_instance_prompt,
                     instance_prompt=instance_prompt,
                     use_captions=use_captions,
                     caption_strategy=caption_strategy,
+                    return_image_paths=True,
                 )
             except AttributeError:
                 logger.debug("Skipping text embedding processing due to incomplete StateTracker configuration.")
@@ -2581,8 +2635,28 @@ class FactoryRegistry:
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
             self.model.get_pipeline()
+            prompt_records = []
+            key_type = self.model.text_embed_cache_key()
+            dataset_id = init_backend["id"]
+            dataset_root = init_backend.get("instance_data_dir")
+            for caption, image_path in zip(captions, caption_image_paths):
+                image_path_str = str(image_path)
+                normalized_identifier = normalize_data_path(image_path_str, dataset_root)
+                metadata = {
+                    "image_path": image_path_str,
+                    "data_backend_id": dataset_id,
+                    "prompt": caption,
+                    "dataset_relative_path": normalized_identifier,
+                }
+                if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
+                    key_value = f"{dataset_id}:{normalized_identifier}"
+                elif key_type is TextEmbedCacheKey.FILENAME:
+                    key_value = normalize_data_path(image_path_str, None)
+                else:
+                    key_value = caption
+                prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                captions, return_concat=False, load_from_cache=False
+                prompt_records, return_concat=False, load_from_cache=False
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
@@ -3563,64 +3637,6 @@ def get_backend_weight(backend_id, backend, step):
         return adjusted_prob
     else:
         raise ValueError(f"Unknown sampling weighting method: {sampling_method}")
-
-
-def random_dataloader_iterator(step, backends: dict):
-    prefetch_log_debug("Random dataloader iterator launched.")
-    args = StateTracker.get_args()
-    grad_steps = getattr(args, "gradient_accumulation_steps", 1) if args is not None else 1
-    if isinstance(grad_steps, (int, float)):
-        gradient_accumulation_steps = max(1, int(grad_steps))
-    else:
-        gradient_accumulation_steps = 1
-    logger.debug(f"Backends to select from {backends}")
-    if backends == {}:
-        logger.debug("All dataloaders exhausted. Moving to next epoch in main training loop.")
-        StateTracker.clear_exhausted_buckets()
-        StateTracker.set_repeats(repeats=0)
-        return False
-    while backends:
-        epoch_step = int(step / gradient_accumulation_steps)
-        StateTracker.set_epoch_step(epoch_step)
-
-        chosen_backend_id = select_dataloader_index(step, backends)
-        if chosen_backend_id is None:
-            logger.debug("No dataloader iterators were available.")
-            break
-
-        backend_instance = backends[chosen_backend_id]
-
-        try:
-            if hasattr(backend_instance, "get_data_loader") and callable(backend_instance.get_data_loader):
-                return backend_instance.get_data_loader()
-
-            try:
-                chosen_iter = iter(backend_instance)
-            except TypeError:
-                if hasattr(backend_instance, "__next__"):
-                    return next(backend_instance)
-                raise
-
-            return next(chosen_iter)
-        except MultiDatasetExhausted:
-            repeats = StateTracker.get_data_backend_config(chosen_backend_id).get("repeats", False)
-            if repeats and repeats > 0 and StateTracker.get_repeats(chosen_backend_id) < repeats:
-                StateTracker.increment_repeats(chosen_backend_id)
-                logger.debug(
-                    f"Dataset (name={chosen_backend_id}) is now sampling its {StateTracker.get_repeats(chosen_backend_id)} repeat out of {repeats} total allowed."
-                )
-                continue
-            logger.debug(
-                f"Dataset (name={chosen_backend_id}) is now exhausted after {StateTracker.get_repeats(chosen_backend_id)} repeat(s). Removing from list."
-            )
-            del backends[chosen_backend_id]
-            StateTracker.backend_exhausted(chosen_backend_id)
-            StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
-        finally:
-            if not backends:
-                logger.debug("All dataloaders exhausted. Moving to next epoch in main training loop.")
-                StateTracker.clear_exhausted_buckets()
-                return False
 
 
 def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> None:
