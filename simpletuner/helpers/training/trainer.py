@@ -31,14 +31,15 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_d
 from simpletuner.helpers.data_backend.factory import (
     BatchFetcher,
     configure_multi_databackend,
-    random_dataloader_iterator,
     run_distillation_cache_generation,
 )
+from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import trainable_parameter_count
+from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
 from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
 from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
@@ -152,11 +153,9 @@ def _setup_logger(name: str, *, env_var: str | None = None, default_level: str =
 
     logger_instance = logging.getLogger(name)
     logger_instance.setLevel(numeric_level)
-    if not logger_instance.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-        logger_instance.addHandler(handler)
-    logger_instance.propagate = False
+    # Don't add handlers - let the logger propagate to the root logger
+    # which has the properly configured handlers from log_format.py
+    logger_instance.propagate = True
     return logger_instance
 
 
@@ -237,6 +236,10 @@ if hasattr(transformers.utils, "logging"):
     transformers.utils.logging.set_verbosity_warning()
 if hasattr(diffusers_logging, "set_verbosity_warning"):
     diffusers_logging.set_verbosity_warning()
+
+# Configure third-party loggers after imports
+if hasattr(log_format, "configure_third_party_loggers"):
+    log_format.configure_third_party_loggers()
 
 
 class Trainer:
@@ -654,6 +657,9 @@ class Trainer:
                 os.environ["RANK"] = str(self.accelerator.process_index)
                 os.environ["WORLD_SIZE"] = str(self.accelerator.num_processes)
             self._setup_accelerator_barrier_guard()
+            # Clean up any handlers that Accelerate or DeepSpeed may have added
+            if hasattr(log_format, "ensure_custom_handlers"):
+                log_format.ensure_custom_handlers()
         fsdp_active = False
         if self.accelerator and hasattr(self.accelerator, "state"):
             fsdp_active = getattr(self.accelerator.state, "fsdp_plugin", None) is not None
@@ -1402,9 +1408,9 @@ class Trainer:
             self._exit_on_signal()
             self.init_validations()
             self._exit_on_signal()
-            self.enable_sageattention_inference()
+            AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
             self.init_benchmark_base_model()
-            self.disable_sageattention_inference()
+            AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
             self._exit_on_signal()
             self.resume_and_prepare()
             self._exit_on_signal()
@@ -1726,6 +1732,10 @@ class Trainer:
                 raise e
 
     def init_preprocessing_models(self, move_to_accelerator: bool = True):
+        # Suppress verbose transformers/diffusers logging before loading models
+        if hasattr(log_format, "configure_third_party_loggers"):
+            log_format.configure_third_party_loggers()
+
         # image embeddings
         self.init_vae(move_to_accelerator=move_to_accelerator)
         # text embeds
@@ -1748,6 +1758,10 @@ class Trainer:
         self.accelerator.wait_for_everyone()
 
     def init_load_base_model(self):
+        # Suppress verbose transformers/diffusers logging before loading models
+        if hasattr(log_format, "configure_third_party_loggers"):
+            log_format.configure_third_party_loggers()
+
         webhook_msg = f"Loading model: `{self.config.pretrained_model_name_or_path}`..."
         # Send to Discord but don't emit event (lifecycle event below will handle that)
         self._send_webhook_msg(message=webhook_msg, emit_event=False)
@@ -2293,6 +2307,7 @@ class Trainer:
             model_type_label=self.config.model_type_label,
             lycoris_wrapped_network=self.lycoris_wrapped_network,
         )
+        AttentionBackendController.attach_parameter_sink(self.params_to_optimize)
         logger.info(f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters")
 
         if optimizer_class is AdamWBF16:
@@ -2341,6 +2356,7 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
 
+        AttentionBackendController.bind_optimizer(self.optimizer)
         if is_optimi_available and self.config.optimizer_release_gradients and "optimi" in self.config.optimizer:
             logger.warning(
                 "Marking model for gradient release. This feature is experimental, and may use more VRAM or not work."
@@ -2675,6 +2691,7 @@ class Trainer:
         checkpoint_dir = os.path.join(self.config.output_dir, path)
         logger.info(f"Resuming from checkpoint {checkpoint_dir}")
         self.accelerator.load_state(checkpoint_dir)
+        AttentionBackendController.on_load_checkpoint(checkpoint_dir)
         if getattr(self, "distiller", None) is not None:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
@@ -2848,115 +2865,16 @@ class Trainer:
         self.init_post_load_freeze()
 
     def enable_sageattention_inference(self):
-        # if the sageattention is inference-only, we'll enable it.
-        # if it's training only, we'll disable it.
-        # if it's inference+training, we leave it alone.
-        if "sageattention" not in self.config.attention_mechanism or self.config.sageattention_usage == "training+inference":
-            return
-        if self.config.sageattention_usage == "inference":
-            self.enable_sageattention()
-        if self.config.sageattention_usage == "training":
-            self.disable_sageattention()
+        AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
 
     def disable_sageattention_inference(self):
-        # if the sageattention is inference-only, we'll disable it.
-        # if it's training only, we'll enable it.
-        # if it's inference+training, we leave it alone.
-        if "sageattention" not in self.config.attention_mechanism or self.config.sageattention_usage == "training+inference":
-            return
-        if self.config.sageattention_usage == "inference":
-            self.disable_sageattention()
-        if self.config.sageattention_usage == "training":
-            self.enable_sageattention()
-
-    def disable_sageattention(self):
-        if "sageattention" not in self.config.attention_mechanism:
-            return
-
-        if (
-            hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa")
-            and torch.nn.functional != torch.nn.functional.scaled_dot_product_attention_sdpa
-        ):
-            logger.info("Disabling SageAttention.")
-            setattr(
-                torch.nn.functional,
-                "scaled_dot_product_attention",
-                torch.nn.functional.scaled_dot_product_attention_sdpa,
-            )
+        AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
 
     def enable_sageattention(self):
-        if "sageattention" not in self.config.attention_mechanism:
-            return
+        AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
 
-        # we'll try and load SageAttention and overload pytorch's sdpa function.
-        try:
-            logger.info("Enabling SageAttention.")
-            from sageattention import (
-                sageattn,
-                sageattn_qk_int8_pv_fp8_cuda,
-                sageattn_qk_int8_pv_fp16_cuda,
-                sageattn_qk_int8_pv_fp16_triton,
-            )
-
-            sageattn_functions = {
-                "sageattention": sageattn,
-                "sageattention-int8-fp16-triton": sageattn_qk_int8_pv_fp16_triton,
-                "sageattention-int8-fp16-cuda": sageattn_qk_int8_pv_fp16_cuda,
-                "sageattention-int8-fp8-cuda": sageattn_qk_int8_pv_fp8_cuda,
-            }
-            # store the old SDPA for validations to use during VAE decode
-            if not hasattr(torch.nn.functional, "scaled_dot_product_attention_sdpa"):
-                setattr(
-                    torch.nn.functional,
-                    "scaled_dot_product_attention_sdpa",
-                    torch.nn.functional.scaled_dot_product_attention,
-                )
-
-            def sageattn_wrapper_for_torch_sdpa_with_fallback(
-                query,
-                key,
-                value,
-                attn_mask=None,
-                dropout_p=0.0,
-                is_causal=False,
-                scale=None,
-                enable_gqa=False,
-            ) -> torch.Tensor:
-                try:
-                    return sageattn_functions[self.config.attention_mechanism](query, key, value, is_causal=is_causal)
-                except:
-                    logger.error(
-                        f"Could not run SageAttention with {self.config.attention_mechanism}. Falling back to Pytorch SDPA."
-                    )
-                    return torch.nn.functional.scaled_dot_product_attention_sdpa(
-                        query,
-                        key,
-                        value,
-                        attn_mask,
-                        dropout_p,
-                        is_causal,
-                        scale,
-                        enable_gqa,
-                    )
-
-            torch.nn.functional.scaled_dot_product_attention = sageattn_wrapper_for_torch_sdpa_with_fallback
-            if not hasattr(torch.nn.functional, "scaled_dot_product_attention_sage"):
-                setattr(
-                    torch.nn.functional,
-                    "scaled_dot_product_attention_sage",
-                    torch.nn.functional.scaled_dot_product_attention,
-                )
-
-            if "training" in self.config.sageattention_usage:
-                logger.warning(
-                    f"Using {self.config.attention_mechanism} for attention calculations during training. Your attention layers will not be trained. To disable SageAttention, remove or set --attention_mechanism to a different value."
-                )
-        except ImportError as e:
-            logger.error(
-                "Could not import SageAttention. Please install it to use this --attention_mechanism=sageattention."
-            )
-            logger.error(repr(e))
-            sys.exit(1)
+    def disable_sageattention(self):
+        AttentionBackendController.restore_default()
 
     def move_models(self, destination: str = "accelerator"):
         is_accelerator_target = destination == "accelerator"
@@ -3007,10 +2925,8 @@ class Trainer:
         if group_offload_requested and is_accelerator_target:
             self.model.configure_group_offload()
 
-        if "sageattention" in self.config.attention_mechanism and "training" in self.config.sageattention_usage:
-            logger.info("Using SageAttention for training. This is an unsupported, experimental configuration.")
-            self.enable_sageattention()
-        elif self.config.attention_mechanism == "xformers":
+        AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
+        if self.config.attention_mechanism == "xformers":
             if is_xformers_available():
                 import xformers  # type: ignore # noqa
 
@@ -3504,6 +3420,10 @@ class Trainer:
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         self.accelerator.save_state(save_path_tmp)
+        AttentionBackendController.on_save_checkpoint(
+            save_path_tmp,
+            is_main_process=getattr(self.accelerator, "is_main_process", True),
+        )
         event = lifecycle_stage_event(
             key="checkpoint_save",
             label="Saving Checkpoint",
@@ -4063,7 +3983,7 @@ class Trainer:
                     should_validate = manual_validation_requested or self.validation.would_validate()
                     if should_validate:
                         self.mark_optimizer_eval()
-                        self.enable_sageattention_inference()
+                        AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
                         self.disable_gradient_checkpointing()
                     self.validation.run_validations(
                         validation_type="intermediary",
@@ -4071,7 +3991,7 @@ class Trainer:
                         force_evaluation=manual_validation_requested,
                     )
                     if should_validate:
-                        self.disable_sageattention_inference()
+                        AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
                         self.enable_gradient_checkpointing()
                         self.mark_optimizer_train()
                 self.accelerator.wait_for_everyone()
@@ -4120,7 +4040,7 @@ class Trainer:
             self._emit_event(event)
             self.mark_optimizer_eval()
             if self.validation is not None:
-                self.enable_sageattention_inference()
+                AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
                 self.disable_gradient_checkpointing()
                 # Emit validation start lifecycle event for final validations
                 validation_start_event = lifecycle_stage_event(
@@ -4147,7 +4067,7 @@ class Trainer:
                 )
                 self._emit_event(validation_completed_event)
                 # we don't have to do this but we will anyway.
-                self.disable_sageattention_inference()
+                AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
             if self.model.get_trained_component() is not None:
                 self.model.model = unwrap_model(self.accelerator, self.model.model)
             if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
@@ -4423,6 +4343,14 @@ def run_trainer_job(config):
             return None
 
         launch_env = os.environ.copy()
+
+        # Force colors to be enabled in subprocess (stdout is piped so TTY detection fails)
+        # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
+        launch_env.pop("SIMPLETUNER_WEB_MODE", None)
+        launch_env.pop("SIMPLETUNER_DISABLE_COLORS", None)
+        launch_env["FORCE_COLOR"] = "1"
+        launch_env["CLICOLOR_FORCE"] = "1"
+
         if job_id:
             launch_env["SIMPLETUNER_JOB_ID"] = job_id
         if hf_token:

@@ -419,6 +419,8 @@ class WebhookLogger(logging.Logger):
         stacklevel: int = 1,
     ) -> None:
         self._apply_managed_level()
+        if "Redirects are currently not supported" in str(msg):
+            return
         super()._log(level, msg, args, exc_info=exc_info, extra=extra, stack_info=stack_info, stacklevel=stacklevel)
         if self._should_forward_to_webhook():
             self._forward_to_webhook(level, msg, args)

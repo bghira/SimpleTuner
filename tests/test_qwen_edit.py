@@ -2,6 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 import torch
+import torch.nn as nn
 
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.qwen_image.model import QwenImage, QwenImageEditPipeline, QwenImageEditPlusPipeline
@@ -60,10 +61,13 @@ class DummyVAE:
         return SimpleNamespace(latent_dist=DummyLatentDist(sample))
 
 
-class DummyTransformer:
-    config = SimpleNamespace(in_channels=64)
+class DummyTransformer(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(in_channels=64)
+        self.last_img_shapes = None
 
-    def __call__(
+    def forward(
         self,
         hidden_states,
         timestep,
@@ -74,6 +78,7 @@ class DummyTransformer:
         txt_seq_lens=None,
         return_dict=False,
     ):
+        self.last_img_shapes = img_shapes
         return (hidden_states,)
 
 
@@ -121,7 +126,11 @@ class QwenEditTests(unittest.TestCase):
             device=torch.device("cpu"),
             dtype=torch.float32,
         )
-        outputs = embedder.encode(["img-a", "img-b"])
+        sample_images = [
+            torch.zeros(3, 2, 2),
+            torch.ones(3, 2, 2),
+        ]
+        outputs = embedder.encode(sample_images)
         self.assertEqual(len(outputs), 2)
         for entry in outputs:
             self.assertIn("pixel_values", entry)
@@ -138,8 +147,9 @@ class QwenEditTests(unittest.TestCase):
 
         batch = {
             "prompts": ["a", "b"],
-            "conditioning_pixel_values": torch.zeros(2, 3, 4, 4),
-            "conditioning_image_embeds": {"pixel_values": torch.zeros(2, 3, 4, 4)},
+            "conditioning_latents": torch.zeros(2, 16, 4, 4),
+            "prompt_embeds": prompt_embeds.clone(),
+            "encoder_attention_mask": prompt_mask.clone(),
         }
 
         updated = model._prepare_edit_batch_v1(batch)
@@ -147,8 +157,10 @@ class QwenEditTests(unittest.TestCase):
         torch.testing.assert_close(updated["prompt_embeds"], prompt_embeds.to(dtype=model.config.weight_dtype))
         torch.testing.assert_close(updated["encoder_attention_mask"], prompt_mask)
         self.assertIn("edit_control_latents", updated)
-        self.assertEqual(updated["edit_control_latents"].shape, torch.Size([2, 16, 4, 4]))
-        self.assertIsNotNone(pipeline.captured_images)
+        torch.testing.assert_close(
+            updated["edit_control_latents"],
+            torch.zeros(2, 16, 4, 4, dtype=model.config.weight_dtype),
+        )
 
     def test_model_predict_edit_path_restores_latent_shape(self):
         prompt_embeds = torch.randn(1, 4, 8)
@@ -172,6 +184,9 @@ class QwenEditTests(unittest.TestCase):
         self.assertIn("model_prediction", result)
         prediction = result["model_prediction"]
         self.assertEqual(prediction.shape, latents.shape)
+        self.assertEqual(len(model.model.last_img_shapes), 1)
+        self.assertEqual(len(model.model.last_img_shapes[0]), 2)
+        self.assertEqual(model.model.last_img_shapes[0][0], (1, 4, 4))
 
     def test_prepare_edit_batch_v2_builds_control_tensors(self):
         prompt_embeds = torch.ones(1, 4, 8)
@@ -220,6 +235,9 @@ class QwenEditTests(unittest.TestCase):
         self.assertIn("model_prediction", result)
         prediction = result["model_prediction"]
         self.assertEqual(prediction.shape, latents.shape)
+        self.assertEqual(len(model.model.last_img_shapes), 1)
+        self.assertEqual(len(model.model.last_img_shapes[0]), 2)
+        self.assertEqual(model.model.last_img_shapes[0][0], (1, 4, 4))
 
     def test_edit_flavours_require_conditioning_latents(self):
         edit_v1 = self._make_model("edit-v1")

@@ -707,10 +707,14 @@ class QwenImageTransformer2DModel(
         hidden_states, patch_h, patch_w = self._tokenize_hidden_states(hidden_states)
 
         if (patch_h is None or patch_w is None) and img_shapes:
-            # img_shapes entries have the form (frame, height, width) where height/width are already scaled by patch
-            _, grid_h, grid_w = img_shapes[0]
-            patch_h = patch_h or grid_h
-            patch_w = patch_w or grid_w
+            # img_shapes entries have the form (frame, height, width) and may be wrapped per-sample.
+            primary_shape = img_shapes[0]
+            if isinstance(primary_shape, list):
+                primary_shape = primary_shape[0] if primary_shape else None
+            if primary_shape is not None:
+                _, grid_h, grid_w = primary_shape
+                patch_h = patch_h or grid_h
+                patch_w = patch_w or grid_w
 
         if img_shapes is None:
             if patch_h is None or patch_w is None:
@@ -811,7 +815,19 @@ class QwenImageTransformer2DModel(
             # remove `lora_scale` from each PEFT layer
             unscale_lora_layers(self, lora_scale)
 
-        output_image = self._untokenize_hidden_states(output, patch_h, patch_w)
+        # Check if output token count matches expected dimensions for untokenization
+        # For edit models with concatenated inputs, the output will have more tokens than expected
+        # In that case, return packed tokens and let the pipeline handle slicing and untokenization
+        expected_tokens = patch_h * patch_w if (patch_h is not None and patch_w is not None) else None
+        actual_tokens = output.shape[1]
+
+        if expected_tokens is not None and actual_tokens != expected_tokens:
+            # Token count mismatch - likely concatenated inputs for edit model
+            # Return packed tokens without untokenization
+            output_image = output
+        else:
+            # Normal case - untokenize to image format
+            output_image = self._untokenize_hidden_states(output, patch_h, patch_w)
 
         if not return_dict:
             return (output_image,)

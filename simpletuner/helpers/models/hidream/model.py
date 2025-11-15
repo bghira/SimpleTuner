@@ -256,19 +256,43 @@ class HiDream(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        t5_embeds = text_embedding["t5_prompt_embeds"]
+        llama_embeds = text_embedding["llama_prompt_embeds"]
+        pooled_embeds = text_embedding["pooled_prompt_embeds"]
+
+        # Add batch dimension if missing
+        if t5_embeds.dim() == 2:  # Shape: [seq, dim]
+            t5_embeds = t5_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if llama_embeds.dim() == 2:  # Shape: [seq, dim]
+            llama_embeds = llama_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_embeds.dim() == 1:  # Shape: [dim]
+            pooled_embeds = pooled_embeds.unsqueeze(0)  # Shape: [1, dim]
+
         return {
-            "t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "t5_prompt_embeds": t5_embeds.to(self.accelerator.device),
+            "llama_prompt_embeds": llama_embeds.to(self.accelerator.device),
+            "pooled_prompt_embeds": pooled_embeds.to(self.accelerator.device),
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        t5_embeds = text_embedding["t5_prompt_embeds"]
+        llama_embeds = text_embedding["llama_prompt_embeds"]
+        pooled_embeds = text_embedding["pooled_prompt_embeds"]
+
+        # Add batch dimension if missing
+        if t5_embeds.dim() == 2:  # Shape: [seq, dim]
+            t5_embeds = t5_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if llama_embeds.dim() == 2:  # Shape: [seq, dim]
+            llama_embeds = llama_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_embeds.dim() == 1:  # Shape: [dim]
+            pooled_embeds = pooled_embeds.unsqueeze(0)  # Shape: [1, dim]
+
         return {
-            "negative_t5_prompt_embeds": text_embedding["t5_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "negative_llama_prompt_embeds": text_embedding["llama_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
-            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0).to(self.accelerator.device),
+            "negative_t5_prompt_embeds": t5_embeds.to(self.accelerator.device),
+            "negative_llama_prompt_embeds": llama_embeds.to(self.accelerator.device),
+            "negative_pooled_prompt_embeds": pooled_embeds.to(self.accelerator.device),
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):

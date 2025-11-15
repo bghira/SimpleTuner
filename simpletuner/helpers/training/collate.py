@@ -10,8 +10,10 @@ import torch
 from PIL import Image
 
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.training.multi_process import _get_rank, rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger("collate_fn")
 logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
@@ -75,23 +77,6 @@ def extract_filepaths(examples):
     return filepaths
 
 
-def _normalize_training_identifier(path, root=None):
-    if not path:
-        return None
-    candidate_path = path
-    if root and not os.path.isabs(candidate_path):
-        candidate_path = os.path.join(root, candidate_path)
-    abs_path = os.path.abspath(os.path.normpath(candidate_path))
-    if root:
-        abs_root = os.path.abspath(os.path.normpath(root))
-        try:
-            if os.path.commonpath([abs_path, abs_root]) == abs_root:
-                return os.path.normcase(os.path.relpath(abs_path, abs_root))
-        except ValueError:
-            pass
-    return os.path.normcase(abs_path)
-
-
 def describe_missing_conditioning_pairs(
     examples,
     conditioning_examples,
@@ -106,7 +91,7 @@ def describe_missing_conditioning_pairs(
 
     expected_counter = Counter()
     for example in examples:
-        identifier = _normalize_training_identifier(example.get("image_path"), training_root)
+        identifier = normalize_data_path(example.get("image_path"), training_root)
         if identifier is not None:
             expected_counter[identifier] += 1
     if not expected_counter:
@@ -121,7 +106,7 @@ def describe_missing_conditioning_pairs(
         identifier = None
         if hasattr(cond_example, "training_sample_path"):
             try:
-                identifier = _normalize_training_identifier(
+                identifier = normalize_data_path(
                     cond_example.training_sample_path(training_backend_id),
                     training_root,
                 )
@@ -198,17 +183,60 @@ def deepfloyd_pixels(filepaths, data_backend_id: str, model):
     return pixels
 
 
-def fetch_conditioning_pixel_values(fp, training_fp, conditioning_data_backend_id: str, training_data_backend_id: str):
-    """Worker method to fetch pixel values for a single image."""
-    # Retrieve data backends
-    conditioning_data_backend = StateTracker.get_data_backend(conditioning_data_backend_id)
-    training_data_backend = StateTracker.get_data_backend(training_data_backend_id)
+_REQUIRED_GEOMETRY_KEYS = (
+    "original_size",
+    "target_size",
+    "intermediary_size",
+    "crop_coordinates",
+    "aspect_ratio",
+)
 
-    # Use the provided training file path directly
-    training_sample = TrainingSample.from_image_path(
+
+def _build_training_sample_for_conditioning(training_fp, training_example, training_data_backend_id: str) -> TrainingSample:
+    """Prefer metadata from the collated training example when preparing conditioning samples."""
+    metadata = None
+    if isinstance(training_example, dict):
+        metadata = training_example.copy()
+    elif isinstance(training_example, TrainingSample):
+        metadata = training_example.image_metadata.copy() if training_example.image_metadata else None
+        if metadata is None:
+            return training_example
+    elif hasattr(training_example, "image_metadata"):
+        metadata = getattr(training_example, "image_metadata")
+        if isinstance(metadata, dict):
+            metadata = metadata.copy()
+
+    if metadata and all(metadata.get(key) is not None for key in _REQUIRED_GEOMETRY_KEYS):
+        metadata.setdefault("image_path", training_fp)
+        return TrainingSample(
+            image=None,
+            data_backend_id=training_data_backend_id,
+            image_metadata=metadata,
+            image_path=metadata.get("image_path", training_fp),
+        )
+
+    if not training_fp:
+        raise ValueError("Training sample path was not provided for conditioning alignment.")
+
+    return TrainingSample.from_image_path(
         image_path=training_fp,
         data_backend_id=training_data_backend_id,
     )
+
+
+def fetch_conditioning_pixel_values(
+    fp,
+    training_fp,
+    training_example,
+    conditioning_data_backend_id: str,
+    training_data_backend_id: str,
+):
+    """Worker method to fetch pixel values for a single image."""
+    # Retrieve data backends
+    conditioning_data_backend = StateTracker.get_data_backend(conditioning_data_backend_id)
+
+    # Prefer metadata captured during the original training sample preparation
+    training_sample = _build_training_sample_for_conditioning(training_fp, training_example, training_data_backend_id)
 
     conditioning_sample = TrainingSample.from_image_path(
         image_path=fp,
@@ -239,6 +267,7 @@ def fetch_conditioning_pixel_values(fp, training_fp, conditioning_data_backend_i
 def conditioning_pixels(
     filepaths,
     training_filepaths,
+    training_examples,
     conditioning_data_backend_id: str,
     training_data_backend_id: str,
 ):
@@ -250,6 +279,7 @@ def conditioning_pixels(
                     fetch_conditioning_pixel_values,
                     filepaths,
                     training_filepaths,
+                    training_examples,
                     [conditioning_data_backend_id] * len(filepaths),
                     [training_data_backend_id] * len(filepaths),
                 )
@@ -284,15 +314,21 @@ def compute_latents(filepaths, data_backend_id: str, model):
     return latents
 
 
-def compute_single_embedding(caption, text_embed_cache):
+def compute_single_embedding(prompt_entry, text_embed_cache):
     """Worker function to compute embedding for a single caption."""
-    if caption == "" or not caption:
+    if not isinstance(prompt_entry, dict):
+        prompt_entry = {"prompt": prompt_entry, "key": prompt_entry, "metadata": {}}
+    prompt_value = prompt_entry.get("prompt")
+    if prompt_value == "" or not prompt_value:
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
+        # Use sentinel key for filename-based caches to match encode_dropout_caption()
+        if text_embed_cache._requires_path_based_keys:
+            prompt_entry["key"] = "__caption_dropout__"
         debug_log(
-            f"Hashing caption '{caption}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
+            f"Hashing caption '{prompt_value}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
         )
-    text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(prompts=[caption])
+    text_encoder_output = text_embed_cache.compute_prompt_embeddings_with_model(prompt_records=[prompt_entry])
     logger.debug(f"Keys: {text_encoder_output.keys()}")
     for key, val in text_encoder_output.items():
         if isinstance(val, torch.Tensor):
@@ -302,11 +338,11 @@ def compute_single_embedding(caption, text_embed_cache):
     return text_encoder_output
 
 
-def compute_prompt_embeddings(captions, text_embed_cache, model):
+def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
     """
     Retrieve / compute text embeds in parallel.
     Args:
-        captions: List of strings
+        prompt_entries: List of strings or prompt records
         text_embed_cache: TextEmbedCache instance
 
     Returns:
@@ -315,37 +351,91 @@ def compute_prompt_embeddings(captions, text_embed_cache, model):
     """
     debug_log(" -> get embed from cache")
     # Use a thread pool to compute embeddings concurrently
+    normalized_entries = []
+    for entry in prompt_entries:
+        if isinstance(entry, dict):
+            normalized_entries.append(entry)
+        else:
+            normalized_entries.append({"prompt": entry, "key": entry, "metadata": {}})
     with ThreadPoolExecutor() as executor:
         text_encoder_output = list(
             executor.map(
                 compute_single_embedding,
-                captions,
-                [text_embed_cache] * len(captions),
+                normalized_entries,
+                [text_embed_cache] * len(normalized_entries),
             )
         )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
+
+    def _collate_tensors(tensors):
+        """
+        Intelligently collate a list of tensors, handling both 2D and 3D cases.
+
+        - If tensors are 2D [seq, dim], stack to get [batch, seq, dim]
+        - If tensors are 3D [1, seq, dim], concatenate along dim=0 to get [batch, seq, dim]
+        - If tensors have inconsistent dimensions, normalize them first
+        """
+        if not tensors:
+            return None
+
+        first_tensor = tensors[0]
+        dims = first_tensor.dim()
+
+        # Check if all tensors have the same number of dimensions
+        all_same_dims = all(t.dim() == dims for t in tensors)
+
+        if dims == 2:
+            # 2D tensors: [seq, dim] - use stack
+            return torch.stack(tensors)
+        elif dims == 3 and all_same_dims:
+            # 3D tensors: [batch, seq, dim] - use cat along batch dimension
+            # This handles cached embeddings that already include batch dimension
+            return torch.cat(tensors, dim=0)
+        elif dims == 1:
+            # 1D tensors - use stack
+            return torch.stack(tensors)
+        else:
+            # Mixed dimensions - normalize to 3D then concatenate
+            normalized = []
+            for t in tensors:
+                if t.dim() == 2:
+                    # Add batch dimension
+                    normalized.append(t.unsqueeze(0))
+                elif t.dim() == 3:
+                    normalized.append(t)
+                elif t.dim() == 1:
+                    # Add batch dimension
+                    normalized.append(t.unsqueeze(0))
+                else:
+                    raise ValueError(f"Unexpected tensor dimension: {t.dim()} with shape {t.shape}")
+            return torch.cat(normalized, dim=0)
+
     # Is there a better way to do this?
     transformed_encoder_output = model.collate_prompt_embeds(text_encoder_output)
     if transformed_encoder_output == {}:
         if "prompt_embeds" in text_encoder_output[0]:
-            transformed_encoder_output["prompt_embeds"] = torch.stack([t["prompt_embeds"] for t in text_encoder_output])
+            transformed_encoder_output["prompt_embeds"] = _collate_tensors([t["prompt_embeds"] for t in text_encoder_output])
         if "pooled_prompt_embeds" in text_encoder_output[0]:
-            transformed_encoder_output["pooled_prompt_embeds"] = torch.stack(
+            transformed_encoder_output["pooled_prompt_embeds"] = _collate_tensors(
                 [t["pooled_prompt_embeds"] for t in text_encoder_output]
             )
         # compatibility for old style
         if "attention_mask" in text_encoder_output[0]:
-            transformed_encoder_output["attention_masks"] = torch.stack([t["attention_mask"] for t in text_encoder_output])
+            transformed_encoder_output["attention_masks"] = _collate_tensors(
+                [t["attention_mask"] for t in text_encoder_output]
+            )
         if "prompt_attention_mask" in text_encoder_output[0]:
-            transformed_encoder_output["attention_masks"] = torch.stack(
+            transformed_encoder_output["attention_masks"] = _collate_tensors(
                 [t["prompt_attention_mask"] for t in text_encoder_output]
             )
         # new style
         if "attention_masks" in text_encoder_output[0]:
-            transformed_encoder_output["attention_masks"] = torch.stack([t["attention_masks"] for t in text_encoder_output])
+            transformed_encoder_output["attention_masks"] = _collate_tensors(
+                [t["attention_masks"] for t in text_encoder_output]
+            )
 
         if "time_ids" in text_encoder_output[0]:
-            transformed_encoder_output["time_ids"] = torch.stack([t["time_ids"] for t in text_encoder_output])
+            transformed_encoder_output["time_ids"] = _collate_tensors([t["time_ids"] for t in text_encoder_output])
 
     if transformed_encoder_output == {}:
         raise Exception(f"Could not compute text encoder output: {text_encoder_output}")
@@ -521,13 +611,17 @@ def collate_fn(batch):
         latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
 
     conditioning_image_embeds = None
+    conditioning_captions = [
+        (
+            sample.caption
+            if getattr(sample, "caption", None)
+            else getattr(sample, "image_metadata", {}).get("instance_prompt_text", "")
+        )
+        for sample in conditioning_examples
+    ]
     if model.requires_conditioning_image_embeds():
-        cache = data_backend.get("conditioning_image_embed_cache")
-        if cache is None:
-            raise ValueError("Conditioning image embed cache is required but was not configured.")
-        embed_tensors = []
-        for path in filepaths:
-            embed_tensor = cache.retrieve_from_cache(path)
+
+        def _prepare_embed_tensor(embed_tensor):
             if isinstance(embed_tensor, dict):
                 processed_entry = {}
                 for key, value in embed_tensor.items():
@@ -535,18 +629,40 @@ def collate_fn(batch):
                         processed_entry[key] = value.to("cpu").pin_memory()
                     else:
                         processed_entry[key] = value
-                embed_tensors.append(processed_entry)
-                continue
-            if not torch.backends.mps.is_available():
-                embed_tensor = embed_tensor.to("cpu").pin_memory()
-            embed_tensors.append(embed_tensor)
+                return processed_entry
+            if torch.is_tensor(embed_tensor) and not torch.backends.mps.is_available():
+                return embed_tensor.to("cpu").pin_memory()
+            return embed_tensor
+
+        embed_tensors = []
+        use_reference_embeds = bool(
+            conditioning_examples and getattr(model, "conditioning_image_embeds_use_reference_dataset", lambda: False)()
+        )
+        if use_reference_embeds:
+            for sample, caption in zip(conditioning_examples, conditioning_captions):
+                cond_backend = StateTracker.get_data_backend(sample.data_backend_id)
+                cache = cond_backend.get("conditioning_image_embed_cache")
+                if cache is None:
+                    raise ValueError(
+                        f"Conditioning dataset {sample.data_backend_id} is missing a conditioning image embed cache."
+                    )
+                embed_tensor = cache.retrieve_from_cache(sample.image_path(basename_only=False), caption=caption or None)
+                embed_tensors.append(_prepare_embed_tensor(embed_tensor))
+        else:
+            cache = data_backend.get("conditioning_image_embed_cache")
+            if cache is None:
+                raise ValueError("Conditioning image embed cache is required but was not configured.")
+            for path in filepaths:
+                embed_tensor = cache.retrieve_from_cache(path, caption=None)
+                embed_tensors.append(_prepare_embed_tensor(embed_tensor))
+
         if embed_tensors:
             if isinstance(embed_tensors[0], dict):
                 conditioning_image_embeds = embed_tensors
             else:
                 conditioning_image_embeds = torch.stack(embed_tensors, dim=0)
 
-    training_filepaths = []
+    conditioning_pairs_by_backend: dict[str, list[tuple[TrainingSample, str, dict | TrainingSample]]] = defaultdict(list)
     conditioning_type = None
     conditioning_pixel_values = None
     conditioning_latents = None
@@ -578,39 +694,102 @@ def collate_fn(batch):
                 f"{detail_suffix}"
             )
 
-        conditioning_map = defaultdict(list)
-        for i, cond_example in enumerate(conditioning_examples):
-            train_example = examples[i % len(examples)]
-            cond_backend = conditioning_backends[i // len(examples)]
-            # Ensure conditioning types match
+        backend_lookup = {backend["id"]: backend for backend in conditioning_backends}
+        normalized_training_examples: dict[str, list[dict | TrainingSample]] = defaultdict(list)
+        for training_example in examples:
+            training_image_path = (
+                training_example.get("image_path")
+                if isinstance(training_example, dict)
+                else getattr(training_example, "image_path", None)
+            )
+            identifier = normalize_data_path(training_image_path, training_data_root)
+            if identifier:
+                normalized_training_examples[identifier].append(training_example)
+
+        def _pop_training_example_for_path(match_path: str):
+            if not match_path:
+                return None
+            candidates = [match_path]
+            stripped = match_path.lstrip("/\\")
+            if stripped and stripped != match_path:
+                candidates.append(stripped)
+            if training_data_root and stripped:
+                joined = os.path.join(training_data_root, stripped)
+                candidates.append(joined)
+            seen_keys = set()
+            for candidate in candidates:
+                normalized_candidate = normalize_data_path(candidate, training_data_root)
+                if not normalized_candidate or normalized_candidate in seen_keys:
+                    continue
+                seen_keys.add(normalized_candidate)
+                entries = normalized_training_examples.get(normalized_candidate)
+                if entries:
+                    return entries.pop()
+            return None
+
+        training_resolution_errors: list[str] = []
+        for cond_example in conditioning_examples:
+            backend_id = getattr(cond_example, "_source_dataset_id", getattr(cond_example, "data_backend_id", None))
+            if backend_id is None or backend_id not in backend_lookup:
+                logger.debug(f"Skipping conditioning sample because backend {backend_id} is not registered for this batch.")
+                continue
+
             cond_type = cond_example.get_conditioning_type()
             if conditioning_type is None:
                 conditioning_type = cond_type
             elif cond_type != conditioning_type:
-                # todo: allow each cond backend to have a different type?
                 raise ValueError(
                     f"Conditioning type mismatch: {conditioning_type} != {cond_type}"
                     "\n-> Ensure all conditioning samples are of the same type."
                 )
 
-            # Collect conditioning and training file paths
-            conditioning_map[cond_backend["id"]].append(cond_example)
-            training_filepaths.append(train_example["image_path"])
-        debug_log(
-            f"Counted {len(conditioning_map)} conditioning filepaths and {len(training_filepaths)} training filepaths."
-        )
+            try:
+                training_pair_path = cond_example.training_sample_path(training_dataset_id=data_backend_id)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                training_resolution_errors.append(
+                    f"{backend_id}: unable to resolve training pair for {cond_example.image_path(basename_only=False)} ({exc})"
+                )
+                continue
+
+            paired_training_example = _pop_training_example_for_path(training_pair_path)
+            if paired_training_example is None:
+                training_resolution_errors.append(
+                    f"{backend_id}: missing training metadata for {cond_example.image_path(basename_only=False)} (paired path: {training_pair_path})"
+                )
+                continue
+
+            conditioning_pairs_by_backend[backend_id].append((cond_example, training_pair_path, paired_training_example))
+
+        if training_resolution_errors:
+            preview = "; ".join(training_resolution_errors[:3])
+            if len(training_resolution_errors) > 3:
+                preview += "; ..."
+            raise ValueError(f"Failed to resolve conditioning pairs: {preview}")
+
+        backend_pair_counts = {backend_id: len(pairs) for backend_id, pairs in conditioning_pairs_by_backend.items()}
+        debug_log(f"Counted conditioning pairs per backend: {backend_pair_counts}")
 
         assert model is not None
         if conditioning_type is not None or model.requires_conditioning_dataset():
             conditioning_latents = []
+            needs_conditioning_pixels = (
+                not model.requires_conditioning_latents()
+                or getattr(model, "requires_text_embed_image_context", lambda: False)()
+            )
+
             if model.requires_conditioning_latents():
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
-                for _backend_id, _examples in conditioning_map.items():
-                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                for backend_cfg in conditioning_backends:
+                    backend_id = backend_cfg["id"]
+                    backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
+                    if not backend_pairs:
+                        continue
+                    _examples = [pair[0] for pair in backend_pairs]
+                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
                     _latents = compute_latents(
                         _filepaths,
-                        _backend_id,
+                        backend_id,
                         model,
                     )
                     debug_log(
@@ -624,26 +803,61 @@ def collate_fn(batch):
                     _latents = check_latent_shapes(
                         _latents,
                         _filepaths,
-                        _backend_id,
+                        backend_id,
                         _examples,
                     )
                     conditioning_latents.append(_latents)
             else:
-                debug_log("Model may require conditioning pixels.")
+                needs_conditioning_pixels = True
+
+            if needs_conditioning_pixels:
+                debug_log("Collect conditioning pixel values for prompt encoding.")
                 conditioning_pixel_values = []
-                for _backend_id, _examples in conditioning_map.items():
-                    _filepaths = [cond_example.image_path(basename_only=False) for cond_example in _examples]
+                for backend_cfg in conditioning_backends:
+                    backend_id = backend_cfg["id"]
+                    backend_pairs = conditioning_pairs_by_backend.get(backend_id, [])
+                    if not backend_pairs:
+                        continue
+                    _examples = [pair[0] for pair in backend_pairs]
+                    _filepaths = [sample.image_path(basename_only=False) for sample in _examples]
+                    paired_training_paths = [pair[1] for pair in backend_pairs]
+                    paired_training_examples = [pair[2] for pair in backend_pairs]
                     _pixel_values = conditioning_pixels(
                         _filepaths,
-                        training_filepaths,
-                        _backend_id,
+                        paired_training_paths,
+                        paired_training_examples,
+                        backend_id,
                         data_backend_id,
                     )
                     debug_log(f"Found {len(_pixel_values)} conditioning pixel values.")
-                    # stack up that pixel values list
                     conditioning_pixel_values.append(
                         torch.stack([pixels.to(StateTracker.get_accelerator().device) for pixels in _pixel_values])
                     )
+
+    def _conditioning_pixel_value_for_example(example_idx: int):
+        if not conditioning_pixel_values:
+            return None
+        first_backend = conditioning_pixel_values[0]
+        if not torch.is_tensor(first_backend):
+            return None
+        if example_idx >= first_backend.shape[0]:
+            return None
+        pixel_tensor = first_backend[example_idx]
+        if pixel_tensor.dim() == 4 and pixel_tensor.size(0) == 1:
+            pixel_tensor = pixel_tensor.squeeze(0)
+        if pixel_tensor.dim() != 3:
+            return None
+        pixel_tensor = pixel_tensor.to(torch.float32)
+        tensor_max = pixel_tensor.max().item()
+        tensor_min = pixel_tensor.min().item()
+        if tensor_max > 1.0 or tensor_min < 0.0:
+            # Most datasets store conditioning pixels in [-1, 1]
+            if tensor_max <= 1.0 and tensor_min >= -1.0:
+                pixel_tensor = (pixel_tensor + 1.0) / 2.0
+            else:
+                pixel_tensor = pixel_tensor / 255.0
+        pixel_tensor = pixel_tensor.clamp_(0.0, 1.0)
+        return pixel_tensor.detach().to("cpu")
 
     # Check if we're in combined mode with multiple conditioning datasets
     sampling_mode = getattr(StateTracker.get_args(), "conditioning_multidataset_sampling")
@@ -672,8 +886,42 @@ def collate_fn(batch):
         captions = [example["instance_prompt_text"] for example in examples]
         debug_log(f"Pull cached text embeds. Using training set captions: {captions}")
         text_embed_cache = StateTracker.get_data_backend(data_backend_id)["text_embed_cache"]
+    prompt_requests = []
+    key_type = TextEmbedCacheKey.CAPTION
+    getter = getattr(model, "text_embed_cache_key", None)
+    if callable(getter):
+        try:
+            key_type = getter()
+        except Exception as exc:
+            debug_log(f"text_embed_cache_key() lookup failed on model {type(model)}: {exc}")
+
+    for idx, caption in enumerate(captions):
+        example = examples[idx]
+        example_path = example.get("image_path")
+        data_backend_id = example.get("data_backend_id")
+        backend_config = StateTracker.get_data_backend_config(data_backend_id) if data_backend_id else {}
+        backend_config = backend_config or {}
+        dataset_root = backend_config.get("instance_data_dir")
+        normalized_identifier = normalize_data_path(example_path, dataset_root)
+        metadata = {
+            "image_path": example_path,
+            "data_backend_id": data_backend_id,
+            "prompt": caption,
+            "dataset_relative_path": normalized_identifier,
+        }
+        pixel_value = _conditioning_pixel_value_for_example(idx)
+        if pixel_value is not None:
+            metadata["conditioning_pixel_values"] = pixel_value
+        if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and data_backend_id and example_path:
+            key_value = f"{data_backend_id}:{normalized_identifier}"
+        elif key_type is TextEmbedCacheKey.FILENAME and example_path:
+            key_value = normalize_data_path(example_path, None)
+        else:
+            key_value = caption
+        prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
+
     if not text_embed_cache.disabled:
-        all_text_encoder_outputs = compute_prompt_embeddings(captions, text_embed_cache, StateTracker.get_model())
+        all_text_encoder_outputs = compute_prompt_embeddings(prompt_requests, text_embed_cache, StateTracker.get_model())
     else:
         all_text_encoder_outputs = {}
     # TODO: Remove model-specific logic from collate.
@@ -703,6 +951,7 @@ def collate_fn(batch):
         "conditioning_pixel_values": conditioning_pixel_values,
         "conditioning_latents": conditioning_latents,
         "conditioning_image_embeds": conditioning_image_embeds,
+        "conditioning_captions": conditioning_captions,
         "encoder_attention_mask": all_text_encoder_outputs.get("attention_masks"),
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,

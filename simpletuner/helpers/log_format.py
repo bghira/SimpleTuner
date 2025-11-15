@@ -1,13 +1,21 @@
 import logging
 import os
+import sys
 import warnings
 
 import torch
 
-# Check if we're in web server mode - disable colors for web responses
-DISABLE_COLORS = os.environ.get("SIMPLETUNER_WEB_MODE", "").lower() in ("1", "true", "yes") or os.environ.get(
-    "SIMPLETUNER_DISABLE_COLORS", ""
+# Force colors if requested (e.g., when running in subprocess with piped stdout)
+FORCE_COLORS = os.environ.get("FORCE_COLOR", "").lower() in ("1", "true", "yes") or os.environ.get(
+    "CLICOLOR_FORCE", ""
 ).lower() in ("1", "true", "yes")
+
+# Check if we're in web server mode - disable colors for web responses
+# FORCE_COLORS overrides DISABLE_COLORS
+DISABLE_COLORS = not FORCE_COLORS and (
+    os.environ.get("SIMPLETUNER_WEB_MODE", "").lower() in ("1", "true", "yes")
+    or os.environ.get("SIMPLETUNER_DISABLE_COLORS", "").lower() in ("1", "true", "yes")
+)
 
 if not DISABLE_COLORS:
     try:
@@ -57,14 +65,17 @@ class ColorizedFormatter(logging.Formatter):
 
 # Initialize colorama only if not disabled
 if not DISABLE_COLORS and COLORAMA_AVAILABLE:
-    init(autoreset=True)
+    # strip=False ensures ANSI codes are preserved even when stdout is piped
+    # convert=True on Windows to convert ANSI to Windows API calls
+    # We always init colorama when colors are enabled, regardless of FORCE_COLORS
+    init(autoreset=True, strip=False, convert=(sys.platform == "win32"))
 
 # Create a logger
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)  # Set lowest level to capture everything
 
 # Create handlers
-console_handler = logging.StreamHandler()
+console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)  # Change to ERROR if you want to suppress INFO messages too
 console_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 
@@ -95,18 +106,182 @@ file_handler.setFormatter(RankFileFormatter("%(asctime)s [%(levelname)s] (%(name
 _CUSTOM_HANDLERS = {id(console_handler): console_handler, id(file_handler): file_handler}
 
 
-def ensure_custom_handlers() -> None:
+def configure_third_party_loggers(include_library_utils: bool = True) -> None:
+    """
+    Configure third-party library loggers to suppress verbose output.
+    This needs to be called after any library initialization that might reset logger levels.
+
+    This function is public and can be called from anywhere to ensure third-party
+    loggers are properly configured after importing libraries.
+
+    Args:
+        include_library_utils: If True, also configure transformers.utils.logging and diffusers.utils.logging.
+                               Set to False at module import to avoid circular imports.
+    """
+    # Configure transformers and diffusers logging utilities (only if requested to avoid circular imports)
+    if include_library_utils:
+        try:
+            import transformers.utils.logging as transformers_logging
+
+            if hasattr(transformers_logging, "set_verbosity_warning"):
+                transformers_logging.set_verbosity_warning()
+        except (ImportError, AttributeError):
+            # transformers is optional; skip configuration if not installed or if logging API is missing
+            pass
+
+        try:
+            import diffusers.utils.logging as diffusers_logging
+
+            if hasattr(diffusers_logging, "set_verbosity_warning"):
+                diffusers_logging.set_verbosity_warning()
+        except (ImportError, AttributeError):
+            # diffusers is optional; skip configuration if not installed or if logging API is missing
+            pass
+
+    # Configure individual loggers (safe to do at any time, no imports needed)
+    forward_logger = logging.getLogger("diffusers.models.unet_2d_condition")
+    forward_logger.setLevel(logging.WARNING)
+
+    pil_logger = logging.getLogger("PIL")
+    pil_logger.setLevel(logging.INFO)
+    pil_logger = logging.getLogger("PIL.Image")
+    pil_logger.setLevel(logging.ERROR)
+    pil_logger = logging.getLogger("PIL.PngImagePlugin")
+    pil_logger.setLevel(logging.ERROR)
+
+    transformers_logger = logging.getLogger("transformers.configuration_utils")
+    transformers_logger.setLevel(logging.ERROR)
+    transformers_logger = logging.getLogger("transformers.processing_utils")
+    transformers_logger.setLevel(logging.ERROR)
+    transformers_image_processing_logger = logging.getLogger("transformers.image_processing_base")
+    transformers_image_processing_logger.setLevel(logging.ERROR)
+    transformers_video_processing_logger = logging.getLogger("transformers.video_processing_utils")
+    transformers_video_processing_logger.setLevel(logging.ERROR)
+    transformers_import_logger = logging.getLogger("transformers.utils.import_utils")
+    transformers_import_logger.setLevel(logging.WARNING)
+    transformers_tokenization_logger = logging.getLogger("transformers.tokenization_utils")
+    transformers_tokenization_logger.setLevel(logging.ERROR)
+    transformers_tokenization_base_logger = logging.getLogger("transformers.tokenization_utils_base")
+    transformers_tokenization_base_logger.setLevel(logging.ERROR)
+    transformers_generation_logger = logging.getLogger("transformers.generation_utils")
+    transformers_generation_logger.setLevel(logging.ERROR)
+    transformers_generation_config_logger = logging.getLogger("transformers.generation.configuration_utils")
+    transformers_generation_config_logger.setLevel(logging.ERROR)
+    transformers_modeling_logger = logging.getLogger("transformers.modeling_utils")
+    transformers_modeling_logger.setLevel(logging.ERROR)
+
+    diffusers_logger = logging.getLogger("diffusers.configuration_utils")
+    diffusers_logger.setLevel(logging.ERROR)
+    diffusers_utils_logger = logging.getLogger("diffusers.pipelines.pipeline_utils")
+    diffusers_utils_logger.setLevel(logging.ERROR)
+    diffusers_attention_logger = logging.getLogger("diffusers.models.attention_dispatch")
+    diffusers_attention_logger.setLevel(logging.ERROR)  # Suppress all debug/info/warning logs
+    diffusers_dynamic_modules_logger = logging.getLogger("diffusers.utils.dynamic_modules_utils")
+    diffusers_dynamic_modules_logger.setLevel(logging.ERROR)
+    diffusers_modeling_logger = logging.getLogger("diffusers.models.modeling_utils")
+    diffusers_modeling_logger.setLevel(logging.ERROR)
+
+    torchdistlogger = logging.getLogger("torch.distributed.nn.jit.instantiator")
+    torchdistlogger.setLevel(logging.WARNING)
+    torch_utils_logger = logging.getLogger("diffusers.utils.torch_utils")
+    torch_utils_logger.setLevel(logging.ERROR)
+    torchao_intmm_logger = logging.getLogger("torchao.kernel.intmm")
+    torchao_intmm_logger.setLevel(logging.WARNING)
+
+    starlette_sse_logger = logging.getLogger("sse_starlette.sse")
+    starlette_sse_logger.setLevel(logging.WARNING)
+    py_multipart_logger = logging.getLogger("python_multipart.multipart")
+    py_multipart_logger.setLevel(logging.WARNING)
+
+    urllib_logger = logging.getLogger("urllib3.connectionpool")
+    urllib_logger.setLevel(logging.WARNING)
+
+    huggingface_login_logger = logging.getLogger("huggingface_hub._login")
+    huggingface_login_logger.setLevel(logging.ERROR)
+
+    # Suppress uvicorn access logs (HTTP request logs)
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    uvicorn_access_logger.setLevel(logging.WARNING)
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    uvicorn_error_logger.setLevel(logging.WARNING)
+
+    # Also clean up any handlers that might have been added to these loggers
+    # and ensure they don't propagate if they have their own handlers
+    for logger_name in [
+        "diffusers.models.unet_2d_condition",
+        "diffusers.models.attention_dispatch",
+        "diffusers.utils.dynamic_modules_utils",
+        "diffusers.models.modeling_utils",
+        "PIL",
+        "PIL.Image",
+        "PIL.PngImagePlugin",
+        "transformers.configuration_utils",
+        "transformers.processing_utils",
+        "transformers.image_processing_base",
+        "transformers.video_processing_utils",
+        "transformers.utils.import_utils",
+        "transformers.tokenization_utils",
+        "transformers.tokenization_utils_base",
+        "transformers.generation_utils",
+        "transformers.generation.configuration_utils",
+        "transformers.modeling_utils",
+        "diffusers.configuration_utils",
+        "diffusers.pipelines.pipeline_utils",
+        "torch.distributed.nn.jit.instantiator",
+        "diffusers.utils.torch_utils",
+        "torchao.kernel.intmm",
+        "sse_starlette.sse",
+        "python_multipart.multipart",
+        "urllib3.connectionpool",
+        "huggingface_hub._login",
+        "uvicorn.access",
+        "uvicorn.error",
+    ]:
+        third_party_logger = logging.getLogger(logger_name)
+        # Remove any handlers added directly to this logger
+        for handler in list(third_party_logger.handlers):
+            third_party_logger.removeHandler(handler)
+        # Ensure it propagates to root so our level filtering works
+        third_party_logger.propagate = True
+
+
+def ensure_custom_handlers(verbose: bool = False) -> None:
     """
     Remove any third-party handlers (Accelerate, Deepspeed, etc.) that might prepend their own formatting.
     We keep only the two handlers defined in this module and make sure they are attached exactly once.
+
+    Args:
+        verbose: Print debug information about handler cleanup
     """
     root_logger = logging.getLogger()
     existing = {id(handler): handler for handler in root_logger.handlers}
 
+    # Debug: print handler info if verbose
+    if verbose and existing:
+        import sys
+
+        print(f"[log_format] Found {len(existing)} handlers before cleanup:", file=sys.stderr)
+        for handler_id, handler in existing.items():
+            handler_type = type(handler).__name__
+            handler_level = getattr(handler, "level", "NOTSET")
+            stream = getattr(handler, "stream", None)
+            stream_name = getattr(stream, "name", "unknown") if stream else "N/A"
+            print(
+                f"  - {handler_type} (level={handler_level}, stream={stream_name}, id={handler_id}, is_custom={handler_id in _CUSTOM_HANDLERS})",
+                file=sys.stderr,
+            )
+
     # Remove unknown handlers that would reformat our messages.
+    removed_count = 0
     for handler_id, handler in list(existing.items()):
         if handler_id not in _CUSTOM_HANDLERS:
             root_logger.removeHandler(handler)
+            removed_count += 1
+
+    if verbose and removed_count > 0:
+        import sys
+
+        print(f"[log_format] Removed {removed_count} non-custom handlers", file=sys.stderr)
 
     # Ensure our handlers are present exactly once.
     for handler in _CUSTOM_HANDLERS.values():
@@ -122,6 +297,22 @@ def ensure_custom_handlers() -> None:
         else:
             seen_types.add(handler_type)
 
+    # Ensure root logger is at DEBUG level (for file handler) and console handler is at INFO
+    root_logger.setLevel(logging.DEBUG)
+    console_handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.DEBUG)
+
+    if verbose:
+        import sys
+
+        print(
+            f"[log_format] After cleanup: {len(root_logger.handlers)} handlers, console level={console_handler.level}, root level={root_logger.level}",
+            file=sys.stderr,
+        )
+
+    # Always configure third-party loggers (including library utils after module import)
+    configure_third_party_loggers(include_library_utils=True)
+
 
 # Remove existing handlers
 for handler in logger.handlers[:]:
@@ -131,35 +322,10 @@ for handler in logger.handlers[:]:
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
-ensure_custom_handlers()
-
-forward_logger = logging.getLogger("diffusers.models.unet_2d_condition")
-forward_logger.setLevel(logging.WARNING)
-
-pil_logger = logging.getLogger("PIL")
-pil_logger.setLevel(logging.INFO)
-pil_logger = logging.getLogger("PIL.Image")
-pil_logger.setLevel("ERROR")
-pil_logger = logging.getLogger("PIL.PngImagePlugin")
-pil_logger.setLevel("ERROR")
-transformers_logger = logging.getLogger("transformers.configuration_utils")
-transformers_logger.setLevel("ERROR")
-transformers_logger = logging.getLogger("transformers.processing_utils")
-transformers_logger.setLevel("ERROR")
-diffusers_logger = logging.getLogger("diffusers.configuration_utils")
-diffusers_logger.setLevel("ERROR")
-diffusers_utils_logger = logging.getLogger("diffusers.pipelines.pipeline_utils")
-diffusers_utils_logger.setLevel("ERROR")
-torchdistlogger = logging.getLogger("torch.distributed.nn.jit.instantiator")
-torchdistlogger.setLevel("WARNING")
-torch_utils_logger = logging.getLogger("diffusers.utils.torch_utils")
-torch_utils_logger.setLevel("ERROR")
-starlette_sse_logger = logging.getLogger("sse_starlette.sse")
-starlette_sse_logger.setLevel("WARNING")
-py_multipart_logger = logging.getLogger("python_multipart.multipart")
-py_multipart_logger.setLevel("WARNING")
-urllib = logging.getLogger("urllib3.connectionpool")
-urllib.setLevel("WARNING")
+# Configure third-party loggers at module import (but skip library utils to avoid circular imports)
+# The library utils (transformers.utils.logging, diffusers.utils.logging) will be configured
+# when ensure_custom_handlers() is called later from train.py, trainer.py, etc.
+configure_third_party_loggers(include_library_utils=False)
 
 # Suppress specific PIL warning
 warnings.filterwarnings(

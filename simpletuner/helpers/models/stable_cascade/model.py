@@ -287,15 +287,41 @@ class StableCascadeStageC(ImageModelFoundation):
         return text_embedding
 
     def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: Optional[str] = None) -> dict:
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+        pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_prompt_embeds.dim() == 2:  # Shape: [batch, dim]
+            # Already has batch dimension - keep as is
+            pass
+        elif pooled_prompt_embeds.dim() == 1:  # Shape: [dim]
+            pooled_prompt_embeds = pooled_prompt_embeds.unsqueeze(0)  # Shape: [1, dim]
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "prompt_embeds_pooled": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
+            "prompt_embeds_pooled": pooled_prompt_embeds,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: str) -> dict:
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+        pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_prompt_embeds.dim() == 2:  # Shape: [batch, dim]
+            # Already has batch dimension - keep as is
+            pass
+        elif pooled_prompt_embeds.dim() == 1:  # Shape: [dim]
+            pooled_prompt_embeds = pooled_prompt_embeds.unsqueeze(0)  # Shape: [1, dim]
+
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_prompt_embeds_pooled": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "negative_prompt_embeds": prompt_embeds,
+            "negative_prompt_embeds_pooled": pooled_prompt_embeds,
         }
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:

@@ -88,9 +88,10 @@ class TestMetadataBackend(unittest.TestCase):
         }
         with patch.object(self.data_backend, "read", return_value=json.dumps(valid_cache_data)):
             self.metadata_backend.reload_cache()
+        # JSON string keys are coerced back to floats when loading
         self.assertEqual(
             self.metadata_backend.aspect_ratio_bucket_indices,
-            {"1.0": ["image1", "image2"]},
+            {1.0: ["image1", "image2"]},
         )
 
     def test_load_cache_invalid(self):
