@@ -1342,6 +1342,14 @@ class ModelFoundation(ABC):
             device = torch.device(getattr(self.accelerator, "device", "cuda") if self.accelerator is not None else "cuda")
 
         use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
+        if use_stream and bool(getattr(self.config, "gradient_checkpointing", False)):
+            logger.warning(
+                "Disabling group offload streams because gradient checkpointing replays layers during backward, "
+                "which breaks diffusers' group offload prefetch order and leads to CPU/CUDA mismatches. "
+                "Re-run without --gradient_checkpointing if you need streamed group offload."
+            )
+            use_stream = False
+            setattr(self.config, "group_offload_use_stream", False)
 
         offload_type = getattr(self.config, "group_offload_type", "block_level")
         blocks_per_group = getattr(self.config, "group_offload_blocks_per_group", 1)
