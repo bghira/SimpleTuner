@@ -12,7 +12,7 @@ class BucketStageSnapshot:
     """Lightweight record describing a single stage in the bucket build pipeline."""
 
     name: str
-    image_count: Optional[int] = None
+    sample_count: Optional[int] = None
     details: Dict[str, Any] = field(default_factory=dict)
     updated_at: float = field(default_factory=time.time)
 
@@ -68,7 +68,7 @@ class BucketReport:
             self.notes.append(note)
 
     # ---- stage tracking ------------------------------------------------------
-    def record_stage(self, name: str, image_count: Optional[int] = None, **details: Any) -> None:
+    def record_stage(self, name: str, sample_count: Optional[int] = None, **details: Any) -> None:
         with self._lock:
             snapshot = self.stages.get(name)
             if snapshot is None:
@@ -76,8 +76,8 @@ class BucketReport:
                 self.stages[name] = snapshot
                 self.stage_order.append(name)
 
-            if image_count is not None:
-                snapshot.image_count = image_count
+            if sample_count is not None:
+                snapshot.sample_count = sample_count
             if details:
                 snapshot.details.update({k: v for k, v in details.items() if v is not None})
             snapshot.updated_at = time.time()
@@ -86,14 +86,14 @@ class BucketReport:
         """Capture a lightweight summary of bucket distribution."""
         if bucket_indices is None:
             return
-        total_images = 0
+        total_samples = 0
         bucket_sizes = []
-        for bucket_key, images in bucket_indices.items():
+        for bucket_key, samples in bucket_indices.items():
             try:
-                size = len(images)
+                size = len(samples)
             except TypeError:
                 size = 0
-            total_images += size
+            total_samples += size
             bucket_sizes.append((bucket_key, size))
 
         bucket_sizes.sort(key=lambda item: item[1], reverse=True)
@@ -101,13 +101,13 @@ class BucketReport:
 
         with self._lock:
             self.bucket_summaries[name] = {
-                "total_images": total_images,
+                "total_samples": total_samples,
                 "bucket_count": len(bucket_sizes),
                 "top_buckets": top_buckets,
             }
         self.record_stage(
             name,
-            image_count=total_images,
+            sample_count=total_samples,
             bucket_count=len(bucket_sizes),
             top_buckets=top_buckets,
         )
@@ -150,9 +150,9 @@ class BucketReport:
         min_size = self.constraints.get("minimum_image_size")
         resolution_type = self.constraints.get("resolution_type")
 
-        if discovered and (discovered.image_count or 0) == 0:
+        if discovered and (discovered.sample_count or 0) == 0:
             recommendations.append(
-                "Check that 'instance_data_dir' points to a directory containing supported image or video files."
+                "Check that 'instance_data_dir' points to a directory containing supported media files (image, video, or audio)."
             )
         if self.skip_counts.get("too_small") and min_size is not None:
             size_hint = f"{min_size}px" if resolution_type == "pixel" else f"{min_size}MP"
@@ -164,9 +164,14 @@ class BucketReport:
             recommendations.append(
                 "Reduce 'train_batch_size' or dataset repeats to satisfy the effective batch size requirement."
             )
-        if post_refresh and post_refresh["total_images"] == 0 and not self.skip_counts:
+        if self.skip_counts.get("too_long") and self.constraints.get("max_duration_seconds") is not None:
+            recommendations.append(
+                f"Increase 'audio.max_duration_seconds' (currently {self.constraints['max_duration_seconds']}) "
+                "or trim long clips offline."
+            )
+        if post_refresh and post_refresh["total_samples"] == 0 and not self.skip_counts:
             recommendations.append("Confirm skip filters (caption, quality, or custom filters) leave usable samples.")
-        if post_split and post_split["total_images"] == 0 and post_refresh and post_refresh["total_images"] > 0:
+        if post_split and post_split["total_samples"] == 0 and post_refresh and post_refresh["total_samples"] > 0:
             recommendations.append(
                 "Increase dataset size or decrease effective batch size so each process receives samples."
             )
@@ -189,6 +194,10 @@ class BucketReport:
                 "minimum_aspect_ratio",
                 "maximum_aspect_ratio",
                 "effective_batch_size",
+                "bucket_strategy",
+                "duration_interval",
+                "max_duration_seconds",
+                "truncation_mode",
             ):
                 if key in self.constraints:
                     entries.append(f"{key}={self.constraints[key]}")
@@ -217,7 +226,7 @@ class BucketReport:
                         detail_parts.append(f"{key}={formatted}")
                 else:
                     detail_parts.append(f"{key}={value}")
-            line = f"{stage_name}: {snapshot.image_count}"
+            line = f"{stage_name}: {snapshot.sample_count}"
             if detail_parts:
                 line += f" ({'; '.join(detail_parts)})"
             lines.append(line)

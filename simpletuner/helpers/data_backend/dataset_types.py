@@ -11,6 +11,7 @@ class DatasetType(str, Enum):
 
     IMAGE = "image"
     VIDEO = "video"
+    AUDIO = "audio"
     CONDITIONING = "conditioning"
     EVAL = "eval"
     TEXT_EMBEDS = "text_embeds"

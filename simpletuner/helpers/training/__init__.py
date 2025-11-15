@@ -34,6 +34,23 @@ image_file_extensions = set(
 )
 
 video_file_extensions = set(["mp4", "avi", "gif", "mov", "webm"])
+audio_file_extensions = {
+    "wav",
+    "wave",
+    "flac",
+    "mp3",
+    "mp4a",
+    "m4a",
+    "aac",
+    "ogg",
+    "oga",
+    "opus",
+    "wma",
+    "aiff",
+    "aif",
+    "aifc",
+    "alac",
+}
 # we combine image and video extensions as image extensions because it's a hack that is used to list all files.
 image_file_extensions = image_file_extensions.union(video_file_extensions)
 

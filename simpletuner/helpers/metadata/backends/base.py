@@ -9,6 +9,7 @@ from random import shuffle
 
 # For semaphore
 from threading import Semaphore, Thread
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
@@ -16,6 +17,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -25,6 +27,8 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+DEFAULT_AUDIO_BUCKET_INTERVAL = 3.0
 
 
 class MetadataBackend:
@@ -65,11 +69,21 @@ class MetadataBackend:
             metadata_file = f"{metadata_file}_{cache_file_suffix}"
         self.cache_file = Path(f"{cache_file}.json")
         self.metadata_file = Path(f"{metadata_file}.json")
-        self.aspect_ratio_bucket_indices = {}
+        self._aspect_ratio_bucket_indices = {}
         self.image_metadata = {}  # Store image metadata
         self.seen_images = {}
         self.config = {}
-        self.dataset_config = StateTracker.get_data_backend_config(self.id)
+        self.dataset_config = StateTracker.get_data_backend_config(self.id) or {}
+        dataset_type_value = self.dataset_config.get("dataset_type")
+        try:
+            self.dataset_type = ensure_dataset_type(dataset_type_value, default=DatasetType.IMAGE)
+        except ValueError:
+            self.dataset_type = DatasetType.IMAGE
+        self.audio_config = self._extract_audio_config()
+        self.bucket_strategy = self._resolve_bucket_strategy()
+        self.audio_duration_interval = self._resolve_audio_duration_interval()
+        self.audio_max_duration_seconds = self._resolve_audio_max_duration()
+        self.audio_truncation_mode = self._resolve_audio_truncation_mode()
         self.reload_cache()
         self.resolution = float(resolution)
         self.resolution_type = resolution_type
@@ -112,7 +126,104 @@ class MetadataBackend:
                 minimum_image_size=self.minimum_image_size,
                 minimum_aspect_ratio=self.minimum_aspect_ratio,
                 maximum_aspect_ratio=self.maximum_aspect_ratio,
+                bucket_strategy=self.bucket_strategy,
+                duration_interval=self.audio_duration_interval if self.dataset_type is DatasetType.AUDIO else None,
+                max_duration_seconds=self.audio_max_duration_seconds if self.dataset_type is DatasetType.AUDIO else None,
+                truncation_mode=self.audio_truncation_mode if self.dataset_type is DatasetType.AUDIO else None,
             )
+
+    @property
+    def aspect_ratio_bucket_indices(self):
+        """Get aspect ratio bucket indices."""
+        return self._aspect_ratio_bucket_indices
+
+    @aspect_ratio_bucket_indices.setter
+    def aspect_ratio_bucket_indices(self, value):
+        """Set aspect ratio bucket indices with debug tracking."""
+        if hasattr(self, "_aspect_ratio_bucket_indices"):
+            old_count = sum(len(v) for v in self._aspect_ratio_bucket_indices.values())
+            new_count = sum(len(v) for v in value.values()) if value else 0
+            if old_count != new_count:
+                logger.debug(
+                    f"aspect_ratio_bucket_indices changed for {self.id}: "
+                    f"{old_count} -> {new_count} images. "
+                    f"Old buckets: {list(self._aspect_ratio_bucket_indices.keys())}, "
+                    f"New buckets: {list(value.keys()) if value else []}"
+                )
+        self._aspect_ratio_bucket_indices = value
+
+    def _extract_audio_config(self) -> Dict[str, Any]:
+        if self.dataset_config is None:
+            return {}
+        config = self.dataset_config.get("audio")
+        return config if isinstance(config, dict) else {}
+
+    def _resolve_bucket_strategy(self) -> str:
+        default_strategy = "duration" if self.dataset_type is DatasetType.AUDIO else "aspect_ratio"
+        strategy = self.audio_config.get("bucket_strategy") if isinstance(self.audio_config, dict) else None
+        if not strategy:
+            strategy = self.dataset_config.get("bucket_strategy")
+        if isinstance(strategy, str):
+            return strategy.lower()
+        return default_strategy
+
+    def _resolve_audio_duration_interval(self) -> Optional[float]:
+        if self.dataset_type is not DatasetType.AUDIO:
+            return None
+        interval = (self.audio_config or {}).get("duration_interval")
+        try:
+            interval_value = float(interval)
+        except (TypeError, ValueError):
+            interval_value = DEFAULT_AUDIO_BUCKET_INTERVAL
+        if interval_value <= 0:
+            interval_value = DEFAULT_AUDIO_BUCKET_INTERVAL
+        return interval_value
+
+    def _resolve_audio_max_duration(self) -> Optional[float]:
+        if self.dataset_type is not DatasetType.AUDIO:
+            return None
+        max_duration = (self.audio_config or {}).get("max_duration_seconds")
+        if max_duration is None:
+            return None
+        try:
+            value = float(max_duration)
+        except (TypeError, ValueError):
+            logger.warning(
+                f"(id={self.id}) Ignoring audio.max_duration_seconds value '{max_duration}' because it is not numeric."
+            )
+            return None
+        if value <= 0:
+            logger.warning(f"(id={self.id}) Ignoring non-positive audio.max_duration_seconds value '{max_duration}'.")
+            return None
+        return value
+
+    @staticmethod
+    def _format_duration_value(value: float) -> str:
+        if float(value).is_integer():
+            return str(int(value))
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+
+    def _build_audio_bucket_key(self, duration_seconds: Optional[float]) -> str:
+        bucket_key, _ = self._compute_audio_bucket(duration_seconds)
+        return bucket_key
+
+    def _compute_audio_bucket(self, duration_seconds: Optional[float]) -> tuple[str, Optional[float]]:
+        if duration_seconds is None:
+            return "audio", None
+        interval = self.audio_duration_interval or DEFAULT_AUDIO_BUCKET_INTERVAL
+        if interval <= 0:
+            interval = DEFAULT_AUDIO_BUCKET_INTERVAL
+        safe_duration = max(float(duration_seconds), 0.0)
+        multiples = floor(safe_duration / interval)
+        if multiples <= 0:
+            truncated = safe_duration
+        else:
+            truncated = multiples * interval
+        truncated = min(safe_duration, truncated)
+        if truncated == 0.0 and safe_duration > 0.0:
+            truncated = safe_duration
+        bucket_key = f"{self._format_duration_value(truncated)}s"
+        return bucket_key, truncated
 
     def set_metadata(self, metadata_backend, update_json: bool = True):
         if not isinstance(metadata_backend, MetadataBackend):
@@ -163,6 +274,7 @@ class MetadataBackend:
                 "metadata_missing": 0,
                 "not_found": 0,
                 "too_small": 0,
+                "too_long": 0,
                 "other": 0,
             },
         }
@@ -220,7 +332,7 @@ class MetadataBackend:
         if self.bucket_report:
             self.bucket_report.record_stage(
                 "existing_cache",
-                image_count=len(existing_files_set),
+                sample_count=len(existing_files_set),
                 bucket_count=len(self.aspect_ratio_bucket_indices),
             )
         aggregated_statistics = {
@@ -230,13 +342,14 @@ class MetadataBackend:
                 "metadata_missing": 0,
                 "not_found": 0,
                 "too_small": 0,
+                "too_long": 0,
                 "other": 0,
             },
         }
         if self.bucket_report:
             self.bucket_report.record_stage(
                 "new_files_to_process",
-                image_count=len(new_files),
+                sample_count=len(new_files),
                 ignore_existing_cache=ignore_existing_cache,
             )
         if not new_files:
@@ -334,7 +447,7 @@ class MetadataBackend:
 
         for worker in workers:
             worker.join()
-        logger.info(f"Image processing statistics: {aggregated_statistics}")
+        logger.info(f"Sample processing statistics: {aggregated_statistics}")
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
         logger.info("Completed aspect bucket update.")
@@ -345,8 +458,8 @@ class MetadataBackend:
     def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
         """split bucket contents across processes for distributed training"""
         new_aspect_ratio_bucket_indices = {}
-        total_images = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
-        logger.debug(f"Count of items before split: {total_images}")
+        total_samples = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
+        logger.debug(f"Count of items before split: {total_samples}")
 
         num_processes = self.accelerator.num_processes
         effective_batch_size = self.batch_size * num_processes * gradient_accumulation_steps
@@ -390,9 +503,9 @@ class MetadataBackend:
                 self.repeats = max_needed_repeats
                 logger.warning(
                     f"(id={self.id}) Dataset oversubscription enabled: automatically increasing repeats from {original_repeats} to {self.repeats}\n"
-                    f"  - This allows training with {total_images} images across {num_processes} GPUs\n"
+                    f"  - This allows training with {total_samples} samples across {num_processes} GPUs\n"
                     f"  - Effective batch size: {effective_batch_size}\n"
-                    f"  - Each image will be seen {self.repeats + 1} times per epoch"
+                    f"  - Each sample will be seen {self.repeats + 1} times per epoch"
                 )
                 # Validation passed with adjustment, continue
             else:
@@ -401,13 +514,13 @@ class MetadataBackend:
                     f"Dataset configuration will produce zero usable batches.\n"
                     f"\nCurrent configuration:\n"
                     f"  - Dataset ID: {self.id}\n"
-                    f"  - Total images: {total_images}\n"
+                    f"  - Total samples: {total_samples}\n"
                     f"  - Repeats: {self.repeats}\n"
                     f"  - Batch size: {self.batch_size}\n"
                     f"  - Number of GPUs: {num_processes}\n"
                     f"  - Gradient accumulation steps: {gradient_accumulation_steps}\n"
                     f"  - Effective batch size: {effective_batch_size}\n"
-                    f"\nProblem: {len(buckets_that_will_fail)} bucket(s) have insufficient images:\n"
+                    f"\nProblem: {len(buckets_that_will_fail)} bucket(s) have insufficient samples:\n"
                 )
 
                 for bucket_info in buckets_that_will_fail:
@@ -416,7 +529,7 @@ class MetadataBackend:
                     samples = bucket_info["samples_with_repeats"]
                     needed = min_repeats_needed[bucket]
                     error_msg += (
-                        f"  - Bucket {bucket}: {images} images × {self.repeats + 1} (with repeats) = {samples} samples\n"
+                        f"  - Bucket {bucket}: {images} samples × {self.repeats + 1} (with repeats) = {samples} samples\n"
                         f"    Need at least {effective_batch_size} samples to form one batch\n"
                         f"    Minimum repeats required: {needed}\n"
                     )
@@ -427,7 +540,7 @@ class MetadataBackend:
                     f"  2. Reduce gradient_accumulation_steps (current: {gradient_accumulation_steps})\n"
                     f"  3. Use fewer GPUs (current: {num_processes})\n"
                     f"  4. Increase repeats to at least {max_needed_repeats} (current: {self.repeats})\n"
-                    f"  5. Add more images to the dataset\n"
+                    f"  5. Add more samples to the dataset\n"
                     f"  6. Enable --allow_dataset_oversubscription to automatically adjust repeats\n"
                 )
 
@@ -458,7 +571,7 @@ class MetadataBackend:
                 )
             if len(trimmed_images) == 0 and should_log():
                 logger.error(
-                    f"Bucket {bucket} has no images after trimming because {len(images)} images are not enough to satisfy an effective batch size of {effective_batch_size}."
+                    f"Bucket {bucket} has no samples after trimming because {len(images)} samples are not enough to satisfy an effective batch size of {effective_batch_size}."
                     " Lower your batch size, increase repeat count, or increase data pool size."
                 )
                 if self.bucket_report:
@@ -476,17 +589,17 @@ class MetadataBackend:
         post_total = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
         if self.bucket_report:
             self.bucket_report.record_bucket_snapshot("post_split", self.aspect_ratio_bucket_indices)
-        if total_images != post_total:
+        if total_samples != post_total:
             self.read_only = True
 
-        # Check if this backend has no images after splitting (can happen with multi-GPU setups)
-        if post_total == 0 and total_images > 0:
+        # Check if this backend has no samples after splitting (can happen with multi-GPU setups)
+        if post_total == 0 and total_samples > 0:
             if should_log():
                 logger.warning(
-                    f"Backend {self.id} has no images after splitting between processes. "
+                    f"Backend {self.id} has no samples after splitting between processes. "
                     f"This can happen when using multiple GPUs with small datasets. "
                     f"Consider using a larger dataset or fewer GPUs. "
-                    f"Original image count: {total_images}"
+                    f"Original sample count: {total_samples}"
                 )
 
         logger.debug(f"Count of items after split: {post_total}")
@@ -684,6 +797,8 @@ class MetadataBackend:
         """check if image meets resolution and frame count requirements"""
         if self.dataset_config.get("dataset_type", None) in ["conditioning"]:
             return True
+        if self.dataset_type is DatasetType.AUDIO:
+            return True
         if image is None and (image_path is not None and image_metadata is None):
             metadata = self.get_metadata_by_filepath(image_path)
             if metadata is None:
@@ -746,13 +861,13 @@ class MetadataBackend:
 
     def handle_incorrect_bucket(self, image_path: str, bucket: str, actual_bucket: str, save_cache: bool = True):
         """move incorrectly bucketed image to proper bucket"""
-        logger.warning(f"Found an image in bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}")
+        logger.debug(f"Found an image in bucket {bucket} it doesn't belong in, when actually it is: {actual_bucket}")
         self.remove_image(image_path, bucket)
         if actual_bucket in self.aspect_ratio_bucket_indices:
-            logger.warning("Moved image to bucket, it already existed.")
+            logger.debug("Moved image to bucket, it already existed.")
             self.aspect_ratio_bucket_indices[actual_bucket].append(image_path)
         else:
-            logger.warning("Created new bucket for that pesky image.")
+            logger.debug("Created new bucket for that pesky image.")
             self.aspect_ratio_bucket_indices[actual_bucket] = [image_path]
         if save_cache:
             self.save_cache()
@@ -797,6 +912,17 @@ class MetadataBackend:
         metadata[attribute] = value
         return self.set_metadata_by_filepath(filepath, metadata, update_json)
 
+    def update_metadata_attribute(self, filepath: str, attribute: str, value: any, update_json: bool = False) -> bool:
+        """
+        Lightweight helper used by batch utilities to amend cached metadata without
+        requiring every backend to implement its own setter.
+        """
+        if getattr(self, "read_only", False):
+            logger.debug(f"Skipping metadata update for {filepath}:{attribute} because backend is read-only.")
+            return False
+        self.set_metadata_attribute_by_filepath(filepath, attribute, value, update_json=update_json)
+        return True
+
     def set_metadata_by_filepath(self, filepath: str, metadata: dict, update_json: bool = True):
         with self.metadata_semaphor:
             logger.debug(f"Setting metadata for {filepath} to {metadata}.")
@@ -813,16 +939,13 @@ class MetadataBackend:
                 abs_path = self.data_backend.get_abs_path(path)
                 if path in self.image_metadata:
                     result = self.image_metadata.get(path, None)
-                    logger.debug(f"Retrieving metadata for path: {filepath}, result: {result}")
                     if result is not None:
                         return result
                 elif abs_path in self.image_metadata:
                     filepath = abs_path
                     result = self.image_metadata.get(filepath, None)
-                    logger.debug(f"Retrieving metadata for path: {filepath}, result: {result}")
                     if result is not None:
                         return result
-
             return None
 
         meta = self.image_metadata.get(filepath, None)
@@ -833,7 +956,7 @@ class MetadataBackend:
         logger.info(f"Loading metadata from {self.metadata_file}")
         self.load_image_metadata()
         logger.debug(f"A subset of the available metadata: {list(self.image_metadata.keys())[:5]}")
-        logger.info("Discovering new images for metadata scan...")
+        logger.info("Discovering new samples for metadata scan...")
         new_files = self._discover_new_files(for_metadata=True)
         if not new_files:
             logger.info("No new files discovered. Exiting.")
@@ -1010,3 +1133,16 @@ class MetadataBackend:
                 files.remove(cache_file)
                 self.aspect_ratio_bucket_indices[expected_bucket].append(cache_file)
                 break
+
+    def _resolve_audio_truncation_mode(self) -> str:
+        truncation_mode = (self.audio_config or {}).get("truncation_mode", "beginning")
+        if isinstance(truncation_mode, str):
+            mode = truncation_mode.lower()
+        else:
+            mode = "beginning"
+        if mode not in {"beginning", "end", "random"}:
+            logger.warning(
+                f"(id={self.id}) Unsupported audio truncation_mode '{truncation_mode}'. " f"Falling back to 'beginning'."
+            )
+            mode = "beginning"
+        return mode

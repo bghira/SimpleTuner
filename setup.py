@@ -81,7 +81,7 @@ def get_cuda_dependencies():
         "triton>=3.3.0",
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
-        "torchao>=0.12.0",
+        "torchao>=0.14.1",
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
@@ -101,14 +101,14 @@ def get_rocm_dependencies():
             build_rocm_wheel_url("torch", torch_version, rocm_version),
             build_rocm_wheel_url("torchvision", torchvision_version, rocm_version),
             "pytorch_triton_rocm @ https://download.pytorch.org/whl/pytorch_triton_rocm-3.5.0-cp312-cp312-linux_x86_64.whl#sha256=b3a209621d0433367c489e8dce90ebc4c7c9e3bfe1c2b7adc928344f8290d5f5",
-            "torchao>=0.11.0",
+            "torchao>=0.14.1",
         ]
     except Exception as exc:
         print(f"Warning: falling back to CPU PyTorch packages because ROCm wheel configuration failed: {exc}")
         return [
             "torch>=2.9.0",
             "torchvision>=0.24.0",
-            "torchao>=0.11.0",
+            "torchao>=0.14.1",
         ]
 
 
@@ -116,7 +116,7 @@ def get_apple_dependencies():
     return [
         "torch>=2.9.0",
         "torchvision>=0.24.0",
-        "torchao>=0.11.0",
+        "torchao>=0.14.1",
     ]
 
 
@@ -124,7 +124,7 @@ def get_cpu_dependencies():
     return [
         "torch>=2.9.0",
         "torchvision>=0.24.0",
-        "torchao>=0.11.0",
+        "torchao>=0.14.1",
     ]
 
 
@@ -203,7 +203,7 @@ base_deps = [
     "tensorboard>=2.18.0",
     "sentencepiece>=0.2.0",
     "optimum-quanto>=0.2.7",
-    "lycoris-lora @ git+https://github.com/KohakuBlueleaf/LyCORIS@dev",
+    "lycoris-lora>=3.4.0",
     "torch-optimi>=0.2.1",
     "torchaudio>=2.4.1",
     "toml>=0.10.2",

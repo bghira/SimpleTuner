@@ -1,0 +1,21 @@
+{
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "full_matrix": true,
+    "linear_alpha": 1,
+    "factor": 16,
+    "apply_preset": {
+        "target_module": [
+            "Attention",
+            "FeedForward"
+        ],
+        "module_algo_map": {
+            "Attention": {
+                "factor": 16
+            },
+            "FeedForward": {
+                "factor": 8
+            }
+        }
+    }
+}

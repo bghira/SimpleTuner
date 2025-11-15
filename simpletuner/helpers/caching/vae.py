@@ -14,13 +14,14 @@ from PIL import Image
 from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from simpletuner.helpers.image_manipulation.training_sample import PreparedSample, TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.models.ltxvideo import normalize_ltx_latents
 from simpletuner.helpers.models.wan import compute_wan_posterior
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.training import image_file_extensions
+from simpletuner.helpers.training import audio_file_extensions, image_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import rank_info, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -118,7 +119,8 @@ class VAECache(WebhookMixin):
         dataset_type: str = None,
     ):
         self.id = id
-        self.dataset_type = dataset_type
+        self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        self.dataset_type = self.dataset_type_enum.value
         if image_data_backend and image_data_backend.id != id:
             raise ValueError(f"VAECache received incorrect image_data_backend: {image_data_backend}")
         self.image_data_backend = image_data_backend
@@ -144,7 +146,7 @@ class VAECache(WebhookMixin):
         self.vae_batch_size = vae_batch_size
         self.instance_data_dir = instance_data_dir
         self.model = model
-        self.transform_sample = model.get_transforms(dataset_type=dataset_type)
+        self.transform_sample = model.get_transforms(dataset_type=self.dataset_type)
         self.num_video_frames = None
         if self.dataset_type == "video":
             self.num_video_frames = num_video_frames
@@ -235,6 +237,8 @@ class VAECache(WebhookMixin):
             raise e
 
     def _normalise_loaded_sample(self, sample):
+        if self.dataset_type_enum is DatasetType.AUDIO:
+            return sample
         if isinstance(sample, Image.Image):
             return sample
         if torch.is_tensor(sample):
@@ -275,10 +279,11 @@ class VAECache(WebhookMixin):
         return self.encode_images([None] * len(filepaths), filepaths)
 
     def discover_all_files(self):
+        extension_pool = audio_file_extensions if self.dataset_type_enum is DatasetType.AUDIO else image_file_extensions
         all_image_files = StateTracker.get_image_files(data_backend_id=self.id) or StateTracker.set_image_files(
             self.image_data_backend.list_files(
                 instance_data_dir=self.instance_data_dir,
-                file_extensions=image_file_extensions,
+                file_extensions=extension_pool,
             ),
             data_backend_id=self.id,
         )
@@ -701,6 +706,9 @@ class VAECache(WebhookMixin):
                     filepath, image, aspect_bucket = self.process_queue.get()
                 initial_data.append((filepath, image, aspect_bucket))
 
+            if self.dataset_type_enum is DatasetType.AUDIO:
+                return self._process_audio_samples_in_batch(initial_data, disable_queue=disable_queue)
+
             # Use BatchedTrainingSamples for efficient batch processing
             processed_images = []
 
@@ -816,6 +824,105 @@ class VAECache(WebhookMixin):
             self.debug_log(f"Error traceback: {traceback.format_exc()}")
             raise e
         return output_values
+
+    def _process_audio_samples_in_batch(self, initial_data: list, disable_queue: bool = False) -> list:
+        output_values = []
+        total_samples = len(initial_data)
+        if self.transform_sample is None:
+            raise ValueError("Audio datasets require model transforms, but none were provided.")
+
+        for idx, (filepath, raw_sample, aspect_bucket) in enumerate(initial_data):
+            try:
+                prepared_sample = self._prepare_audio_sample(filepath, raw_sample)
+                if prepared_sample is None:
+                    continue
+                transformed = self.transform_sample(prepared_sample)
+                if transformed is None:
+                    logger.debug(f"Skipping audio sample {filepath}: transform returned None.")
+                    continue
+                if not torch.is_tensor(transformed):
+                    raise ValueError(
+                        f"Audio transform for {filepath} must return a torch.Tensor, received {type(transformed)}."
+                    )
+                pixel_values = transformed.to(self.accelerator.device, dtype=self.vae.dtype)
+                is_final_sample = idx == total_samples - 1
+                output_value = (pixel_values, filepath, aspect_bucket, is_final_sample)
+                output_values.append(output_value)
+                if not disable_queue:
+                    self.vae_input_queue.put(output_value)
+            except Exception as exc:
+                logger.error(f"Error processing audio sample {filepath}: {exc}", exc_info=True)
+
+        self.debug_log(f"Completed processing gathered {len(output_values)} audio samples.")
+        return output_values
+
+    def _prepare_audio_sample(self, filepath: str, raw_sample):
+        metadata = {}
+        if self.metadata_backend:
+            try:
+                metadata = self.metadata_backend.get_metadata_by_filepath(filepath) or {}
+            except Exception as exc:
+                logger.debug(f"Falling back to empty metadata for {filepath}: {exc}")
+                metadata = {}
+        waveform, sample_rate = self._coerce_audio_waveform(raw_sample, metadata, filepath)
+        if waveform is None:
+            return None
+        return {
+            "waveform": waveform,
+            "sample_rate": sample_rate,
+            "metadata": metadata,
+            "filepath": filepath,
+            "num_frames": waveform.shape[-1],
+        }
+
+    def _coerce_audio_waveform(self, sample, metadata: dict, filepath: str):
+        waveform = None
+        sample_rate = None
+        if isinstance(sample, dict):
+            waveform = sample.get("waveform") or sample.get("audio") or sample.get("data")
+            sample_rate = sample.get("sample_rate") or sample.get("sampling_rate")
+        elif isinstance(sample, (list, tuple)):
+            if len(sample) > 0:
+                waveform = sample[0]
+            if len(sample) > 1 and isinstance(sample[1], (int, float)):
+                sample_rate = int(sample[1])
+        else:
+            waveform = sample
+
+        if waveform is None:
+            logger.debug(f"Audio sample {filepath} contained no waveform data; skipping.")
+            return None, sample_rate
+
+        if isinstance(waveform, np.ndarray):
+            waveform_tensor = torch.from_numpy(waveform)
+        elif torch.is_tensor(waveform):
+            waveform_tensor = waveform
+        else:
+            try:
+                waveform_tensor = torch.as_tensor(waveform)
+            except Exception as exc:
+                raise ValueError(f"Unsupported audio sample type for {filepath}: {type(waveform)}") from exc
+
+        waveform_tensor = waveform_tensor.detach().clone().to(dtype=torch.float32)
+        if waveform_tensor.ndim == 1:
+            waveform_tensor = waveform_tensor.unsqueeze(0)
+        if waveform_tensor.ndim != 2:
+            raise ValueError(
+                f"Audio sample {filepath} must have shape (channels, samples); received {tuple(waveform_tensor.shape)}."
+            )
+
+        metadata_rate = metadata.get("sample_rate")
+        if metadata_rate is not None:
+            try:
+                metadata_rate = int(metadata_rate)
+            except (TypeError, ValueError):
+                metadata_rate = None
+        if sample_rate is None:
+            sample_rate = metadata_rate
+        elif metadata_rate and metadata_rate != sample_rate:
+            sample_rate = metadata_rate
+
+        return waveform_tensor.contiguous(), sample_rate
 
     def _encode_images_in_batch(self, image_pixel_values: list = None, disable_queue: bool = False) -> None:
         """Encode the batched Image objects using the VAE model.

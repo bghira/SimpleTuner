@@ -432,7 +432,7 @@ def save_model_card(
         optimizer_config = ""
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
-    datasettypes = ["image", "video"]
+    datasettypes = ["image", "video", "audio"]
     for dataset in StateTracker.get_data_backends(_types=datasettypes).keys():
         if "sampler" in StateTracker.get_data_backends(_types=datasettypes)[dataset]:
             datasets_str += f"### {dataset}\n"
@@ -475,6 +475,7 @@ def save_model_card(
 
             shortname_idx += 1
     args = StateTracker.get_args()
+    sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
     yaml_content = f"""---
 license: {model.MODEL_LICENSE}
 base_model: "{base_model}"
@@ -544,7 +545,8 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Base model precision: `{args.base_model_precision}`
 - Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
-{f'- SageAttention: Enabled {StateTracker.get_args().sageattention_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
+{f'- SageAttention: Enabled {sage_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
+{('- SLA: Enabled (you MUST use SLA for inference; sla_attention.pt contains attention weights)') if StateTracker.get_args().attention_mechanism == 'sla' else ''}
 {lora_info(args=StateTracker.get_args())}
 
 ## Datasets

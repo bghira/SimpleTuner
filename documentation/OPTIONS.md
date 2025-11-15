@@ -24,7 +24,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 <img width="1484" height="560" alt="image" src="https://github.com/user-attachments/assets/67dec8d8-3e41-42df-96e6-f95892d2814c" />
 
-
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 
 ---
@@ -95,12 +94,12 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--pretrained_model_name_or_path`
 
-- **What**: Path to the pretrained model or its identifier from https://huggingface.co/models.
+- **What**: Path to the pretrained model or its identifier from <https://huggingface.co/models>.
 - **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository. This also supports single-file `.safetensors` paths for SDXL, Flux, and SD3.x.
 
 ### `--pretrained_t5_model_name_or_path`
 
-- **What**: Path to the pretrained T5 model or its identifier from https://huggingface.co/models.
+- **What**: Path to the pretrained T5 model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
 
 ### `--gradient_checkpointing`
@@ -109,7 +108,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--gradient_checkpointing_interval`
 
-- **What**: Checkpoint only every _n_ blocks, where _n_ is a value greater than zero. A value of 1 is effectively the same as just leaving `--gradient_checkpointing` enabled, and a value of 2 will checkpoint every other block.
+- **What**: Checkpoint only every *n* blocks, where *n* is a value greater than zero. A value of 1 is effectively the same as just leaving `--gradient_checkpointing` enabled, and a value of 2 will checkpoint every other block.
 - **Note**: SDXL and Flux are currently the only models supporting this option. SDXL uses a hackish implementation.
 
 ### `--refiner_training`
@@ -123,7 +122,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Choices**: `cpu`, `accelerator`
   - On `accelerator`, it may work moderately faster at the risk of possibly OOM'ing on 24G cards for a model as large as Flux.
   - On `cpu`, quantisation takes about 30 seconds. (**Default**)
-
 
 ### `--base_model_precision`
 
@@ -194,15 +192,26 @@ Omit any entries you want to inherit from Accelerate’s defaults (for example, 
 
 ### `--attention_mechanism`
 
-Alternative attention mechanisms are supported, with varying levels of compatibility or other trade-offs;
+Alternative attention mechanisms are supported, with varying levels of compatibility or other trade-offs:
 
-- `diffusers` uses the native Pytorch SDPA functions and is the default attention mechanism
-- `xformers` allows the use of Meta's [xformers](https://github.com/facebook/xformers) attention implementation which supports both training and inference fully
-- `sageattention` is an inference-focused attention mechanism which does not fully support being used for training ([SageAttention](https://github.com/thu-ml/SageAttention) project page)
+- `diffusers` uses PyTorch’s native SDPA kernels and is the default.
+- `xformers` enables Meta’s [xformers](https://github.com/facebookresearch/xformers) attention kernel (training + inference) when the underlying model exposes `enable_xformers_memory_efficient_attention`.
+- `flash-attn`, `flash-attn-2`, `flash-attn-3`, and `flash-attn-3-varlen` hook into Diffusers’ new `attention_backend` helper to route attention through FlashAttention v1/2/3 kernels. Install the corresponding `flash-attn` / `flash-attn-interface` wheels and note that FA3 currently requires Hopper GPUs.
+- `flex` selects PyTorch 2.5’s FlexAttention backend (FP16/BF16 on CUDA). You must compile/install the Flex kernels separately — see [documentation/attention/FLEX.md](attention/FLEX.md).
+- `cudnn`, `native-efficient`, `native-flash`, `native-math`, `native-npu`, and `native-xla` select the matching SDPA backend exposed by `torch.nn.attention.sdpa_kernel`. These are handy when you want determinism (`native-math`), the CuDNN SDPA kernel, or the vendor-native accelerators (NPU/XLA).
+- `sla` enables [Sparse–Linear Attention (SLA)](https://github.com/thu-ml/SLA), providing a fine-tunable sparse/linear hybrid kernel that can be used for both training and validation without additional gating.
+  - Install the SLA package (for example via `pip install -e ~/src/SLA`) before selecting this backend.
+  - SimpleTuner saves SLA’s learned projection weights into `sla_attention.pt` inside every checkpoint; keep this file with the rest of the checkpoint so resumes and inference retain the trained SLA state.
+  - Because the backbone is tuned around SLA’s mixed sparse/linear behaviour, SLA will be required at inference time as well. See `documentation/attention/SLA.md` for a focused guide.
+  - Use `--sla_config '{"topk":0.15,"blkq":32,"tie_feature_map_qk":false}'` (JSON or Python dict syntax) to override SLA runtime defaults if you need to experiment.
+- `sageattention`, `sageattention-int8-fp16-triton`, `sageattention-int8-fp16-cuda`, and `sageattention-int8-fp8-cuda` wrap the corresponding [SageAttention](https://github.com/thu-ml/SageAttention) kernels. These are inference-oriented and must be used with `--sageattention_usage` to guard against accidental training.
   - In simplest terms, SageAttention reduces compute requirement for inference
 
+> ℹ️ The Flash/Flex/PyTorch backend selectors rely on Diffusers’ `attention_backend` dispatcher, so they currently benefit transformer-style models that already opt into that code path (Flux, Wan 2.x, LTXVideo, QwenImage, etc.). Classic SD/SDXL UNets still use PyTorch SDPA directly.
+
 Using `--sageattention_usage` to enable training with SageAttention should be enabled with care, as it does not track or propagate gradients from its custom CUDA implementations for the QKV linears.
-  - This results in these layers being completely untrained, which might cause model collapse or, slight improvements in short training runs.
+
+- This results in these layers being completely untrained, which might cause model collapse or slight improvements in short training runs.
 
 ---
 
@@ -227,7 +236,7 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 
 - **What**: Path to your SimpleTuner dataset configuration.
 - **Why**: Multiple datasets on different storage medium may be combined into a single training session.
-- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration, and [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
+- **Example**: See [multidatabackend.json.example](/multidatabackend.json.example) for an example configuration, and [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
 
 ### `--override_dataset_config`
 
@@ -497,7 +506,7 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 ### `--checkpoint_step_interval` (alias: `--checkpointing_steps`)
 
 - **What**: Interval at which training state checkpoints are saved (in steps).
-- **Why**: Useful for resuming training and for inference. Every _n_ iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
+- **Why**: Useful for resuming training and for inference. Every *n* iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
 
 ### `--checkpoint_epoch_interval`
 
@@ -526,11 +535,11 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
 - **Choices**: wandb, tensorboard, comet_ml
 
-# Environment configuration variables
+## Environment configuration variables
 
 The above options apply for the most part, to `config.json` - but some entries must be set inside `config.env` instead.
 
-- `TRAINING_NUM_PROCESSES` should be set to the number of GPUs in the system. For most use-cases, this is enough to enable DistributedDataParallel (DDP) training
+- `TRAINING_NUM_PROCESSES` should be set to the number of GPUs in the system. For most use-cases, this is enough to enable DistributedDataParallel (DDP) training. Use `num_processes` inside `config.json` if you prefer to not use `config.env`.
 - `TRAINING_DYNAMO_BACKEND` defaults to `no` but can be set to any supported torch.compile backend (e.g. `inductor`, `aot_eager`, `cudagraphs`) and combined with `--dynamo_mode`, `--dynamo_fullgraph`, or `--dynamo_use_regional_compilation` for finer tuning
 - `SIMPLETUNER_LOG_LEVEL` defaults to `INFO` but can be set to `DEBUG` to add more information for issue reports into `debug.log`
 - `VENV_PATH` can be set to the location of your python virtual env, if it is not in the typical `.venv` location
@@ -676,7 +685,7 @@ usage: train.py [-h] --model_family
                 [--sd3_t5_uncond_behaviour {empty_string,zero}]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--mixed_precision {no,fp16,bf16,fp8}]
-                [--attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
+                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
                 [--disable_tf32 [DISABLE_TF32]]
                 [--set_grads_to_none [SET_GRADS_TO_NONE]]
@@ -1116,7 +1125,7 @@ options:
                         Sigma data for soft min SNR weighting
   --mixed_precision {no,fp16,bf16,fp8}
                         Precision for training computations
-  --attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
+  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
                         Attention computation backend
   --sageattention_usage {training,inference,training+inference}
                         When to use SageAttention

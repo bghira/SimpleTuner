@@ -233,17 +233,35 @@ class SD3(ImageModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+        pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_prompt_embeds.dim() == 1:  # Shape: [dim]
+            pooled_prompt_embeds = pooled_prompt_embeds.unsqueeze(0)  # Shape: [1, dim]
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+        pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_prompt_embeds.dim() == 1:  # Shape: [dim]
+            pooled_prompt_embeds = pooled_prompt_embeds.unsqueeze(0)  # Shape: [1, dim]
+
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "negative_pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "negative_prompt_embeds": prompt_embeds,
+            "negative_pooled_prompt_embeds": pooled_prompt_embeds,
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
