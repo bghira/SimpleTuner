@@ -456,3 +456,75 @@ class TestAudioMetadataBackends(unittest.TestCase):
         )
         audio_metadata = metadata_updates[audio_path]
         self.assertEqual(audio_metadata["truncation_mode"], "end")
+
+    def test_discovery_audio_metadata_includes_image_fields(self):
+        dataset_id = "audio_discovery_placeholders"
+        audio_path = os.path.join(self.tempdir.name, "placeholder.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=8000, num_samples=4000)
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id)
+        discovery_backend = DiscoveryMetadataBackend(
+            id=dataset_id,
+            instance_data_dir=self.tempdir.name,
+            cache_file=os.path.join(self.tempdir.name, "cache_discovery"),
+            metadata_file=os.path.join(self.tempdir.name, "metadata_discovery"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=1.0,
+            resolution_type="pixel",
+        )
+
+        metadata_updates = {}
+        discovery_backend._process_audio_sample(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics={},
+        )
+        audio_metadata = metadata_updates[audio_path]
+        self.assertEqual(audio_metadata["image_path"], audio_path)
+        self.assertEqual(audio_metadata["audio_path"], audio_path)
+        self.assertEqual(audio_metadata["crop_coordinates"], (0, 0))
+        self.assertEqual(audio_metadata["aspect_ratio"], 1.0)
+        self.assertEqual(audio_metadata["original_size"], (num_samples, 1))
+        self.assertEqual(audio_metadata["intermediary_size"], (num_samples, 1))
+        self.assertEqual(audio_metadata["target_size"], (num_samples, 1))
+
+    def test_parquet_audio_metadata_includes_image_fields(self):
+        dataset_id = "audio_parquet_placeholders"
+        audio_path = os.path.join(self.tempdir.name, "placeholder_parquet.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path, sample_rate=16000, num_samples=3200)
+        duration_seconds = round(num_samples / sample_rate, 2)
+
+        manifest_path = os.path.join(self.tempdir.name, "parquet_placeholders.jsonl")
+        record = {
+            "filepath": os.path.basename(audio_path),
+            "sample_rate": sample_rate,
+            "num_samples": num_samples,
+            "duration": duration_seconds,
+            "channels": 2,
+        }
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            manifest_file.write(json.dumps(record) + "\n")
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id)
+        parquet_backend = self._parquet_backend(dataset_id, backend, manifest_path)
+
+        metadata_updates = {}
+        parquet_backend._process_for_bucket(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics={},
+        )
+        audio_metadata = metadata_updates[audio_path]
+        self.assertEqual(audio_metadata["image_path"], audio_path)
+        self.assertEqual(audio_metadata["audio_path"], audio_path)
+        self.assertEqual(audio_metadata["crop_coordinates"], (0, 0))
+        self.assertEqual(audio_metadata["aspect_ratio"], 1.0)
+        self.assertEqual(audio_metadata["original_size"], (num_samples, 2))
+        self.assertEqual(audio_metadata["intermediary_size"], (num_samples, 2))
+        self.assertEqual(audio_metadata["target_size"], (num_samples, 2))
