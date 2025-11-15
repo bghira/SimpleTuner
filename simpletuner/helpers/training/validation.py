@@ -419,6 +419,14 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         raise ValueError(
             f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
         )
+    # Precompute the unconditional prompt embedding if it was added
+    if validation_prompts and validation_prompts[0] == "":
+        logger.info("Precomputing unconditional prompt embed for validations")
+        prompt_record = {
+            "prompt": "",
+            "key": "unconditional",
+        }
+        embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     model_type = embed_cache.model_type
     validation_sample_images = None
     if (
