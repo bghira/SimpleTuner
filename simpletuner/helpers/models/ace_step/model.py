@@ -82,12 +82,12 @@ class ACEStep(AudioModelFoundation):
         rules = [
             make_default_rule(
                 field_name="tokenizer_max_length",
-                value=256,
+                default_value=256,
                 message="ACE-Step defaults to 256 token UMT5 context.",
             ),
             make_default_rule(
                 field_name="ace_step_ssl_loss_weight",
-                value=1.0,
+                default_value=1.0,
                 message="Projection-alignment losses default to weight 1.0 for ACE-Step.",
             ),
             ConfigRule(
