@@ -428,6 +428,13 @@ class ModelFoundation(ABC):
         """
         return {}
 
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """
+        Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
+        """
+        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        return self._format_text_embedding(encoded_text)
+
     @classmethod
     def get_flavour_choices(cls):
         """
@@ -1722,6 +1729,47 @@ class ModelFoundation(ABC):
         """
         return text_embedding
 
+    @classmethod
+    def caption_field_preferences(cls, dataset_type: Optional[str] = None) -> list[str]:
+        """
+        Preferred caption-related fields (by name) to use when harvesting captions from metadata backends.
+        Models can override to request lyrics/tags or other domain-specific fields.
+        """
+        return []
+
+    def requires_validation_i2v_samples(self) -> bool:
+        """
+        Override for models that need to pair validation videos with their conditioning images.
+        """
+        return False
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        """
+        Whether to pre-encode negative prompts during validation setup.
+        Override for models that need per-sample negative prompt encoding (e.g., with reference images).
+        """
+        return True
+
+    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
+        """
+        Encode the negative prompt for validation.
+
+        Args:
+            negative_prompt: The negative prompt text to encode
+            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
+
+        Returns:
+            Dictionary of encoded negative prompt embeddings
+        """
+        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
+
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """
+        Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
+        """
+        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        return self._format_text_embedding(encoded_text)
+
     def conditional_loss(
         self,
         model_pred: torch.Tensor,
@@ -1980,45 +2028,6 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
-
-    def requires_validation_i2v_samples(self) -> bool:
-        """
-        Override for models that need to pair validation videos with their conditioning images.
-        """
-        return False
-
-    def should_precompute_validation_negative_prompt(self) -> bool:
-        """
-        Whether to pre-encode negative prompts during validation setup.
-        Override for models that need per-sample negative prompt encoding (e.g., with reference images).
-        """
-        return True
-
-    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
-        """
-        Encode the negative prompt for validation.
-
-        Args:
-            negative_prompt: The negative prompt text to encode
-            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
-
-        Returns:
-            Dictionary of encoded negative prompt embeddings
-        """
-        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
-
-    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
-        """
-        Encode the caption dropout (null) prompt.
-
-        Args:
-            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
-
-        Returns:
-            Dictionary of encoded null prompt embeddings
-        """
-        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
-        return self._format_text_embedding(encoded_text)
 
     @classmethod
     def _iter_pipeline_classes(cls):
