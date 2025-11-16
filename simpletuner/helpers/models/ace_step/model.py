@@ -9,11 +9,13 @@ ACEStep audio model integration for SimpleTuner.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
 import torchaudio
+from huggingface_hub import snapshot_download
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModel, AutoTokenizer, UMT5EncoderModel
 
@@ -28,8 +30,17 @@ from simpletuner.helpers.models.ace_step.language_segmentation import LangSegmen
 from simpletuner.helpers.models.ace_step.lyrics_utils.lyric_tokenizer import VoiceBpeTokenizer
 from simpletuner.helpers.models.ace_step.music_dcae.music_dcae_pipeline import MusicDCAE
 from simpletuner.helpers.models.ace_step.pipeline import SUPPORT_LANGUAGES, ACEStepPipeline, structure_pattern
+from simpletuner.helpers.models.ace_step.schedulers.scheduling_flow_match_euler_discrete import (
+    FlowMatchEulerDiscreteScheduler,
+)
 from simpletuner.helpers.models.ace_step.transformer import ACEStepTransformer2DModel
-from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    AudioModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    get_model_config_path,
+)
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -44,6 +55,7 @@ class ACEStep(AudioModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_CLASS = ACEStepTransformer2DModel
+    MODEL_SUBFOLDER = "ace_step_transformer"
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: ACEStepPipeline,
     }
@@ -75,7 +87,106 @@ class ACEStep(AudioModelFoundation):
         self.resampler_mhubert = None
         self._ssl_models_ready = False
         self.lyric_tokenizer = VoiceBpeTokenizer()
-        self.lang_segment = LangSegment(language_filters)
+        self.lang_segment = LangSegment()
+        self.lang_segment.setfilters(language_filters.default)
+        self.tokenizers = []
+        self.text_encoders = []
+        self._checkpoint_base: Optional[str] = None
+
+    def setup_training_noise_schedule(self):
+        """
+        ACE-Step ships its own flow-matching scheduler; avoid diffusers hub lookups.
+        """
+        shift = getattr(self.config, "flow_schedule_shift", None)
+        if shift is None:
+            shift = 3.0
+
+        self.noise_schedule = FlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=shift,
+        )
+        return self.config, self.noise_schedule
+
+    def _resolve_checkpoint_base(self) -> str:
+        if self._checkpoint_base and os.path.exists(self._checkpoint_base):
+            return self._checkpoint_base
+        base = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
+        if os.path.exists(base):
+            self._checkpoint_base = base
+            return self._checkpoint_base
+        logger.info("Downloading ACE-Step assets for %s", base)
+        self._checkpoint_base = snapshot_download(
+            repo_id=base,
+            allow_patterns=[
+                "music_dcae_f8c8/*",
+                "music_vocoder/*",
+                "ace_step_transformer/*",
+                "umt5-base/*",
+                "ace_step_transformer/*",
+            ],
+        )
+        return self._checkpoint_base
+
+    def load_text_tokenizer(self):
+        base_path = self._resolve_checkpoint_base()
+        logger.info("Loading ACE-Step tokenizer from %s (subfolder=umt5-base)", base_path)
+        tokenizer = AutoTokenizer.from_pretrained(
+            pretrained_model_name_or_path=base_path,
+            subfolder="umt5-base",
+            use_fast=True,
+        )
+        self.tokenizers = [tokenizer]
+        self.tokenizer_1 = tokenizer
+
+    def load_text_encoder(self, move_to_device: bool = True):
+        if not self.tokenizers:
+            self.load_text_tokenizer()
+        base_path = self._resolve_checkpoint_base()
+        logger.info("Loading ACE-Step text encoder from %s (subfolder=umt5-base)", base_path)
+        text_encoder = UMT5EncoderModel.from_pretrained(
+            pretrained_model_name_or_path=base_path,
+            subfolder="umt5-base",
+            torch_dtype=self.config.weight_dtype,
+        )
+        if move_to_device:
+            text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+
+        self.text_encoders = [text_encoder]
+        self.text_encoder_1 = text_encoder
+
+    def load_vae(self, move_to_device: bool = True):
+        """
+        Load the ACE-Step DCAE/Vocoder bundle from the model checkpoint directory.
+        The upstream weights live under `music_dcae_f8c8` and `music_vocoder` subfolders.
+        """
+        base_path = self.config.vae_path or self.config.pretrained_model_name_or_path
+        base_path = get_model_config_path(self.config.model_family, base_path)
+        if not os.path.exists(base_path):
+            base_path = self._resolve_checkpoint_base()
+        logger.info("Loading ACE-Step MusicDCAE from %s (subfolders music_dcae_f8c8/music_vocoder)", base_path)
+        self.vae = MusicDCAE(
+            dcae_checkpoint_path=base_path,
+            vocoder_checkpoint_path=base_path,
+        )
+
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """
+        Encode a null caption for dropout using the ACE-Step text encoder/tokenizer.
+        """
+        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        return self._format_text_embedding(encoded_text)
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        """
+        ACE-Step does not use Diffusers pipelines; return None to satisfy callers.
+        """
+        return None
+
+    @classmethod
+    def caption_field_preferences(cls, dataset_type: Optional[str] = None) -> list[str]:
+        if dataset_type and str(dataset_type).lower() == "audio":
+            return ["prompt", "lyrics", "tags"]
+        return []
 
     @classmethod
     def register_config_requirements(cls):

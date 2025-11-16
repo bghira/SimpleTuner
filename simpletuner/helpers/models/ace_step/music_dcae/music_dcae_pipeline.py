@@ -42,8 +42,16 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
     ):
         super(MusicDCAE, self).__init__()
 
-        self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path)
-        self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path)
+        # Accept either a direct subfolder path or a repo root; fall back to repo subfolders when needed.
+        try:
+            self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path)
+        except Exception:
+            self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path, subfolder="music_dcae_f8c8")
+
+        try:
+            self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path)
+        except Exception:
+            self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path, subfolder="music_vocoder")
 
         if source_sample_rate is None:
             source_sample_rate = 48000
