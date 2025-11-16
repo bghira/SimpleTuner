@@ -284,6 +284,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                     audio_block[target_key] = source[alias]
                     break
 
+        for passthrough_key in ("lyrics_extension", "lyrics_suffix", "lyrics_filename_format"):
+            if passthrough_key not in audio_block and passthrough_key in source:
+                audio_block[passthrough_key] = source[passthrough_key]
+
         bucket_strategy_raw = audio_block.get("bucket_strategy") or AUDIO_DEFAULT_BUCKET_STRATEGY
         if isinstance(bucket_strategy_raw, str):
             bucket_strategy = bucket_strategy_raw.lower()
@@ -478,6 +482,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution"] = None
         output["config"]["resolution_type"] = None
 
+    user_supplied_caption_strategy = "caption_strategy" in backend
     if "parquet" in backend:
         output["config"]["parquet"] = backend["parquet"]
     if "caption_strategy" in backend:
@@ -508,6 +513,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"(id={backend['id']}) caption_strategy='huggingface' can only be used with type='huggingface' backends"
             )
+    elif backend.get("type") == "huggingface" and not user_supplied_caption_strategy:
+        output["config"]["caption_strategy"] = "huggingface"
+        info_log(
+            f"(id={backend['id']}) Defaulting caption_strategy to 'huggingface' for HuggingFace dataset. "
+            "Set caption_strategy explicitly in the backend config to override."
+        )
     if backend.get("type") == "huggingface":
         # huggingface must use metadata backend. if the user defined something else, we'll error. if they are not using anything, we'll override it.
         if backend.get("metadata_backend", None) is None:
@@ -584,6 +595,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     if is_audio_dataset:
         output["config"]["audio"] = _prepare_audio_settings(backend)
+        model_family_value = str(_get_arg_value(args, "model_family", "") or "").lower()
+        if model_family_value == "ace_step" and output["config"].get("caption_strategy") == "textfile":
+            audio_settings = output["config"]["audio"]
+            if not any(audio_settings.get(key) for key in ("lyrics_filename_format", "lyrics_extension", "lyrics_suffix")):
+                default_lyrics_format = "{filename}.lyrics"
+                audio_settings["lyrics_filename_format"] = default_lyrics_format
+                warning_log(
+                    f"(id={backend['id']}) ACE-Step textfile datasets will also load lyrics beside each sample "
+                    f"using '{default_lyrics_format}'. Set audio.lyrics_filename_format to match your naming scheme."
+                )
+            output["config"]["audio"] = audio_settings
     if backend.get("dataset_type", None) == "video":
         output["config"]["video"] = {}
         if "video" in backend:
@@ -2410,6 +2432,21 @@ class FactoryRegistry:
                                 f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
                             )
                         init_backend["config"][key] = prev_config[key]
+
+        # For Hugging Face datasets, always honor the active caption_strategy (e.g., switching from textfile/filename).
+        if backend.get("type") == "huggingface":
+            desired_caption_strategy = backend.get("caption_strategy") or init_backend["config"].get("caption_strategy")
+            if desired_caption_strategy and init_backend["config"].get("caption_strategy") != desired_caption_strategy:
+                warning_log(
+                    f"(id={init_backend['id']}) Overriding cached caption_strategy="
+                    f"{init_backend['config'].get('caption_strategy')} with {desired_caption_strategy} for Hugging Face dataset."
+                )
+                init_backend["config"]["caption_strategy"] = desired_caption_strategy
+            # Keep the metadata backend's config in sync so future cache reloads preserve the override.
+            try:
+                init_backend["metadata_backend"].config["caption_strategy"] = init_backend["config"]["caption_strategy"]
+            except Exception:
+                pass
 
         init_backend["config"]["config_version"] = current_config_version
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
