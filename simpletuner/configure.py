@@ -56,9 +56,6 @@ def _build_model_class_map() -> Dict[str, List[str]]:
     control_supported = set()
 
     for family, model_cls in ModelRegistry.model_families().items():
-        if not getattr(model_cls, "ENABLED_IN_WIZARD", True):
-            continue
-
         display_name = getattr(model_cls, "NAME", family)
         families.append((family, display_name.lower()))
 
