@@ -42,16 +42,18 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
     ):
         super(MusicDCAE, self).__init__()
 
-        # Accept either a direct subfolder path or a repo root; fall back to repo subfolders when needed.
+        # Load directly from the known subfolders to avoid diffusers root-probing errors.
         try:
-            self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path)
-        except Exception:
             self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path, subfolder="music_dcae_f8c8")
+        except Exception:
+            # Final fallback: try the checkpoint path as-is
+            self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path)
 
         try:
-            self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path)
-        except Exception:
             self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path, subfolder="music_vocoder")
+        except Exception:
+            # Final fallback: try the checkpoint path as-is
+            self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path)
 
         if source_sample_rate is None:
             source_sample_rate = 48000
@@ -63,6 +65,8 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 transforms.Normalize(0.5, 0.5),
             ]
         )
+        # Place heavy submodules on the init device when the model is moved later.
+        self._init_device = None
         self.min_mel_value = -11.0
         self.max_mel_value = 3.0
         self.audio_chunk_size = int(round((1024 * 512 / 44100 * 48000)))
@@ -79,6 +83,12 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         return audio, sr
 
     def forward_mel(self, audios):
+        # Ensure submodules follow the audio device/dtype (MPS safety)
+        target_device = audios.device
+        target_dtype = audios.dtype
+        self.dcae = self.dcae.to(device=target_device, dtype=target_dtype)
+        self.vocoder = self.vocoder.to(device=target_device, dtype=target_dtype)
+
         mels = []
         for i in range(len(audios)):
             image = self.vocoder.mel_transform(audios[i])
@@ -98,7 +108,7 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         if sr is None:
             sr = 48000
-            resampler = self.resampler
+            resampler = self.resampler.to(device).to(dtype)
         else:
             resampler = torchaudio.transforms.Resample(sr, 44100).to(device).to(dtype)
 
