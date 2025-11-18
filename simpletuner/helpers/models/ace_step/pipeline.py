@@ -16,9 +16,11 @@ import os
 import random
 import re
 import time
+from typing import Optional
 
 import torch
 import torchaudio
+from diffusers.loaders import LoraLoaderMixin
 from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import retrieve_timesteps
 from diffusers.utils.peft_utils import set_weights_and_activate_adapters
 from diffusers.utils.torch_utils import randn_tensor
@@ -76,11 +78,11 @@ def ensure_directory_exists(directory):
 
 
 REPO_ID = "ACE-Step/ACE-Step-v1-3.5B"
-REPO_ID_QUANT = REPO_ID + "-q4-K-M"  # ??? update this i guess
+REPO_ID_QUANT = REPO_ID + "-q4-K-M"
 
 
 # class ACEStepPipeline(DiffusionPipeline):
-class ACEStepPipeline:
+class ACEStepPipeline(LoraLoaderMixin):
     def __init__(
         self,
         checkpoint_dir=None,
@@ -121,6 +123,24 @@ class ACEStepPipeline:
         self.cpu_offload = cpu_offload
         self.quantized = quantized
         self.overlapped_decode = overlapped_decode
+        # Allow SimpleTuner validation hooks to be device-aware
+        self.transformer = None
+        self.scheduler = None
+        self.text_encoder = None
+        self.text_encoder_2 = None
+        self.text_encoder_3 = None
+        self.text_encoder_4 = None
+        # LoRA/LyCORIS bookkeeping
+        self.unet = None  # Expected by diffusers LoRA helpers
+
+    def to(self, device):
+        # Simple no-op hook for validation; components are moved elsewhere.
+        self.device = device
+        return self
+
+    def set_progress_bar_config(self, **kwargs):
+        # Diffusers compatibility shim
+        return None
 
     def cleanup_memory(self):
         """Clean up GPU and CPU memory to prevent VRAM overflow during multiple generations."""
@@ -1088,7 +1108,7 @@ class ACEStepPipeline:
                 # compute current guidance scale
                 if guidance_interval_decay > 0:
                     # Linearly interpolate to calculate the current guidance scale
-                    progress = (i - start_idx) / (end_idx - start_idx - 1)  # 归一化到[0,1]
+                    progress = (i - start_idx) / (end_idx - start_idx - 1)  # Normalize progress to [0, 1]
                     current_guidance_scale = (
                         guidance_scale - (guidance_scale - min_guidance_scale) * progress * guidance_interval_decay
                     )
@@ -1297,6 +1317,99 @@ class ACEStepPipeline:
         elif self.lora_path != "none" and lora_name_or_path == "none":
             logger.info("No lora weights to load.")
             self.ace_step_transformer.unload_lora()
+
+    # --- LoRA compatibility wrappers for SimpleTuner checkpoints ---
+    def load_lora_weights(self, *args, **kwargs):
+        """Alias to the existing load_lora helper for compatibility with trainer save/load hooks."""
+        adapter_name = kwargs.pop("adapter_name", "ace_step_lora")
+        weight = kwargs.pop("weight", kwargs.pop("lora_weight", 1.0))
+        lora_path = kwargs.pop("pretrained_model_name_or_path", kwargs.pop("lora_path", None))
+        self.load_lora(lora_path or "none", weight)
+        return self
+
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory: str,
+        transformer_lora_layers: Optional[dict] = None,
+        text_encoder_lora_layers: Optional[dict] = None,
+        text_encoder_2_lora_layers: Optional[dict] = None,
+        controlnet_lora_layers: Optional[dict] = None,
+        is_main_process: bool = True,
+        weight_name: Optional[str] = None,
+        save_function=None,
+        safe_serialization: bool = True,
+        transformer_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_lora_adapter_metadata: Optional[dict] = None,
+        text_encoder_2_lora_adapter_metadata: Optional[dict] = None,
+        controlnet_lora_adapter_metadata: Optional[dict] = None,
+        **kwargs,
+    ):
+        """
+        Minimal LoRA saver for ACE-Step: writes provided LoRA state dicts to disk.
+        """
+        if not is_main_process:
+            return
+        if save_directory is None:
+            raise ValueError("save_directory must be provided when saving ACE-Step LoRA weights.")
+
+        # Accept alias used by SimpleTuner save hooks
+        alias_transformer_layers = kwargs.pop("ace_step_transformer_lora_layers", None)
+        if alias_transformer_layers is not None:
+            transformer_lora_layers = alias_transformer_layers
+
+        # Collect any provided LoRA layers (trainer may pass ace_step_transformer_lora_layers)
+        state_dict = {}
+        metadata = {}
+
+        # Standard names
+        if transformer_lora_layers:
+            state_dict.update(transformer_lora_layers)
+        if text_encoder_lora_layers:
+            state_dict.update(text_encoder_lora_layers)
+        if text_encoder_2_lora_layers:
+            state_dict.update(text_encoder_2_lora_layers)
+        if controlnet_lora_layers:
+            state_dict.update(controlnet_lora_layers)
+
+        if transformer_lora_adapter_metadata:
+            metadata.update(transformer_lora_adapter_metadata)
+        if text_encoder_lora_adapter_metadata:
+            metadata.update(text_encoder_lora_adapter_metadata)
+        if text_encoder_2_lora_adapter_metadata:
+            metadata.update(text_encoder_2_lora_adapter_metadata)
+        if controlnet_lora_adapter_metadata:
+            metadata.update(controlnet_lora_adapter_metadata)
+
+        # Accept trainer-inserted keys like "ace_step_transformer_lora_layers"
+        for key, value in list(kwargs.items()):
+            if key.endswith("_lora_layers") and value:
+                state_dict.update(value)
+            if key.endswith("_lora_adapter_metadata") and value:
+                metadata.update(value)
+
+        if not state_dict:
+            raise ValueError("You must pass at least one set of LoRA layers to save for ACE-Step.")
+
+        os.makedirs(save_directory, exist_ok=True)
+
+        filename = weight_name or ("pytorch_lora_weights.safetensors" if safe_serialization else "pytorch_lora_weights.bin")
+        save_path = os.path.join(save_directory, filename)
+        if safe_serialization:
+            from safetensors.torch import save_file
+
+            metadata = {}
+            if transformer_lora_adapter_metadata:
+                metadata.update(transformer_lora_adapter_metadata)
+            if text_encoder_lora_adapter_metadata:
+                metadata.update(text_encoder_lora_adapter_metadata)
+            save_file(state_dict, save_path, metadata={k: str(v) for k, v in metadata.items()})
+        else:
+            if save_function is None:
+                torch.save(state_dict, save_path)
+            else:
+                save_function(state_dict, save_path)
+        return save_path
 
     def __call__(
         self,
