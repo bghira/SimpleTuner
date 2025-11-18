@@ -98,7 +98,12 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         except Exception:
             pass
         dataset_type_normalized = str(dataset_type).lower() if dataset_type is not None else "image"
-        default_extension = "mp4" if dataset_type_normalized == "video" else "jpg"
+        if dataset_type_normalized == "video":
+            default_extension = "mp4"
+        elif dataset_type_normalized == "audio":
+            default_extension = "wav"
+        else:
+            default_extension = "jpg"
         self.file_extension = hf_config.get("file_extension", default_extension)
         self.num_frames_column = hf_config.get("num_frames_column", None)
         self.fps_column = hf_config.get("fps_column", None)
