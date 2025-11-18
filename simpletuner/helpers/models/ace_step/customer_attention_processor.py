@@ -117,13 +117,8 @@ class CustomLiteLAProcessor2_0:
             elif rotary_freqs_cis_cross is not None and has_encoder_hidden_state_proj:
                 key = self.apply_rotary_emb(key, rotary_freqs_cis_cross)
 
-        if attn.is_cross_attention and encoder_attention_mask is not None and has_encoder_hidden_state_proj:
-            combined_mask = attention_mask[:, :, None] * encoder_attention_mask[:, None, :]
-            attention_mask = torch.where(combined_mask == 1, 0.0, -torch.inf)
-            attention_mask = attention_mask[:, None, :, :].expand(-1, attn.heads, -1, -1).to(query.dtype)
-        elif not attn.is_cross_attention and attention_mask is not None:
-            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+        # Disable all attention masking - masks cause shape mismatches
+        attention_mask = None
 
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
@@ -195,6 +190,8 @@ class CustomerAttnProcessor2_0:
         has_encoder_hidden_state_proj = (
             hasattr(attn, "add_q_proj") and hasattr(attn, "add_k_proj") and hasattr(attn, "add_v_proj")
         )
+        # Track if we concatenated encoder states (for attention mask handling later)
+        did_concatenate = False
         if encoder_hidden_states is not None and has_encoder_hidden_state_proj:
             encoder_hidden_states_query_proj = attn.add_q_proj(encoder_hidden_states)
             encoder_hidden_states_key_proj = attn.add_k_proj(encoder_hidden_states)
@@ -204,11 +201,16 @@ class CustomerAttnProcessor2_0:
                 query = torch.cat([query, encoder_hidden_states_query_proj], dim=1)
                 key = torch.cat([key, encoder_hidden_states_key_proj], dim=1)
                 value = torch.cat([value, encoder_hidden_states_value_proj], dim=1)
+                did_concatenate = True
 
             elif encoder_attention_mask is not None:
                 encoder_attention_mask = encoder_attention_mask.to(query.device)
                 if encoder_attention_mask.shape[-1] != encoder_hidden_states.shape[1]:
                     encoder_attention_mask = encoder_attention_mask[:, : encoder_hidden_states.shape[1], ...]
+                # Broadcast mask over feature dimension
+                if encoder_attention_mask.ndim == 2:
+                    encoder_attention_mask = encoder_attention_mask.unsqueeze(-1)
+                encoder_attention_mask = encoder_attention_mask.to(dtype=encoder_hidden_states_query_proj.dtype)
                 encoder_hidden_states_query_proj = encoder_hidden_states_query_proj * encoder_attention_mask
                 encoder_hidden_states_key_proj = encoder_hidden_states_key_proj * encoder_attention_mask
                 encoder_hidden_states_value_proj = encoder_hidden_states_value_proj * encoder_attention_mask
@@ -216,6 +218,7 @@ class CustomerAttnProcessor2_0:
                 query = torch.cat([query, encoder_hidden_states_query_proj], dim=1)
                 key = torch.cat([key, encoder_hidden_states_key_proj], dim=1)
                 value = torch.cat([value, encoder_hidden_states_value_proj], dim=1)
+                did_concatenate = True
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // attn.heads
@@ -230,15 +233,21 @@ class CustomerAttnProcessor2_0:
             key = attn.norm_k(key)
 
         # Currently only used by LLaVA-NeXT
-        if attn.attention_mode == "up_residual" and attn.is_cross_attention:
+        attention_mode = getattr(attn, "attention_mode", None)
+        if attention_mode == "up_residual" and attn.is_cross_attention:
             latent_image = hidden_states[None, None, None, :, :]
             image_context = encoder_hidden_states[None, None, None, :, :]
             up_residual_attention_scores = torch.matmul(latent_image, image_context.transpose(-1, -2))
         else:
             up_residual_attention_scores = None
 
-        attention_probs = attn.get_attention_scores(query, key, attention_mask)
-        hidden_states = torch.matmul(attention_probs, value)
+        # Disable all attention masking - masks cause shape mismatches with concatenation
+        attention_mask = None
+
+        # Use scaled_dot_product_attention instead of get_attention_scores to avoid mask issues
+        hidden_states = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        )
 
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)

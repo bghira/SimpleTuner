@@ -3,6 +3,7 @@ import os
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from queue import Queue
 from random import shuffle
@@ -212,7 +213,10 @@ class VAECache(WebhookMixin):
     def _read_from_storage(self, filename: str, hide_errors: bool = False) -> torch.Tensor:
         if os.path.splitext(filename)[1] != ".pt":
             try:
-                sample = self.image_data_backend.read_image(filename)
+                if self.dataset_type_enum is DatasetType.AUDIO:
+                    sample = self.image_data_backend.read(filename, as_byteIO=False)
+                else:
+                    sample = self.image_data_backend.read_image(filename)
                 return self._normalise_loaded_sample(sample)
             except Exception as e:
                 if self.delete_problematic_images:
@@ -641,23 +645,7 @@ class VAECache(WebhookMixin):
                         latents_uncached = latents_uncached.sample()
                     latents_uncached = self.process_video_latents(latents_uncached)
 
-                if (
-                    hasattr(self.vae, "config")
-                    and hasattr(self.vae.config, "shift_factor")
-                    and self.vae.config.shift_factor is not None
-                ):
-                    latents_uncached = (latents_uncached - self.vae.config.shift_factor) * getattr(
-                        self.model,
-                        "AUTOENCODER_SCALING_FACTOR",
-                        self.vae.config.scaling_factor,
-                    )
-                elif isinstance(latents_uncached, torch.Tensor) and hasattr(self.vae.config, "scaling_factor"):
-                    latents_uncached = latents_uncached * getattr(
-                        self.model,
-                        "AUTOENCODER_SCALING_FACTOR",
-                        self.vae.config.scaling_factor,
-                    )
-                    logger.debug(f"Latents shape after scaling: {latents_uncached.shape}")
+                latents_uncached = self.model.scale_vae_latents_for_cache(latents_uncached, self.vae)
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
@@ -708,15 +696,30 @@ class VAECache(WebhookMixin):
             if file_extension != ".pt":
                 raise ValueError(f"Cannot write a latent embedding to an image path, {output_file}")
             filepaths.append(output_file)
+
             # pytorch will hold onto all of the tensors in the list if we do not use clone()
             if isinstance(latent_vector, dict):
+                # For audio (ACE-Step) keep metadata such as latent_lengths/lyrics in the cache.
+                keep_metadata = (
+                    StateTracker.get_model_family() in ["ace_step"] or self.dataset_type_enum is DatasetType.AUDIO
+                )
+                if keep_metadata:
+                    cloned_entry = {}
+                    for key, value in latent_vector.items():
+                        if torch.is_tensor(value):
+                            cloned_entry[key] = value.clone()
+                        else:
+                            cloned_entry[key] = self._clone_metadata_value(value)
+                    latents.append(cloned_entry)
+                    continue
+
                 cloned_entry = {}
                 for key, value in latent_vector.items():
                     if key == "latents":
                         cloned_entry[key] = value.clone()
                     else:
                         cloned_entry[key] = self._clone_metadata_value(value)
-                latents.append(cloned_entry)
+                latents.append(cloned_entry["latents"])
             else:
                 latents.append(latent_vector.clone())
 
@@ -940,6 +943,15 @@ class VAECache(WebhookMixin):
                 waveform = sample[0]
             if len(sample) > 1 and isinstance(sample[1], (int, float)):
                 sample_rate = int(sample[1])
+        elif isinstance(sample, (bytes, bytearray, memoryview, BytesIO)):
+            try:
+                import soundfile as sf  # type: ignore
+
+                buffer = BytesIO(sample) if not isinstance(sample, BytesIO) else sample
+                waveform_np, sample_rate = sf.read(buffer, dtype="float32", always_2d=True)
+                waveform = torch.from_numpy(waveform_np.T)
+            except Exception as exc:
+                raise ValueError(f"Unable to decode audio bytes for {filepath}: {exc}") from exc
         else:
             waveform = sample
 
@@ -1071,6 +1083,23 @@ class VAECache(WebhookMixin):
         image_paths = [p for p in paths if not p.endswith(".pt")]
         cache_paths = [p for p in paths if p.endswith(".pt")]
 
+        if self.dataset_type_enum is DatasetType.AUDIO:
+            for path in image_paths:
+                try:
+                    yield path, self._read_from_storage(path, hide_errors=hide_errors)
+                except Exception as e:
+                    logger.error(f"Error reading audio sample {path}: {e}")
+                    if hide_errors:
+                        yield path, None
+            for path in cache_paths:
+                try:
+                    yield path, self._read_from_storage(path, hide_errors=hide_errors)
+                except Exception as e:
+                    logger.error(f"Error reading cache {path}: {e}")
+                    if hide_errors:
+                        yield path, None
+            return
+
         # Read images in batch if available
         if image_paths:
             try:
@@ -1119,8 +1148,18 @@ class VAECache(WebhookMixin):
         if not filepaths:
             return
 
-        # Use backend batch reading capabilities
+        # Use backend batch reading capabilities; audio datasets fall back to per-file reads.
         try:
+            if self.dataset_type_enum is DatasetType.AUDIO:
+                for filepath, aspect_bucket in zip(filepaths, aspect_buckets):
+                    try:
+                        sample = self._read_from_storage(filepath)
+                        if sample is not None:
+                            self.process_queue.put((filepath, sample, aspect_bucket))
+                    except Exception as read_e:
+                        logger.error(f"Error reading audio sample {filepath}: {read_e}")
+                return
+
             available_filepaths, batch_output = self.image_data_backend.read_image_batch(
                 filepaths, delete_problematic_images=self.delete_problematic_images
             )
