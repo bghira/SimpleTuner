@@ -2847,6 +2847,13 @@ class FactoryRegistry:
             info_log(f"(id={init_backend['id']}) Skipping VAE cache configuration (disable_vae_cache=True).")
             return
         """Configure VAE cache for the backend."""
+        dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
+        allowed_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.AUDIO}
+        if dataset_type_enum not in allowed_types:
+            info_log(
+                f"(id={init_backend['id']}) Skipping VAE cache configuration for dataset_type={dataset_type_enum.value}."
+            )
+            return
         vae_cache_dir = backend.get("cache_dir_vae", None)
         if vae_cache_dir in vae_cache_dir_paths:
             raise ValueError(
@@ -3589,6 +3596,7 @@ def get_huggingface_backend(
         revision=revision,
         image_column=image_column,
         video_column=video_column,
+        audio_column=backend.get("audio_column", "audio"),
         cache_dir=cache_dir,
         compress_cache=compress_cache,
         streaming=streaming,
