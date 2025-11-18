@@ -376,7 +376,31 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             ],
             dim=1,
         )
-        encoder_hidden_mask = torch.cat([speaker_mask, text_attention_mask, lyric_mask], dim=1)
+        # Build encoder mask. In training we may not have reliable per-token masks from cached embeds,
+        # so fall back to a fully valid mask if concatenation fails.
+        try:
+            mask_parts = [speaker_mask]
+            if text_attention_mask is not None:
+                tam = text_attention_mask
+                # Normalize to (bs, seq_len)
+                if tam.ndim == 1:
+                    tam = tam.unsqueeze(0).expand(bs, -1)
+                elif tam.ndim > 2:
+                    tam = tam.view(bs, -1)
+                mask_parts.append(tam.to(device=device, dtype=speaker_mask.dtype))
+            if lyric_mask is not None:
+                lm = lyric_mask
+                if lm.ndim == 1:
+                    lm = lm.unsqueeze(0).expand(bs, -1)
+                elif lm.ndim > 2:
+                    lm = lm.view(bs, -1)
+                mask_parts.append(lm.to(device=device, dtype=speaker_mask.dtype))
+            encoder_hidden_mask = torch.cat(mask_parts, dim=1)
+        except Exception:
+            # Fallback: treat all encoder tokens as valid.
+            total_len = encoder_hidden_states.shape[1]
+            encoder_hidden_mask = torch.ones(bs, total_len, device=device, dtype=speaker_mask.dtype)
+
         return encoder_hidden_states, encoder_hidden_mask
 
     def decode(
