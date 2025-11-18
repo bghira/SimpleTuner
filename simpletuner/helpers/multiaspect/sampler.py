@@ -301,16 +301,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             int: Bucket array index, eg. 0
         """
-        if "." not in str(bucket_name):
+        name = str(bucket_name)
+        if name.isdigit():
             self.debug_log(f"Assuming {bucket_name} is already an index.")
-            return int(bucket_name)
-        try:
-            if str(bucket_name) in self.buckets:
-                return self.buckets.index(str(bucket_name))
-            if bucket_name in self.buckets:
-                return self.buckets.index(bucket_name)
-        except ValueError:
-            raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
+            return int(name)
+        if name in self.buckets:
+            return self.buckets.index(name)
+        raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
 
     def _reset_buckets(self, raise_exhaustion_signal: bool = True):
         if len(self.metadata_backend.seen_images) == 0 and len(self._get_unseen_images()) == 0:
@@ -464,7 +461,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen {self.sample_type_strs}.
         """
         next_bucket = self._get_next_bucket()
-        self.current_bucket = self._bucket_name_to_id(next_bucket)
+        # Allow non-numeric bucket identifiers (e.g., duration strings, resolution strings)
+        try:
+            self.current_bucket = self._bucket_name_to_id(next_bucket)
+        except Exception:
+            self.current_bucket = next_bucket
         self._clear_batch_accumulator()
 
     def move_to_exhausted(self):
@@ -525,15 +526,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             if image_metadata is None:
                 image_metadata = {}
-            if (
-                StateTracker.get_args().model_family
-                not in [
-                    "sd1x",
-                    "sd2x",
-                    "deepfloyd",
-                ]
-                and "crop_coordinates" not in image_metadata
-            ):
+            requires_crop = StateTracker.get_args().model_family not in [
+                "sd1x",
+                "sd2x",
+                "deepfloyd",
+                "ace_step",
+            ]
+            if requires_crop and "crop_coordinates" not in image_metadata:
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
                 )

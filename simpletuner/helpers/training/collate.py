@@ -498,7 +498,7 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch, is_condition
         for example in batch:
             aspect_ratio = None
             if isinstance(example, dict):
-                aspect_ratio = example["aspect_ratio"]
+                aspect_ratio = example.get("aspect_ratio")
             elif isinstance(example, TrainingSample):
                 if hasattr(example, "aspect_ratio"):
                     aspect_ratio = example.aspect_ratio
@@ -606,6 +606,14 @@ def collate_fn(batch):
         latent_batch = [v["latents"] for v in batch_data]
     else:
         latent_batch = batch_data
+        # Fallback: collect metadata so audio models (e.g. ACE-Step) can build attention masks from lengths.
+        if latent_metadata is None and StateTracker.get_args().model_family == "ace_step":
+            latent_metadata = []
+            for idx, fp in enumerate(filepaths):
+                meta = StateTracker.get_metadata_by_filepath(fp, data_backend_id=examples[idx]["data_backend_id"]) or {}
+                meta.setdefault("filepath", fp)
+                meta.setdefault("data_backend_id", examples[idx]["data_backend_id"])
+                latent_metadata.append(meta)
     if "deepfloyd" not in StateTracker.get_args().model_family:
         debug_log("Check latents")
         latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
