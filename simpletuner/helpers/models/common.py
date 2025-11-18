@@ -77,6 +77,7 @@ def get_model_config_path(model_family: str, model_path: str):
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
+    TEXT2AUDIO = "text2audio"
     IMG2VIDEO = "img2video"
     CONTROLNET = "controlnet"
     CONTROL = "control"
@@ -169,6 +170,44 @@ class ModelFoundation(ABC):
     SUPPORTS_CONTROLNET = None
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_CONTROLNET_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "proj_in",
+        "proj_out",
+        "conv",
+        "conv1",
+        "conv2",
+        "conv_in",
+        "conv_shortcut",
+        "linear_1",
+        "linear_2",
+        "time_emb_proj",
+        "controlnet_cond_embedding.conv_in",
+        "controlnet_cond_embedding.blocks.0",
+        "controlnet_cond_embedding.blocks.1",
+        "controlnet_cond_embedding.blocks.2",
+        "controlnet_cond_embedding.blocks.3",
+        "controlnet_cond_embedding.blocks.4",
+        "controlnet_cond_embedding.blocks.5",
+        "controlnet_cond_embedding.conv_out",
+        "controlnet_down_blocks.0",
+        "controlnet_down_blocks.1",
+        "controlnet_down_blocks.2",
+        "controlnet_down_blocks.3",
+        "controlnet_down_blocks.4",
+        "controlnet_down_blocks.5",
+        "controlnet_down_blocks.6",
+        "controlnet_down_blocks.7",
+        "controlnet_down_blocks.8",
+        "controlnet_mid_block",
+    ]
+    DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -208,6 +247,85 @@ class ModelFoundation(ABC):
         Subclasses should override if chunking is supported.
         """
         return False
+
+    # -------------------------------------------------------------------------
+    # LoRA/PEFT helpers (shared across model families)
+    # -------------------------------------------------------------------------
+    def get_lora_save_layers(self):
+        return None
+
+    def get_lora_target_layers(self):
+        lora_type = getattr(self.config, "lora_type", "standard")
+        if lora_type.lower() == "standard":
+            if getattr(self.config, "controlnet", False):
+                return self.DEFAULT_CONTROLNET_LORA_TARGET
+            return self.DEFAULT_LORA_TARGET
+        if lora_type.lower() == "lycoris":
+            return self.DEFAULT_LYCORIS_TARGET
+        raise NotImplementedError(f"Unknown LoRA target type {lora_type}.")
+
+    def add_lora_adapter(self):
+        from peft import LoraConfig
+
+        target_modules = self.get_lora_target_layers()
+        save_modules = self.get_lora_save_layers()
+        addkeys, misskeys = [], []
+
+        if getattr(self.config, "controlnet", False) and getattr(self, "MODEL_TYPE", None) == ModelTypes.UNET:
+            logger.warning(
+                "ControlNet with UNet requires Conv2d layer support. "
+                "Using LyCORIS (LoHa) adapter instead of standard LoRA."
+            )
+            from peft import LoHaConfig
+
+            self.lora_config = LoHaConfig(
+                r=self.config.lora_rank,
+                alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                rank_dropout=self.config.lora_dropout,
+                module_dropout=0.0,
+                use_effective_conv2d=True,
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+            )
+        else:
+            lora_config_cls = LoraConfig
+            lora_config_kwargs = {}
+            if getattr(self.config, "peft_lora_mode", None) is not None:
+                if self.config.peft_lora_mode.lower() == "singlora":
+                    from peft_singlora import SingLoRAConfig, setup_singlora
+
+                    lora_config_cls = SingLoRAConfig
+                    lora_config_kwargs = {
+                        "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
+                    }
+
+                    logger.info("Enabling SingLoRA for LoRA training.")
+                    setup_singlora()
+            self.lora_config = lora_config_cls(
+                r=self.config.lora_rank,
+                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                lora_dropout=self.config.lora_dropout,
+                init_lora_weights=self.config.lora_initialisation_style,
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+                use_dora=getattr(self.config, "use_dora", False),
+                **lora_config_kwargs,
+            )
+
+        if getattr(self.config, "controlnet", False):
+            self.controlnet.add_adapter(self.lora_config)
+        else:
+            self.model.add_adapter(self.lora_config)
+
+        if getattr(self.config, "init_lora", None):
+            use_dora = getattr(self.config, "use_dora", False) if isinstance(self.lora_config, LoraConfig) else False
+            addkeys, misskeys = load_lora_weights(
+                {self.MODEL_TYPE: (self.controlnet if getattr(self.config, "controlnet", False) else self.model)},
+                self.config.init_lora,
+                use_dora=use_dora,
+            )
+
+        return addkeys, misskeys
 
     def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: int = 0) -> None:
         """
@@ -548,9 +666,20 @@ class ModelFoundation(ABC):
         logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
+        """
+        Proxy to the pipeline save_lora_weights, ensuring save_directory is passed explicitly.
+        """
+        if args:
+            save_directory, *remaining = args
+        else:
+            save_directory = kwargs.pop("save_directory", None)
+            remaining = []
+        if save_directory is None:
+            raise ValueError("save_directory is required to save LoRA weights.")
+
         self.PIPELINE_CLASSES[
             (PipelineTypes.TEXT2IMG if not self.config.controlnet else PipelineTypes.CONTROLNET)
-        ].save_lora_weights(*args, **kwargs)
+        ].save_lora_weights(save_directory=save_directory, *remaining, **kwargs)
 
     def pre_ema_creation(self):
         """
@@ -805,6 +934,12 @@ class ModelFoundation(ABC):
         This is a stub and can be optionally implemented in subclasses.
         """
         return sample
+
+    def scale_vae_latents_for_cache(self, latents, vae):
+        """
+        Optional hook for caching flows to apply model-specific VAE scaling.
+        """
+        return latents
 
     def unload_vae(self):
         if self.vae is not None:
@@ -2029,6 +2164,19 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
 
+    def scale_vae_latents_for_cache(self, latents, vae):
+        if vae is None or not hasattr(vae, "config") or latents is None:
+            return latents
+        shift_factor = getattr(vae.config, "shift_factor", None)
+        scaling_factor = getattr(self, "AUTOENCODER_SCALING_FACTOR", getattr(vae.config, "scaling_factor", 1.0))
+        if shift_factor is not None:
+            return (latents - shift_factor) * scaling_factor
+        if isinstance(latents, torch.Tensor) and hasattr(vae.config, "scaling_factor"):
+            scaled = latents * scaling_factor
+            logger.debug("Latents shape after scaling: %s", scaled.shape)
+            return scaled
+        return latents
+
     @classmethod
     def _iter_pipeline_classes(cls):
         pipelines = getattr(cls, "PIPELINE_CLASSES", {})
@@ -2093,83 +2241,6 @@ class ImageModelFoundation(ModelFoundation):
         batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
 
         return batch
-
-    def get_lora_save_layers(self):
-        return None
-
-    def get_lora_target_layers(self):
-        if self.config.lora_type.lower() == "standard":
-            if self.config.controlnet:
-                return self.DEFAULT_CONTROLNET_LORA_TARGET
-            return self.DEFAULT_LORA_TARGET
-        elif self.config.lora_type.lower() == "lycoris":
-            return self.DEFAULT_LYCORIS_TARGET
-        else:
-            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
-
-    def add_lora_adapter(self):
-        from peft import LoraConfig
-
-        target_modules = self.get_lora_target_layers()
-        save_modules = self.get_lora_save_layers()
-        addkeys, misskeys = [], []
-
-        if self.config.controlnet and self.MODEL_TYPE.value == "unet":
-            logger.warning(
-                "ControlNet with UNet requires Conv2d layer support. "
-                "Using LyCORIS (LoHa) adapter instead of standard LoRA."
-            )
-            from peft import LoHaConfig
-
-            self.lora_config = LoHaConfig(
-                r=self.config.lora_rank,
-                alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
-                rank_dropout=self.config.lora_dropout,
-                module_dropout=0.0,
-                use_effective_conv2d=True,  # Critical for Conv2d support
-                target_modules=target_modules,
-                modules_to_save=save_modules,
-                # init_weights defaults to True, which is what we want
-            )
-        else:
-            lora_config_cls = LoraConfig
-            lora_config_kwargs = {}
-            if self.config.peft_lora_mode is not None:
-                if self.config.peft_lora_mode.lower() == "singlora":
-                    from peft_singlora import SingLoRAConfig, setup_singlora
-
-                    lora_config_cls = SingLoRAConfig
-                    lora_config_kwargs = {
-                        "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
-                    }
-
-                    logger.info("Enabling SingLoRA for LoRA training.")
-                    setup_singlora()
-            self.lora_config = lora_config_cls(
-                r=self.config.lora_rank,
-                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
-                lora_dropout=self.config.lora_dropout,
-                init_lora_weights=self.config.lora_initialisation_style,
-                target_modules=target_modules,
-                modules_to_save=save_modules,
-                use_dora=self.config.use_dora,
-                **lora_config_kwargs,
-            )
-
-        if self.config.controlnet:
-            self.controlnet.add_adapter(self.lora_config)
-        else:
-            self.model.add_adapter(self.lora_config)
-
-        if self.config.init_lora:
-            use_dora = self.config.use_dora if isinstance(self.lora_config, LoraConfig) else False
-            addkeys, misskeys = load_lora_weights(
-                {self.MODEL_TYPE: (self.controlnet if self.config.controlnet else self.model)},
-                self.config.init_lora,
-                use_dora=use_dora,
-            )
-
-        return addkeys, misskeys
 
     def custom_model_card_schedule_info(self):
         """
