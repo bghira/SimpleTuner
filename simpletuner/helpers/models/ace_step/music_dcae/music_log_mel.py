@@ -39,6 +39,12 @@ class LinearSpectrogram(nn.Module):
         if y.ndim == 3:
             y = y.squeeze(1)
 
+        # Ensure window buffer matches tensor device/dtype (MPS safety)
+        if self.window.device != y.device or self.window.dtype != y.dtype:
+            window = self.window.to(device=y.device, dtype=y.dtype)
+        else:
+            window = self.window
+
         y = torch.nn.functional.pad(
             y.unsqueeze(1),
             (
@@ -53,7 +59,7 @@ class LinearSpectrogram(nn.Module):
             self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
-            window=self.window,
+            window=window,
             center=self.center,
             pad_mode="reflect",
             normalized=False,
@@ -110,6 +116,11 @@ class LogMelSpectrogram(nn.Module):
 
     def forward(self, x: Tensor, return_linear: bool = False) -> Tensor:
         linear = self.spectrogram(x)
+        # mel_scale buffers (fb) must follow the audio device/dtype (MPS safety)
+        if hasattr(self.mel_scale, "fb"):
+            fb = self.mel_scale.fb
+            if fb.device != linear.device or fb.dtype != linear.dtype:
+                self.mel_scale.fb = fb.to(device=linear.device, dtype=linear.dtype)
         x = self.mel_scale(linear)
         x = self.compress(x)
         # print(x.shape)
