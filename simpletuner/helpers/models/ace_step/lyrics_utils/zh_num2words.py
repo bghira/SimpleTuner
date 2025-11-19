@@ -8,7 +8,6 @@
 # copy from https://github.com/coqui-ai/TTS/blob/dbf1a08a0d4e47fdad6172e433eeb34bc6b13b4e/TTS/tts/layers/xtts/zh_num2words.py
 import argparse
 import csv
-import os
 import re
 import string
 import sys

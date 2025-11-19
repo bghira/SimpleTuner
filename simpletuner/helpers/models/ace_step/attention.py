@@ -18,7 +18,6 @@
 from typing import Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import logging
 from torch import nn

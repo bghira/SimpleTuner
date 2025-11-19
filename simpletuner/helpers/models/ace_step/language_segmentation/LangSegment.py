@@ -52,9 +52,7 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVE
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
-import os
 import re
-import sys
 from collections import Counter, defaultdict
 
 import numpy as np

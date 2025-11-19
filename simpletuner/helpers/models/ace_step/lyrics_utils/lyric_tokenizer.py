@@ -6,9 +6,8 @@ import os
 import re
 import textwrap
 from functools import cached_property
-from typing import Dict, List, Optional, Set, Union
+from typing import List, Union
 
-import numpy as np
 import pypinyin
 import torch
 from hangul_romanize import Transliter
@@ -20,11 +19,6 @@ from spacy.lang.es import Spanish
 from spacy.lang.ja import Japanese
 from spacy.lang.zh import Chinese
 from tokenizers import Tokenizer
-
-try:
-    import tensorflow as tf
-except ImportError:  # pragma: no cover - optional dependency
-    tf = None
 
 from .zh_num2words import TextNorm as zh_num2words
 
@@ -709,14 +703,14 @@ class VoiceBpeTokenizer:
     # copy from https://github.com/huggingface/transformers/blob/main/src/transformers/tokenization_utils_base.py#L3936
     def batch_decode(
         self,
-        sequences: Union[List[int], List[List[int]], "np.ndarray", "torch.Tensor", "tf.Tensor"],
+        sequences: Union[List[int], List[List[int]], torch.Tensor],
         skip_special_tokens: bool = False,
     ) -> List[str]:
         """
         Convert a list of lists of token ids into a list of strings by calling decode.
 
         Args:
-            sequences (`Union[List[int], List[List[int]], np.ndarray, torch.Tensor, tf.Tensor]`):
+            sequences (`Union[List[int], List[List[int]], torch.Tensor]`):
                 List of tokenized input ids. Can be obtained using the `__call__` method.
             skip_special_tokens (`bool`, *optional*, defaults to `False`):
                 Whether or not to remove special tokens in the decoding.
