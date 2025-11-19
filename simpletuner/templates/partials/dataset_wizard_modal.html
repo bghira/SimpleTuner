@@ -84,7 +84,7 @@
                     <h6 class="mb-4">Dataset Type</h6>
                     <div class="mb-4">
                         <div class="row g-3">
-                            <div class="col-md-6">
+                            <div class="col-md-4" x-show="!isAudioModel">
                                 <div class="backend-card"
                                      :class="{ 'selected': currentDataset.dataset_type === 'image' }"
                                      @click="selectDatasetType('image')">
@@ -95,7 +95,7 @@
                                     <p class="text-muted small mb-0">For training with still images</p>
                                 </div>
                             </div>
-                            <div class="col-md-6">
+                            <div class="col-md-4" x-show="!isAudioModel">
                                 <div class="backend-card"
                                      :class="{
                                          'selected': currentDataset.dataset_type === 'video',
@@ -110,6 +110,17 @@
                                         <span x-show="isVideoModel">For training with video sequences</span>
                                         <span x-show="!isVideoModel" class="text-warning">Model not marked video-capable; continue with caution.</span>
                                     </p>
+                                </div>
+                            </div>
+                            <div class="col-md-4" x-show="isAudioModel">
+                                <div class="backend-card"
+                                     :class="{ 'selected': currentDataset.dataset_type === 'audio' }"
+                                     @click="selectDatasetType('audio')">
+                                    <div class="backend-icon">
+                                        <i class="fas fa-music"></i>
+                                    </div>
+                                    <h6>Audio Dataset</h6>
+                                    <p class="text-muted small mb-0">For training with audio/speech</p>
                                 </div>
                             </div>
                         </div>

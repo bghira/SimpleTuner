@@ -267,6 +267,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         """Normalize audio configuration settings from backend definitions."""
         audio_block = deepcopy(source.get("audio", {}) or {})
         alias_map = {
+            "min_duration_seconds": ["audio_min_duration_seconds"],
             "max_duration_seconds": ["audio_max_duration_seconds"],
             "channels": ["audio_channels"],
             "bucket_strategy": ["audio_bucket_strategy"],
@@ -275,6 +276,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 "audio_duration_interval_seconds",
                 "audio_bucket_interval",
             ],
+            "truncation_mode": ["audio_truncation_mode"],
         }
         for target_key, aliases in alias_map.items():
             if target_key in audio_block:

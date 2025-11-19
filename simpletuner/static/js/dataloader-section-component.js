@@ -170,6 +170,22 @@ function dataloaderSectionComponent() {
         const context = this.modelContext || {};
         return this.normalizeBoolean(context.isVideoModel) || this.normalizeBoolean(context.supportsVideo);
     },
+    get isAudioModel() {
+        const trainer = Alpine.store('trainer');
+        if (!trainer) return false;
+        // Try modelContext first
+        if (trainer.modelContext && trainer.modelContext.isAudioModel) {
+            return true;
+        }
+        // Fallback to config values similar to the wizard logic
+        const config = trainer.configValues || {};
+        const family = (
+            config['model_family'] ||
+            config['--model_family'] ||
+            ''
+        ).toString().toLowerCase();
+        return family === 'ace_step';
+    },
     get requiresStrictI2VDatasets() {
         const context = this.modelContext || {};
         const active = this.normalizeBoolean(context.strictI2VActive);
