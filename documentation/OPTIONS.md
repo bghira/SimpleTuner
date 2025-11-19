@@ -841,6 +841,9 @@ options:
   --vae_cache_ondemand [VAE_CACHE_ONDEMAND]
                         Process VAE latents during training instead of
                         precomputing them
+  --vae_cache_disable [VAE_CACHE_DISABLE]
+                        Implicitly enables on-demand caching and disables
+                        writing embeddings to disk.
   --accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL
                         Clear the cache from VRAM every X steps to prevent
                         memory leaks

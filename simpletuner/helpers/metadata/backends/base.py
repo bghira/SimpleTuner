@@ -84,6 +84,9 @@ class MetadataBackend:
         self.audio_duration_interval = self._resolve_audio_duration_interval()
         self.audio_max_duration_seconds = self._resolve_audio_max_duration()
         self.audio_truncation_mode = self._resolve_audio_truncation_mode()
+        self.audio_lyrics_format = self._resolve_audio_lyrics_format()
+        self.audio_lyrics_extension = self._resolve_audio_lyrics_extension()
+        self.audio_lyrics_suffix = self._resolve_audio_lyrics_suffix()
         self.reload_cache()
         self.resolution = float(resolution)
         self.resolution_type = resolution_type
@@ -324,6 +327,29 @@ class MetadataBackend:
         """compute aspect ratio buckets - main processing function"""
         logger.info("Discovering new files...")
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
+
+        # Audio datasets use duration-based bucketing, not spatial aspect ratios.
+        if self.dataset_type is DatasetType.AUDIO:
+            logger.info("Audio dataset detected; rebuilding duration buckets.")
+            self.load_image_metadata()
+            self.aspect_ratio_bucket_indices = {}
+            for sample_path, meta in self.image_metadata.items():
+                duration_seconds = None
+                if isinstance(meta, dict):
+                    duration_seconds = (
+                        meta.get("bucket_duration_seconds")
+                        or meta.get("duration_seconds")
+                        or meta.get("original_duration_seconds")
+                    )
+                bucket_key, truncated = self._compute_audio_bucket(duration_seconds)
+                self.aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(sample_path)
+                if truncated is not None and isinstance(meta, dict):
+                    meta["bucket_duration_seconds"] = truncated
+                    meta["duration_seconds"] = truncated
+            if self.bucket_report:
+                self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
+            logger.info("Audio bucket rebuild complete.")
+            return
 
         existing_files_set = set().union(*self.aspect_ratio_bucket_indices.values())
         logger.info(
@@ -1146,3 +1172,141 @@ class MetadataBackend:
             )
             mode = "beginning"
         return mode
+
+    def _resolve_audio_lyrics_format(self) -> Optional[str]:
+        if self.dataset_type is not DatasetType.AUDIO:
+            return None
+        lyrics_format = None
+        if isinstance(self.audio_config, dict):
+            lyrics_format = self.audio_config.get("lyrics_filename_format")
+        if lyrics_format is None and isinstance(self.dataset_config, dict):
+            lyrics_format = self.dataset_config.get("lyrics_filename_format")
+        if lyrics_format is None:
+            return None
+        try:
+            lyrics_format = str(lyrics_format).strip()
+        except Exception:
+            return None
+        return lyrics_format or None
+
+    def _resolve_audio_lyrics_extension(self) -> Optional[str]:
+        if self.dataset_type is not DatasetType.AUDIO:
+            return None
+        extension = (self.audio_config or {}).get("lyrics_extension")
+        if extension is None:
+            return None
+        extension = str(extension).strip()
+        if not extension:
+            return None
+        return extension.lstrip(".")
+
+    def _resolve_audio_lyrics_suffix(self) -> Optional[str]:
+        if self.dataset_type is not DatasetType.AUDIO:
+            return None
+        suffix = (self.audio_config or {}).get("lyrics_suffix")
+        if suffix is None:
+            return None
+        suffix = str(suffix)
+        return suffix if suffix else None
+
+    def _discover_audio_lyrics(self, sample_path: str) -> Optional[str]:
+        if not (self.audio_lyrics_extension or self.audio_lyrics_suffix or self.audio_lyrics_format):
+            return None
+        try:
+            path = Path(sample_path)
+        except Exception:
+            return None
+        candidates = []
+        if self.audio_lyrics_format:
+            replacements = {
+                "{filename}": path.stem,
+                "{stem}": path.stem,
+                "{name}": path.name,
+                "{suffix}": "".join(path.suffixes) or path.suffix,
+                "{extension}": path.suffix.lstrip("."),
+                "{ext}": path.suffix.lstrip("."),
+                "{parent}": str(path.parent),
+                "{dirname}": path.parent.name,
+            }
+            rendered = self.audio_lyrics_format
+            for token, value in replacements.items():
+                rendered = rendered.replace(token, value)
+            try:
+                format_path = Path(rendered)
+            except Exception:
+                format_path = None
+            if format_path is not None:
+                if not format_path.is_absolute():
+                    format_path = path.parent / format_path
+                candidates.append(format_path)
+
+        if self.audio_lyrics_extension or self.audio_lyrics_suffix:
+            suffix_candidate = path
+            if self.audio_lyrics_suffix:
+                suffix_candidate = suffix_candidate.with_name(suffix_candidate.stem + self.audio_lyrics_suffix)
+            if self.audio_lyrics_extension:
+                extension = self.audio_lyrics_extension
+                if not extension.startswith("."):
+                    extension = f".{extension}"
+                suffix_candidate = suffix_candidate.with_suffix(extension)
+            candidates.append(suffix_candidate)
+
+        seen_paths = set()
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                candidate_key = candidate.resolve()
+            except Exception:
+                candidate_key = candidate
+            if candidate_key in seen_paths:
+                continue
+            seen_paths.add(candidate_key)
+            if not candidate.exists():
+                continue
+            try:
+                content = candidate.read_text(encoding="utf-8").strip()
+            except Exception as exc:
+                logger.debug(f"(id={self.id}) Failed reading lyrics for {sample_path}: {exc}")
+                continue
+            if content:
+                return content
+        return None
+
+    def _build_audio_metadata_entry(
+        self,
+        sample_path: str,
+        sample_rate: Optional[float],
+        num_channels: Optional[int],
+        num_samples: Optional[int],
+        duration_seconds: Optional[float],
+        overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a canonical audio metadata payload so downstream components can reuse the same schema
+        regardless of the discovery backend.
+        """
+        safe_samples = int(num_samples) if num_samples is not None else 0
+        raw_channels = int(num_channels) if num_channels is not None else 0
+        safe_channels = max(raw_channels, 1)
+        placeholder_size = (safe_samples, safe_channels)
+        payload = {
+            "audio_path": sample_path,
+            "image_path": sample_path,
+            "sample_rate": sample_rate,
+            "num_channels": num_channels,
+            "num_samples": num_samples,
+            "duration_seconds": duration_seconds,
+            "truncation_mode": self.audio_truncation_mode,
+            "original_size": placeholder_size,
+            "intermediary_size": placeholder_size,
+            "target_size": placeholder_size,
+            "crop_coordinates": (0, 0),
+            "aspect_ratio": 1.0,
+        }
+        lyrics_text = self._discover_audio_lyrics(sample_path)
+        if lyrics_text:
+            payload["lyrics"] = lyrics_text
+        if overrides:
+            payload.update(overrides)
+        return payload

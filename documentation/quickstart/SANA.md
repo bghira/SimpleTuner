@@ -350,7 +350,7 @@ Currently, the lowest VRAM utilisation can be attained with:
 - Using `--quantize_via=cpu` to avoid outOfMemory error during startup on <=16G cards.
 - Enable `--gradient_checkpointing`
 
-**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation can be enabled. VAE tiling may not work for Sana at this time.
+**NOTE**: Pre-caching of VAE embeds and text encoder outputs may use more memory and still OOM. If so, text encoder quantisation can be enabled. VAE tiling may not work for Sana at this time. For large datasets where disk space is a concern, you can use `--vae_cache_disable` to perform online encoding without caching to disk.
 
 Speed was approximately 1.4 iterations per second on a 4090.
 

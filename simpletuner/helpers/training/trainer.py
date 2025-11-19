@@ -2570,7 +2570,7 @@ class Trainer:
         )
 
     def init_unload_vae(self):
-        if self.config.keep_vae_loaded or self.config.vae_cache_ondemand:
+        if self.config.keep_vae_loaded or self.config.vae_cache_ondemand or getattr(self.config, "vae_cache_disable", False):
             return
         memory_before_unload = self.stats_memory_used()
         self.model.unload_vae()
@@ -3818,8 +3818,9 @@ class Trainer:
                     self.timesteps_buffer = []
 
                     # Average out the luminance values of each batch, so that we can store that in this step.
-                    avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
-                    wandb_logs["train_luminance"] = avg_training_data_luminance
+                    if training_luminance_values:
+                        avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
+                        wandb_logs["train_luminance"] = avg_training_data_luminance
 
                     logger.debug(
                         f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {loss.item()}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {self.train_loss}"

@@ -284,6 +284,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                     audio_block[target_key] = source[alias]
                     break
 
+        for passthrough_key in ("lyrics_extension", "lyrics_suffix", "lyrics_filename_format"):
+            if passthrough_key not in audio_block and passthrough_key in source:
+                audio_block[passthrough_key] = source[passthrough_key]
+
         bucket_strategy_raw = audio_block.get("bucket_strategy") or AUDIO_DEFAULT_BUCKET_STRATEGY
         if isinstance(bucket_strategy_raw, str):
             bucket_strategy = bucket_strategy_raw.lower()
@@ -478,6 +482,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         output["config"]["resolution"] = None
         output["config"]["resolution_type"] = None
 
+    user_supplied_caption_strategy = "caption_strategy" in backend
     if "parquet" in backend:
         output["config"]["parquet"] = backend["parquet"]
     if "caption_strategy" in backend:
@@ -508,6 +513,12 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             raise ValueError(
                 f"(id={backend['id']}) caption_strategy='huggingface' can only be used with type='huggingface' backends"
             )
+    elif backend.get("type") == "huggingface" and not user_supplied_caption_strategy:
+        output["config"]["caption_strategy"] = "huggingface"
+        info_log(
+            f"(id={backend['id']}) Defaulting caption_strategy to 'huggingface' for HuggingFace dataset. "
+            "Set caption_strategy explicitly in the backend config to override."
+        )
     if backend.get("type") == "huggingface":
         # huggingface must use metadata backend. if the user defined something else, we'll error. if they are not using anything, we'll override it.
         if backend.get("metadata_backend", None) is None:
@@ -584,6 +595,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
 
     if is_audio_dataset:
         output["config"]["audio"] = _prepare_audio_settings(backend)
+        model_family_value = str(_get_arg_value(args, "model_family", "") or "").lower()
+        if model_family_value == "ace_step" and output["config"].get("caption_strategy") == "textfile":
+            audio_settings = output["config"]["audio"]
+            if not any(audio_settings.get(key) for key in ("lyrics_filename_format", "lyrics_extension", "lyrics_suffix")):
+                default_lyrics_format = "{filename}.lyrics"
+                audio_settings["lyrics_filename_format"] = default_lyrics_format
+                warning_log(
+                    f"(id={backend['id']}) ACE-Step textfile datasets will also load lyrics beside each sample "
+                    f"using '{default_lyrics_format}'. Set audio.lyrics_filename_format to match your naming scheme."
+                )
+            output["config"]["audio"] = audio_settings
     if backend.get("dataset_type", None) == "video":
         output["config"]["video"] = {}
         if "video" in backend:
@@ -2411,7 +2433,23 @@ class FactoryRegistry:
                             )
                         init_backend["config"][key] = prev_config[key]
 
-        init_backend["config"]["config_version"] = current_config_version
+        # For Hugging Face datasets, always honor the active caption_strategy (e.g., switching from textfile/filename).
+        if backend.get("type") == "huggingface":
+            desired_caption_strategy = backend.get("caption_strategy") or init_backend["config"].get("caption_strategy")
+            if desired_caption_strategy and init_backend["config"].get("caption_strategy") != desired_caption_strategy:
+                warning_log(
+                    f"(id={init_backend['id']}) Overriding cached caption_strategy="
+                    f"{init_backend['config'].get('caption_strategy')} with {desired_caption_strategy} for Hugging Face dataset."
+                )
+                init_backend["config"]["caption_strategy"] = desired_caption_strategy
+            # Keep the metadata backend's config in sync so future cache reloads preserve the override.
+            try:
+                init_backend["metadata_backend"].config["caption_strategy"] = init_backend["config"]["caption_strategy"]
+            except Exception:
+                # Metadata backend might not be initialized yet or config might be immutable
+                pass
+
+        return init_backend
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
         init_backend_debug_info = {
@@ -2468,13 +2506,6 @@ class FactoryRegistry:
         if dataset_type is DatasetType.CAPTION:
             self._create_caption_dataloader(backend, init_backend)
             return
-        if dataset_type is DatasetType.AUDIO:
-            info_log(f"(id={init_backend['id']}) Audio dataset detected; skipping MultiAspect dataset creation.")
-            init_backend["train_dataset"] = None
-            init_backend["sampler"] = None
-            init_backend["train_dataloader"] = None
-            return
-
         caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
         prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
         instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
@@ -2817,6 +2848,13 @@ class FactoryRegistry:
             info_log(f"(id={init_backend['id']}) Skipping VAE cache configuration (disable_vae_cache=True).")
             return
         """Configure VAE cache for the backend."""
+        dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
+        allowed_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.AUDIO}
+        if dataset_type_enum not in allowed_types:
+            info_log(
+                f"(id={init_backend['id']}) Skipping VAE cache configuration for dataset_type={dataset_type_enum.value}."
+            )
+            return
         vae_cache_dir = backend.get("cache_dir_vae", None)
         if vae_cache_dir in vae_cache_dir_paths:
             raise ValueError(
@@ -2859,11 +2897,12 @@ class FactoryRegistry:
             max_workers=backend.get("max_workers", self.args.max_workers),
             process_queue_size=backend.get("image_processing_batch_size", self.args.image_processing_batch_size),
             vae_cache_ondemand=self.args.vae_cache_ondemand,
+            vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
             hash_filenames=init_backend["config"].get("hash_filenames", True),
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
-        if not self.args.vae_cache_ondemand:
+        if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
             info_log(f"(id={init_backend['id']}) Discovering cache objects..")
             if self.accelerator.is_local_main_process:
                 try:
@@ -3175,12 +3214,6 @@ class FactoryRegistry:
 
         self._handle_bucket_operations(backend, init_backend, conditioning_type)
 
-        if dataset_type_enum is DatasetType.AUDIO:
-            self._process_text_embeddings(backend, init_backend, conditioning_type)
-            init_backend["metadata_backend"].save_cache()
-            self.data_backends[init_backend["id"]] = init_backend
-            return
-
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
         self._process_text_embeddings(backend, init_backend, conditioning_type)
@@ -3218,6 +3251,7 @@ class FactoryRegistry:
 
         if (
             not self.args.vae_cache_ondemand
+            and not getattr(self.args, "vae_cache_disable", False)
             and "vaecache" in init_backend
             and "vae" not in self.args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
@@ -3230,7 +3264,7 @@ class FactoryRegistry:
         ):
             unprocessed_files = init_backend["vaecache"].discover_unprocessed_files()
             logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
-            if not self.args.vae_cache_ondemand:
+            if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
                 logger.info(f"Executing VAE cache update..")
                 init_backend["vaecache"].process_buckets()
             logger.debug(f"Encoding images during training: {self.args.vae_cache_ondemand}")
@@ -3565,6 +3599,7 @@ def get_huggingface_backend(
         revision=revision,
         image_column=image_column,
         video_column=video_column,
+        audio_column=backend.get("audio_column", "audio"),
         cache_dir=cache_dir,
         compress_cache=compress_cache,
         streaming=streaming,

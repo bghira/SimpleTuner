@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from hashlib import sha256
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -38,6 +39,7 @@ if "imageio" not in sys.modules:
 
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.models.common import AudioModelFoundation
 from simpletuner.helpers.training import audio_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -146,6 +148,26 @@ class DummyModel:
         return _transform
 
 
+class MiniAudioModel(AudioModelFoundation):
+    TEXT_ENCODER_CONFIGURATION = {}
+
+    def __init__(self):
+        self.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        self.config = SimpleNamespace(weight_dtype=torch.float32)
+
+    def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
+        return {}
+
+    def convert_text_embed_for_pipeline(self, text_embedding, prompt: str = "") -> dict:
+        return {}
+
+    def convert_negative_text_embed_for_pipeline(self, text_embedding, prompt: str) -> dict:
+        return {}
+
+    def model_predict(self, *args, **kwargs):
+        raise NotImplementedError
+
+
 class TestVaeCacheAudio(unittest.TestCase):
     @patch("simpletuner.helpers.caching.vae.StateTracker.set_vae_cache_files")
     @patch("simpletuner.helpers.caching.vae.StateTracker.get_vae_cache_files", return_value=[])
@@ -242,6 +264,19 @@ class TestVaeCacheAudio(unittest.TestCase):
         self.assertEqual(len(model.transform_calls), 1)
         self.assertEqual(model.transform_calls[0]["metadata"]["sample_rate"], 48000)
         self.assertEqual(vae_cache.vae_input_queue.qsize(), 0)
+
+    def test_audio_model_foundation_encode_with_vae(self):
+        class DummyVAE:
+            def encode(self, audio):
+                return audio * 2, torch.tensor([audio.shape[-1]])
+
+        model = MiniAudioModel()
+        samples = torch.ones(2, 3, 4)
+        output = model.encode_with_vae(DummyVAE(), samples)
+        self.assertIn("latents", output)
+        self.assertIn("latent_lengths", output)
+        self.assertTrue(torch.equal(output["latents"], samples * 2))
+        self.assertEqual(output["latent_lengths"].shape[0], 1)
 
 
 if __name__ == "__main__":

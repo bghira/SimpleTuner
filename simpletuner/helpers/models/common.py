@@ -24,6 +24,7 @@ try:
 except ImportError:
     FSDP_AVAILABLE = False
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.custom_schedule import (
@@ -76,6 +77,7 @@ def get_model_config_path(model_family: str, model_path: str):
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
+    TEXT2AUDIO = "text2audio"
     IMG2VIDEO = "img2video"
     CONTROLNET = "controlnet"
     CONTROL = "control"
@@ -168,6 +170,45 @@ class ModelFoundation(ABC):
     SUPPORTS_CONTROLNET = None
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_CONTROLNET_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "proj_in",
+        "proj_out",
+        "conv",
+        "conv1",
+        "conv2",
+        "conv_in",
+        "conv_shortcut",
+        "linear_1",
+        "linear_2",
+        "time_emb_proj",
+        "controlnet_cond_embedding.conv_in",
+        "controlnet_cond_embedding.blocks.0",
+        "controlnet_cond_embedding.blocks.1",
+        "controlnet_cond_embedding.blocks.2",
+        "controlnet_cond_embedding.blocks.3",
+        "controlnet_cond_embedding.blocks.4",
+        "controlnet_cond_embedding.blocks.5",
+        "controlnet_cond_embedding.conv_out",
+        "controlnet_down_blocks.0",
+        "controlnet_down_blocks.1",
+        "controlnet_down_blocks.2",
+        "controlnet_down_blocks.3",
+        "controlnet_down_blocks.4",
+        "controlnet_down_blocks.5",
+        "controlnet_down_blocks.6",
+        "controlnet_down_blocks.7",
+        "controlnet_down_blocks.8",
+        "controlnet_mid_block",
+    ]
+    DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    VALIDATION_USES_NEGATIVE_PROMPT = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -207,6 +248,85 @@ class ModelFoundation(ABC):
         Subclasses should override if chunking is supported.
         """
         return False
+
+    # -------------------------------------------------------------------------
+    # LoRA/PEFT helpers (shared across model families)
+    # -------------------------------------------------------------------------
+    def get_lora_save_layers(self):
+        return None
+
+    def get_lora_target_layers(self):
+        lora_type = getattr(self.config, "lora_type", "standard")
+        if lora_type.lower() == "standard":
+            if getattr(self.config, "controlnet", False):
+                return self.DEFAULT_CONTROLNET_LORA_TARGET
+            return self.DEFAULT_LORA_TARGET
+        if lora_type.lower() == "lycoris":
+            return self.DEFAULT_LYCORIS_TARGET
+        raise NotImplementedError(f"Unknown LoRA target type {lora_type}.")
+
+    def add_lora_adapter(self):
+        from peft import LoraConfig
+
+        target_modules = self.get_lora_target_layers()
+        save_modules = self.get_lora_save_layers()
+        addkeys, misskeys = [], []
+
+        if getattr(self.config, "controlnet", False) and getattr(self, "MODEL_TYPE", None) == ModelTypes.UNET:
+            logger.warning(
+                "ControlNet with UNet requires Conv2d layer support. "
+                "Using LyCORIS (LoHa) adapter instead of standard LoRA."
+            )
+            from peft import LoHaConfig
+
+            self.lora_config = LoHaConfig(
+                r=self.config.lora_rank,
+                alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                rank_dropout=self.config.lora_dropout,
+                module_dropout=0.0,
+                use_effective_conv2d=True,
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+            )
+        else:
+            lora_config_cls = LoraConfig
+            lora_config_kwargs = {}
+            if getattr(self.config, "peft_lora_mode", None) is not None:
+                if self.config.peft_lora_mode.lower() == "singlora":
+                    from peft_singlora import SingLoRAConfig, setup_singlora
+
+                    lora_config_cls = SingLoRAConfig
+                    lora_config_kwargs = {
+                        "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
+                    }
+
+                    logger.info("Enabling SingLoRA for LoRA training.")
+                    setup_singlora()
+            self.lora_config = lora_config_cls(
+                r=self.config.lora_rank,
+                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                lora_dropout=self.config.lora_dropout,
+                init_lora_weights=self.config.lora_initialisation_style,
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+                use_dora=getattr(self.config, "use_dora", False),
+                **lora_config_kwargs,
+            )
+
+        if getattr(self.config, "controlnet", False):
+            self.controlnet.add_adapter(self.lora_config)
+        else:
+            self.model.add_adapter(self.lora_config)
+
+        if getattr(self.config, "init_lora", None):
+            use_dora = getattr(self.config, "use_dora", False) if isinstance(self.lora_config, LoraConfig) else False
+            addkeys, misskeys = load_lora_weights(
+                {self.MODEL_TYPE: (self.controlnet if getattr(self.config, "controlnet", False) else self.model)},
+                self.config.init_lora,
+                use_dora=use_dora,
+            )
+
+        return addkeys, misskeys
 
     def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: int = 0) -> None:
         """
@@ -540,9 +660,20 @@ class ModelFoundation(ABC):
         logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
+        """
+        Proxy to the pipeline save_lora_weights, ensuring save_directory is passed explicitly.
+        """
+        if args:
+            save_directory, *remaining = args
+        else:
+            save_directory = kwargs.pop("save_directory", None)
+            remaining = []
+        if save_directory is None:
+            raise ValueError("save_directory is required to save LoRA weights.")
+
         self.PIPELINE_CLASSES[
             (PipelineTypes.TEXT2IMG if not self.config.controlnet else PipelineTypes.CONTROLNET)
-        ].save_lora_weights(*args, **kwargs)
+        ].save_lora_weights(save_directory=save_directory, *remaining, **kwargs)
 
     def pre_ema_creation(self):
         """
@@ -784,12 +915,25 @@ class ModelFoundation(ABC):
         """
         return vae.encode(samples)
 
+    def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
+        """
+        Hook invoked by VAECache so models can consume per-sample metadata (e.g. lyrics)
+        while performing VAE encoding. Default implementation ignores metadata.
+        """
+        return self.encode_with_vae(vae, samples)
+
     def post_vae_encode_transform_sample(self, sample):
         """
         Post-encode transform for the sample after passing it to the VAE.
         This is a stub and can be optionally implemented in subclasses.
         """
         return sample
+
+    def scale_vae_latents_for_cache(self, latents, vae):
+        """
+        Optional hook for caching flows to apply model-specific VAE scaling.
+        """
+        return latents
 
     def unload_vae(self):
         if self.vae is not None:
@@ -1722,6 +1866,47 @@ class ModelFoundation(ABC):
         """
         return text_embedding
 
+    @classmethod
+    def caption_field_preferences(cls, dataset_type: Optional[str] = None) -> list[str]:
+        """
+        Preferred caption-related fields (by name) to use when harvesting captions from metadata backends.
+        Models can override to request lyrics/tags or other domain-specific fields.
+        """
+        return []
+
+    def requires_validation_i2v_samples(self) -> bool:
+        """
+        Override for models that need to pair validation videos with their conditioning images.
+        """
+        return False
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        """
+        Whether to pre-encode negative prompts during validation setup.
+        Override for models that need per-sample negative prompt encoding (e.g., with reference images).
+        """
+        return True
+
+    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
+        """
+        Encode the negative prompt for validation.
+
+        Args:
+            negative_prompt: The negative prompt text to encode
+            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
+
+        Returns:
+            Dictionary of encoded negative prompt embeddings
+        """
+        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
+
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """
+        Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
+        """
+        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        return self._format_text_embedding(encoded_text)
+
     def conditional_loss(
         self,
         model_pred: torch.Tensor,
@@ -1981,44 +2166,18 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
 
-    def requires_validation_i2v_samples(self) -> bool:
-        """
-        Override for models that need to pair validation videos with their conditioning images.
-        """
-        return False
-
-    def should_precompute_validation_negative_prompt(self) -> bool:
-        """
-        Whether to pre-encode negative prompts during validation setup.
-        Override for models that need per-sample negative prompt encoding (e.g., with reference images).
-        """
-        return True
-
-    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
-        """
-        Encode the negative prompt for validation.
-
-        Args:
-            negative_prompt: The negative prompt text to encode
-            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
-
-        Returns:
-            Dictionary of encoded negative prompt embeddings
-        """
-        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
-
-    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
-        """
-        Encode the caption dropout (null) prompt.
-
-        Args:
-            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
-
-        Returns:
-            Dictionary of encoded null prompt embeddings
-        """
-        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
-        return self._format_text_embedding(encoded_text)
+    def scale_vae_latents_for_cache(self, latents, vae):
+        if vae is None or not hasattr(vae, "config") or latents is None:
+            return latents
+        shift_factor = getattr(vae.config, "shift_factor", None)
+        scaling_factor = getattr(self, "AUTOENCODER_SCALING_FACTOR", getattr(vae.config, "scaling_factor", 1.0))
+        if shift_factor is not None:
+            return (latents - shift_factor) * scaling_factor
+        if isinstance(latents, torch.Tensor) and hasattr(vae.config, "scaling_factor"):
+            scaled = latents * scaling_factor
+            logger.debug("Latents shape after scaling: %s", scaled.shape)
+            return scaled
+        return latents
 
     @classmethod
     def _iter_pipeline_classes(cls):
@@ -2084,83 +2243,6 @@ class ImageModelFoundation(ModelFoundation):
         batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
 
         return batch
-
-    def get_lora_save_layers(self):
-        return None
-
-    def get_lora_target_layers(self):
-        if self.config.lora_type.lower() == "standard":
-            if self.config.controlnet:
-                return self.DEFAULT_CONTROLNET_LORA_TARGET
-            return self.DEFAULT_LORA_TARGET
-        elif self.config.lora_type.lower() == "lycoris":
-            return self.DEFAULT_LYCORIS_TARGET
-        else:
-            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
-
-    def add_lora_adapter(self):
-        from peft import LoraConfig
-
-        target_modules = self.get_lora_target_layers()
-        save_modules = self.get_lora_save_layers()
-        addkeys, misskeys = [], []
-
-        if self.config.controlnet and self.MODEL_TYPE.value == "unet":
-            logger.warning(
-                "ControlNet with UNet requires Conv2d layer support. "
-                "Using LyCORIS (LoHa) adapter instead of standard LoRA."
-            )
-            from peft import LoHaConfig
-
-            self.lora_config = LoHaConfig(
-                r=self.config.lora_rank,
-                alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
-                rank_dropout=self.config.lora_dropout,
-                module_dropout=0.0,
-                use_effective_conv2d=True,  # Critical for Conv2d support
-                target_modules=target_modules,
-                modules_to_save=save_modules,
-                # init_weights defaults to True, which is what we want
-            )
-        else:
-            lora_config_cls = LoraConfig
-            lora_config_kwargs = {}
-            if self.config.peft_lora_mode is not None:
-                if self.config.peft_lora_mode.lower() == "singlora":
-                    from peft_singlora import SingLoRAConfig, setup_singlora
-
-                    lora_config_cls = SingLoRAConfig
-                    lora_config_kwargs = {
-                        "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
-                    }
-
-                    logger.info("Enabling SingLoRA for LoRA training.")
-                    setup_singlora()
-            self.lora_config = lora_config_cls(
-                r=self.config.lora_rank,
-                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
-                lora_dropout=self.config.lora_dropout,
-                init_lora_weights=self.config.lora_initialisation_style,
-                target_modules=target_modules,
-                modules_to_save=save_modules,
-                use_dora=self.config.use_dora,
-                **lora_config_kwargs,
-            )
-
-        if self.config.controlnet:
-            self.controlnet.add_adapter(self.lora_config)
-        else:
-            self.model.add_adapter(self.lora_config)
-
-        if self.config.init_lora:
-            use_dora = self.config.use_dora if isinstance(self.lora_config, LoraConfig) else False
-            addkeys, misskeys = load_lora_weights(
-                {self.MODEL_TYPE: (self.controlnet if self.config.controlnet else self.model)},
-                self.config.init_lora,
-                use_dora=use_dora,
-            )
-
-        return addkeys, misskeys
 
     def custom_model_card_schedule_info(self):
         """
@@ -2248,3 +2330,75 @@ class VideoModelFoundation(ImageModelFoundation):
         You can reshape or permute as needed for the underlying model.
         """
         return tensor
+
+
+class AudioModelFoundation(ModelFoundation):
+    """
+    Base class for audio-first models. Provides minimal audio transform helpers
+    and ensures autoencoders that return auxiliary metadata (e.g. sample lengths)
+    are wrapped in a cache-friendly structure.
+    """
+
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+
+    def get_transforms(self, dataset_type: str = "image"):
+        if dataset_type == DatasetType.AUDIO.value or dataset_type == "audio":
+
+            def _audio_transform(sample):
+                waveform = sample
+                if isinstance(sample, dict):
+                    waveform = sample.get("waveform")
+                if waveform is None:
+                    raise ValueError("Audio transform expected a waveform tensor in the sample payload.")
+                if isinstance(waveform, np.ndarray):
+                    waveform = torch.from_numpy(waveform)
+                if not torch.is_tensor(waveform):
+                    raise ValueError(f"Unsupported audio payload type: {type(waveform)}")
+                waveform = waveform.detach().clone()
+                if waveform.ndim == 1:
+                    waveform = waveform.unsqueeze(0)
+                return waveform
+
+            return _audio_transform
+        return super().get_transforms(dataset_type=dataset_type)
+
+    def encode_with_vae(self, vae, samples):
+        """
+        Music-focused autoencoders often return both latents and accompanying
+        sequence lengths. Wrap both into a dict so downstream caches retain the metadata.
+        """
+        if samples is None:
+            raise ValueError("Audio VAE received no samples to encode.")
+        audio = samples
+        if not torch.is_tensor(audio):
+            raise ValueError(f"Audio encoder expected a Tensor input, received {type(audio)}.")
+        if audio.ndim == 2:
+            audio = audio.unsqueeze(0)
+        audio = audio.to(device=self.accelerator.device, dtype=torch.float32)
+        result = vae.encode(audio)
+        latent_lengths = None
+        latents = result
+        if isinstance(result, tuple):
+            latents, *extras = result
+            latent_lengths = extras[0] if extras else None
+        elif isinstance(result, dict):
+            latents = result.get("latents")
+            latent_lengths = result.get("latent_lengths")
+        payload = {"latents": latents}
+        if latent_lengths is not None:
+            payload["latent_lengths"] = latent_lengths
+        return payload
+
+    def expand_sigmas(self, batch: dict) -> dict:
+        """
+        Broadcast sampled sigmas to match the latent dimensionality expected by audio
+        transformers (batch, channels, height, width).
+        """
+        sigmas = batch.get("sigmas")
+        latents = batch.get("latents")
+        if sigmas is None or latents is None:
+            return batch
+        view_shape = [sigmas.shape[0]] + [1] * (latents.ndim - 1)
+        batch["sigmas"] = sigmas.view(*view_shape)
+        return batch

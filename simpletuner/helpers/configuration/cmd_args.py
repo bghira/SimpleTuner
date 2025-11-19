@@ -407,27 +407,83 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     args = None
     from simpletuner.helpers.training.state_tracker import StateTracker
 
+    parser_error = None
+
+    def _normalize_model_family(value: str) -> str:
+        normalized = (value or "").strip().lower().replace("-", "_")
+        if not normalized:
+            return normalized
+
+        try:
+            from simpletuner.helpers.models.registry import ModelRegistry
+
+            families = list(ModelRegistry.model_families().keys())
+        except Exception:
+            return normalized
+
+        if normalized in families:
+            return normalized
+
+        simplified = normalized.replace("_", "")
+        for family in families:
+            if simplified == family.replace("_", ""):
+                return family
+
+        return normalized
+
+    def _normalize_input_args(raw_args):
+        if raw_args is None:
+            return None
+
+        normalized_args = []
+        skip_next = False
+
+        for idx, arg in enumerate(raw_args):
+            if skip_next:
+                skip_next = False
+                continue
+
+            if arg.startswith(("--model_family=", "--model-family=")):
+                prefix, value = arg.split("=", 1)
+                normalized_args.append(f"{prefix}={_normalize_model_family(value)}")
+                continue
+
+            if arg in ("--model_family", "--model-family") and idx + 1 < len(raw_args):
+                normalized_args.append(arg)
+                normalized_args.append(_normalize_model_family(raw_args[idx + 1]))
+                skip_next = True
+                continue
+
+            normalized_args.append(arg)
+
+        return normalized_args
+
     try:
-        args = parser.parse_args(input_args)
+        normalized_args = _normalize_input_args(input_args)
+        args = parser.parse_args(normalized_args)
     except Exception:  # pragma: no cover - parser handles errors consistently
+        parser_error = sys.exc_info()[1]
         logger.error(f"Could not parse input: {input_args}")
         import traceback
 
         logger.error(traceback.format_exc())
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
-            logger.info(f"Sending error message to webhook: {webhook_handler.webhook_url}")
-            # Sanitize error message - don't expose raw args in webhook
-            webhook_handler.send(
-                message="Command Line Argument Error: Failed to parse command line arguments. Please check the server logs for details.",
-                message_level="error",
-            )
+            try:
+                logger.info(f"Sending error message to webhook: {webhook_handler.webhook_url}")
+                # Sanitize error message - don't expose raw args in webhook
+                webhook_handler.send(
+                    message="Command Line Argument Error: Failed to parse command line arguments. Please check the server logs for details.",
+                    message_level="error",
+                )
+            except Exception as exc:
+                logger.error(f"Failed to send webhook error message: {exc}")
             logger.error(f"Argument parsing failed for input: {input_args}")
         else:
             logger.error("No webhook handler available to send error message.")
 
     if args is None and exit_on_error:
-        raise ValueError("Could not parse command line arguments. Check the logs above for details.")
+        raise ValueError(f"Could not parse command line arguments: {parser_error or 'see above logs for details'}")
 
     if args is None:
         return None

@@ -64,7 +64,7 @@ class MultiAspectDataset(Dataset):
                 continue
 
             image_metadata = sample
-            if "target_size" in image_metadata:
+            if model_family != "ace_step" and "target_size" in image_metadata:
                 calculated_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(image_metadata["target_size"])
                 if first_aspect_ratio is None:
                     first_aspect_ratio = calculated_aspect_ratio
@@ -73,12 +73,11 @@ class MultiAspectDataset(Dataset):
                         f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {calculated_aspect_ratio}"
                     )
 
-            if "deepfloyd" not in model_family and (
-                image_metadata["original_size"] is None or image_metadata["target_size"] is None
-            ):
-                raise Exception(
-                    f"Metadata was unavailable for image: {image_metadata['image_path']}. Ensure --skip_file_discovery=metadata is not set."
-                )
+            if model_family not in ("deepfloyd", "ace_step"):
+                if image_metadata.get("original_size") is None or image_metadata.get("target_size") is None:
+                    raise Exception(
+                        f"Metadata was unavailable for image: {image_metadata['image_path']}. Ensure --skip_file_discovery=metadata is not set."
+                    )
 
             if self.print_names:
                 logger.info(f"Dataset is now using image: {image_metadata['image_path']}")

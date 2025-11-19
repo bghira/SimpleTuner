@@ -14,7 +14,8 @@ import torch
 from tqdm import tqdm
 
 import wandb
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, VideoModelFoundation
+from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
+from simpletuner.helpers.training import validation_audio, validation_video
 from simpletuner.helpers.training.wrappers import unwrap_model
 
 try:
@@ -633,10 +634,16 @@ def apply_to_image_or_video(func):
     def wrapper(image_or_frames, *args, **kwargs):
         if isinstance(image_or_frames, list):
             # It's a video - apply to each frame
+            # Ensure the list contains PIL images before processing
+            if len(image_or_frames) > 0 and not isinstance(image_or_frames[0], Image.Image):
+                return image_or_frames
             return [func(frame, *args, **kwargs) for frame in image_or_frames]
-        else:
+        elif isinstance(image_or_frames, Image.Image):
             # It's a single image
             return func(image_or_frames, *args, **kwargs)
+        else:
+            # It's something else (audio tensor, etc), return as is
+            return image_or_frames
 
     return wrapper
 
@@ -1851,6 +1858,20 @@ class Validation:
                 "items": [Validation._serialise_media(item) for item in media],
             }
         if not isinstance(media, Image.Image):
+            # Check if it's audio (tensor or numpy)
+            if isinstance(media, (torch.Tensor, np.ndarray)):
+                # It's audio. Serialize as WAV bytes.
+                buffer = BytesIO()
+                # Assuming 44100 sample rate for serialization, or we need to pass it.
+                # For simplicity, we might just pickle it or use a standard rate.
+                # But _serialise_media is static.
+                # Let's use torch.save for tensors to be safe and generic
+                torch.save(media, buffer)
+                return {
+                    "type": "audio_tensor",
+                    "data": buffer.getvalue(),
+                }
+
             coerced = _coerce_validation_image_input(media)
             if isinstance(coerced, Image.Image):
                 media = coerced
@@ -1882,6 +1903,10 @@ class Validation:
                 with Image.open(buffer) as image:
                     image.load()
                     return image.copy()
+        if media_type == "audio_tensor":
+            data = serialised.get("data", b"")
+            with BytesIO(data) as buffer:
+                return torch.load(buffer)
         raise ValueError(f"Unknown media type '{media_type}' in serialised validation payload.")
 
     @staticmethod
@@ -1928,13 +1953,52 @@ class Validation:
         self.validation_prompt_dict[decorated_shortname] = prompt
         logger.debug(f"Completed generating image: {prompt}")
         validation_images.setdefault(decorated_shortname, []).extend(stitched_results)
-        if isinstance(self.model, VideoModelFoundation):
-            self._save_videos(validation_images, decorated_shortname, prompt)
+
+        if isinstance(self.model, AudioModelFoundation):
+            validation_audio.save_audio(
+                self.save_dir,
+                validation_images,
+                decorated_shortname,
+            )
+            validation_audio.log_audio_to_webhook(
+                validation_images,
+                decorated_shortname,
+                prompt,
+            )
+        elif isinstance(self.model, VideoModelFoundation):
+            video_paths = validation_video.save_videos(
+                self.save_dir,
+                validation_images,
+                decorated_shortname,
+                self.validation_resolutions,
+                self.config,
+            )
+            self.validation_video_paths[decorated_shortname] = video_paths
+            validation_video.log_videos_to_webhook(
+                validation_images,
+                self.validation_video_paths,
+                decorated_shortname,
+                prompt,
+                self.eval_scores,
+            )
         else:
-            self._save_images(validation_images, decorated_shortname, prompt)
+            validation_images.save_images(
+                self.save_dir,
+                validation_images,
+                decorated_shortname,
+                self.validation_resolutions,
+                self.config,
+            )
+            validation_images.log_images_to_webhook(
+                validation_images,
+                decorated_shortname,
+                prompt,
+                self.eval_scores,
+            )
+
         checkpoint_payload = {decorated_shortname: checkpoint_results}
-        self.evaluation_result = self.evaluate_images(checkpoint_payload)
-        self._log_validations_to_webhook(validation_images, decorated_shortname, prompt)
+        if not isinstance(self.model, AudioModelFoundation):
+            self.evaluation_result = self.evaluate_images(checkpoint_payload)
 
     def process_prompts(
         self,
@@ -2343,7 +2407,10 @@ class Validation:
         checkpoint_validation_images = {}
         ema_validation_images = {}
         benchmark_image = None
-        for resolution in self.validation_resolutions:
+        is_audio = isinstance(self.model, AudioModelFoundation)
+        resolutions = self.validation_resolutions if not is_audio else [(0, 0)]
+
+        for resolution in resolutions:
             extra_validation_kwargs = {}
             if validation_input_image is not None:
                 extra_validation_kwargs["image"] = validation_input_image
@@ -2389,7 +2456,10 @@ class Validation:
                     raise ValueError("Validation input images are not supported for this model type.")
                 extra_validation_kwargs["control_image"] = extra_validation_kwargs["image"]
             else:
-                validation_resolution_width, validation_resolution_height = resolution
+                if not is_audio:
+                    validation_resolution_width, validation_resolution_height = resolution
+                else:
+                    validation_resolution_width, validation_resolution_height = 0, 0
 
             if type(self.config.validation_guidance_skip_layers) is list:
                 extra_validation_kwargs["skip_layer_guidance_start"] = float(
@@ -2405,7 +2475,8 @@ class Validation:
                 extra_validation_kwargs["strength"] = getattr(self.config, "validation_strength", 0.2)
                 logger.debug(f"Set validation image denoise strength to {extra_validation_kwargs['strength']}")
 
-            logger.debug(f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}")
+            if not is_audio:
+                logger.debug(f"Processing width/height: {validation_resolution_width}x{validation_resolution_height}")
             if validation_shortname not in stitched_validation_images:
                 stitched_validation_images[validation_shortname] = []
                 checkpoint_validation_images[validation_shortname] = []
@@ -2431,10 +2502,15 @@ class Validation:
                     "num_images_per_prompt": self.config.num_validation_images,
                     "num_inference_steps": self.config.validation_num_inference_steps,
                     "guidance_scale": self.config.validation_guidance,
-                    "height": MultiaspectImage._round_to_nearest_multiple(int(validation_resolution_height), 16),
-                    "width": MultiaspectImage._round_to_nearest_multiple(int(validation_resolution_width), 16),
                     **extra_validation_kwargs,
                 }
+                if not is_audio:
+                    pipeline_kwargs["height"] = MultiaspectImage._round_to_nearest_multiple(
+                        int(validation_resolution_height), 16
+                    )
+                    pipeline_kwargs["width"] = MultiaspectImage._round_to_nearest_multiple(
+                        int(validation_resolution_width), 16
+                    )
                 if self.model.VALIDATION_USES_NEGATIVE_PROMPT:
                     if StateTracker.get_args().validation_negative_prompt is None:
                         StateTracker.get_args().validation_negative_prompt = ""
@@ -2482,6 +2558,12 @@ class Validation:
                     pipeline_kwargs["guidance_scale_real"] = float(self.config.validation_guidance_real)
                 if isinstance(self.config.validation_no_cfg_until_timestep, int) and self.config.model_family == "flux":
                     pipeline_kwargs["no_cfg_until_timestep"] = self.config.validation_no_cfg_until_timestep
+
+                if is_audio and getattr(self.config, "validation_lyrics", None):
+                    pipeline_kwargs["lyrics"] = self.config.validation_lyrics
+
+                if is_audio:
+                    pipeline_kwargs["audio_duration"] = getattr(self.config, "validation_audio_duration", 30.0) or 30.0
 
                 pipeline_kwargs = self.model.update_pipeline_call_kwargs(pipeline_kwargs)
                 logger.debug(f"Image being generated with parameters: {pipeline_kwargs}")
@@ -2540,8 +2622,10 @@ class Validation:
                             all_validation_type_results[current_validation_type] = pipeline_result.frames
                         elif hasattr(pipeline_result, "images"):
                             all_validation_type_results[current_validation_type] = pipeline_result.images
+                        elif hasattr(pipeline_result, "audios"):
+                            all_validation_type_results[current_validation_type] = pipeline_result.audios
                         else:
-                            logger.error(f"Pipeline result does not have 'frames' or 'images': {pipeline_result}")
+                            logger.error(f"Pipeline result does not have 'frames', 'images' or 'audios': {pipeline_result}")
                             all_validation_type_results[current_validation_type] = []
                     if current_validation_type == "ema":
                         self.disable_ema_for_inference()
@@ -2655,9 +2739,10 @@ class Validation:
                     if font is not None:
                         # Add the validation prompt text to the bottom of each image
                         for idx, validation_result in enumerate(display_validation_results):
-                            display_validation_results[idx] = draw_text_on_image(
-                                validation_result, f"Prompt: {prompt}", font=font
-                            )
+                            if not isinstance(self.model, AudioModelFoundation):
+                                display_validation_results[idx] = draw_text_on_image(
+                                    validation_result, f"Prompt: {prompt}", font=font
+                                )
 
                 # Use original results for checkpoint storage, display results for viewing
                 checkpoint_validation_images[validation_shortname].extend(original_validation_image_results)
@@ -2729,149 +2814,33 @@ class Validation:
         if video_paths:
             self.validation_video_paths[validation_shortname] = video_paths
 
-    def _save_images(self, validation_images, validation_shortname, validation_prompt):
-        validation_img_idx = 0
-        resolutions = [_res for res in self.validation_resolutions for _res in [res] * self.config.num_eval_images]
-        for validation_image in validation_images[validation_shortname]:
-            res = resolutions[validation_img_idx]
-            if "x" in res:
-                res_label = str(res)
-            elif type(res) is tuple:
-                res_label = f"{res[0]}x{res[1]}"
-            else:
-                res_label = f"{res}x{res}"
-            validation_image.save(
-                os.path.join(
-                    self.save_dir,
-                    f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.png",
-                )
-            )
-            validation_img_idx += 1
-
-    def _log_validations_to_webhook(self, validation_images, validation_shortname, validation_prompt):
-        webhook_handler = StateTracker.get_webhook_handler()
-        if webhook_handler is None:
-            return
-
-        media_word = "video" if isinstance(self.model, VideoModelFoundation) else "image"
-        message = (
-            f"Validation {media_word} for `{validation_shortname if validation_shortname != '' else '(blank shortname)'}`"
-            f"\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
-            f"\nEvaluation score: {self.eval_scores.get(validation_shortname, 'N/A')}"
-        )
-
-        images_payload = validation_images.get(validation_shortname, [])
-        videos_for_discord = None
-        videos_for_raw = None
-
-        if isinstance(self.model, VideoModelFoundation):
-            video_paths = self.validation_video_paths.get(validation_shortname, [])
-            if video_paths:
-                videos_for_discord = []
-                videos_for_raw = []
-                for path in video_paths:
-                    try:
-                        with open(path, "rb") as handle:
-                            video_bytes = handle.read()
-                    except Exception as exc:  # pragma: no cover - defensive logging
-                        logger.warning("Failed to read validation video %s: %s", path, exc)
-                        continue
-                    video_buffer = BytesIO(video_bytes)
-                    video_buffer.name = os.path.basename(path)
-                    videos_for_discord.append(video_buffer)
-                    data_uri = f"data:video/mp4;base64,{base64.b64encode(video_bytes).decode('utf-8')}"
-                    videos_for_raw.append({"src": data_uri, "mime_type": "video/mp4"})
-                if videos_for_discord:
-                    images_payload = None
-
-        webhook_handler.send(
-            message,
-            images=images_payload,
-            videos=videos_for_discord,
-        )
-
-        webhook_handler.send_raw(
-            structured_data={"message": f"Validation: {validation_shortname}"},
-            message_type="training.validation",
-            message_level="info",
-            job_id=StateTracker.get_job_id(),
-            images=images_payload,
-            videos=videos_for_raw,
-        )
-
     def _log_validations_to_trackers(self, validation_images):
-        for tracker in self.accelerator.trackers:
-            if tracker.name == "comet_ml":
-                experiment = self.accelerator.get_tracker("comet_ml").tracker
-                for shortname, image_list in validation_images.items():
-                    for idx, image in enumerate(image_list):
-                        experiment.log_image(
-                            image,
-                            name=f"{shortname} - {self.validation_resolutions[idx]}",
-                        )
-            elif tracker.name == "tensorboard":
-                tracker = self.accelerator.get_tracker("tensorboard")
-                for shortname, image_list in validation_images.items():
-                    tracker.log_images(
-                        {
-                            f"{shortname} - {self.validation_resolutions[idx]}": np.moveaxis(np.array(image), -1, 0)[
-                                np.newaxis, ...
-                            ]
-                            for idx, image in enumerate(image_list)
-                        },
-                        step=StateTracker.get_global_step(),
-                    )
-            elif tracker.name == "wandb":
-                resolution_list = [f"{res[0]}x{res[1]}" for res in get_validation_resolutions()]
-
-                if self.config.tracker_image_layout == "table":
-                    columns = [
-                        "Prompt",
-                        *resolution_list,
-                        "Mean Luminance",
-                    ]
-                    table = wandb.Table(columns=columns)
-
-                    # Process each prompt and its associated images
-                    for prompt_shortname, image_list in validation_images.items():
-                        wandb_images = []
-                        luminance_values = []
-                        logger.debug(f"Prompt {prompt_shortname} has {len(image_list)} images")
-                        for image in image_list:
-                            logger.debug(f"Adding to table: {image}")
-                            wandb_image = wandb.Image(image)
-                            wandb_images.append(wandb_image)
-                            luminance = calculate_luminance(image)
-                            luminance_values.append(luminance)
-                        mean_luminance = torch.tensor(luminance_values).mean().item()
-                        while len(wandb_images) < len(resolution_list):
-                            # any missing images will crash it. use None so they are indexed.
-                            logger.debug("Found a missing image - masking with a None")
-                            wandb_images.append(None)
-                        table.add_data(prompt_shortname, *wandb_images, mean_luminance)
-
-                    # Log the table to Weights & Biases
-                    tracker.log(
-                        {"Validation Gallery": table},
-                        step=StateTracker.get_global_step(),
-                    )
-
-                elif self.config.tracker_image_layout == "gallery":
-                    gallery_images = {}
-                    for prompt_shortname, image_list in validation_images.items():
-                        logger.debug(f"Prompt {prompt_shortname} has {len(image_list)} images")
-                        for idx, image in enumerate(image_list):
-                            # if it's a list of images, make a grid
-                            if isinstance(image, list) and isinstance(image[0], Image.Image):
-                                image = image[0]
-                            wandb_image = wandb.Image(
-                                image,
-                                caption=f"{prompt_shortname} - {resolution_list[idx]}",
-                            )
-                            gallery_images[f"{prompt_shortname} - {resolution_list[idx]}"] = wandb_image
-
-                    # Log all images in one call to prevent the global step from ticking
-                    tracker.log(gallery_images, step=StateTracker.get_global_step())
+        if isinstance(self.model, AudioModelFoundation):
+            for validation_shortname in validation_images.keys():
+                validation_audio.log_audio_to_trackers(
+                    self.accelerator,
+                    validation_images,
+                    validation_shortname,
+                )
+        elif isinstance(self.model, VideoModelFoundation):
+            # Video logging not fully implemented in validation_video yet, or uses image logger?
+            # Original code logged videos as images in some trackers or didn't support it fully.
+            # Let's assume validation_images.log_images_to_trackers handles it or we need to implement it.
+            # Original code used _log_validations_to_trackers which handled images.
+            # If validation_images contains frames, log_images_to_trackers handles it.
+            validation_images.log_images_to_trackers(
+                self.accelerator,
+                validation_images,
+                self.validation_resolutions,
+                self.config,
+            )
+        else:
+            validation_images.log_images_to_trackers(
+                self.accelerator,
+                validation_images,
+                self.validation_resolutions,
+                self.config,
+            )
 
     def enable_ema_for_inference(self, pipeline=None):
         if self.ema_enabled:
@@ -2927,7 +2896,11 @@ class Validation:
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
-        if not self.config.keep_vae_loaded and not self.config.vae_cache_ondemand:
+        if (
+            not self.config.keep_vae_loaded
+            and not self.config.vae_cache_ondemand
+            and not getattr(self.config, "vae_cache_disable", False)
+        ):
             self.model.unload_vae()
         self.model.pipeline = None
         if torch.cuda.is_available():

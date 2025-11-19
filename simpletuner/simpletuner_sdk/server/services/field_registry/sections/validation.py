@@ -122,6 +122,47 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Validation Lyrics
+    registry._add_field(
+        ConfigField(
+            name="validation_lyrics",
+            arg_name="--validation_lyrics",
+            ui_label="Validation Lyrics",
+            field_type=FieldType.TEXTAREA,
+            tab="validation",
+            section="prompt_management",
+            placeholder="Enter lyrics for audio validation",
+            help_text="Lyrics to use for audio validation",
+            tooltip="Provide lyrics for music generation validation. Only used by audio models.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+            allow_empty=True,
+            model_specific=["ace_step"],
+        )
+    )
+
+    # Validation Audio Duration
+    registry._add_field(
+        ConfigField(
+            name="validation_audio_duration",
+            arg_name="--validation_audio_duration",
+            ui_label="Validation Audio Duration",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_schedule",
+            default_value=30.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1.0, message="Duration must be at least 1 second"),
+                ValidationRule(ValidationRuleType.MAX, value=300.0, message="Duration recommended to be under 300s"),
+            ],
+            help_text="Duration of generated audio for validation (seconds)",
+            tooltip="Length of the audio clip to generate during validation runs.",
+            importance=ImportanceLevel.ADVANCED,
+            order=6,
+            model_specific=["ace_step"],
+        )
+    )
+
     # Number of Validation Images
     registry._add_field(
         ConfigField(
