@@ -321,7 +321,7 @@ class ModelFoundation(ABC):
         if getattr(self.config, "init_lora", None):
             use_dora = getattr(self.config, "use_dora", False) if isinstance(self.lora_config, LoraConfig) else False
             addkeys, misskeys = load_lora_weights(
-                {self.MODEL_TYPE: (self.controlnet if getattr(self.config, "controlnet", False) else self.model)},
+                {self.MODEL_TYPE.value: (self.controlnet if getattr(self.config, "controlnet", False) else self.model)},
                 self.config.init_lora,
                 use_dora=use_dora,
             )

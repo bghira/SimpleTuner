@@ -163,6 +163,11 @@ simpletuner train env=acestep-training-demo
 
 This command tells SimpleTuner to look for `config.json` inside `config/acestep-training-demo/`.
 
+> 💡 **Tip (Continue Training):** To continue fine-tuning from an existing LoRA (e.g. the official ACE-Step checkpoints or community adapters), use the `--init_lora` option:
+> ```bash
+> simpletuner train env=acestep-training-demo --init_lora=/path/to/existing_lora.safetensors
+> ```
+
 ## Troubleshooting
 
 - **Validation Errors:** Ensure you are not trying to use image-centric validation features like `num_validation_images` > 1 (conceptually mapped to batch size for audio) or image-based metrics (CLIP score).
