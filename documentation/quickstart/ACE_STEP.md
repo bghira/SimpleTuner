@@ -14,6 +14,10 @@ ACE-Step is a 3.5B parameter model, making it relatively lightweight compared to
 - **Recommended:** NVIDIA GPU with 24GB+ VRAM (e.g., 3090, 4090, A10G) for larger batch sizes.
 - **Mac:** Supported via MPS on Apple Silicon (Requires ~36GB+ Unified Memory).
 
+### Storage Requirements
+
+> ⚠️ **Disk Usage Warning:** The VAE cache for audio models can be substantial. For example, a single 60-second audio clip can result in a ~89MB cached latent file. This caching strategy is used to drastically reduce VRAM requirements during training. Ensure you have sufficient disk space for your dataset's cache. A future update will allow disabling this cache for purely online encoding.
+
 > 💡 **Tip:** Using `int8-quanto` quantization allows training on GPUs with less VRAM (e.g., 12GB-16GB) with minimal quality loss.
 
 ## Prerequisites
@@ -118,6 +122,7 @@ Create `config/acestep-training-demo/multidatabackend.json`:
 ### Data Structure
 
 Place your audio files in `datasets/my_audio_files`. SimpleTuner supports a wide range of formats including:
+
 - **Lossless:** `.wav`, `.flac`, `.aiff`, `.alac`
 - **Lossy:** `.mp3`, `.ogg`, `.m4a`, `.aac`, `.wma`, `.opus`
 
@@ -137,6 +142,7 @@ datasets/my_audio_files/
 ```
 
 > 💡 **Advanced:** If your dataset uses a different naming convention (e.g. `_lyrics.txt`), you can customize this in your dataset config:
+>
 > ```json
 > "audio": {
 >   "lyrics_filename_format": "{filename}_lyrics.txt"
