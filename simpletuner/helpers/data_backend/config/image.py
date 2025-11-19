@@ -291,16 +291,24 @@ class ImageBackendConfig(BaseBackendConfig):
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
 
     def _validate_controlnet_requirements(self, args: Dict[str, Any]) -> None:
-        state_args = validators.StateTracker.get_args()
-        if (
-            state_args is not None
-            and hasattr(state_args, "controlnet")
-            and state_args.controlnet
-            and self.dataset_type == DatasetType.IMAGE
-            and (self.conditioning_data is None and self.conditioning is None)
-        ):
+        def _get_controlnet_flag(source: Any) -> Optional[bool]:
+            if source is None:
+                return None
+            if isinstance(source, dict):
+                return source.get("controlnet")
+            return getattr(source, "controlnet", None)
+
+        controlnet_enabled = _get_controlnet_flag(args)
+        if controlnet_enabled is None:
+            state_args = validators.StateTracker.get_args()
+            controlnet_enabled = _get_controlnet_flag(state_args)
+
+        if not controlnet_enabled:
+            return
+
+        if self.dataset_type == DatasetType.IMAGE and (self.conditioning_data is None and self.conditioning is None):
             raise ValueError(
-                f"When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
+                f"(id={self.id}) When training ControlNet, a conditioning block or conditioning_data string should be configured in your dataloader. See this link for more information: https://github.com/bghira/SimpleTuner/blob/main/documentation/CONTROLNET.md"
             )
 
     def _validate_backend_specific_settings(self) -> None:
