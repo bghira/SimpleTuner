@@ -108,6 +108,38 @@ class ACEStep(AudioModelFoundation):
         self.text_encoders = []
         self._checkpoint_base: Optional[str] = None
 
+    def get_lora_target_layers(self):
+        if getattr(self.config, "controlnet", False):
+            return self.DEFAULT_CONTROLNET_LORA_TARGET
+
+        target_option = getattr(self.config, "acestep_lora_target", "attn_qkv+linear_qkv")
+
+        if target_option == "attn_qkv":
+            return ["to_q", "to_k", "to_v", "to_out.0"]
+        elif target_option == "attn_qkv+linear_qkv":
+            return [
+                "linear_q",
+                "linear_k",
+                "linear_v",
+                "to_q",
+                "to_k",
+                "to_v",
+                "to_out.0",
+            ]
+        elif target_option == "attn_qkv+linear_qkv+speech_embedder":
+            return [
+                "speaker_embedder",
+                "linear_q",
+                "linear_k",
+                "linear_v",
+                "to_q",
+                "to_k",
+                "to_v",
+                "to_out.0",
+            ]
+
+        return self.DEFAULT_LORA_TARGET
+
     def setup_training_noise_schedule(self):
         """
         ACE-Step ships its own flow-matching scheduler; avoid diffusers hub lookups.
