@@ -16,7 +16,7 @@ import os
 import random
 import re
 import time
-from typing import Optional
+from typing import List, Optional, Union
 
 import torch
 import torchaudio
@@ -41,10 +41,6 @@ from .schedulers.scheduling_flow_match_heun_discrete import FlowMatchHeunDiscret
 from .schedulers.scheduling_flow_match_pingpong import FlowMatchPingPongScheduler
 from .transformer import ACEStepTransformer2DModel
 
-torch.backends.cudnn.benchmark = False
-torch.set_float32_matmul_precision("high")
-torch.backends.cudnn.deterministic = True
-torch.backends.cuda.matmul.allow_tf32 = True
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
@@ -111,10 +107,6 @@ class ACEStepPipeline(LoraLoaderMixin):
         if device.type == "cpu" and torch.backends.mps.is_available():
             device = torch.device("mps")
         self.dtype = torch.bfloat16 if dtype == "bfloat16" else torch.float32
-        if device.type == "mps" and self.dtype == torch.bfloat16:
-            self.dtype = torch.float16
-        if device.type == "mps":
-            self.dtype = torch.float32
         if "ACE_PIPELINE_DTYPE" in os.environ and len(os.environ["ACE_PIPELINE_DTYPE"]):
             self.dtype = getattr(torch, os.environ["ACE_PIPELINE_DTYPE"])
         self.device = device
@@ -663,7 +655,6 @@ class ACEStepPipeline(LoraLoaderMixin):
                     )
                     V_delta_avg += (1 / n_avg) * (Vt_tar - Vt_src)  # - (hfg - 1) * (x_src)
 
-                zt_edit = zt_edit.to(torch.float32)  # arbitrary, should be settable for compatibility
                 if scheduler_type != "pingpong":
                     # propagate direct ODE
                     zt_edit = zt_edit + (t_im1 - t_i) * V_delta_avg
@@ -709,7 +700,6 @@ class ACEStepPipeline(LoraLoaderMixin):
                     return_src_pred=False,
                 )
 
-                xt_tar = xt_tar.to(torch.float32)
                 if scheduler_type != "pingpong":
                     prev_sample = xt_tar + (t_im1 - t_i) * Vt_tar
                     prev_sample = prev_sample.to(self.dtype)
@@ -1210,7 +1200,6 @@ class ACEStepPipeline(LoraLoaderMixin):
                     t_im1 = (timesteps[i + 1]) / 1000
                 else:
                     t_im1 = torch.zeros_like(t_i).to(self.device)
-                target_latents = target_latents.to(torch.float32)
                 prev_sample = target_latents + (t_im1 - t_i) * noise_pred
                 prev_sample = prev_sample.to(self.dtype)
                 target_latents = prev_sample
@@ -1251,23 +1240,22 @@ class ACEStepPipeline(LoraLoaderMixin):
             else:
                 _, pred_wavs = self.music_dcae.decode(pred_latents, sr=sample_rate)
         pred_wavs = [pred_wav.cpu().float() for pred_wav in pred_wavs]
-        for i in tqdm(range(bs)):
-            output_audio_path = self.save_wav_file(
-                pred_wavs[i],
-                i,
-                save_path=save_path,
-                sample_rate=sample_rate,
-                format=format,
-            )
-            output_audio_paths.append(output_audio_path)
-        return output_audio_paths
+
+        if save_path is not None:
+            for i in tqdm(range(bs)):
+                output_audio_path = self.save_wav_file(
+                    pred_wavs[i],
+                    i,
+                    save_path=save_path,
+                    sample_rate=sample_rate,
+                    format=format,
+                )
+                output_audio_paths.append(output_audio_path)
+        return output_audio_paths, pred_wavs
 
     def save_wav_file(self, target_wav, idx, save_path=None, sample_rate=48000, format="wav"):
         if save_path is None:
-            logger.warning("save_path is None, using default path ./outputs/")
-            base_path = "./outputs"
-            ensure_directory_exists(base_path)
-            output_path_wav = f"{base_path}/output_{time.strftime('%Y%m%d%H%M%S')}_{idx}." + format
+            return None
         else:
             ensure_directory_exists(os.path.dirname(save_path))
             if os.path.isdir(save_path):
@@ -1451,6 +1439,10 @@ class ACEStepPipeline(LoraLoaderMixin):
         save_path: str = None,
         batch_size: int = 1,
         debug: bool = False,
+        encoder_text_hidden_states: Optional[torch.Tensor] = None,
+        text_attention_mask: Optional[torch.Tensor] = None,
+        encoder_text_hidden_states_null: Optional[torch.Tensor] = None,
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
     ):
 
         start_time = time.time()
@@ -1471,7 +1463,15 @@ class ACEStepPipeline(LoraLoaderMixin):
 
         start_time = time.time()
 
-        random_generators, actual_seeds = self.set_seeds(batch_size, manual_seeds)
+        if generator is not None:
+            if isinstance(generator, list):
+                random_generators = generator
+            else:
+                random_generators = [generator] * batch_size
+            actual_seeds = [None] * batch_size
+        else:
+            random_generators, actual_seeds = self.set_seeds(batch_size, manual_seeds)
+
         retake_random_generators, actual_retake_seeds = self.set_seeds(batch_size, retake_seeds)
 
         if isinstance(oss_steps, str) and len(oss_steps) > 0:
@@ -1479,15 +1479,41 @@ class ACEStepPipeline(LoraLoaderMixin):
         else:
             oss_steps = []
 
-        texts = [prompt]
-        encoder_text_hidden_states, text_attention_mask = self.get_text_embeddings(texts)
-        encoder_text_hidden_states = encoder_text_hidden_states.repeat(batch_size, 1, 1)
-        text_attention_mask = text_attention_mask.repeat(batch_size, 1)
+        texts = [prompt if prompt is not None else ""]
+        if encoder_text_hidden_states is None:
+            encoder_text_hidden_states, text_attention_mask = self.get_text_embeddings(texts)
+            # Only repeat if we just generated them; if passed in, assume they are handled or will be handled
+            encoder_text_hidden_states = encoder_text_hidden_states.repeat(batch_size, 1, 1)
+            text_attention_mask = text_attention_mask.repeat(batch_size, 1)
+        else:
+            # Ensure provided embeddings are on the correct device/dtype and repeated if necessary
+            encoder_text_hidden_states = encoder_text_hidden_states.to(device=self.device, dtype=self.dtype)
+            if encoder_text_hidden_states.shape[0] == 1 and batch_size > 1:
+                encoder_text_hidden_states = encoder_text_hidden_states.repeat(batch_size, 1, 1)
 
-        encoder_text_hidden_states_null = None
+            if text_attention_mask is not None:
+                text_attention_mask = text_attention_mask.to(device=self.device)
+                if text_attention_mask.shape[0] == 1 and batch_size > 1:
+                    text_attention_mask = text_attention_mask.repeat(batch_size, 1)
+
+            # If we have cached embeddings but no null embeddings, we must disable ERG tag guidance
+            # because we cannot compute null embeddings without the text encoder (which is likely offloaded).
+            if use_erg_tag and encoder_text_hidden_states_null is None:
+                logger.warning(
+                    "Disabling use_erg_tag because encoder_text_hidden_states_null was not provided and text encoder is offloaded."
+                )
+                use_erg_tag = False
+
         if use_erg_tag:
-            encoder_text_hidden_states_null = self.get_text_embeddings_null(texts)
-            encoder_text_hidden_states_null = encoder_text_hidden_states_null.repeat(batch_size, 1, 1)
+            if encoder_text_hidden_states_null is None:
+                encoder_text_hidden_states_null = self.get_text_embeddings_null(texts)
+                encoder_text_hidden_states_null = encoder_text_hidden_states_null.repeat(batch_size, 1, 1)
+            else:
+                encoder_text_hidden_states_null = encoder_text_hidden_states_null.to(device=self.device, dtype=self.dtype)
+                if encoder_text_hidden_states_null.shape[0] == 1 and batch_size > 1:
+                    encoder_text_hidden_states_null = encoder_text_hidden_states_null.repeat(batch_size, 1, 1)
+        else:
+            encoder_text_hidden_states_null = None
 
         # not support for released checkpoint
         speaker_embeds = torch.zeros(batch_size, 512).to(self.device).to(self.dtype)
@@ -1495,7 +1521,7 @@ class ACEStepPipeline(LoraLoaderMixin):
         # 6 lyric
         lyric_token_idx = torch.tensor([0]).repeat(batch_size, 1).to(self.device).long()
         lyric_mask = torch.tensor([0]).repeat(batch_size, 1).to(self.device).long()
-        if len(lyrics) > 0:
+        if lyrics and len(lyrics) > 0:
             lyric_token_idx = self.tokenize_lyrics(lyrics, debug=debug)
             lyric_mask = [1] * len(lyric_token_idx)
             lyric_token_idx = torch.tensor(lyric_token_idx).unsqueeze(0).to(self.device).repeat(batch_size, 1)
@@ -1607,7 +1633,7 @@ class ACEStepPipeline(LoraLoaderMixin):
         diffusion_time_cost = end_time - start_time
         start_time = end_time
 
-        output_paths = self.latents2audio(
+        output_paths, pred_wavs = self.latents2audio(
             latents=target_latents,
             target_wav_duration_second=audio_duration,
             save_path=save_path,
@@ -1670,4 +1696,12 @@ class ACEStepPipeline(LoraLoaderMixin):
             with open(input_params_json_save_path, "w", encoding="utf-8") as f:
                 json.dump(input_params_json, f, indent=4, ensure_ascii=False)
 
-        return output_paths + [input_params_json]
+        from dataclasses import dataclass
+
+        @dataclass
+        class ACEStepPipelineOutput:
+            audios: list
+            paths: list
+            params: dict
+
+        return ACEStepPipelineOutput(audios=pred_wavs, paths=output_paths, params=input_params_json)
