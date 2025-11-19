@@ -1,28 +1,34 @@
-import logging
-import os
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
 import torch
 
-# Add src to path
-sys.path.append("/Users/kash/src/SimpleTuner")
-
-from simpletuner.helpers.models.common import AudioModelFoundation
-from simpletuner.helpers.training import validation_audio
+from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.training.validation import Validation
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class MockAudioModel(AudioModelFoundation):
+    PREDICTION_TYPE = PredictionTypes.EPSILON
+    MODEL_TYPE = ModelTypes.TRANSFORMER
+    NAME = "MockAudioModel"
+    DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2AUDIO
+    PIPELINE_CLASSES = {PipelineTypes.TEXT2AUDIO: MagicMock}
+    VALIDATION_USES_NEGATIVE_PROMPT = False
+
     def __init__(self):
+        config = MagicMock()
+        config.model_family = "ace_step"
+        config.pretrained_model_name_or_path = "dummy_path"
+        super().__init__(config=config, accelerator=MagicMock())
         self.pipeline = MagicMock()
+        self.controlnet = None
+        self.vae = None
+        self.text_encoders = None
+
+    def setup_training_noise_schedule(self):
+        self.noise_schedule = MagicMock()
+        return self.config, self.noise_schedule
         self.NAME = "MockAudioModel"
-        self.PREDICTION_TYPE = MagicMock()
-        self.PREDICTION_TYPE.value = "epsilon"  # Default
         self.PIPELINE_CLASSES = {}
         self.DEFAULT_PIPELINE_TYPE = None
         self.VALIDATION_USES_NEGATIVE_PROMPT = False
@@ -35,8 +41,6 @@ class MockAudioModel(AudioModelFoundation):
         self.controlnet = None
         self.vae = None
         self.text_encoders = None
-        self.MODEL_TYPE = MagicMock()
-        self.MODEL_TYPE.value = "transformer"
 
     def requires_conditioning_validation_inputs(self):
         return False
@@ -47,10 +51,10 @@ class MockAudioModel(AudioModelFoundation):
     def update_pipeline_call_kwargs(self, kwargs):
         return kwargs
 
-    def convert_text_embed_for_pipeline(self, embed):
+    def convert_text_embed_for_pipeline(self, embed, prompt=None):
         return {}
 
-    def _encode_prompts(self, prompts, is_validation=False):
+    def _encode_prompts(self, prompts, is_validation=False, is_negative_prompt=False):
         return {}
 
     def convert_negative_text_embed_for_pipeline(self, prompt, text_embedding):
@@ -155,7 +159,6 @@ class TestAudioValidation(unittest.TestCase):
         # validation_images is a dict {shortname: [audio_tensors]}
         self.assertIn("test", call_args[0][1])
         self.assertEqual(len(call_args[0][1]["test"]), 1)
-        logger.info("Audio validation flow verified successfully.")
 
 
 if __name__ == "__main__":

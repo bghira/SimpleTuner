@@ -83,9 +83,6 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
     def forward_mel(self, audios):
         # Ensure submodules follow the audio device/dtype (MPS safety)
-        target_device = audios.device
-        target_dtype = audios.dtype
-
         mels = []
         for i in range(len(audios)):
             image = self.vocoder.mel_transform(audios[i])
@@ -282,12 +279,6 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 # p_audio_samples tracks the start of the *next* audio segment to generate (in conceptual total audio samples)
                 p_audio_samples = vocoder_hop_len_audio
                 conceptual_total_audio_len_native_sr = mel_total_frames * VOCODER_AUDIO_SAMPLES_PER_MEL_FRAME
-
-                pbar_total = (
-                    1
-                    + max(0, (conceptual_total_audio_len_native_sr - (vocoder_win_len_audio - vocoder_overlap_len_audio)))
-                    // vocoder_hop_len_audio
-                )
 
                 # Use tqdm if you want a progress bar for the vocoder part
                 # with tqdm(total=pbar_total, desc=f"Vocoder {latent_idx+1}/{len(latents)}", leave=False) as pbar:

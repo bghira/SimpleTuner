@@ -537,7 +537,7 @@ def expand_numbers_multilingual(text, lang="en"):
             text = re.sub(_currency_re["GBP"], lambda m: _expand_currency(m, lang, "GBP"), text)
             text = re.sub(_currency_re["USD"], lambda m: _expand_currency(m, lang, "USD"), text)
             text = re.sub(_currency_re["EUR"], lambda m: _expand_currency(m, lang, "EUR"), text)
-        except:
+        except Exception:
             pass
         if lang != "tr":
             text = re.sub(_decimal_number_re, lambda m: _expand_decimal_point(m, lang), text)
@@ -563,15 +563,15 @@ def multilingual_cleaners(text, lang):
     text = lowercase(text)
     try:
         text = expand_numbers_multilingual(text, lang)
-    except:
+    except Exception:
         pass
     try:
         text = expand_abbreviations_multilingual(text, lang)
-    except:
+    except Exception:
         pass
     try:
         text = expand_symbols_multilingual(text, lang=lang)
-    except:
+    except Exception:
         pass
     text = collapse_whitespace(text)
     return text
@@ -644,11 +644,7 @@ class VoiceBpeTokenizer:
 
     def check_input_length(self, txt, lang):
         lang = lang.split("-")[0]  # remove the region
-        limit = self.char_limits.get(lang, 250)
-        # if len(txt) > limit:
-        #     print(
-        #         f"[!] Warning: The text length exceeds the character limit of {limit} for language '{lang}', this might cause truncated audio."
-        #     )
+        # limit = self.char_limits.get(lang, 250)
 
     def preprocess_text(self, txt, lang):
         if lang in {

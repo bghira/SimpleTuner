@@ -1,7 +1,6 @@
 import logging
 import os
 
-import torch
 import torchaudio
 
 import wandb

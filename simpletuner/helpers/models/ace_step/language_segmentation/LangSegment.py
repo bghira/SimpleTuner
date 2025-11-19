@@ -156,7 +156,6 @@ class LangSSML:
     # Standardize 2024/8/24, 2024-08, 08-24, 24 to "year-month-day"
     def _format_chinese_data(self, date_str: str):
         # 处理日期格式
-        input_date = date_str
         if date_str is None or date_str.strip() == "":
             return ""
         date_str = re.sub(r"[\/\._|年|月]", "-", date_str)
@@ -197,7 +196,7 @@ class LangSSML:
                 nonZero(month, "月", f_currency),
                 nonZero(day, "日", f_currency),
             )
-            year_month_day = re.sub(r"([年|月|日])+", r"\1", f"{year}{month}{day}")
+            year_month_day = re.sub(r"([年月日])+", r"\1", f"{year}{month}{day}")
         # hours, minutes, seconds
         time_str = re.sub(r"[\/\.\-：_]", ":", time_str)
         time_arrs = time_str.split(":")
@@ -214,7 +213,7 @@ class LangSSML:
                 nonZero(minutes, "分", f_currency),
                 nonZero(seconds, "秒", f_currency),
             )
-        hours_minutes_seconds = re.sub(r"([点|分|秒])+", r"\1", f"{hours}{minutes}{seconds}")
+        hours_minutes_seconds = re.sub(r"([点分秒])+", r"\1", f"{hours}{minutes}{seconds}")
         output_date = f"{year_month_day}{hours_minutes_seconds}"
         return output_date
 
@@ -942,7 +941,6 @@ def printList(langlist):
         return
     for line in langlist:
         print(line)
-    pass
 
 
 def main():

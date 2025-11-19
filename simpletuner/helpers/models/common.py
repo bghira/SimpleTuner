@@ -547,13 +547,6 @@ class ModelFoundation(ABC):
         """
         return {}
 
-    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
-        """
-        Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
-        """
-        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
-        return self._format_text_embedding(encoded_text)
-
     @classmethod
     def get_flavour_choices(cls):
         """

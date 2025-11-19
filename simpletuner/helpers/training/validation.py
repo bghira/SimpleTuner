@@ -14,13 +14,8 @@ import torch
 from tqdm import tqdm
 
 import wandb
-from simpletuner.helpers.models.common import (
-    AudioModelFoundation,
-    ImageModelFoundation,
-    ModelFoundation,
-    VideoModelFoundation,
-)
-from simpletuner.helpers.training import validation_audio, validation_images, validation_video
+from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
+from simpletuner.helpers.training import validation_audio, validation_video
 from simpletuner.helpers.training.wrappers import unwrap_model
 
 try:
@@ -2411,7 +2406,6 @@ class Validation:
         # untouched / un-stitched validation images
         checkpoint_validation_images = {}
         ema_validation_images = {}
-        benchmark_image = None
         benchmark_image = None
         is_audio = isinstance(self.model, AudioModelFoundation)
         resolutions = self.validation_resolutions if not is_audio else [(0, 0)]

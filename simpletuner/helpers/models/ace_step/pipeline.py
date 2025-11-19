@@ -395,7 +395,6 @@ class ACEStepPipeline(LoraLoaderMixin):
         return random_generators, actual_seeds
 
     def get_lang(self, text):
-        language = "en"
         try:
             _ = self.lang_segment.getTexts(text)
             langCounts = self.lang_segment.getCounts()
@@ -663,7 +662,7 @@ class ACEStepPipeline(LoraLoaderMixin):
                     # propagate pingpong SDE
                     zt_edit_denoised = zt_edit - t_i * V_delta_avg
                     noise = torch.empty_like(zt_edit).normal_(generator=random_generators[0] if random_generators else None)
-                    prev_sample = (1 - t_im1) * zt_edit_denoised + t_im1 * noise
+                    # prev_sample = (1 - t_im1) * zt_edit_denoised + t_im1 * noise
 
             else:  # i >= T_steps-n_min # regular sampling for last n_min steps
                 if i == n_max:
@@ -722,7 +721,6 @@ class ACEStepPipeline(LoraLoaderMixin):
         infer_steps,
     ):
 
-        bsz = gt_latents.shape[0]
         if scheduler_type == "euler":
             scheduler = FlowMatchEulerDiscreteScheduler(
                 num_train_timesteps=1000,
@@ -924,7 +922,6 @@ class ACEStepPipeline(LoraLoaderMixin):
                         extend_gt_latents = extend_gt_latents[:, :, :, :max_infer_fame_length]
                         to_right_pad_gt_latents = extend_gt_latents[:, :, :, -right_trim_length:]
                         frame_length = max_infer_fame_length
-                    repaint_start_frame = 0
                     gt_latents = extend_gt_latents
 
                 if repaint_end_frame > src_latents_length:
@@ -936,7 +933,6 @@ class ACEStepPipeline(LoraLoaderMixin):
                         extend_gt_latents = extend_gt_latents[:, :, :, -max_infer_fame_length:]
                         to_left_pad_gt_latents = extend_gt_latents[:, :, :, :left_trim_length]
                         frame_length = max_infer_fame_length
-                    repaint_end_frame = frame_length
                     gt_latents = extend_gt_latents
 
                 repaint_mask = torch.zeros((bsz, 8, 16, frame_length), device=self.device, dtype=self.dtype)
@@ -1309,7 +1305,6 @@ class ACEStepPipeline(LoraLoaderMixin):
     # --- LoRA compatibility wrappers for SimpleTuner checkpoints ---
     def load_lora_weights(self, *args, **kwargs):
         """Alias to the existing load_lora helper for compatibility with trainer save/load hooks."""
-        adapter_name = kwargs.pop("adapter_name", "ace_step_lora")
         weight = kwargs.pop("weight", kwargs.pop("lora_weight", 1.0))
         lora_path = kwargs.pop("pretrained_model_name_or_path", kwargs.pop("lora_path", None))
         self.load_lora(lora_path or "none", weight)
@@ -1337,7 +1332,7 @@ class ACEStepPipeline(LoraLoaderMixin):
         Minimal LoRA saver for ACE-Step: writes provided LoRA state dicts to disk.
         """
         if not is_main_process:
-            return
+            return None
         if save_directory is None:
             raise ValueError("save_directory must be provided when saving ACE-Step LoRA weights.")
 

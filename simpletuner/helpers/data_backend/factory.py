@@ -2446,9 +2446,10 @@ class FactoryRegistry:
             try:
                 init_backend["metadata_backend"].config["caption_strategy"] = init_backend["config"]["caption_strategy"]
             except Exception:
+                # Metadata backend might not be initialized yet or config might be immutable
                 pass
 
-        init_backend["config"]["config_version"] = current_config_version
+        return init_backend
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
         init_backend_debug_info = {

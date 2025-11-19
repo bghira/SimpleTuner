@@ -97,6 +97,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     merged = list(dict.fromkeys(list(preferred) + list(self.audio_caption_fields or [])))
                     self.audio_caption_fields = merged
         except Exception:
+            # Model might not be loaded or doesn't support caption preferences; ignore.
             pass
         dataset_type_normalized = str(dataset_type).lower() if dataset_type is not None else "image"
         if dataset_type_normalized == "video":
@@ -498,9 +499,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         aspect_ratio_bucket_indices: Dict,
         metadata_updates: Optional[Dict] = None,
         delete_problematic_images: bool = False,
-        statistics: dict = {},
+        statistics: Optional[dict] = None,
         aspect_ratio_rounding: int = 2,
     ) -> Dict:
+        if statistics is None:
+            statistics = {}
         try:
             index = self.data_backend._get_index_from_path(image_path_str)
             if index is None:
@@ -560,7 +563,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                             sample_metadata["sample_rate"] = sample_rate
                             sample_metadata["num_samples"] = len(array)
                     except Exception:
-                        duration_seconds = duration_seconds
+                        pass
                 bucket_key, truncated_duration = self._compute_audio_bucket(duration_seconds)
                 if truncated_duration is not None:
                     sample_metadata["bucket_duration_seconds"] = truncated_duration
