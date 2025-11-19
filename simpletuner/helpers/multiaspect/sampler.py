@@ -492,18 +492,32 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 total_image_count *= self.accelerator.num_processes
                 total_image_count = f"~{total_image_count}"
             data_backend_config = StateTracker.get_data_backend_config(self.id)
-            printed_state = (
-                f"- Repeats: {data_backend_config.get('repeats', 0)}\n"
-                f"- Total number of images: {total_image_count}\n"
-                f"- Total number of aspect buckets: {len(self.buckets)}\n"
-                f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}\n"
-                f"- Cropped: {data_backend_config.get('crop')}\n"
-                f"- Crop style: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_style')}\n"
-                f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}\n"
-                f"- Used for regularisation data: {'Yes' if self.is_regularisation_data else 'No'}\n"
-            )
+            printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
+            printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
+            printed_state.append(f"- Total number of aspect buckets: {len(self.buckets)}")
+            if self.sample_type_strs == "images":
+                printed_state.append(
+                    f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}"
+                )
+                printed_state.append(f"- Cropped: {data_backend_config.get('crop')}")
+                printed_state.append(
+                    f"- Crop style: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_style')}"
+                )
+                printed_state.append(
+                    f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}"
+                )
+            elif self.sample_type_strs == "videos":
+                printed_state.append(f"- Target frame count: {data_backend_config.get('frames_per_video')}")
+                printed_state.append(f"- FPS: {data_backend_config.get('fps')}")
+            elif self.sample_type_strs == "audio":
+                sample_rate = data_backend_config.get("sample_rate") or data_backend_config.get("audio_sample_rate")
+                target_len = data_backend_config.get("sample_size") or data_backend_config.get("audio_samples")
+                printed_state.append(f"- Sample rate: {sample_rate if sample_rate is not None else 'unknown'}")
+                printed_state.append(f"- Target samples: {target_len if target_len is not None else 'unknown'}")
+            printed_state.append(f"- Used for regularisation data: {'Yes' if self.is_regularisation_data else 'No'}")
             if self.conditioning_type:
-                printed_state += f"- Conditioning type: {self.conditioning_type}\n"
+                printed_state.append(f"- Conditioning type: {self.conditioning_type}")
+            printed_state = "\n".join(printed_state) + "\n"
         else:
             # Return a snapshot of the current state during training.
             printed_state = (
