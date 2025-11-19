@@ -84,9 +84,6 @@ class ACEStep(AudioModelFoundation):
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
-        if accelerator and accelerator.device.type == "mps":
-            # Keep all weights/activations in fp32 on MPS to avoid Metal matmul dtype mismatches.
-            self.config.weight_dtype = torch.float32
         self.text_tokenizer_max_length = getattr(self.config, "tokenizer_max_length", 256)
         self.mert_model = None
         self.hubert_model = None
@@ -239,6 +236,10 @@ class ACEStep(AudioModelFoundation):
         pipeline.text_encoder_2 = getattr(self, "text_encoder_2", None)
         pipeline.text_encoder_3 = getattr(self, "text_encoder_3", None)
         pipeline.text_encoder_4 = getattr(self, "text_encoder_4", None)
+        pipeline.lyric_tokenizer = getattr(self, "lyric_tokenizer", None)
+        pipeline.lang_segment = getattr(self, "lang_segment", None)
+        # Mark pipeline as loaded so it doesn't try to reload weights from disk
+        pipeline.loaded = True
         return pipeline
 
     @classmethod
@@ -325,7 +326,7 @@ class ACEStep(AudioModelFoundation):
 
     def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: Optional[str] = None) -> dict:
         return {
-            "encoder_text_hidden_states": text_embedding["prompt_embeds"].unsqueeze(0),
+            "encoder_text_hidden_states": text_embedding["prompt_embeds"],
             "text_attention_mask": text_embedding.get("attention_masks"),
         }
 
@@ -798,10 +799,9 @@ class ACEStep(AudioModelFoundation):
             batch["encoder_attention_mask"] = torch.ones(mask_shape, dtype=torch.float32)
         self._prepare_conditioning_features(batch)
 
-        device = self.accelerator.device
-        dtype = torch.float32 if device.type == "mps" else self.config.weight_dtype
-
         # Move cached tensors to device
+        device = self.accelerator.device
+        dtype = getattr(self.config, "weight_dtype", torch.float32)
         latents = latent_batch.to(device=device, dtype=dtype)
         attention_mask = batch["latent_attention_mask"].to(device=device, dtype=dtype)
         encoder_hidden_states = batch["prompt_embeds"].to(device=device, dtype=dtype)
