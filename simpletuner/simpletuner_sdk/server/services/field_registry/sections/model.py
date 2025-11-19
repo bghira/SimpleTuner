@@ -358,6 +358,23 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # VAE Cache Disable
+    registry._add_field(
+        ConfigField(
+            name="vae_cache_disable",
+            arg_name="--vae_cache_disable",
+            ui_label="Disable VAE Cache Writing",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="vae_config",
+            default_value=False,
+            help_text="Implicitly enables on-demand caching and disables writing embeddings to disk.",
+            tooltip="Useful for large datasets where writing embeddings to disk is impractical.",
+            importance=ImportanceLevel.ADVANCED,
+            order=14,
+        )
+    )
+
     # Accelerator Cache Clear Interval
     registry._add_field(
         ConfigField(

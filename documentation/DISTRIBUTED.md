@@ -196,6 +196,12 @@ See the [dataloader configuration guide](/documentation/DATALOADER.md#local-cach
 
 Ideally, all images and all embeds are simply maintained in a cloud storage bucket. This greatly simplifies the risk of issues during pre-processing and resuming training.
 
+#### On-demand VAE encoding
+
+For large datasets where storing cached VAE latents is impractical due to storage constraints or slow shared storage access, you can use `--vae_cache_disable`. This disables the VAE cache entirely, forcing the VAE to encode images on-the-fly during training.
+
+This increases GPU computation load but significantly reduces storage requirements and network I/O for cached latents.
+
 #### Preserving filesystem scan caches
 
 If your datasets so large that scanning for new images becomes a bottleneck, adding `preserve_data_backend_cache=true` to each dataloader config entry will prevent the backend from being scanned for new images.

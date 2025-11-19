@@ -16,7 +16,9 @@ ACE-Step is a 3.5B parameter model, making it relatively lightweight compared to
 
 ### Storage Requirements
 
-> ⚠️ **Disk Usage Warning:** The VAE cache for audio models can be substantial. For example, a single 60-second audio clip can result in a ~89MB cached latent file. This caching strategy is used to drastically reduce VRAM requirements during training. Ensure you have sufficient disk space for your dataset's cache. A future update will allow disabling this cache for purely online encoding.
+> ⚠️ **Disk Usage Warning:** The VAE cache for audio models can be substantial. For example, a single 60-second audio clip can result in a ~89MB cached latent file. This caching strategy is used to drastically reduce VRAM requirements during training. Ensure you have sufficient disk space for your dataset's cache.
+
+> 💡 **Tip:** For larger datasets, you can use the `--vae_cache_disable` option to disable writing embeddings to disk. This will implicitly enable on-demand caching, which saves disk space but will increase training time and memory usage as encodings are performed during the training loop.
 
 > 💡 **Tip:** Using `int8-quanto` quantization allows training on GPUs with less VRAM (e.g., 12GB-16GB) with minimal quality loss.
 

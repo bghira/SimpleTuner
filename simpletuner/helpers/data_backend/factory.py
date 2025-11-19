@@ -2896,11 +2896,12 @@ class FactoryRegistry:
             max_workers=backend.get("max_workers", self.args.max_workers),
             process_queue_size=backend.get("image_processing_batch_size", self.args.image_processing_batch_size),
             vae_cache_ondemand=self.args.vae_cache_ondemand,
+            vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
             hash_filenames=init_backend["config"].get("hash_filenames", True),
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
-        if not self.args.vae_cache_ondemand:
+        if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
             info_log(f"(id={init_backend['id']}) Discovering cache objects..")
             if self.accelerator.is_local_main_process:
                 try:
@@ -3249,6 +3250,7 @@ class FactoryRegistry:
 
         if (
             not self.args.vae_cache_ondemand
+            and not getattr(self.args, "vae_cache_disable", False)
             and "vaecache" in init_backend
             and "vae" not in self.args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
@@ -3261,7 +3263,7 @@ class FactoryRegistry:
         ):
             unprocessed_files = init_backend["vaecache"].discover_unprocessed_files()
             logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
-            if not self.args.vae_cache_ondemand:
+            if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
                 logger.info(f"Executing VAE cache update..")
                 init_backend["vaecache"].process_buckets()
             logger.debug(f"Encoding images during training: {self.args.vae_cache_ondemand}")

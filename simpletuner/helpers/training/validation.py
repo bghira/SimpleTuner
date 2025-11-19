@@ -2902,7 +2902,11 @@ class Validation:
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
-        if not self.config.keep_vae_loaded and not self.config.vae_cache_ondemand:
+        if (
+            not self.config.keep_vae_loaded
+            and not self.config.vae_cache_ondemand
+            and not getattr(self.config, "vae_cache_disable", False)
+        ):
             self.model.unload_vae()
         self.model.pipeline = None
         if torch.cuda.is_available():

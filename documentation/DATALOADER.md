@@ -471,6 +471,12 @@ This is particularly useful when:
 - When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
 - In fact, this option is **enabled by default** when using random bucketing or crops.
 
+### `vae_cache_disable`
+
+- **Values:** `true` | `false`
+- **Description:** When enabled (via the command-line argument `--vae_cache_disable`), this option implicitly enables on-demand VAE caching but disables writing the generated embeddings to disk. This is useful for large datasets where disk space is a concern or writing is impractical.
+- **Note:** This is a trainer-level argument, not a per-dataset configuration option, but it affects how the dataloader interacts with the VAE cache.
+
 ### `skip_file_discovery`
 
 - You probably don't want to ever set this - it is useful only for very large datasets.

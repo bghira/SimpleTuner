@@ -116,6 +116,7 @@ class VAECache(WebhookMixin):
         vae_batch_size: int = 4,
         max_workers: int = 32,
         vae_cache_ondemand: bool = False,
+        vae_cache_disable: bool = False,
         hash_filenames: bool = True,
         dataset_type: str = None,
     ):
@@ -157,6 +158,9 @@ class VAECache(WebhookMixin):
             self.metadata_backend.load_image_metadata()
 
         self.vae_cache_ondemand = vae_cache_ondemand
+        self.vae_cache_disable = vae_cache_disable
+        if self.vae_cache_disable:
+            self.vae_cache_ondemand = True
 
         self.max_workers = max_workers
         self.read_queue = Queue()
@@ -692,10 +696,12 @@ class VAECache(WebhookMixin):
                 output_file, filepath, latent_vector = input_latents.pop()
             else:
                 output_file, filepath, latent_vector = self.write_queue.get()
-            file_extension = os.path.splitext(output_file)[1]
-            if file_extension != ".pt":
-                raise ValueError(f"Cannot write a latent embedding to an image path, {output_file}")
-            filepaths.append(output_file)
+
+            if not self.vae_cache_disable:
+                file_extension = os.path.splitext(output_file)[1]
+                if file_extension != ".pt":
+                    raise ValueError(f"Cannot write a latent embedding to an image path, {output_file}")
+                filepaths.append(output_file)
 
             # pytorch will hold onto all of the tensors in the list if we do not use clone()
             if isinstance(latent_vector, dict):
@@ -723,7 +729,8 @@ class VAECache(WebhookMixin):
             else:
                 latents.append(latent_vector.clone())
 
-        self.cache_data_backend.write_batch(filepaths, latents)
+        if not self.vae_cache_disable:
+            self.cache_data_backend.write_batch(filepaths, latents)
 
         return latents
 
