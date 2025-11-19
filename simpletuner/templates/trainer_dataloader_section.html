@@ -148,14 +148,18 @@
             <h6 class="subsection-title">Add Dataset Manually</h6>
             <p class="text-muted small mb-3">Configure individual datasets with custom settings. For guided setup, use the Dataset Wizard above.</p>
             <div class="add-dataset-container">
-                <button type="button" class="add-dataset-btn" @click="addDataset('image')">
+                <button type="button" class="add-dataset-btn" @click="addDataset('image')" x-show="!isAudioModel">
                     <i class="fas fa-plus"></i> 🖼️ Add Image Dataset
                 </button>
                 <button type="button" class="add-dataset-btn"
                         @click="onAddDatasetClick('video')"
                         :disabled="!storeReady"
-                        :title="isVideoModel ? 'Add a video dataset' : 'Add a video dataset (advanced users only)'">
+                        :title="isVideoModel ? 'Add a video dataset' : 'Add a video dataset (advanced users only)'"
+                        x-show="!isAudioModel">
                     <i class="fas fa-plus"></i> 🎬 Add Video Dataset
+                </button>
+                <button type="button" class="add-dataset-btn" @click="addDataset('audio')" x-show="isAudioModel">
+                    <i class="fas fa-plus"></i> 🎵 Add Audio Dataset
                 </button>
                 <button type="button" class="add-dataset-btn" @click="addDataset('text_embeds')">
                     <i class="fas fa-plus"></i> 💾 Add Text Embeds

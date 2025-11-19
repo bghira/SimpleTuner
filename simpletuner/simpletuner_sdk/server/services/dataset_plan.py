@@ -202,8 +202,18 @@ def compute_validations(
     # For image models, require at least one image dataset
     image_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE)
     video_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.VIDEO)
+    audio_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.AUDIO)
 
-    if is_video_model and not relax_training_requirement:
+    if str(model_family).lower() == "ace_step":
+        if audio_count == 0 and not relax_training_requirement:
+            validations.append(
+                ValidationMessage(
+                    field="datasets",
+                    message="at least one audio dataset is required for ACE-Step models",
+                    level="error",
+                )
+            )
+    elif is_video_model and not relax_training_requirement:
         if video_count == 0:
             if requires_strict_video_inputs:
                 validations.append(
