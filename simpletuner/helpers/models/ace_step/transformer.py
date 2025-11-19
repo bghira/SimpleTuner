@@ -302,6 +302,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         self.final_layer = T2IFinalLayer(self.inner_dim, patch_size=patch_size, out_channels=out_channels)
         self.gradient_checkpointing = False
+        self._mps_fp32 = False
         self._logged_dtype_mismatch = False
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
@@ -358,6 +359,12 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         bs = encoder_text_hidden_states.shape[0]
         device = encoder_text_hidden_states.device
+
+        target_dtype = self.speaker_embedder.weight.dtype
+        if speaker_embeds.dtype != target_dtype:
+            speaker_embeds = speaker_embeds.to(dtype=target_dtype)
+        if encoder_text_hidden_states.dtype != target_dtype:
+            encoder_text_hidden_states = encoder_text_hidden_states.to(dtype=target_dtype)
 
         # speaker embedding
         encoder_spk_hidden_states = self.speaker_embedder(speaker_embeds).unsqueeze(1)
@@ -422,6 +429,16 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
     ):
 
         param_dtype = next(self.parameters()).dtype
+        target_dtype = param_dtype
+        hidden_states = hidden_states.to(dtype=target_dtype)
+        attention_mask = attention_mask.to(dtype=target_dtype) if attention_mask is not None else attention_mask
+        encoder_hidden_states = encoder_hidden_states.to(dtype=target_dtype)
+        encoder_hidden_mask = encoder_hidden_mask.to(dtype=target_dtype)
+        if timestep is not None and torch.is_tensor(timestep):
+            timestep = timestep.to(dtype=target_dtype)
+        if block_controlnet_hidden_states is not None and torch.is_tensor(block_controlnet_hidden_states):
+            block_controlnet_hidden_states = block_controlnet_hidden_states.to(dtype=target_dtype)
+
         if not self._logged_dtype_mismatch:
             mismatches = []
             for name, tensor in [
@@ -434,19 +451,10 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
                 if torch.is_tensor(tensor) and tensor.dtype != param_dtype:
                     mismatches.append(f"{name}={tensor.dtype}")
             if mismatches:
-                logger.warning("ACEStepTransformer dtype mismatch: params=%s, %s", param_dtype, ", ".join(mismatches))
+                logger.warning(
+                    "ACEStepTransformer dtype mismatch after cast: params=%s, %s", param_dtype, ", ".join(mismatches)
+                )
                 self._logged_dtype_mismatch = True
-
-        # Align masks/timesteps to the activations dtype before entering autocast.
-        target_dtype = hidden_states.dtype
-        if attention_mask is not None and attention_mask.dtype != target_dtype:
-            attention_mask = attention_mask.to(dtype=target_dtype)
-        if encoder_hidden_mask is not None and encoder_hidden_mask.dtype != target_dtype:
-            encoder_hidden_mask = encoder_hidden_mask.to(dtype=target_dtype)
-        if timestep is not None and torch.is_tensor(timestep) and timestep.dtype != target_dtype:
-            timestep = timestep.to(dtype=target_dtype)
-        if block_controlnet_hidden_states is not None and torch.is_tensor(block_controlnet_hidden_states):
-            block_controlnet_hidden_states = block_controlnet_hidden_states.to(dtype=target_dtype)
 
         embedded_timestep = self.timestep_embedder(self.time_proj(timestep).to(dtype=hidden_states.dtype))
         temb = self.t_block(embedded_timestep)
