@@ -208,6 +208,7 @@ class ModelFoundation(ABC):
         "controlnet_mid_block",
     ]
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    VALIDATION_USES_NEGATIVE_PROMPT = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
