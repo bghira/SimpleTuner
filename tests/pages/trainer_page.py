@@ -819,13 +819,35 @@ class TrainerPage(BasePage):
                 )
             ):
                 return "validation"
+
+            if any(keyword in status_text for keyword in ("error", "failed")):
+                return "failed"
+
+            toast_text = driver.execute_script(
+                "const el = document.querySelector('.toast.error .toast-body');"
+                "return el ? (el.textContent || '').toLowerCase() : '';"
+            )
+            if toast_text:
+                return "failed"
+
             return False
 
         return WebDriverWait(self.driver, timeout).until(_check)
 
     def wait_for_training_active(self, timeout: float = 10.0) -> None:
         """Wait for the trainer to enter an active training state."""
-        state = self.wait_for_training_state(timeout=timeout)
+        try:
+            state = self.wait_for_training_state(timeout=timeout)
+        except TimeoutException:
+            # Capture current status for debugging
+            try:
+                status = self.driver.execute_script(
+                    "const el = document.getElementById('training-status');" "return el ? el.innerText : 'missing';"
+                )
+            except Exception:
+                status = "unknown"
+            raise TimeoutException(f"Training did not enter active state (timeout). Last status: {status}")
+
         if state != "active":
             raise TimeoutException(f"Training did not enter active state (state={state})")
 
