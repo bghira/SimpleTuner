@@ -85,8 +85,6 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         # Ensure submodules follow the audio device/dtype (MPS safety)
         target_device = audios.device
         target_dtype = audios.dtype
-        self.dcae = self.dcae.to(device=target_device, dtype=target_dtype)
-        self.vocoder = self.vocoder.to(device=target_device, dtype=target_dtype)
 
         mels = []
         for i in range(len(audios)):
