@@ -214,12 +214,22 @@ class ACEStep(AudioModelFoundation):
         not the repo root (which lacks a top-level config.json).
         """
         base_path = self._resolve_checkpoint_base()
+
+        # If the user hasn't specified a specific transformer model path, or if they have specified the
+        # upstream repo ID, we should default to the resolved snapshot path.
+        current_transformer_path = getattr(self.config, "pretrained_transformer_model_name_or_path", None)
+        if not current_transformer_path or not os.path.exists(current_transformer_path):
+            self.config.pretrained_transformer_model_name_or_path = base_path
+
         # Force the common loader to use the resolved snapshot path.
-        self.config.pretrained_transformer_model_name_or_path = base_path
         self.config.pretrained_model_name_or_path = base_path
         # Ensure we look inside the transformer subfolder
         self.config.pretrained_transformer_subfolder = self.MODEL_SUBFOLDER
-        logger.info("Loading ACE-Step transformer from %s (subfolder=%s)", base_path, self.MODEL_SUBFOLDER)
+        logger.info(
+            "Loading ACE-Step transformer from %s (subfolder=%s)",
+            self.config.pretrained_transformer_model_name_or_path,
+            self.MODEL_SUBFOLDER,
+        )
         return super().load_model(move_to_device=move_to_device)
 
     def encode_dropout_caption(self, positive_prompt_embeds: dict = None):

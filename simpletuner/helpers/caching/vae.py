@@ -372,6 +372,7 @@ class VAECache(WebhookMixin):
             else args.pretrained_vae_model_name_or_path
         )
         self.vae = self.model.get_vae()
+        self.vae.to(self.accelerator.device, dtype=StateTracker.get_vae_dtype())
 
     def rebuild_cache(self):
         self.debug_log("Rebuilding cache.")
@@ -625,6 +626,8 @@ class VAECache(WebhookMixin):
 
         if len(uncached_images) > 0 and (len(images) != len(latents) or len(filepaths) != len(latents)):
             with torch.no_grad():
+                if hasattr(self.vae, "device") and self.vae.device != self.accelerator.device:
+                    self.vae.to(self.accelerator.device, dtype=StateTracker.get_vae_dtype())
                 processed_images = torch.stack(uncached_images).to(
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
