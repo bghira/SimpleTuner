@@ -81,6 +81,15 @@ class ACEStep(AudioModelFoundation):
     SPEAKER_EMBED_DIM = 512
     SSL_ENCODER_NAMES = ["mert", "m-hubert"]
     SSL_LATENT_DIMS = [1024, 768]
+    DEFAULT_LORA_TARGET = [
+        "linear_q",
+        "linear_k",
+        "linear_v",
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+    ]
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)

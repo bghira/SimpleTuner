@@ -105,6 +105,17 @@ Audio backends support a dedicated `audio` block so metadata and bucket math sta
 - **`truncation_mode`** – determines which portion of the clip is retained when we snap to the bucket interval. Options: `beginning`, `end`, or `random` (default: `beginning`).
 - Standard audio settings (channel count, cache directory) map directly to the runtime audio backend created by `simpletuner.helpers.data_backend.factory`. Padding is intentionally avoided—clips are truncated instead of extended to keep behaviour consistent with diffusion trainers like ACE-Step.
 
+### Audio Captions (Hugging Face)
+For Hugging Face audio datasets, you can specify which columns form the caption (prompt) and which column contains the lyrics:
+```json
+"config": {
+    "audio_caption_fields": ["prompt", "tags"],
+    "lyrics_column": "lyrics"
+}
+```
+*   `audio_caption_fields`: Joins multiple columns to form the text prompt (used by the text encoder).
+*   `lyrics_column`: Specifies the column for lyrics (used by the lyric encoder).
+
 During metadata discovery the loader records `sample_rate`, `num_samples`, `num_channels`, and `duration_seconds` for each file. Bucket reports in the CLI now speak in **samples** rather than **images**, and empty-dataset diagnostics will list the active `bucket_strategy`/`duration_interval` (plus any `max_duration_seconds` limit) so you can tune intervals without diving into logs.
 
 ### `type`

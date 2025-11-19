@@ -85,7 +85,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.height_column = hf_config.get("height_column", None)
         self.quality_column = hf_config.get("quality_column", "quality_assessment")
         self.description_column = hf_config.get("description_column", "description")
-        self.audio_caption_fields = hf_config.get("audio_caption_fields", ["prompt", "lyrics", "tags"])
+        self.lyrics_column = hf_config.get("lyrics_column", "lyrics")
+        self.audio_caption_fields = hf_config.get("audio_caption_fields", ["prompt", "tags"])
         try:
             from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -523,6 +524,24 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     return aspect_ratio_bucket_indices
             if self.dataset_type == "audio":
                 sample_metadata = dict(self.image_metadata.get(image_path_str, {}))
+                # Ensure audio fields are present in metadata
+                if self.audio_caption_fields:
+                    for field in self.audio_caption_fields:
+                        val = self._get_nested_value(item, field)
+                        if val:
+                            sample_metadata[field] = str(val)
+
+                # Specific handling for lyrics column
+                if "lyrics" not in sample_metadata:
+                    lyrics_val = self._get_nested_value(item, self.lyrics_column)
+                    if lyrics_val:
+                        sample_metadata["lyrics"] = str(lyrics_val)
+                    # Fallback for norm_lyrics if not found via lyrics_column
+                    elif self.lyrics_column != "norm_lyrics":
+                        norm_lyrics = self._get_nested_value(item, "norm_lyrics")
+                        if norm_lyrics:
+                            sample_metadata["lyrics"] = str(norm_lyrics)
+
                 duration_seconds = sample_metadata.get("duration_seconds") or sample_metadata.get("bucket_duration_seconds")
                 if duration_seconds is None:
                     # Prefer explicit duration columns if provided by the dataset.

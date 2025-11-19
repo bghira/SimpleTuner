@@ -167,3 +167,36 @@ This command tells SimpleTuner to look for `config.json` inside `config/acestep-
 
 - **Validation Errors:** Ensure you are not trying to use image-centric validation features like `num_validation_images` > 1 (conceptually mapped to batch size for audio) or image-based metrics (CLIP score).
 - **Memory Issues:** If running OOM, try reducing `train_batch_size` or enabling `gradient_checkpointing`.
+
+## Migrating from Upstream Trainer
+
+If you are coming from the original ACE-Step training scripts, here is how the parameters map to SimpleTuner's `config.json`:
+
+| Upstream Parameter | SimpleTuner `config.json` | Default / Notes |
+| :--- | :--- | :--- |
+| `--learning_rate` | `learning_rate` | `1e-4` |
+| `--num_workers` | `dataloader_num_workers` | `8` |
+| `--max_steps` | `max_train_steps` | `2000000` |
+| `--every_n_train_steps` | `checkpointing_steps` | `2000` |
+| `--precision` | `mixed_precision` | `"fp16"` or `"bf16"` (use `"no"` for fp32) |
+| `--accumulate_grad_batches` | `gradient_accumulation_steps` | `1` |
+| `--gradient_clip_val` | `max_grad_norm` | `0.5` |
+| `--shift` | `flow_schedule_shift` | `3.0` (Specific to ACE-Step) |
+
+### Converting Raw Data
+
+If you have raw audio/text/lyrics files and want to use the Hugging Face dataset format (as used by the upstream `convert2hf_dataset.py` tool), you can use the resulting dataset directly in SimpleTuner.
+
+The upstream converter produces a dataset with `tags` and `norm_lyrics` columns. To use these, configure your backend like this:
+
+```json
+{
+    "type": "huggingface",
+    "dataset_type": "audio",
+    "dataset_name": "path/to/converted/dataset",
+    "config": {
+        "audio_caption_fields": ["tags"],
+        "lyrics_column": "norm_lyrics"
+    }
+}
+```
