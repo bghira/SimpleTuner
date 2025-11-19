@@ -1242,6 +1242,8 @@ class FactoryRegistry:
 
     def _requires_conditioning_dataset(self) -> bool:
         """Return whether the active model truly requires a conditioning dataset."""
+        if self.model is None:
+            return False
         try:
             result = self.model.requires_conditioning_dataset()
         except AttributeError:
@@ -2449,7 +2451,6 @@ class FactoryRegistry:
                 # Metadata backend might not be initialized yet or config might be immutable
                 pass
 
-        return init_backend
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
         init_backend_debug_info = {
