@@ -66,6 +66,7 @@ function trainingWizardComponent() {
             enable_validations: true,
             validation_steps: 100,
             validation_prompt: '',
+            validation_lyrics: '',
             validation_preview: false,
             validation_preview_steps: 1,
             report_to: 'none',
@@ -363,6 +364,22 @@ function trainingWizardComponent() {
             return `${this.answers.report_to || 'none'} (Project: ${this.trackerProjectDisplay}, Run: ${this.trackerRunDisplay})`;
         },
 
+        get currentModelSupportsLyrics() {
+            if (!this.answers.model_family) {
+                return false;
+            }
+            const details = this.modelDetailsCache[this.answers.model_family];
+            return Boolean(details?.capabilities?.supports_lyrics);
+        },
+
+        get currentModelIsAudio() {
+            if (!this.answers.model_family) {
+                return false;
+            }
+            const details = this.modelDetailsCache[this.answers.model_family];
+            return Boolean(details?.capabilities?.is_audio_model);
+        },
+
         // Initialization
         async init() {
             console.log('[TRAINING WIZARD] Initializing...');
@@ -438,6 +455,7 @@ function trainingWizardComponent() {
                     }
                     if (config.validation_steps) this.answers.validation_steps = parseInt(config.validation_steps);
                     if (config.validation_prompt) this.answers.validation_prompt = config.validation_prompt;
+                    if (config.validation_lyrics) this.answers.validation_lyrics = config.validation_lyrics;
                     if (config.validation_resolution !== undefined && config.validation_resolution !== null) {
                         this.answers.validation_resolution = String(config.validation_resolution);
                     }
@@ -1793,6 +1811,7 @@ function trainingWizardComponent() {
                 'checkpoint_epoch_interval': 'checkpoints',
                 'validation_step_interval': 'validations',
                 'validation_prompt': 'validations',
+                'validation_lyrics': 'validations',
                 'validation_resolution': 'validations',
                 'validation_num_inference_steps': 'validations',
                 'disable_validations': 'validations',
