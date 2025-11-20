@@ -168,6 +168,28 @@ This command tells SimpleTuner to look for `config.json` inside `config/acestep-
 > simpletuner train env=acestep-training-demo --init_lora=/path/to/existing_lora.safetensors
 > ```
 
+### Training the Lyrics Embedder (upstream-style)
+
+The upstream ACE-Step trainer fine-tunes the lyrics embedder alongside the denoiser. To mirror that behaviour in SimpleTuner (full or standard LoRA only):
+
+- Enable it: `lyrics_embedder_train: true`
+- Optional overrides (otherwise the main optimizer/scheduler are reused):
+  - `lyrics_embedder_lr`
+  - `lyrics_embedder_optimizer`
+  - `lyrics_embedder_lr_scheduler`
+
+Example snippet:
+
+```json
+{
+  "lyrics_embedder_train": true,
+  "lyrics_embedder_lr": 5e-5,
+  "lyrics_embedder_optimizer": "torch-adamw",
+  "lyrics_embedder_lr_scheduler": "cosine_with_restarts"
+}
+```
+Embedder weights are checkpointed with LoRA saves and restored on resume.
+
 ## Troubleshooting
 
 - **Validation Errors:** Ensure you are not trying to use image-centric validation features like `num_validation_images` > 1 (conceptually mapped to batch size for audio) or image-based metrics (CLIP score).
