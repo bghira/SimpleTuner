@@ -79,6 +79,7 @@ class SanaVideo(VideoModelFoundation):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.LATENT_CHANNEL_COUNT = 16
+        self._transformer_model_path = None
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """
@@ -182,6 +183,120 @@ class SanaVideo(VideoModelFoundation):
         return {
             "model_prediction": model_pred,
         }
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        """
+        Sanavideo checkpoints occasionally store scale_shift_table with an extra leading dim (1, 2, dim),
+        which trips strict size checks. Allow the load to proceed and fix the weight afterwards.
+        """
+        args = super().pretrained_load_args(pretrained_load_args)
+        args["ignore_mismatched_sizes"] = True
+        args["low_cpu_mem_usage"] = False  # allow state_dict surgery after load
+        return args
+
+    def load_model(self, move_to_device: bool = True):
+        # Remember the path/subfolder so we can fetch raw weights if a mismatch is detected.
+        self._transformer_model_path = (
+            self.config.pretrained_transformer_model_name_or_path or self.config.pretrained_model_name_or_path
+        )
+        super().load_model(move_to_device)
+        self._patch_scale_shift_table_shape()
+
+    def _patch_scale_shift_table_shape(self):
+        """Fix scale_shift_table weights saved with an extra leading dimension (1, 2, dim)."""
+        if not hasattr(self, "model") or self.model is None:
+            return
+        param = getattr(self.model, "scale_shift_table", None)
+        if param is None or not hasattr(param, "data"):
+            return
+
+        expected_shape = tuple(param.shape)
+        if len(expected_shape) != 2:
+            return
+
+        try:
+            tensor = self._load_transformer_weight("scale_shift_table")
+        except Exception as exc:
+            logger.debug("Could not inspect transformer weights for scale_shift_table: %s", exc)
+            return
+
+        if tensor is None:
+            return
+
+        if tensor.shape == expected_shape:
+            return
+
+        if tensor.shape[0] == 1 and tensor.shape[1:] == expected_shape:
+            squeezed = tensor.squeeze(0).to(param.device, dtype=param.dtype)
+            if squeezed.shape == expected_shape:
+                param.data.copy_(squeezed)
+                logger.info(
+                    "Fixed scale_shift_table shape from %s to %s for %s",
+                    tuple(tensor.shape),
+                    expected_shape,
+                    self.config.model_family,
+                )
+            return
+
+        logger.warning(
+            "scale_shift_table shape mismatch persists (checkpoint=%s, expected=%s) for %s",
+            tuple(tensor.shape),
+            expected_shape,
+            self.config.model_family,
+        )
+
+    def _load_transformer_weight(self, key: str):
+        """Load a single transformer weight tensor from the checkpoint shards, if available."""
+        if not self._transformer_model_path:
+            return None
+        try:
+            import json
+            import os
+
+            from huggingface_hub import hf_hub_download
+            from safetensors import safe_open
+        except Exception:
+            return None
+
+        subfolder = self.MODEL_SUBFOLDER
+        index_filename = "diffusion_pytorch_model.safetensors.index.json"
+        weight_filename = None
+
+        try:
+            index_path = hf_hub_download(
+                self._transformer_model_path,
+                filename=os.path.join(subfolder, index_filename) if subfolder else index_filename,
+                revision=self.config.revision,
+                repo_type=None,
+            )
+            with open(index_path, "r") as f:
+                index = json.load(f)
+                weight_map = index.get("weight_map", {})
+                weight_filename = weight_map.get(key)
+        except Exception:
+            weight_filename = None
+
+        if weight_filename is None:
+            # Try single-file shard fallback
+            weight_filename = "diffusion_pytorch_model.safetensors"
+
+        try:
+            weight_path = hf_hub_download(
+                self._transformer_model_path,
+                filename=os.path.join(subfolder, weight_filename) if subfolder else weight_filename,
+                revision=self.config.revision,
+                repo_type=None,
+            )
+        except Exception:
+            return None
+
+        try:
+            with safe_open(weight_path, framework="pt", device="cpu") as f:
+                if key in f.keys():
+                    return f.get_tensor(key)
+        except Exception:
+            return None
+        return None
 
     def setup_training_noise_schedule(self):
         """
