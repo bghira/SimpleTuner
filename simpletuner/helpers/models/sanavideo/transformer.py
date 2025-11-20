@@ -323,7 +323,7 @@ class SanaAttnProcessor2_0:
             dropout_p=0.0,
             is_causal=False,
             backend=self._attention_backend,
-            parallel_config=self._parallel_config,
+            # parallel_config=self._parallel_config,
         )
         hidden_states = hidden_states.flatten(2, 3)
         hidden_states = hidden_states.type_as(query)
