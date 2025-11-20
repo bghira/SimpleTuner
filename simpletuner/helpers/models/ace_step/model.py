@@ -90,6 +90,7 @@ class ACEStep(AudioModelFoundation):
         "to_v",
         "to_out.0",
     ]
+    SUPPORTS_LYRICS_EMBEDDER_TRAINING = True
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
@@ -292,6 +293,22 @@ class ACEStep(AudioModelFoundation):
         # Mark pipeline as loaded so it doesn't try to reload weights from disk
         pipeline.loaded = True
         return pipeline
+
+    def get_lyrics_embedder_modules(self, unwrap: bool = True) -> list[tuple[str, torch.nn.Module]]:
+        """
+        Return the ACE-Step lyrics embedder components (embedding, encoder, projection).
+        """
+        component = self.model
+        if component is None:
+            return []
+        if unwrap:
+            component = self.unwrap_model(component)
+        modules: list[tuple[str, torch.nn.Module]] = []
+        for name in ("lyric_embs", "lyric_encoder", "lyric_proj"):
+            module = getattr(component, name, None)
+            if module is not None:
+                modules.append((name, module))
+        return modules
 
     @classmethod
     def caption_field_preferences(cls, dataset_type: Optional[str] = None) -> list[str]:

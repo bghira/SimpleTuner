@@ -170,14 +170,20 @@ class TrainerMain {
         try {
             const payload = this.validation.getPayload(this.form.form);
             this.ui.showLoadingOverlay('Starting training...');
+            // Optimistically mark training as active so the UI reflects the pending start immediately.
+            this.actions.updateButtonStates(true);
+            document.body.dataset.trainingActive = 'true';
+
             const html = await this.actions.startTraining(payload);
             this.ui.updateResultContainer('training-status', html);
             const feedback = this._extractAlertFeedback(html);
             this._handleFeedbackResult(feedback);
-            if (feedback && (feedback.severity === 'error' || feedback.severity === 'warning')) {
+            if (feedback && feedback.severity === 'error') {
+                // Revert active state on validation/launch errors.
+                this.actions.updateButtonStates(false);
+                document.body.dataset.trainingActive = 'false';
                 return;
             }
-            this.actions.updateButtonStates(true);
 
             // Initialize event handler if available
             if (window.eventHandler) {
@@ -187,6 +193,8 @@ class TrainerMain {
         } catch (error) {
             console.error('Training start error:', error);
             this.ui.showToast(error.message, 'error');
+            this.actions.updateButtonStates(false);
+            document.body.dataset.trainingActive = 'false';
         } finally {
             this.ui.hideLoadingOverlay();
         }

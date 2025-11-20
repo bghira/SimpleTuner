@@ -301,12 +301,27 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             int: Bucket array index, eg. 0
         """
+        # Numeric index
+        if isinstance(bucket_name, (int, float)):
+            # If it's already a valid index, return it.
+            if int(bucket_name) == bucket_name and 0 <= int(bucket_name) < len(self.buckets):
+                return int(bucket_name)
+            # Otherwise try to resolve by value in buckets (for float bucket identifiers).
+            if bucket_name in self.buckets:
+                return self.buckets.index(bucket_name)
         name = str(bucket_name)
         if name.isdigit():
             self.debug_log(f"Assuming {bucket_name} is already an index.")
             return int(name)
-        if name in self.buckets:
-            return self.buckets.index(name)
+        try:
+            numeric_name = float(name)
+            for idx, bucket in enumerate(self.buckets):
+                if isinstance(bucket, (int, float)) and bucket == numeric_name:
+                    return idx
+        except (TypeError, ValueError):
+            pass
+        if bucket_name in self.buckets:
+            return self.buckets.index(bucket_name)
         raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
 
     def _reset_buckets(self, raise_exhaustion_signal: bool = True):
@@ -461,11 +476,19 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen {self.sample_type_strs}.
         """
         next_bucket = self._get_next_bucket()
-        # Allow non-numeric bucket identifiers (e.g., duration strings, resolution strings)
-        try:
-            self.current_bucket = self._bucket_name_to_id(next_bucket)
-        except Exception:
-            self.current_bucket = next_bucket
+        # Resolve to an integer index in self.buckets for downstream indexing.
+        if next_bucket in self.buckets:
+            self.current_bucket = self.buckets.index(next_bucket)
+        else:
+            # Fallback for stringified indices (e.g., "0", "1") or float/int values.
+            try:
+                self.current_bucket = self._bucket_name_to_id(next_bucket)
+            except Exception:
+                # If still unresolved, pick bucket 0 to avoid TypeError and log for debugging.
+                self.logger.warning(
+                    f"Bucket {next_bucket} not found in buckets; defaulting to index 0 out of {len(self.buckets)} buckets."
+                )
+                self.current_bucket = 0
         self._clear_batch_accumulator()
 
     def move_to_exhausted(self):

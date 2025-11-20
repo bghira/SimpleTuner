@@ -721,9 +721,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
 
         if args.quantize_via == "accelerator":
-            error_log(
-                "MPS does not benefit from models being quantized on the accelerator device. Overriding --quantize_via to 'cpu'."
-            )
             args.quantize_via = "cpu"
 
     if args.max_train_steps is not None and args.max_train_steps > 0 and args.num_train_epochs > 0:
