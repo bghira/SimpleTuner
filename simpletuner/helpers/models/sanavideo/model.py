@@ -271,6 +271,9 @@ class SanaVideo(VideoModelFoundation):
         if not hasattr(self.config, "sana_complex_human_instruction"):
             logger.info(f"{self.NAME}: 'sana_complex_human_instruction' not found in config. Defaulting to True.")
 
+        if self.config.framerate is None:
+            self.config.framerate = 16
+
 
 from simpletuner.helpers.models.registry import ModelRegistry
 
