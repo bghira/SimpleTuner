@@ -244,14 +244,11 @@ if hasattr(log_format, "configure_third_party_loggers"):
 
 class Trainer:
     # Provide safe defaults so tests that bypass __init__ via object.__new__ still have attributes resolved.
-    lyrics_optimizer = None
-    lyrics_lr_scheduler = None
-    lyrics_lr = None
-    lyrics_is_schedulefree = False
-    lyrics_scheduler_disabled = False
     sidecar_optimizer = None
     sidecar_lr_scheduler = None
     sidecar_lr = None
+    sidecar_is_schedulefree = False
+    sidecar_scheduler_disabled = False
 
     def __init__(
         self,
@@ -271,7 +268,6 @@ class Trainer:
         self.lycoris_wrapped_network = None
         self.lycoris_config = None
         self.lr_scheduler = None
-        self.lyrics_lr_scheduler = None
         self.webhook_handler = None
         self.should_abort = False
         self._external_abort_checker = None
@@ -279,13 +275,11 @@ class Trainer:
         self._manual_checkpoint_consumer: Optional[Callable[[], bool]] = None
         self.ema_model = None
         self.job_id = job_id
-        self.lyrics_optimizer = None
-        self.lyrics_lr = None
-        self.lyrics_scheduler_disabled = False
-        self.lyrics_is_schedulefree = False
         self.sidecar_optimizer = None
         self.sidecar_lr_scheduler = None
         self.sidecar_lr = None
+        self.sidecar_is_schedulefree = False
+        self.sidecar_scheduler_disabled = False
         StateTracker.set_job_id(job_id)
         try:
             self.parse_arguments(
@@ -2343,10 +2337,10 @@ class Trainer:
 
     def init_optimizer(self):
         logger.info(f"Learning rate: {self.config.learning_rate}")
-        self.lyrics_optimizer = None
-        self.lyrics_lr = None
-        self.lyrics_is_schedulefree = False
-        self.lyrics_scheduler_disabled = False
+        self.sidecar_optimizer = None
+        self.sidecar_lr = None
+        self.sidecar_is_schedulefree = False
+        self.sidecar_scheduler_disabled = False
 
         def _normalize_lr(value):
             if value in (None, "", "None"):
@@ -2450,19 +2444,26 @@ class Trainer:
 
         if text_encoder_lr_value is not None and text_encoder_params:
             self.params_to_optimize = _filter_params(text_encoder_param_ids, self.params_to_optimize)
+            if self.params_to_optimize and not isinstance(self.params_to_optimize[0], dict):
+                self.params_to_optimize = [{"params": self.params_to_optimize}]
             self.params_to_optimize.append({"params": text_encoder_params, "lr": text_encoder_lr_value})
         elif text_encoder_lr_value is not None and not text_encoder_params:
             logger.warning("text_encoder_lr provided but no trainable text encoder parameters were found.")
 
         if embedder_lr_value is not None and embedder_params and not use_separate_lyrics_opt:
             self.params_to_optimize = _filter_params(embedder_param_ids, self.params_to_optimize)
+            if self.params_to_optimize and not isinstance(self.params_to_optimize[0], dict):
+                self.params_to_optimize = [{"params": self.params_to_optimize}]
             self.params_to_optimize.append({"params": embedder_params, "lr": embedder_lr_value})
         # Ensure embedder parameters are still optimized when training is enabled without custom LR/optimizer.
         if embedder_params and not use_separate_lyrics_opt and embedder_lr_value is None:
             current_param_ids = {id(p) for p in _flatten_parameters(self.params_to_optimize)}
             missing = [p for p in embedder_params if id(p) not in current_param_ids]
             if missing:
-                self.params_to_optimize.extend(missing)
+                if self.params_to_optimize and isinstance(self.params_to_optimize[0], dict):
+                    self.params_to_optimize.append({"params": missing})
+                else:
+                    self.params_to_optimize.extend(missing)
 
         AttentionBackendController.attach_parameter_sink(self.params_to_optimize)
         logger.info(f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters")
@@ -2531,7 +2532,7 @@ class Trainer:
             if lyrics_optimizer_class is AdamWBF16 and getattr(self.config, "weight_dtype", None) != torch.bfloat16:
                 logger.warning("Casting lyrics embedder parameters to bf16 for AdamWBF16 compatibility.")
                 self._ensure_parameter_dtype(embedder_params, torch.bfloat16, optimizer_name="lyrics_embedder_adamw_bf16")
-            self.lyrics_optimizer = cpu_offload_optimizer(
+            self.sidecar_optimizer = cpu_offload_optimizer(
                 params_to_optimize=embedder_params,
                 optimizer_cls=lyrics_optimizer_class,
                 optimizer_parameters=lyrics_extra_args,
@@ -2539,16 +2540,15 @@ class Trainer:
                 offload_gradients=self.config.optimizer_offload_gradients,
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
-            self.lyrics_is_schedulefree = is_lr_schedulefree(lyrics_optimizer_name)
-            self.sidecar_optimizer = self.lyrics_optimizer
+            self.sidecar_is_schedulefree = is_lr_schedulefree(lyrics_optimizer_name)
             logger.info(
                 "Configured lyrics embedder optimizer with %s parameters",
                 trainable_parameter_count(embedder_params),
             )
 
     def init_lr_scheduler(self):
-        self.lyrics_lr_scheduler = None
-        self.lyrics_scheduler_disabled = False
+        self.sidecar_lr_scheduler = None
+        self.sidecar_scheduler_disabled = False
         self.config.is_schedulefree = is_lr_schedulefree(self.config.optimizer)
         self.config.is_lr_scheduler_disabled = (
             is_lr_scheduler_disabled(self.config.optimizer) or self.config.use_deepspeed_scheduler
@@ -2557,7 +2557,7 @@ class Trainer:
             logger.info("Using experimental ScheduleFree optimiser..")
 
         def _init_lyrics_scheduler():
-            if self.lyrics_optimizer is None:
+            if self.sidecar_optimizer is None:
                 return
             lyrics_scheduler_name = getattr(self.config, "lyrics_embedder_lr_scheduler", None) or getattr(
                 self.config, "lr_scheduler", None
@@ -2565,40 +2565,39 @@ class Trainer:
             lyrics_optimizer_name = getattr(self.config, "lyrics_embedder_optimizer", None) or getattr(
                 self.config, "optimizer", None
             )
-            self.lyrics_is_schedulefree = is_lr_schedulefree(lyrics_optimizer_name)
+            self.sidecar_is_schedulefree = is_lr_schedulefree(lyrics_optimizer_name)
             lyrics_config = copy.copy(self.config)
             lyrics_config.optimizer = lyrics_optimizer_name
             lyrics_config.lr_scheduler = lyrics_scheduler_name
-            lyrics_config.is_schedulefree = self.lyrics_is_schedulefree
-            self.lyrics_scheduler_disabled = (
+            lyrics_config.is_schedulefree = self.sidecar_is_schedulefree
+            self.sidecar_scheduler_disabled = (
                 is_lr_scheduler_disabled(lyrics_optimizer_name) or self.config.use_deepspeed_scheduler
             )
-            if self.lyrics_is_schedulefree:
+            if self.sidecar_is_schedulefree:
                 logger.info("Using experimental ScheduleFree optimiser for lyrics embedder..")
-            if self.lyrics_scheduler_disabled:
+            if self.sidecar_scheduler_disabled:
                 logger.info("Disabling lyrics embedder LR scheduler.")
                 if torch.backends.mps.is_available():
-                    self.lyrics_lr_scheduler = None
+                    self.sidecar_lr_scheduler = None
                 else:
-                    self.lyrics_lr_scheduler = accelerate.utils.DummyScheduler(
-                        self.lyrics_optimizer,
+                    self.sidecar_lr_scheduler = accelerate.utils.DummyScheduler(
+                        self.sidecar_optimizer,
                         total_num_steps=self.config.max_train_steps,
                         warmup_num_steps=self.config.lr_warmup_steps,
                     )
                 return
-            self.lyrics_lr_scheduler = get_lr_scheduler(
+            self.sidecar_lr_scheduler = get_lr_scheduler(
                 lyrics_config,
-                self.lyrics_optimizer,
+                self.sidecar_optimizer,
                 self.accelerator,
                 logger,
                 global_step=self.state["global_step"],
                 use_deepspeed_scheduler=False,
             )
-            if hasattr(self.lyrics_lr_scheduler, "num_update_steps_per_epoch"):
-                self.lyrics_lr_scheduler.num_update_steps_per_epoch = self.config.num_update_steps_per_epoch
-            if hasattr(self.lyrics_lr_scheduler, "last_step"):
-                self.lyrics_lr_scheduler.last_step = self.state.get("global_resume_step", 0)
-            self.sidecar_lr_scheduler = self.lyrics_lr_scheduler
+            if hasattr(self.sidecar_lr_scheduler, "num_update_steps_per_epoch"):
+                self.sidecar_lr_scheduler.num_update_steps_per_epoch = self.config.num_update_steps_per_epoch
+            if hasattr(self.sidecar_lr_scheduler, "last_step"):
+                self.sidecar_lr_scheduler.last_step = self.state.get("global_resume_step", 0)
 
         if self.config.is_lr_scheduler_disabled:
             # we don't use LR schedulers with schedulefree optimisers
@@ -2752,12 +2751,12 @@ class Trainer:
             prepared_labels.append("lr_scheduler")
         prepare_targets.append(self.optimizer)
         prepared_labels.append("optimizer")
-        if self.lyrics_optimizer is not None:
-            prepare_targets.append(self.lyrics_optimizer)
-            prepared_labels.append("lyrics_optimizer")
-        if self.lyrics_lr_scheduler is not None:
-            prepare_targets.append(self.lyrics_lr_scheduler)
-            prepared_labels.append("lyrics_lr_scheduler")
+        if self.sidecar_optimizer is not None:
+            prepare_targets.append(self.sidecar_optimizer)
+            prepared_labels.append("sidecar_optimizer")
+        if self.sidecar_lr_scheduler is not None:
+            prepare_targets.append(self.sidecar_lr_scheduler)
+            prepared_labels.append("sidecar_lr_scheduler")
         prepare_targets.append(self.train_dataloaders[0])
         prepared_labels.append("train_dataloader")
 
@@ -2769,10 +2768,10 @@ class Trainer:
                 self.lr_scheduler = prepared
             elif label == "optimizer":
                 self.optimizer = prepared
-            elif label == "lyrics_optimizer":
-                self.lyrics_optimizer = prepared
-            elif label == "lyrics_lr_scheduler":
-                self.lyrics_lr_scheduler = prepared
+            elif label == "sidecar_optimizer":
+                self.sidecar_optimizer = prepared
+            elif label == "sidecar_lr_scheduler":
+                self.sidecar_lr_scheduler = prepared
             elif label == "train_dataloader":
                 self.train_dataloaders = [prepared]
         if self.config.use_ema and self.ema_model is not None:
@@ -3214,18 +3213,18 @@ class Trainer:
             # we typically have to call train() on the optim for schedulefree.
             logger.debug("Setting optimiser into train() mode.")
             self.optimizer.train()
-        if getattr(self, "lyrics_is_schedulefree", False) and hasattr(getattr(self, "lyrics_optimizer", None), "train"):
-            logger.debug("Setting lyrics embedder optimiser into train() mode.")
-            self.lyrics_optimizer.train()
+        if getattr(self, "sidecar_is_schedulefree", False) and hasattr(getattr(self, "sidecar_optimizer", None), "train"):
+            logger.debug("Setting sidecar optimiser into train() mode.")
+            self.sidecar_optimizer.train()
 
     def mark_optimizer_eval(self):
         if is_lr_schedulefree(self.config.optimizer) and hasattr(self.optimizer, "eval"):
             # we typically have to call eval() on the optim for schedulefree before saving or running validations.
             logger.debug("Setting optimiser into eval() mode.")
             self.optimizer.eval()
-        if getattr(self, "lyrics_is_schedulefree", False) and hasattr(getattr(self, "lyrics_optimizer", None), "eval"):
-            logger.debug("Setting lyrics embedder optimiser into eval() mode.")
-            self.lyrics_optimizer.eval()
+        if getattr(self, "sidecar_is_schedulefree", False) and hasattr(getattr(self, "sidecar_optimizer", None), "eval"):
+            logger.debug("Setting sidecar optimiser into eval() mode.")
+            self.sidecar_optimizer.eval()
 
     def _checkpoint_step_interval(self) -> int | None:
         raw_value = getattr(self.config, "checkpoint_step_interval", None)
@@ -3945,7 +3944,7 @@ class Trainer:
                         if self.config.optimizer != "adam_bfloat16" and self.config.gradient_precision == "fp32":
                             # After backward, convert gradients to fp32 for stable accumulation
                             for param in _flatten_parameters(
-                                [self.params_to_optimize, getattr(self.lyrics_optimizer, "param_groups", None)]
+                                [self.params_to_optimize, getattr(self.sidecar_optimizer, "param_groups", None)]
                             ):
                                 if param.grad is not None:
                                     param.grad.data = param.grad.data.to(torch.float32)
@@ -3997,15 +3996,15 @@ class Trainer:
                                 f"step: {step}, should_not_release_gradients: {should_not_release_gradients}, self.config.optimizer_release_gradients: {self.config.optimizer_release_gradients}"
                             )
                             self.optimizer.optimizer_accumulation = should_not_release_gradients
-                            if self.lyrics_optimizer is not None:
-                                self.lyrics_optimizer.optimizer_accumulation = should_not_release_gradients
+                            if self.sidecar_optimizer is not None:
+                                self.sidecar_optimizer.optimizer_accumulation = should_not_release_gradients
                         else:
                             self.optimizer.step()
-                            if self.lyrics_optimizer is not None:
-                                self.lyrics_optimizer.step()
+                            if self.sidecar_optimizer is not None:
+                                self.sidecar_optimizer.step()
                         self.optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
-                        if self.lyrics_optimizer is not None:
-                            self.lyrics_optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
+                        if self.sidecar_optimizer is not None:
+                            self.sidecar_optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
                         if (
                             getattr(self, "distiller", None) is not None
                             and self.accelerator.sync_gradients  # run once per global step
@@ -4034,12 +4033,18 @@ class Trainer:
                     except Exception as e:
                         logger.error(f"Failed to get the last learning rate from the scheduler. Error: {e}")
                     try:
-                        if self.lyrics_optimizer is not None:
-                            if self.lyrics_lr_scheduler is not None and not self.lyrics_scheduler_disabled:
-                                self.lyrics_lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
-                                self.lyrics_lr = self.lyrics_lr_scheduler.get_last_lr()[0]
+                        if self.sidecar_optimizer is not None:
+                            if self.sidecar_lr_scheduler is not None and not self.sidecar_scheduler_disabled:
+                                sidecar_step_kwargs = {}
+                                sidecar_sched_name = getattr(self.config, "lyrics_embedder_lr_scheduler", None) or getattr(
+                                    self.config, "lr_scheduler", None
+                                )
+                                if sidecar_sched_name == getattr(self.config, "lr_scheduler", None):
+                                    sidecar_step_kwargs = dict(self.extra_lr_scheduler_kwargs)
+                                self.sidecar_lr_scheduler.step(**sidecar_step_kwargs)
+                                self.sidecar_lr = self.sidecar_lr_scheduler.get_last_lr()[0]
                             else:
-                                self.lyrics_lr = self.lyrics_optimizer.param_groups[0].get("lr")
+                                self.sidecar_lr = self.sidecar_optimizer.param_groups[0].get("lr")
                     except Exception as e:
                         logger.error(f"Failed to update lyrics embedder learning rate: {e}")
                     wandb_logs.update(
@@ -4050,8 +4055,8 @@ class Trainer:
                             "epoch": epoch,
                         }
                     )
-                    if self.lyrics_lr is not None:
-                        wandb_logs["lyrics_embedder_learning_rate"] = self.lyrics_lr
+                    if self.sidecar_lr is not None:
+                        wandb_logs["lyrics_embedder_learning_rate"] = self.sidecar_lr
                     if distill_logs is not None:
                         wandb_logs.update(distill_logs)
                     if parent_loss is not None:
@@ -4267,11 +4272,17 @@ class Trainer:
                         self.mark_optimizer_eval()
                         AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
                         self.disable_gradient_checkpointing()
-                    self.validation.run_validations(
-                        validation_type="intermediary",
-                        step=step,
-                        force_evaluation=manual_validation_requested,
-                    )
+
+                    try:
+                        self.validation.run_validations(
+                            validation_type="intermediary",
+                            step=step,
+                            force_evaluation=manual_validation_requested,
+                        )
+                    except Exception as error:
+                        # let's not crash training because of a validation error.
+                        logger.error(f"Validation run failed at step {step}: {error}", exc_info=True)
+
                     if should_validate:
                         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
                         self.enable_gradient_checkpointing()
