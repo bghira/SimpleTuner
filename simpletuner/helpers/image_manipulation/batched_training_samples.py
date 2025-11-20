@@ -107,7 +107,30 @@ class BatchedTrainingSamples:
             if not videos or not target_sizes:
                 return []
 
-            resized = ts.batch_resize_videos(videos, target_sizes)
+            valid_videos: List[np.ndarray] = []
+            valid_sizes: List[Tuple[int, int]] = []
+            for i, (video, size) in enumerate(zip(videos, target_sizes)):
+                if not isinstance(video, np.ndarray):
+                    logger.warning(f"Skipping invalid video at index {i}: type={type(video)}")
+                    continue
+                if len(video.shape) != 4 or video.shape[3] not in (1, 3, 4):
+                    logger.warning(
+                        f"Skipping invalid video at index {i}: shape={video.shape if hasattr(video, 'shape') else 'unknown'}"
+                    )
+                    continue
+                if not (isinstance(size, (list, tuple)) and len(size) == 2):
+                    logger.warning(f"Skipping video at index {i} due to invalid target_size={size}")
+                    continue
+                try:
+                    valid_sizes.append((int(size[0]), int(size[1])))
+                    valid_videos.append(video)
+                except Exception as e:
+                    logger.warning(f"Skipping video at index {i} due to size conversion error: {e}")
+
+            if not valid_videos:
+                return []
+
+            resized = ts.batch_resize_videos(valid_videos, tuple(valid_sizes))
             if self.debug_enabled:
                 logger.debug(f"Batch resized {len(resized)} videos")
             return resized
