@@ -299,11 +299,11 @@ class ImageBackendConfig(BaseBackendConfig):
             return getattr(source, "controlnet", None)
 
         controlnet_enabled = _get_controlnet_flag(args)
-        if controlnet_enabled is None:
+        if controlnet_enabled is None and args is None:
             state_args = validators.StateTracker.get_args()
             controlnet_enabled = _get_controlnet_flag(state_args)
 
-        if not controlnet_enabled:
+        if controlnet_enabled is None or controlnet_enabled is False:
             return
 
         if self.dataset_type == DatasetType.IMAGE and (self.conditioning_data is None and self.conditioning is None):
