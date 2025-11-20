@@ -243,6 +243,16 @@ if hasattr(log_format, "configure_third_party_loggers"):
 
 
 class Trainer:
+    # Provide safe defaults so tests that bypass __init__ via object.__new__ still have attributes resolved.
+    lyrics_optimizer = None
+    lyrics_lr_scheduler = None
+    lyrics_lr = None
+    lyrics_is_schedulefree = False
+    lyrics_scheduler_disabled = False
+    sidecar_optimizer = None
+    sidecar_lr_scheduler = None
+    sidecar_lr = None
+
     def __init__(
         self,
         config: dict = None,
@@ -273,6 +283,9 @@ class Trainer:
         self.lyrics_lr = None
         self.lyrics_scheduler_disabled = False
         self.lyrics_is_schedulefree = False
+        self.sidecar_optimizer = None
+        self.sidecar_lr_scheduler = None
+        self.sidecar_lr = None
         StateTracker.set_job_id(job_id)
         try:
             self.parse_arguments(
@@ -2527,6 +2540,7 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
             self.lyrics_is_schedulefree = is_lr_schedulefree(lyrics_optimizer_name)
+            self.sidecar_optimizer = self.lyrics_optimizer
             logger.info(
                 "Configured lyrics embedder optimizer with %s parameters",
                 trainable_parameter_count(embedder_params),
@@ -2584,6 +2598,7 @@ class Trainer:
                 self.lyrics_lr_scheduler.num_update_steps_per_epoch = self.config.num_update_steps_per_epoch
             if hasattr(self.lyrics_lr_scheduler, "last_step"):
                 self.lyrics_lr_scheduler.last_step = self.state.get("global_resume_step", 0)
+            self.sidecar_lr_scheduler = self.lyrics_lr_scheduler
 
         if self.config.is_lr_scheduler_disabled:
             # we don't use LR schedulers with schedulefree optimisers
@@ -3199,7 +3214,7 @@ class Trainer:
             # we typically have to call train() on the optim for schedulefree.
             logger.debug("Setting optimiser into train() mode.")
             self.optimizer.train()
-        if self.lyrics_is_schedulefree and hasattr(self.lyrics_optimizer, "train"):
+        if getattr(self, "lyrics_is_schedulefree", False) and hasattr(getattr(self, "lyrics_optimizer", None), "train"):
             logger.debug("Setting lyrics embedder optimiser into train() mode.")
             self.lyrics_optimizer.train()
 
@@ -3208,7 +3223,7 @@ class Trainer:
             # we typically have to call eval() on the optim for schedulefree before saving or running validations.
             logger.debug("Setting optimiser into eval() mode.")
             self.optimizer.eval()
-        if self.lyrics_is_schedulefree and hasattr(self.lyrics_optimizer, "eval"):
+        if getattr(self, "lyrics_is_schedulefree", False) and hasattr(getattr(self, "lyrics_optimizer", None), "eval"):
             logger.debug("Setting lyrics embedder optimiser into eval() mode.")
             self.lyrics_optimizer.eval()
 
