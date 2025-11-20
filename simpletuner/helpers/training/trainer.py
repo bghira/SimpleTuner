@@ -2444,19 +2444,26 @@ class Trainer:
 
         if text_encoder_lr_value is not None and text_encoder_params:
             self.params_to_optimize = _filter_params(text_encoder_param_ids, self.params_to_optimize)
+            if self.params_to_optimize and not isinstance(self.params_to_optimize[0], dict):
+                self.params_to_optimize = [{"params": self.params_to_optimize}]
             self.params_to_optimize.append({"params": text_encoder_params, "lr": text_encoder_lr_value})
         elif text_encoder_lr_value is not None and not text_encoder_params:
             logger.warning("text_encoder_lr provided but no trainable text encoder parameters were found.")
 
         if embedder_lr_value is not None and embedder_params and not use_separate_lyrics_opt:
             self.params_to_optimize = _filter_params(embedder_param_ids, self.params_to_optimize)
+            if self.params_to_optimize and not isinstance(self.params_to_optimize[0], dict):
+                self.params_to_optimize = [{"params": self.params_to_optimize}]
             self.params_to_optimize.append({"params": embedder_params, "lr": embedder_lr_value})
         # Ensure embedder parameters are still optimized when training is enabled without custom LR/optimizer.
         if embedder_params and not use_separate_lyrics_opt and embedder_lr_value is None:
             current_param_ids = {id(p) for p in _flatten_parameters(self.params_to_optimize)}
             missing = [p for p in embedder_params if id(p) not in current_param_ids]
             if missing:
-                self.params_to_optimize.extend(missing)
+                if self.params_to_optimize and isinstance(self.params_to_optimize[0], dict):
+                    self.params_to_optimize.append({"params": missing})
+                else:
+                    self.params_to_optimize.extend(missing)
 
         AttentionBackendController.attach_parameter_sink(self.params_to_optimize)
         logger.info(f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters")
@@ -4028,7 +4035,13 @@ class Trainer:
                     try:
                         if self.sidecar_optimizer is not None:
                             if self.sidecar_lr_scheduler is not None and not self.sidecar_scheduler_disabled:
-                                self.sidecar_lr_scheduler.step(**self.extra_lr_scheduler_kwargs)
+                                sidecar_step_kwargs = {}
+                                sidecar_sched_name = getattr(self.config, "lyrics_embedder_lr_scheduler", None) or getattr(
+                                    self.config, "lr_scheduler", None
+                                )
+                                if sidecar_sched_name == getattr(self.config, "lr_scheduler", None):
+                                    sidecar_step_kwargs = dict(self.extra_lr_scheduler_kwargs)
+                                self.sidecar_lr_scheduler.step(**sidecar_step_kwargs)
                                 self.sidecar_lr = self.sidecar_lr_scheduler.get_last_lr()[0]
                             else:
                                 self.sidecar_lr = self.sidecar_optimizer.param_groups[0].get("lr")
