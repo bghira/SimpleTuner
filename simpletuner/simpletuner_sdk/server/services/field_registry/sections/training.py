@@ -454,7 +454,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="lyrics_embedder",
             default_value=None,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be positive")],
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             dependencies=[FieldDependency(field="lyrics_embedder_train", operator="equals", value=True, action="show")],
             help_text="Optional learning rate override for the lyrics embedder.",
             tooltip="Leave empty to share the main learning rate. Set a value to use a dedicated rate.",

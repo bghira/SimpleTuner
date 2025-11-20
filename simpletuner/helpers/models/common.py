@@ -6,7 +6,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
