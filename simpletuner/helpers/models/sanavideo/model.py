@@ -78,7 +78,7 @@ class SanaVideo(VideoModelFoundation):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.LATENT_CHANNEL_COUNT = self.config.vae_latent_channels or 16
+        self.LATENT_CHANNEL_COUNT = 16
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """
@@ -152,12 +152,6 @@ class SanaVideo(VideoModelFoundation):
         use_chi = getattr(self.config, "sana_complex_human_instruction", True)
         chi_prompt = self.COMPLEX_HUMAN_INSTRUCTION if use_chi else None
 
-        # If is_negative_prompt, we might want to skip CHI?
-        # Usually system prompts are for the positive prompt instructions.
-        # The pipeline implementation applies CHI to the prompt passed to it.
-        # If we pass negative prompts, we probably don't want CHI on them?
-        # The pipeline's `encode_prompt` allows `complex_human_instruction` argument.
-        # If we are encoding negative prompts, we should likely pass None for CHI.
         if is_negative_prompt:
             chi_prompt = None
 
