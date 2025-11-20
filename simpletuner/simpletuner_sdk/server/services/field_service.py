@@ -64,6 +64,12 @@ class FieldService:
         "train_text_encoder",
         "text_encoder_lr",
     }
+    _LYRICS_EMBEDDER_FIELDS = {
+        "lyrics_embedder_train",
+        "lyrics_embedder_optimizer",
+        "lyrics_embedder_lr",
+        "lyrics_embedder_lr_scheduler",
+    }
 
     _TEXT_ENCODER_PRECISION_FIELDS = {f"text_encoder_{idx}_precision" for idx in range(1, 5)}
     _NOISE_OFFSET_FIELDS = {"offset_noise", "noise_offset", "noise_offset_probability"}
@@ -909,6 +915,13 @@ class FieldService:
 
         return bool(getattr(model_class, "SUPPORTS_TEXT_ENCODER_TRAINING", False))
 
+    def _supports_lyrics_embedder_training(self, config_values: Dict[str, Any]) -> bool:
+        """Check whether the selected model exposes a lyrics embedder for training."""
+        model_class = self._get_model_class(config_values)
+        if not model_class:
+            return False
+        return bool(getattr(model_class, "SUPPORTS_LYRICS_EMBEDDER_TRAINING", False))
+
     def _supports_noise_offset(self, config_values: Dict[str, Any]) -> bool:
         """Determine if noise offset settings are compatible with the model."""
 
@@ -1008,6 +1021,7 @@ class FieldService:
             combined_config.update(config_values)
 
         supports_text_encoder = self._supports_text_encoder_training(combined_config)
+        supports_lyrics_embedder = self._supports_lyrics_embedder_training(combined_config)
         supports_noise_offset = self._supports_noise_offset(combined_config)
         text_encoder_config = self._get_text_encoder_configuration(combined_config)
         available_text_encoders = list(text_encoder_config.keys()) if text_encoder_config else []
@@ -1033,6 +1047,9 @@ class FieldService:
                     continue
 
             if name in self._TEXT_ENCODER_TRAINING_FIELDS and not supports_text_encoder:
+                continue
+
+            if name in self._LYRICS_EMBEDDER_FIELDS and not supports_lyrics_embedder:
                 continue
 
             if name in self._TEXT_ENCODER_PRECISION_FIELDS:

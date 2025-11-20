@@ -4,8 +4,9 @@ import math
 import os
 import random
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -1205,6 +1206,72 @@ class ModelFoundation(ABC):
                 self.model.requires_grad_(False)
         if self.config.controlnet and self.controlnet is not None:
             self.controlnet.train()
+
+    def get_lyrics_embedder_modules(self, unwrap: bool = True) -> list[tuple[str, torch.nn.Module]]:
+        """Return a list of (name, module) tuples for any lyrics embedder components."""
+        return []
+
+    def get_lyrics_embedder_parameters(
+        self, *, require_grad_only: bool = True, unwrap: bool = True
+    ) -> list[torch.nn.Parameter]:
+        """Return parameters belonging to the lyrics embedder, if present."""
+        params: list[torch.nn.Parameter] = []
+        for _, module in self.get_lyrics_embedder_modules(unwrap=unwrap):
+            if module is None:
+                continue
+            for param in module.parameters():
+                if require_grad_only and not param.requires_grad:
+                    continue
+                params.append(param)
+        return params
+
+    def enable_lyrics_embedder_training(self) -> list[str]:
+        """
+        Mark lyrics embedder parameters as trainable and return the module names enabled.
+        """
+        enabled: list[str] = []
+        for name, module in self.get_lyrics_embedder_modules(unwrap=False):
+            if module is None:
+                continue
+            module.train()
+            module.requires_grad_(True)
+            enabled.append(name)
+        return enabled
+
+    def get_lyrics_embedder_state_dict(self) -> OrderedDict:
+        """
+        Return a flattened state dict for lyrics embedder components, if any exist.
+        """
+        state = OrderedDict()
+        for name, module in self.get_lyrics_embedder_modules(unwrap=True):
+            if module is None:
+                continue
+            for key, tensor in module.state_dict().items():
+                state[f"{name}.{key}"] = tensor.detach().cpu()
+        return state
+
+    def load_lyrics_embedder_state_dict(self, state_dict: dict) -> list[str]:
+        """
+        Load the provided state dict into any available lyrics embedder components.
+        """
+        if not state_dict:
+            return []
+
+        grouped: dict[str, dict] = {}
+        for key, tensor in state_dict.items():
+            if not isinstance(key, str) or "." not in key:
+                continue
+            prefix, remainder = key.split(".", 1)
+            grouped.setdefault(prefix, {})[remainder] = tensor
+
+        loaded: list[str] = []
+        for name, module in self.get_lyrics_embedder_modules(unwrap=False):
+            module_state = grouped.get(name)
+            if not module_state:
+                continue
+            module.load_state_dict(module_state, strict=False)
+            loaded.append(name)
+        return loaded
 
     def uses_shared_modules(self):
         return False

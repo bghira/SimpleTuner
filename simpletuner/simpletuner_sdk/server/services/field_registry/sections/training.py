@@ -407,6 +407,84 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Lyrics Embedder Training (ACE-Step)
+    registry._add_field(
+        ConfigField(
+            name="lyrics_embedder_train",
+            arg_name="--lyrics_embedder_train",
+            ui_label="Train Lyrics Embedder",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="lyrics_embedder",
+            default_value=False,
+            help_text="Enable fine-tuning of the ACE-Step lyrics embedder components.",
+            tooltip="Unlocks lyric embedding layers for training. Recommended for ACE-Step only.",
+            importance=ImportanceLevel.ADVANCED,
+            model_specific=["ace_step"],
+            order=1,
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="lyrics_embedder_optimizer",
+            arg_name="--lyrics_embedder_optimizer",
+            ui_label="Lyrics Embedder Optimizer",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="lyrics_embedder",
+            default_value=None,
+            choices=[{"value": opt, "label": opt} for opt in optimizer_choices],
+            dynamic_choices=True,
+            validation_rules=[ValidationRule(ValidationRuleType.CHOICES, value=optimizer_choices)],
+            dependencies=[FieldDependency(field="lyrics_embedder_train", operator="equals", value=True, action="show")],
+            help_text="Optional optimizer override for the lyrics embedder (leave empty to reuse the main optimizer).",
+            tooltip="Pick a different optimizer just for the lyrics embedder, or leave blank to share the primary one.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            model_specific=["ace_step"],
+            allow_empty=True,
+            order=2,
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="lyrics_embedder_lr",
+            arg_name="--lyrics_embedder_lr",
+            ui_label="Lyrics Embedder Learning Rate",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="lyrics_embedder",
+            default_value=None,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be positive")],
+            dependencies=[FieldDependency(field="lyrics_embedder_train", operator="equals", value=True, action="show")],
+            help_text="Optional learning rate override for the lyrics embedder.",
+            tooltip="Leave empty to share the main learning rate. Set a value to use a dedicated rate.",
+            importance=ImportanceLevel.ADVANCED,
+            model_specific=["ace_step"],
+            allow_empty=True,
+            order=3,
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="lyrics_embedder_lr_scheduler",
+            arg_name="--lyrics_embedder_lr_scheduler",
+            ui_label="Lyrics Embedder LR Scheduler",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="lyrics_embedder",
+            default_value=None,
+            choices=[{"value": s, "label": s.replace("_", " ").title()} for s in lr_scheduler_choices],
+            validation_rules=[ValidationRule(ValidationRuleType.CHOICES, value=lr_scheduler_choices)],
+            dependencies=[FieldDependency(field="lyrics_embedder_train", operator="equals", value=True, action="show")],
+            help_text="Select a scheduler for the lyrics embedder (leave empty to mirror the main scheduler).",
+            tooltip="Use a distinct scheduler for lyric embeddings if needed, or leave blank to follow the primary plan.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            model_specific=["ace_step"],
+            allow_empty=True,
+            order=4,
+        )
+    )
+
     # LR Number of Cycles
     registry._add_field(
         ConfigField(
