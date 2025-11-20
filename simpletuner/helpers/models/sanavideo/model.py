@@ -1,13 +1,11 @@
 import logging
 import os
-import random
-from typing import List, Optional
 
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.models import AutoencoderKLWan
 from diffusers.training_utils import compute_loss_weighting_for_sd3
-from transformers import Gemma2Model, GemmaTokenizer, GemmaTokenizerFast
+from transformers import Gemma2Model, GemmaTokenizerFast
 
 from simpletuner.helpers.models.common import (
     ModelTypes,
@@ -86,7 +84,7 @@ class SanaVideo(VideoModelFoundation):
         """
         When we're running the pipeline, we'll update the kwargs specifically for this model here.
         """
-        # pipeline_kwargs["num_frames"] = min(81, self.config.validation_num_video_frames or 81)
+        pipeline_kwargs["frames"] = min(81, self.config.validation_num_video_frames or 81)
         return pipeline_kwargs
 
     def _format_text_embedding(self, text_embedding: dict):
@@ -105,7 +103,7 @@ class SanaVideo(VideoModelFoundation):
             "negative_prompt_attention_mask": negative_prompt_attention_mask,
         }
 
-    def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding: dict, pipeline_type=None) -> dict:
         return {
             "prompt_embeds": text_embedding["prompt_embeds"],
             "prompt_attention_mask": text_embedding["prompt_attention_mask"],
@@ -231,7 +229,9 @@ class SanaVideo(VideoModelFoundation):
         if self.config.flow_use_uniform_schedule:
             output_args.append(f"flow_use_uniform_schedule")
         output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
-        return logger.info(f"SANA loaded flow matching logit-normal distribution scheduler{output_str}")
+        msg = f"SANA loaded flow matching logit-normal distribution scheduler{output_str}"
+        logger.info(msg)
+        return msg
 
     def check_user_config(self):
         """
@@ -250,9 +250,6 @@ class SanaVideo(VideoModelFoundation):
 
         if not hasattr(self.config, "sana_complex_human_instruction"):
             logger.info(f"{self.NAME}: 'sana_complex_human_instruction' not found in config. Defaulting to True.")
-
-        if self.config.prediction_type is not None:
-            pass
 
 
 from simpletuner.helpers.models.registry import ModelRegistry

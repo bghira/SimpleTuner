@@ -23,7 +23,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.loaders import SanaLoraLoaderMixin
-from diffusers.models import AutoencoderDC, AutoencoderKLWan
+from diffusers.models import AutoencoderKLWan
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import DPMSolverMultistepScheduler
 from diffusers.utils import (
@@ -202,7 +202,7 @@ class SanaVideoPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
             The tokenizer used to tokenize the prompt.
         text_encoder ([`Gemma2PreTrainedModel`]):
             Text encoder model to encode the input prompts.
-        vae ([`AutoencoderKLWan` or `AutoencoderDCAEV`]):
+        vae ([`AutoencoderKLWan`]):
             Variational Auto-Encoder (VAE) Model to encode and decode videos to and from latent representations.
         transformer ([`SanaVideoTransformer3DModel`]):
             Conditional Transformer to denoise the input latents.
@@ -221,7 +221,7 @@ class SanaVideoPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
         self,
         tokenizer: Union[GemmaTokenizer, GemmaTokenizerFast],
         text_encoder: Gemma2PreTrainedModel,
-        vae: Union[AutoencoderDC, AutoencoderKLWan],
+        vae: Union[AutoencoderKLWan],
         transformer: SanaVideoTransformer3DModel,
         scheduler: DPMSolverMultistepScheduler,
     ):
@@ -641,11 +641,11 @@ class SanaVideoPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
         caption = re.sub(r"(\D[,\./])\b", r"\1 ", caption)
         caption = re.sub(r"\s+", " ", caption)
 
-        caption.strip()
+        caption = caption.strip()
 
         caption = re.sub(r"^[\"\']([\w\W]+)[\"\']$", r"\1", caption)
         caption = re.sub(r"^[\'\_,\-\:;]", r"", caption)
-        caption = re.sub(r"[\'\_,\-\:\-\+]$", r"", caption)
+        caption = re.sub(r"[\'\_,\-\:\+]$", r"", caption)
         caption = re.sub(r"^\.\S+$", "", caption)
 
         return caption.strip()
@@ -681,8 +681,6 @@ class SanaVideoPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
 
         if latents is None:
             latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-        else:
-            latents = latents.to(device=device, dtype=dtype)
         return latents
 
     @property
@@ -1002,9 +1000,10 @@ class SanaVideoPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
             except oom_error as e:
                 warnings.warn(
                     f"{e}. \n"
-                    f"Try to use VAE tiling for large images. For example: \n"
+                    f"Try to use VAE tiling for large videos. For example: \n"
                     f"pipe.vae.enable_tiling(tile_sample_min_width=512, tile_sample_min_height=512)"
                 )
+                raise
 
             if use_resolution_binning:
                 video = self.video_processor.resize_and_crop_tensor(video, orig_width, orig_height)
