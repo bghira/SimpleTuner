@@ -29,6 +29,8 @@
         var lifecycleStageListener = null;
         var trainingStatusListener = null;
         var connectionListener = null;
+        var notificationListener = null;
+        var errorEventListener = null;
         var callbackEventListeners = {};
 
         /**
@@ -389,6 +391,8 @@
                 eventSource.removeEventListener('lifecycle.stage', lifecycleStageListener);
                 eventSource.removeEventListener('training.status', trainingStatusListener);
                 eventSource.removeEventListener('connection', connectionListener);
+                eventSource.removeEventListener('notification', notificationListener);
+                eventSource.removeEventListener('error', errorEventListener);
 
                 // Remove callback event listeners
                 CALLBACK_EVENT_TYPES.forEach(function(category) {
@@ -409,6 +413,8 @@
             lifecycleStageListener = null;
             trainingStatusListener = null;
             connectionListener = null;
+            notificationListener = null;
+            errorEventListener = null;
             callbackEventListeners = {};
         }
 
@@ -536,6 +542,34 @@
                     }
                 };
                 eventSource.addEventListener('training.status', trainingStatusListener);
+
+                notificationListener = function(event) {
+                    lastHeartbeat = Date.now();
+                    if (!event || !event.data) {
+                        return;
+                    }
+                    try {
+                        var data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch (error) {
+                        console.error('Error parsing notification event:', error);
+                    }
+                };
+                eventSource.addEventListener('notification', notificationListener);
+
+                errorEventListener = function(event) {
+                    lastHeartbeat = Date.now();
+                    if (!event || !event.data) {
+                        return;
+                    }
+                    try {
+                        var data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch (error) {
+                        console.error('Error parsing SSE error event payload:', error);
+                    }
+                };
+                eventSource.addEventListener('error', errorEventListener);
 
                 connectionListener = function(event) {
                     lastHeartbeat = Date.now();
