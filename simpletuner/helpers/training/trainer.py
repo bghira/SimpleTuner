@@ -38,7 +38,7 @@ from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing.huggingface import HubManager
-from simpletuner.helpers.training import trainable_parameter_count
+from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
 from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
 from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
@@ -2357,11 +2357,22 @@ class Trainer:
             else:
                 logger.warning("lyrics_embedder_train enabled but model does not expose embedder parameters.")
 
-        use_separate_lyrics_opt = getattr(self.config, "lyrics_embedder_optimizer", None) not in (
+        lyrics_optimizer_override = getattr(self.config, "lyrics_embedder_optimizer", None) not in (
             None,
             "",
             "None",
-        ) or getattr(self.config, "lyrics_embedder_lr_scheduler", None) not in (None, "", "None")
+        )
+        lyrics_scheduler_override = getattr(self.config, "lyrics_embedder_lr_scheduler", None) not in (
+            None,
+            "",
+            "None",
+        )
+        if lyrics_scheduler_override and not lyrics_optimizer_override:
+            logger.info(
+                "A lyrics embedder LR scheduler was provided without a custom optimizer; a separate embedder optimizer "
+                "will reuse the primary optimizer type."
+            )
+        use_separate_lyrics_opt = lyrics_optimizer_override or lyrics_scheduler_override
         use_separate_lyrics_opt = use_separate_lyrics_opt and bool(embedder_params)
 
         if use_separate_lyrics_opt and self.config.use_deepspeed_optimizer:
@@ -2374,7 +2385,7 @@ class Trainer:
             logger.warning("lyrics_embedder_lr will be ignored when using DeepSpeed optimizers.")
             embedder_lr_value = None
         if self.config.use_deepspeed_optimizer and text_encoder_lr_value is not None:
-            logger.warning("text_encoder_lr is ignored when using DeepSpeed optimizers.")
+            logger.warning("text_encoder_lr will be ignored when using DeepSpeed optimizers.")
             text_encoder_lr_value = None
         text_encoder_params: list[torch.nn.Parameter] = []
         text_encoder_param_ids: set[int] = set()
@@ -2433,8 +2444,14 @@ class Trainer:
         if embedder_lr_value is not None and embedder_params and not use_separate_lyrics_opt:
             self.params_to_optimize = _filter_params(embedder_param_ids, self.params_to_optimize)
             self.params_to_optimize.append({"params": embedder_params, "lr": embedder_lr_value})
+        # Ensure embedder parameters are still optimized when training is enabled without custom LR/optimizer.
+        if embedder_params and not use_separate_lyrics_opt and embedder_lr_value is None:
+            current_param_ids = {id(p) for p in _flatten_parameters(self.params_to_optimize)}
+            missing = [p for p in embedder_params if id(p) not in current_param_ids]
+            if missing:
+                self.params_to_optimize.extend(missing)
 
-        AttentionBackendController.attach_parameter_sink(self._get_trainable_parameters())
+        AttentionBackendController.attach_parameter_sink(self.params_to_optimize)
         logger.info(f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters")
 
         if optimizer_class is AdamWBF16:
@@ -3910,24 +3927,10 @@ class Trainer:
                         training_logger.debug("Backwards pass.")
                         self.accelerator.backward(loss)
 
-                        def _iter_opt_params(*groups):
-                            for group in groups:
-                                if group is None:
-                                    continue
-                                for entry in group:
-                                    if isinstance(entry, dict):
-                                        params = entry.get("params", [])
-                                        if not isinstance(params, (list, tuple, set)):
-                                            params = [params]
-                                        for param in params:
-                                            yield param
-                                    else:
-                                        yield entry
-
                         if self.config.optimizer != "adam_bfloat16" and self.config.gradient_precision == "fp32":
                             # After backward, convert gradients to fp32 for stable accumulation
-                            for param in _iter_opt_params(
-                                self.params_to_optimize, getattr(self.lyrics_optimizer, "param_groups", None)
+                            for param in _flatten_parameters(
+                                [self.params_to_optimize, getattr(self.lyrics_optimizer, "param_groups", None)]
                             ):
                                 if param.grad is not None:
                                     param.grad.data = param.grad.data.to(torch.float32)
