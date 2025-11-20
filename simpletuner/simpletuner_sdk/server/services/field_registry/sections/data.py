@@ -330,3 +330,98 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             order=2,
         )
     )
+
+    # Audio Max Duration
+    registry._add_field(
+        ConfigField(
+            name="audio_max_duration_seconds",
+            arg_name="--audio_max_duration_seconds",
+            ui_label="Audio Max Duration (s)",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="dataset_config",
+            subsection="audio",
+            default_value=None,
+            help_text="Maximum duration for audio samples in seconds",
+            tooltip="Longer samples will be truncated or skipped depending on configuration.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=10,
+        )
+    )
+
+    # Audio Min Duration
+    registry._add_field(
+        ConfigField(
+            name="audio_min_duration_seconds",
+            arg_name="--audio_min_duration_seconds",
+            ui_label="Audio Min Duration (s)",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="dataset_config",
+            subsection="audio",
+            default_value=None,
+            help_text="Minimum duration for audio samples in seconds",
+            tooltip="Samples shorter than this will be skipped.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=11,
+        )
+    )
+
+    # Audio Channels
+    registry._add_field(
+        ConfigField(
+            name="audio_channels",
+            arg_name="--audio_channels",
+            ui_label="Audio Channels",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="dataset_config",
+            subsection="audio",
+            default_value=1,
+            help_text="Number of audio channels (1=mono, 2=stereo)",
+            tooltip="Target channel count for training data. Inputs will be mixed/expanded to match.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=12,
+        )
+    )
+
+    # Audio Duration Interval
+    registry._add_field(
+        ConfigField(
+            name="audio_duration_interval",
+            arg_name="--audio_duration_interval",
+            ui_label="Audio Duration Interval (s)",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="dataset_config",
+            subsection="audio",
+            default_value=3.0,
+            help_text="Bucket interval for audio durations",
+            tooltip="Audio samples will be bucketed/truncated to multiples of this duration.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=13,
+        )
+    )
+
+    # Audio Truncation Mode
+    registry._add_field(
+        ConfigField(
+            name="audio_truncation_mode",
+            arg_name="--audio_truncation_mode",
+            ui_label="Audio Truncation Mode",
+            field_type=FieldType.SELECT,
+            tab="basic",
+            section="dataset_config",
+            subsection="audio",
+            default_value="beginning",
+            choices=[
+                {"value": "beginning", "label": "Beginning (Keep Start)"},
+                {"value": "end", "label": "End (Keep End)"},
+                {"value": "random", "label": "Random"},
+            ],
+            help_text="How to truncate audio that exceeds bucket length",
+            tooltip="Which part of the audio file to keep when truncating to fit a bucket.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=14,
+        )
+    )

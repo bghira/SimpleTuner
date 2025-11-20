@@ -285,6 +285,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 if alias in source:
                     audio_block[target_key] = source[alias]
                     break
+                global_val = _get_arg_value(args, alias)
+                if global_val is not None:
+                    audio_block[target_key] = global_val
+                    break
 
         for passthrough_key in ("lyrics_extension", "lyrics_suffix", "lyrics_filename_format"):
             if passthrough_key not in audio_block and passthrough_key in source:
@@ -1237,6 +1241,7 @@ class FactoryRegistry:
         init_backend["audio_data_backend"] = {
             "reader": load_audio,
             "max_duration_seconds": audio_settings.get("max_duration_seconds"),
+            "min_duration_seconds": audio_settings.get("min_duration_seconds"),
             "channels": audio_settings.get("channels"),
             "cache_dir": audio_cache_dir,
             "truncation_mode": audio_settings.get("truncation_mode"),

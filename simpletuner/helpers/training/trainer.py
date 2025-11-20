@@ -2256,18 +2256,20 @@ class Trainer:
         self.config.num_update_steps_per_epoch = math.ceil(
             self.config.total_num_batches / max(self.config.gradient_accumulation_steps or 1, 1)
         )
+        steps_per_epoch = max(self.config.num_update_steps_per_epoch, 1)
+        target_epochs = float(self.config.num_train_epochs or 0)
         if getattr(self.config, "overrode_max_train_steps", False):
-            self.config.max_train_steps = self.config.num_train_epochs * self.config.num_update_steps_per_epoch
+            self.config.max_train_steps = int(math.ceil(target_epochs * steps_per_epoch))
             # Afterwards we recalculate our number of training epochs
-            self.config.num_train_epochs = math.ceil(self.config.max_train_steps / self.config.num_update_steps_per_epoch)
+            self.config.num_train_epochs = math.ceil(self.config.max_train_steps / steps_per_epoch)
             logger.info(
                 "After removing any undesired samples and updating cache entries, we have settled on"
                 f" {self.config.num_train_epochs} epochs and {self.config.num_update_steps_per_epoch} steps per epoch."
             )
         if self.config.max_train_steps is None or self.config.max_train_steps == 0:
-            if self.config.num_train_epochs is None or self.config.num_train_epochs == 0:
+            if target_epochs == 0:
                 raise ValueError("You must specify either --max_train_steps or --num_train_epochs with a value > 0")
-            self.config.max_train_steps = self.config.num_train_epochs * self.config.num_update_steps_per_epoch
+            self.config.max_train_steps = int(math.ceil(target_epochs * steps_per_epoch))
             logger.info(
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
                 f" {self.config.num_train_epochs} epochs and {self.config.num_update_steps_per_epoch} steps per epoch."
@@ -3490,7 +3492,7 @@ class Trainer:
         if not self.accelerator.is_local_main_process:
             show_progress_bar = False
         progress_bar = tqdm(
-            range(0, self.config.max_train_steps),
+            range(0, int(self.config.max_train_steps)),
             disable=not show_progress_bar,
             initial=self.state["global_step"],
             desc=f"Epoch {self.state['first_epoch']}/{self.config.num_train_epochs} Steps",
@@ -3504,7 +3506,7 @@ class Trainer:
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
-        num_epochs_to_track = self.config.num_train_epochs + 1
+        num_epochs_to_track = int(math.ceil(self.config.num_train_epochs)) + 1
         if self.config.ignore_final_epochs:
             num_epochs_to_track += 1000000
         for epoch in range(self.state["first_epoch"], num_epochs_to_track):

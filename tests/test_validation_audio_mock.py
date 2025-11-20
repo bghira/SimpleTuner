@@ -1,9 +1,11 @@
 import unittest
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import torch
 
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.training import validation_audio
 from simpletuner.helpers.training.validation import Validation
 
 
@@ -159,6 +161,28 @@ class TestAudioValidation(unittest.TestCase):
         # validation_images is a dict {shortname: [audio_tensors]}
         self.assertIn("test", call_args[0][1])
         self.assertEqual(len(call_args[0][1]["test"]), 1)
+
+    @patch("simpletuner.helpers.training.validation_audio._tensor_to_wav_buffer")
+    @patch("simpletuner.helpers.training.validation_audio.StateTracker")
+    def test_log_audio_to_webhook_sends_payloads(self, mock_state_tracker, mock_to_wav):
+        audio_buffer = BytesIO(b"abc")
+        audio_buffer.name = "sample.wav"
+        mock_to_wav.return_value = audio_buffer
+        webhook = MagicMock()
+        mock_state_tracker.get_webhook_handler.return_value = webhook
+        mock_state_tracker.get_job_id.return_value = "job-123"
+
+        validation_audio.log_audio_to_webhook({"clip": [torch.zeros(1)]}, "clip", "prompt", sample_rate=22050)
+
+        webhook.send.assert_called_once()
+        send_kwargs = webhook.send.call_args.kwargs
+        self.assertIn("audios", send_kwargs)
+        self.assertEqual(send_kwargs["audios"][0], audio_buffer)
+
+        webhook.send_raw.assert_called_once()
+        raw_kwargs = webhook.send_raw.call_args.kwargs
+        self.assertIn("audios", raw_kwargs)
+        self.assertEqual(raw_kwargs["audios"][0]["mime_type"], "audio/wav")
 
 
 if __name__ == "__main__":

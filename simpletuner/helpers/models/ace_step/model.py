@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 class ACEStep(AudioModelFoundation):
     NAME = "ACE-Step"
     MODEL_DESCRIPTION = "Audio generation foundation model (ACE-Step v1 3.5B)"
-    ENABLED_IN_WIZARD = False
+    ENABLED_IN_WIZARD = True
     MODEL_LICENSE = "apache-2.0"
     MODEL_TYPE = ModelTypes.TRANSFORMER
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
