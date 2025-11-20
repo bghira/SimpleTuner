@@ -129,6 +129,7 @@ function trainingWizardComponent() {
 
         // Configuration
         modelFamilyOptions: [],
+        groupedModelFamilyOptionsList: [],
 
         // Step definitions
         steps: [
@@ -600,8 +601,10 @@ function trainingWizardComponent() {
                 this.modelFamilyOptions = data.models.map(model => ({
                     value: model.family,
                     label: model.name,
-                    description: model.description
+                    description: model.description,
+                    category: (model.category || 'image').toLowerCase()
                 }));
+                this.groupedModelFamilyOptionsList = this.buildGroupedModelFamilies();
 
                 console.log('[TRAINING WIZARD] Transformed model options:', this.modelFamilyOptions);
             } catch (error) {
@@ -609,9 +612,49 @@ function trainingWizardComponent() {
                 this.modelsError = error.message;
                 // Fallback to empty array - user will see error message
                 this.modelFamilyOptions = [];
+                this.groupedModelFamilyOptionsList = [];
             } finally {
                 this.modelsLoading = false;
             }
+        },
+
+        buildGroupedModelFamilies() {
+            const preferredOrder = ['image', 'video', 'audio', 'other'];
+            const labels = {
+                image: 'Image models',
+                video: 'Video models',
+                audio: 'Audio models',
+                other: 'Other models'
+            };
+
+            const buckets = {};
+            this.modelFamilyOptions.forEach((option) => {
+                const category = (option.category || 'other').toLowerCase();
+                buckets[category] = buckets[category] || [];
+                buckets[category].push(option);
+            });
+
+            const ordered = preferredOrder
+                .filter((category) => Array.isArray(buckets[category]) && buckets[category].length > 0)
+                .map((category) => ({
+                    category,
+                    label: labels[category] || category,
+                    options: buckets[category].slice().sort((a, b) => a.label.localeCompare(b.label))
+                }));
+
+            const remainingCategories = Object.keys(buckets)
+                .filter((category) => !preferredOrder.includes(category))
+                .sort();
+
+            remainingCategories.forEach((category) => {
+                ordered.push({
+                    category,
+                    label: labels[category] || category,
+                    options: buckets[category].slice().sort((a, b) => a.label.localeCompare(b.label))
+                });
+            });
+
+            return ordered;
         },
 
         closeWizard() {

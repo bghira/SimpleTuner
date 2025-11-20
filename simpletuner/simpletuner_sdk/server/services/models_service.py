@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import status
 
-from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes, VideoModelFoundation
+from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, PipelineTypes, VideoModelFoundation
 from simpletuner.helpers.models.registry import ModelRegistry
 
 
@@ -59,6 +59,7 @@ class ModelsService:
         """Return model families enabled for the wizard with their descriptions."""
         self._ensure_models_loaded()
         wizard_models = []
+        category_order = {"image": 0, "video": 1, "audio": 2, "other": 3}
 
         for family_name, model_cls in ModelRegistry.model_families().items():
             # Check if model is enabled in wizard (default to True if not specified)
@@ -69,17 +70,24 @@ class ModelsService:
             # Get model metadata
             display_name = getattr(model_cls, "NAME", family_name)
             description = getattr(model_cls, "MODEL_DESCRIPTION", "")
+            if issubclass(model_cls, AudioModelFoundation):
+                category = "audio"
+            elif issubclass(model_cls, VideoModelFoundation):
+                category = "video"
+            else:
+                category = "image"
 
             wizard_models.append(
                 {
                     "family": family_name,
                     "name": display_name,
                     "description": description,
+                    "category": category,
                 }
             )
 
         # Sort by display name for consistent ordering
-        wizard_models.sort(key=lambda x: x["name"])
+        wizard_models.sort(key=lambda x: (category_order.get(x.get("category"), 99), x["name"]))
 
         return {"models": wizard_models}
 

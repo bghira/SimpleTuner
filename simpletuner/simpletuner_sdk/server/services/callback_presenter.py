@@ -96,7 +96,8 @@ class CallbackPresenter:
 
         images_html = cls._render_images(payload.get("images") or (), headline)
         videos_html = cls._render_videos(payload.get("videos") or (), headline)
-        media_html = images_html + videos_html
+        audios_html = cls._render_audios(payload.get("audios") or (), headline)
+        media_html = images_html + videos_html + audios_html
 
         headline_html = html.escape(str(headline))
         body_html = html.escape(str(body)) if body else ""
@@ -166,6 +167,29 @@ class CallbackPresenter:
             return ""
 
         return '<div class="event-videos d-flex flex-wrap gap-2">' + "".join(rendered) + "</div>"
+
+    @staticmethod
+    def _render_audios(audios: Any, alt: str | None) -> str:
+        if not audios:
+            return ""
+        rendered: list[str] = []
+        alt_text = html.escape(str(alt)) if alt else "Event audio"
+
+        for audio in audios:
+            src = CallbackPresenter._normalise_audio_src(audio)
+            if not src:
+                continue
+            rendered.append(
+                (
+                    '<audio src="{src}" class="event-audio w-100 mt-2" '
+                    'controls preload="metadata" aria-label="{alt}"></audio>'
+                ).format(src=html.escape(src, quote=True), alt=alt_text)
+            )
+
+        if not rendered:
+            return ""
+
+        return '<div class="event-audios d-flex flex-column gap-2">' + "".join(rendered) + "</div>"
 
     @staticmethod
     def _normalise_image_src(image: Any) -> str | None:
@@ -244,6 +268,40 @@ class CallbackPresenter:
             if data.startswith("data:") or data.startswith(("http://", "https://", "//")):
                 return data
             mime = video.get("mime_type") or video.get("mime") or "video/mp4"
+            return f"data:{mime};base64,{data}"
+
+        return None
+
+    @staticmethod
+    def _normalise_audio_src(audio: Any) -> str | None:
+        if audio is None:
+            return None
+
+        if isinstance(audio, str):
+            value = audio.strip()
+            if not value:
+                return None
+            if value.startswith("data:") or value.startswith(("http://", "https://", "//")):
+                return value
+            if re.match(r"^[A-Za-z0-9+/]+=*$", value):
+                return f"data:audio/wav;base64,{value}"
+            return value
+
+        if isinstance(audio, Mapping):
+            data = (
+                audio.get("src")
+                or audio.get("url")
+                or audio.get("data")
+                or audio.get("base64")
+                or audio.get("audio")
+                or audio.get("audio_base64")
+            )
+            if not isinstance(data, str) or not data.strip():
+                return None
+            data = data.strip()
+            if data.startswith("data:") or data.startswith(("http://", "https://", "//")):
+                return data
+            mime = audio.get("mime_type") or audio.get("mime") or "audio/wav"
             return f"data:{mime};base64,{data}"
 
         return None

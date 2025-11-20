@@ -1,6 +1,11 @@
+import base64
 import logging
 import os
+from io import BytesIO
+from typing import Any
 
+import numpy as np
+import torch
 import torchaudio
 
 import wandb
@@ -36,6 +41,39 @@ def save_audio(save_dir, validation_audios, validation_shortname, sample_rate=44
             logger.error(f"Failed to save validation audio to {save_path}: {e}")
 
     return saved_paths
+
+
+def _coerce_audio_tensor(audio: Any) -> torch.Tensor | None:
+    """Normalise incoming audio payloads to a 2D CPU tensor for logging."""
+    if isinstance(audio, np.ndarray):
+        audio = torch.from_numpy(audio)
+    if not torch.is_tensor(audio):
+        logger.warning("Skipping validation audio of unsupported type %s", type(audio))
+        return None
+
+    tensor = audio.detach().cpu()
+    if tensor.ndim == 1:
+        tensor = tensor.unsqueeze(0)
+    if tensor.ndim != 2:
+        logger.warning("Validation audio tensor must be 2D (channels, time); received shape %s", tuple(tensor.shape))
+        return None
+    return tensor
+
+
+def _tensor_to_wav_buffer(audio: Any, sample_rate: int) -> BytesIO | None:
+    """Encode a tensor-like audio clip into an in-memory WAV buffer."""
+    tensor = _coerce_audio_tensor(audio)
+    if tensor is None:
+        return None
+
+    buffer = BytesIO()
+    try:
+        torchaudio.save(buffer, tensor, sample_rate, format="wav")
+    except Exception as exc:  # pragma: no cover - torchaudio backend/env dependent
+        logger.warning("Unable to encode validation audio for webhook delivery: %s", exc)
+        return None
+    buffer.seek(0)
+    return buffer
 
 
 def log_audio_to_trackers(accelerator, validation_audios, validation_shortname, sample_rate=44100):
@@ -84,9 +122,31 @@ def log_audio_to_webhook(validation_audios, validation_shortname, validation_pro
         f"\\nValidation prompt: `{validation_prompt if validation_prompt != '' else '(blank prompt)'}`"
     )
 
-    # Webhook might not support audio uploads directly in the same way as images/videos depending on implementation
-    # But we can try sending a message.
-    # If the webhook handler supports generic files, we could upload.
-    # For now, just send the text notification.
+    audio_list = validation_audios.get(validation_shortname, [])
+    audio_buffers_for_discord = []
+    audio_payloads_for_raw = []
 
-    webhook_handler.send(message)
+    for idx, audio in enumerate(audio_list):
+        buffer = _tensor_to_wav_buffer(audio, sample_rate)
+        if buffer is None:
+            continue
+        buffer.name = getattr(buffer, "name", None) or f"{validation_shortname or 'validation'}_{idx}.wav"
+        wav_bytes = buffer.getvalue()
+        data_uri = f"data:audio/wav;base64,{base64.b64encode(wav_bytes).decode('utf-8')}"
+        # Ensure the buffer is rewound before sending to Discord
+        buffer.seek(0)
+        audio_buffers_for_discord.append(buffer)
+        audio_payloads_for_raw.append({"src": data_uri, "mime_type": "audio/wav"})
+
+    webhook_handler.send(
+        message,
+        audios=audio_buffers_for_discord,
+    )
+
+    webhook_handler.send_raw(
+        structured_data={"message": f"Validation: {validation_shortname}"},
+        message_type="training.validation",
+        message_level="info",
+        job_id=StateTracker.get_job_id(),
+        audios=audio_payloads_for_raw,
+    )

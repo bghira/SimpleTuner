@@ -117,11 +117,15 @@
             var message = payload.headline || payload.body || payload.message || '';
             var severity = payload.severity || 'info';
             var images = payload.images || [];
+            var videos = payload.videos || [];
+            var audios = payload.audios || [];
 
             renderEvent(eventType, {
                 message: message,
                 severity: severity,
                 images: images,
+                videos: videos,
+                audios: audios,
                 timestamp: payload.timestamp || payload.timestamp_display || new Date().toISOString(),
                 raw: payload
             });
@@ -175,6 +179,9 @@
             if (data.videos && data.videos.length > 0) {
                 contentHTML += renderVideos(data.videos, message, type);
             }
+            if (data.audios && data.audios.length > 0) {
+                contentHTML += renderAudios(data.audios, message, type);
+            }
 
             contentHTML +=
                         '<small class="text-muted">' + timestamp + '</small>' +
@@ -212,6 +219,28 @@
 
             imagesHTML += '</div>';
             return imagesHTML;
+        }
+
+        function renderAudios(audios, alt, eventType) {
+            var audiosHTML = '<div class="event-audios d-flex flex-column gap-2 mt-2">';
+            var group = escapeHtml(eventType || 'event');
+            var altText = escapeHtml(alt || 'Event audio');
+
+            audios.forEach(function(audio, idx) {
+                var src = normalizeAudioSrc(audio);
+                if (!src) return;
+
+                audiosHTML +=
+                    '<audio src="' + escapeHtml(src) + '" ' +
+                    'aria-label="' + altText + '" ' +
+                    'class="event-audio w-100" ' +
+                    'data-audio-group="event-' + group + '" ' +
+                    'data-audio-index="' + idx + '" ' +
+                    'controls preload="metadata"></audio>';
+            });
+
+            audiosHTML += '</div>';
+            return audiosHTML;
         }
 
         function renderVideos(videos, alt, eventType) {
@@ -268,6 +297,37 @@
                 // Wrap as base64
                 var mime = image.mime_type || image.mime || 'image/png';
                 return 'data:' + mime + ';base64,' + data;
+            }
+
+            return null;
+        }
+
+        function normalizeAudioSrc(audio) {
+            if (!audio) return null;
+
+            if (typeof audio === 'string') {
+                var value = audio.trim();
+                if (!value) return null;
+                if (value.startsWith('data:') || value.startsWith('http://') ||
+                    value.startsWith('https://') || value.startsWith('//')) {
+                    return value;
+                }
+                if (/^[A-Za-z0-9+/]+=*$/.test(value)) {
+                    return 'data:audio/wav;base64,' + value;
+                }
+                return value;
+            }
+
+            if (typeof audio === 'object') {
+                var data = audio.src || audio.url || audio.data || audio.base64 || audio.audio || audio.audio_base64;
+                if (!data || typeof data !== 'string') return null;
+                var trimmed = data.trim();
+                if (trimmed.startsWith('data:') || trimmed.startsWith('http://') ||
+                    trimmed.startsWith('https://') || trimmed.startsWith('//')) {
+                    return trimmed;
+                }
+                var mime = audio.mime_type || audio.mime || 'audio/wav';
+                return 'data:' + mime + ';base64,' + trimmed;
             }
 
             return null;

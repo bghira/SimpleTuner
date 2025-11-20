@@ -60,13 +60,20 @@
                 </div>
 
                 <!-- Model options -->
-                <div x-show="!modelsLoading && !modelsError" class="wizard-options">
-                    <template x-for="option in modelFamilyOptions" :key="option.value">
-                        <div class="wizard-option-card"
-                             :class="{ 'selected': answers.model_family === option.value }"
-                             @click="selectAnswer('model_family', option.value)">
-                            <h6 x-text="option.label"></h6>
-                            <p class="text-muted small" x-text="option.description"></p>
+                <div x-show="!modelsLoading && !modelsError">
+                    <template x-for="group in groupedModelFamilyOptionsList" :key="group.category">
+                        <div class="mb-3">
+                            <div class="text-uppercase text-muted small fw-semibold mb-2" x-text="group.label"></div>
+                            <div class="wizard-options">
+                                <template x-for="option in group.options" :key="option.value">
+                                    <div class="wizard-option-card"
+                                         :class="{ 'selected': answers.model_family === option.value }"
+                                         @click="selectAnswer('model_family', option.value)">
+                                        <h6 x-text="option.label"></h6>
+                                        <p class="text-muted small" x-text="option.description"></p>
+                                    </div>
+                                </template>
+                            </div>
                         </div>
                     </template>
                 </div>
