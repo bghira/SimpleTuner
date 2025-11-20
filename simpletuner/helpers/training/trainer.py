@@ -4272,11 +4272,17 @@ class Trainer:
                         self.mark_optimizer_eval()
                         AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
                         self.disable_gradient_checkpointing()
-                    self.validation.run_validations(
-                        validation_type="intermediary",
-                        step=step,
-                        force_evaluation=manual_validation_requested,
-                    )
+
+                    try:
+                        self.validation.run_validations(
+                            validation_type="intermediary",
+                            step=step,
+                            force_evaluation=manual_validation_requested,
+                        )
+                    except Exception as error:
+                        # let's not crash training because of a validation error.
+                        logger.error(f"Validation run failed at step {step}: {error}", exc_info=True)
+
                     if should_validate:
                         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
                         self.enable_gradient_checkpointing()
