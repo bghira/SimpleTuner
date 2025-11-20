@@ -111,6 +111,32 @@ class SanaVideo(VideoModelFoundation):
             "negative_prompt_attention_mask": text_embedding.get("negative_prompt_attention_mask"),
         }
 
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: dict, prompt: str) -> dict:
+        """
+        Prepare cached negative prompt embeddings for pipeline execution.
+        Falls back to the stored prompt embedding if the cache omits explicit negative entries.
+        """
+        negative_embeds = text_embedding.get("negative_prompt_embeds") or text_embedding.get("prompt_embeds")
+        negative_attention_mask = (
+            text_embedding.get("negative_prompt_attention_mask")
+            or text_embedding.get("prompt_attention_mask")
+            or text_embedding.get("attention_mask")
+        )
+
+        if negative_embeds is None:
+            raise ValueError("Negative prompt embeddings are missing for SanaVideo.")
+
+        # Add batch dimension if it was stripped during caching.
+        if negative_embeds.dim() == 2:
+            negative_embeds = negative_embeds.unsqueeze(0)
+        if negative_attention_mask is not None and negative_attention_mask.dim() == 1:
+            negative_attention_mask = negative_attention_mask.unsqueeze(0)
+
+        return {
+            "negative_prompt_embeds": negative_embeds,
+            "negative_prompt_attention_mask": negative_attention_mask,
+        }
+
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
         Encode a prompt.
