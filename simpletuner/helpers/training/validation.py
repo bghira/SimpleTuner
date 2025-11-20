@@ -15,7 +15,9 @@ from tqdm import tqdm
 
 import wandb
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
-from simpletuner.helpers.training import validation_audio, validation_video
+from simpletuner.helpers.training import validation_audio
+from simpletuner.helpers.training import validation_images as validation_images_utils
+from simpletuner.helpers.training import validation_video
 from simpletuner.helpers.training.wrappers import unwrap_model
 
 try:
@@ -1982,14 +1984,14 @@ class Validation:
                 self.eval_scores,
             )
         else:
-            validation_images.save_images(
+            validation_images_utils.save_images(
                 self.save_dir,
                 validation_images,
                 decorated_shortname,
                 self.validation_resolutions,
                 self.config,
             )
-            validation_images.log_images_to_webhook(
+            validation_images_utils.log_images_to_webhook(
                 validation_images,
                 decorated_shortname,
                 prompt,
@@ -2823,19 +2825,14 @@ class Validation:
                     validation_shortname,
                 )
         elif isinstance(self.model, VideoModelFoundation):
-            # Video logging not fully implemented in validation_video yet, or uses image logger?
-            # Original code logged videos as images in some trackers or didn't support it fully.
-            # Let's assume validation_images.log_images_to_trackers handles it or we need to implement it.
-            # Original code used _log_validations_to_trackers which handled images.
-            # If validation_images contains frames, log_images_to_trackers handles it.
-            validation_images.log_images_to_trackers(
+            validation_images_utils.log_images_to_trackers(
                 self.accelerator,
                 validation_images,
                 self.validation_resolutions,
                 self.config,
             )
         else:
-            validation_images.log_images_to_trackers(
+            validation_images_utils.log_images_to_trackers(
                 self.accelerator,
                 validation_images,
                 self.validation_resolutions,
