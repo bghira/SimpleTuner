@@ -5,7 +5,7 @@ from typing import List, Optional
 
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
-from diffusers.models import AutoencoderDC
+from diffusers.models import AutoencoderKLWan
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizer, GemmaTokenizerFast
 
@@ -34,7 +34,7 @@ class SanaVideo(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
-    AUTOENCODER_CLASS = AutoencoderDC
+    AUTOENCODER_CLASS = AutoencoderKLWan
     LATENT_CHANNEL_COUNT = 16
 
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
