@@ -5,6 +5,7 @@ from io import BytesIO
 from typing import Any
 
 import numpy as np
+import scipy.io.wavfile
 import torch
 import torchaudio
 
@@ -68,8 +69,12 @@ def _tensor_to_wav_buffer(audio: Any, sample_rate: int) -> BytesIO | None:
 
     buffer = BytesIO()
     try:
-        torchaudio.save(buffer, tensor, sample_rate, format="wav")
-    except Exception as exc:  # pragma: no cover - torchaudio backend/env dependent
+        # Transpose to (Time, Channels) for scipy and ensure numpy
+        audio_np = tensor.numpy().T
+        if audio_np.shape[1] == 1:
+            audio_np = audio_np.squeeze(1)
+        scipy.io.wavfile.write(buffer, sample_rate, audio_np)
+    except Exception as exc:
         logger.warning("Unable to encode validation audio for webhook delivery: %s", exc)
         return None
     buffer.seek(0)
