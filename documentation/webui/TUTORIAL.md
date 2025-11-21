@@ -180,6 +180,8 @@ If you do select to publish your model, be mindful to select `Private repo` if y
 
 If you want the trainer to generate images periodically, you can configure a single validation prompt at this point of the wizard. Multiple prompt library can be configured inside the `Validations & Output` tab after the wizard is complete.
 
+Want to outsource validation to your own script or service? Switch the **Validation Method** to `external-script` in the validation tab after the wizard and provide `--validation_external_script`. You can pass training context into the script with placeholders like `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, and `{model_family}`. Enable `--validation_external_background` to fire-and-forget without blocking training.
+
 <img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
 
 #### Logging training statistics

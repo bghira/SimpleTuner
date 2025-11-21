@@ -317,6 +317,28 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
+### `--validation_method`
+
+- **What**: Choose how validation runs are executed.
+- **Options**: `simpletuner-local` (default) runs the built-in pipeline; `external-script` runs a user-provided executable instead.
+- **Why**: Lets you hand off validation to an external system without pausing training for local pipeline work.
+
+### `--validation_external_script`
+
+- **What**: Executable to run when `--validation_method=external-script`. Uses shell-style splitting, so quote the command string accordingly.
+- **Placeholders**: You can embed these tokens (formatted with `.format`) to pass training context. Missing values are replaced with an empty string unless noted:
+  - `{local_checkpoint_path}` → latest checkpoint directory under `output_dir` (requires at least one checkpoint).
+  - `{global_step}` → current global step.
+  - `{tracker_run_name}` → value of `--tracker_run_name`.
+  - `{tracker_project_name}` → value of `--tracker_project_name`.
+  - `{model_family}` → value of `--model_family`.
+- **Example**: `--validation_external_script="/opt/tools/validate.sh {local_checkpoint_path} {global_step}"`
+
+### `--validation_external_background`
+
+- **What**: When set, `--validation_external_script` is launched in the background (fire-and-forget).
+- **Why**: Keep training moving without waiting for the external script; exit codes are not checked in this mode.
+
 ### `--validation_adapter_path`
 
 - **What**: Temporarily loads a single LoRA adapter when running scheduled validations.

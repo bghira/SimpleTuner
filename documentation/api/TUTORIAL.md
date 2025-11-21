@@ -145,6 +145,7 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
 - The server responds with the active `job_id`.
 - The trainer queues a validation run that fires immediately after the next gradient synchronization (it does not interrupt the current micro-batch).
 - The run reuses your configured validation prompts/settings so the resulting images appear in the usual event/log streams.
+- To offload validation to an external executable instead of the built-in pipeline, set `--validation_method=external-script` in your config (or payload) and point `--validation_external_script` at your script. You can pass training context to the script with placeholders: `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, `{model_family}`. Enable `--validation_external_background` if you want the script to fire-and-forget without blocking training.
 
 If no job is active the endpoint returns HTTP 400, so check `/api/training/status` first when scripting retries.
 
