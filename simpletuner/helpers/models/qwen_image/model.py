@@ -868,10 +868,33 @@ class QwenImage(ImageModelFoundation):
             image_grid_thw = processed.get("image_grid_thw", None)
 
             embeds: List[dict] = []
-            for idx in range(pixel_values.shape[0]):
+            loop_len = min(pixel_values.shape[0], len(pil_images))
+            if loop_len != pixel_values.shape[0]:
+                logger.warning(
+                    "Processor returned %s pixel_value entries for %s images; truncating to %s",
+                    pixel_values.shape[0],
+                    len(pil_images),
+                    loop_len,
+                )
+
+            for idx in range(loop_len):
                 entry = {"pixel_values": pixel_values[idx]}
                 if image_grid_thw is not None:
-                    entry["image_grid_thw"] = image_grid_thw[idx]
+                    grid_batch = getattr(image_grid_thw, "shape", [len(image_grid_thw)])[0]
+                    if idx >= grid_batch:
+                        logger.warning(
+                            "Processor returned fewer image_grid_thw entries than pixel_values; skipping grid for idx %s",
+                            idx,
+                        )
+                    else:
+                        try:
+                            entry["image_grid_thw"] = image_grid_thw[idx]
+                        except IndexError:
+                            logger.warning(
+                                "Processor image_grid_thw is shorter than reported (%s); skipping grid for idx %s",
+                                grid_batch,
+                                idx,
+                            )
                 embeds.append(entry)
             return embeds
 
