@@ -287,6 +287,35 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # ACE-Step LoRA Target
+    acestep_targets = [
+        "attn_qkv",
+        "attn_qkv+linear_qkv",
+        "attn_qkv+linear_qkv+speech_embedder",
+    ]
+    registry._add_field(
+        ConfigField(
+            name="acestep_lora_target",
+            arg_name="--acestep_lora_target",
+            ui_label="ACE-Step LoRA Target Layers",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="lora_config",
+            subsection="model_specific",
+            default_value="attn_qkv+linear_qkv",
+            choices=[{"value": t, "label": t} for t in acestep_targets],
+            dependencies=[
+                FieldDependency(field="model_type", value="lora"),
+                FieldDependency(field="model_family", value="ace_step"),
+            ],
+            help_text="Which layers to train in ACE-Step models",
+            tooltip="'attn_qkv+linear_qkv' is default. '+speech_embedder' adds speaker embedding. 'attn_qkv' is minimal.",
+            importance=ImportanceLevel.ADVANCED,
+            model_specific=["ace_step"],
+            order=11,
+        )
+    )
+
     # Use DoRA
     registry._add_field(
         ConfigField(

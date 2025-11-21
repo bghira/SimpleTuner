@@ -99,7 +99,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             json.dump(config_data, f, indent=2)
         return config_path
 
-    def test_config_file_not_found(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_config_file_not_found(self, mock_torch_save):
         """Test behavior when config file doesn't exist."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -317,7 +318,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
             self.assertIn("Only one text embed backend can be marked as default", str(context.exception))
 
-    def test_deepfloyd_model_warnings(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_deepfloyd_model_warnings(self, mock_torch_save):
         """Test DeepFloyd model specific warnings and handling."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -363,7 +365,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # Check that warnings were logged (the exact calls depend on the implementation)
                 # We mainly want to ensure no exceptions are raised for DeepFloyd
 
-    def test_pixel_area_resolution_conversion(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_pixel_area_resolution_conversion(self, mock_torch_save):
         """Test pixel_area to area resolution type conversion."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -427,7 +430,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 expected_resolution = (1024 * 1024) / (1000**2)  # Convert to megapixels
                 self.assertAlmostEqual(backend_config["resolution"], expected_resolution, places=6)
 
-    def test_csv_backend_invalid_config(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_csv_backend_invalid_config(self, mock_torch_save):
         """Test CSV backend with invalid configuration."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -507,7 +511,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             with self.assertRaises((ValueError, KeyError)):
                 factory.configure_data_backends(loaded_config)
 
-    def test_parquet_backend_missing_config(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_parquet_backend_missing_config(self, mock_torch_save):
         """Test parquet metadata backend with missing parquet config."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -577,7 +582,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._finalize_metrics()
         self.assertGreater(factory.metrics["initialization_time"], 0)
 
-    def test_no_data_backends_error(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_no_data_backends_error(self, mock_torch_save):
         """Test error when no data backends are found after configuration."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -898,7 +904,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     if "Dataset configuration will produce zero usable batches" in str(e):
                         self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
 
-    def test_oversubscription_auto_adjustment(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_oversubscription_auto_adjustment(self, mock_torch_save):
         """Test that --allow_dataset_oversubscription automatically adjusts repeats."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -979,7 +986,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertIn("manually set repeats=2", error_msg)
                 self.assertIn("will not override manual repeats", error_msg)
 
-    def test_oversubscription_disabled_raises_error(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_oversubscription_disabled_raises_error(self, mock_torch_save):
         """Test that error is raised when oversubscription is disabled."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -1056,6 +1064,154 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                     # Image embed setup should not instantiate the cache; the owning dataset does.
                     mock_vae_cache.assert_not_called()
+
+    def test_qwen_edit_model_invalid_conditioning_type(self):
+        """Test that Qwen edit models reject invalid conditioning_type values."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Set up args for Qwen edit model
+        self.args.model_family = "qwen_image"
+        self.args.model_flavour = "edit-v1"
+
+        # Mock the model's edit check methods
+        self.model.is_edit_v1_model = MagicMock(return_value=True)
+        self.model.is_edit_v2_model = MagicMock(return_value=False)
+        self.model.requires_conditioning_dataset.return_value = True
+
+        # Create config with invalid conditioning_type
+        config = [
+            {
+                "id": "test-images",
+                "type": "local",
+                "instance_data_dir": self.temp_dir,
+                "dataset_type": "image",
+                "conditioning_data": ["test-conditioning"],
+            },
+            {
+                "id": "test-conditioning",
+                "type": "local",
+                "instance_data_dir": self.temp_dir,
+                "dataset_type": "conditioning",
+                "conditioning_type": "controlnet",  # Invalid for Qwen edit!
+            },
+            {
+                "id": "test-text-embeds",
+                "type": "local",
+                "dataset_type": "text_embeds",
+                "default": True,
+            },
+        ]
+
+        config_path = self._create_temp_config(config)
+        self.args.data_backend_config = config_path
+
+        # Should raise ValueError about invalid conditioning_type
+        with self.assertRaises(ValueError) as context:
+            factory = FactoryRegistry(
+                self.args,
+                self.accelerator,
+                self.text_encoders,
+                self.tokenizers,
+                self.model,
+            )
+            # Call the validation method directly
+            factory._validate_edit_model_conditioning_type(config)
+
+        error_msg = str(context.exception)
+        self.assertIn("Invalid conditioning_type='controlnet'", error_msg)
+        self.assertIn("reference_strict", error_msg)
+        self.assertIn("reference_loose", error_msg)
+        self.assertIn("dimension mismatches", error_msg)
+
+    def test_qwen_edit_model_valid_conditioning_type(self):
+        """Test that Qwen edit models accept valid conditioning_type values."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Set up args for Qwen edit model
+        self.args.model_family = "qwen_image"
+        self.args.model_flavour = "edit-v2"
+
+        # Mock the model's edit check methods
+        self.model.is_edit_v1_model = MagicMock(return_value=False)
+        self.model.is_edit_v2_model = MagicMock(return_value=True)
+        self.model.requires_conditioning_dataset.return_value = True
+
+        # Test both valid conditioning_type values
+        for conditioning_type in ["reference_strict", "reference_loose"]:
+            config = [
+                {
+                    "id": "test-images",
+                    "type": "local",
+                    "instance_data_dir": self.temp_dir,
+                    "dataset_type": "image",
+                    "conditioning_data": ["test-conditioning"],
+                },
+                {
+                    "id": "test-conditioning",
+                    "type": "local",
+                    "instance_data_dir": self.temp_dir,
+                    "dataset_type": "conditioning",
+                    "conditioning_type": conditioning_type,  # Valid!
+                },
+                {
+                    "id": "test-text-embeds",
+                    "type": "local",
+                    "dataset_type": "text_embeds",
+                    "default": True,
+                },
+            ]
+
+            config_path = self._create_temp_config(config)
+            self.args.data_backend_config = config_path
+
+            # Should NOT raise with valid conditioning_type
+            try:
+                factory = FactoryRegistry(
+                    self.args,
+                    self.accelerator,
+                    self.text_encoders,
+                    self.tokenizers,
+                    self.model,
+                )
+                # Just call the validation method directly since full setup is complex
+                factory._validate_edit_model_conditioning_type(config)
+            except ValueError as e:
+                self.fail(f"Should not raise with conditioning_type='{conditioning_type}': {e}")
+
+    def test_qwen_non_edit_model_allows_any_conditioning_type(self):
+        """Test that non-edit Qwen models (e.g., v1.0) don't restrict conditioning_type."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        # Set up args for non-edit Qwen model
+        self.args.model_family = "qwen_image"
+        self.args.model_flavour = "v1.0"  # Not an edit model
+
+        # Mock the model's edit check methods
+        self.model.is_edit_v1_model = MagicMock(return_value=False)
+        self.model.is_edit_v2_model = MagicMock(return_value=False)
+
+        config = [
+            {
+                "id": "test-conditioning",
+                "type": "local",
+                "instance_data_dir": self.temp_dir,
+                "dataset_type": "conditioning",
+                "conditioning_type": "controlnet",  # Should be OK for non-edit models
+            },
+        ]
+
+        # Should NOT raise for non-edit models
+        try:
+            factory = FactoryRegistry(
+                self.args,
+                self.accelerator,
+                self.text_encoders,
+                self.tokenizers,
+                self.model,
+            )
+            factory._validate_edit_model_conditioning_type(config)
+        except ValueError as e:
+            self.fail(f"Non-edit Qwen model should allow any conditioning_type: {e}")
 
 
 if __name__ == "__main__":

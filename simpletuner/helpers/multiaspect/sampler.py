@@ -241,7 +241,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         we shall use this quick and dirty method to retrieve n samples from the exhausted bucket.
         the thing is we can have a batch size of 4 and 1 image. so we'll have to just return the same image 4 times.
         """
-        available_images = self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+        available_images = self._get_bucket_images(bucket)
         if len(available_images) == 0:
             self.debug_log(f"Bucket {bucket} is empty.")
             return []
@@ -271,7 +271,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def _yield_random_image(self):
         bucket = random.choice(self.buckets)
-        image_path = random.choice(self.metadata_backend.aspect_ratio_bucket_indices[bucket])
+        bucket_images = self._get_bucket_images(bucket)
+        if not bucket_images:
+            raise ValueError(f"Bucket {bucket} is empty")
+        image_path = random.choice(bucket_images)
         return image_path
 
     def yield_single_image(self, filepath: str):
@@ -298,16 +301,28 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Returns:
             int: Bucket array index, eg. 0
         """
-        if "." not in str(bucket_name):
-            self.debug_log(f"Assuming {bucket_name} is already an index.")
-            return int(bucket_name)
-        try:
-            if str(bucket_name) in self.buckets:
-                return self.buckets.index(str(bucket_name))
+        # Numeric index
+        if isinstance(bucket_name, (int, float)):
+            # If it's already a valid index, return it.
+            if int(bucket_name) == bucket_name and 0 <= int(bucket_name) < len(self.buckets):
+                return int(bucket_name)
+            # Otherwise try to resolve by value in buckets (for float bucket identifiers).
             if bucket_name in self.buckets:
                 return self.buckets.index(bucket_name)
-        except ValueError:
-            raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
+        name = str(bucket_name)
+        if name.isdigit():
+            self.debug_log(f"Assuming {bucket_name} is already an index.")
+            return int(name)
+        try:
+            numeric_name = float(name)
+            for idx, bucket in enumerate(self.buckets):
+                if isinstance(bucket, (int, float)) and bucket == numeric_name:
+                    return idx
+        except (TypeError, ValueError):
+            pass
+        if bucket_name in self.buckets:
+            return self.buckets.index(bucket_name)
+        raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
 
     def _reset_buckets(self, raise_exhaustion_signal: bool = True):
         if len(self.metadata_backend.seen_images) == 0 and len(self._get_unseen_images()) == 0:
@@ -338,15 +353,60 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if raise_exhaustion_signal:
             raise MultiDatasetExhausted()
 
+    def _get_bucket_images(self, bucket):
+        """
+        Safely retrieve bucket images, trying both original type and type conversion.
+
+        Args:
+            bucket: The bucket key (could be float or str)
+
+        Returns:
+            list: List of images in the bucket, or empty list if bucket not found
+        """
+        # Try the original bucket key first
+        if bucket in self.metadata_backend.aspect_ratio_bucket_indices:
+            return self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+
+        # Try converting between str and float
+        try:
+            if isinstance(bucket, str):
+                # Try converting str to float
+                bucket_as_float = float(bucket)
+                if bucket_as_float in self.metadata_backend.aspect_ratio_bucket_indices:
+                    return self.metadata_backend.aspect_ratio_bucket_indices[bucket_as_float]
+            elif isinstance(bucket, (float, int)):
+                # Try converting float/int to str
+                bucket_as_str = str(bucket)
+                if bucket_as_str in self.metadata_backend.aspect_ratio_bucket_indices:
+                    return self.metadata_backend.aspect_ratio_bucket_indices[bucket_as_str]
+        except (ValueError, TypeError):
+            pass
+
+        # Bucket not found with either type
+        return []
+
     def _get_unseen_images(self, bucket=None):
         """
         Get unseen {self.sample_type_strs} from the specified bucket.
         If bucket is None, get unseen {self.sample_type_strs} from all buckets.
         """
-        if bucket and bucket in self.metadata_backend.aspect_ratio_bucket_indices:
+        if bucket:
+            bucket_images = self._get_bucket_images(bucket)
+            # Debug: Track bucket contents
+            self.debug_log(
+                f"_get_unseen_images(bucket={bucket}): "
+                f"bucket has {len(bucket_images)} total images, "
+                f"seen_images has {len(self.metadata_backend.seen_images)} entries"
+            )
+            if len(bucket_images) == 0:
+                self.logger.warning(
+                    f"BUCKET {bucket} IS EMPTY! aspect_ratio_bucket_indices keys: "
+                    f"{list(self.metadata_backend.aspect_ratio_bucket_indices.keys())}"
+                )
+
             return [
                 (os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image)
-                for image in self.metadata_backend.aspect_ratio_bucket_indices[bucket]
+                for image in bucket_images
                 if not self.metadata_backend.is_seen(image)
             ]
         elif bucket is None:
@@ -371,10 +431,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Handle buckets with insufficient images. Return True if we changed or reset the bucket.
         """
-        if len(self.metadata_backend.aspect_ratio_bucket_indices[bucket]) < self.batch_size:
-            self.debug_log(
-                f"Bucket {bucket} has insufficient ({len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])}) images."
-            )
+        bucket_images = self._get_bucket_images(bucket)
+        if len(bucket_images) < self.batch_size:
+            self.debug_log(f"Bucket {bucket} has insufficient ({len(bucket_images)}) images.")
             if bucket not in self.exhausted_buckets:
                 self.debug_log(
                     f"Bucket {bucket} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
@@ -383,9 +442,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log("Changing bucket to another random selection.")
             self.change_bucket()
             return True
-        self.debug_log(
-            f"Bucket {bucket} has sufficient ({len(self.metadata_backend.aspect_ratio_bucket_indices[bucket])}) images."
-        )
+        self.debug_log(f"Bucket {bucket} has sufficient ({len(bucket_images)}) images.")
         return False
 
     def _get_next_bucket(self):
@@ -419,7 +476,19 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen {self.sample_type_strs}.
         """
         next_bucket = self._get_next_bucket()
-        self.current_bucket = self._bucket_name_to_id(next_bucket)
+        # Resolve to an integer index in self.buckets for downstream indexing.
+        if next_bucket in self.buckets:
+            self.current_bucket = self.buckets.index(next_bucket)
+        else:
+            # Fallback for stringified indices (e.g., "0", "1") or float/int values.
+            try:
+                self.current_bucket = self._bucket_name_to_id(next_bucket)
+            except Exception:
+                # If still unresolved, pick bucket 0 to avoid TypeError and log for debugging.
+                self.logger.warning(
+                    f"Bucket {next_bucket} not found in buckets; defaulting to index 0 out of {len(self.buckets)} buckets."
+                )
+                self.current_bucket = 0
         self._clear_batch_accumulator()
 
     def move_to_exhausted(self):
@@ -446,18 +515,32 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 total_image_count *= self.accelerator.num_processes
                 total_image_count = f"~{total_image_count}"
             data_backend_config = StateTracker.get_data_backend_config(self.id)
-            printed_state = (
-                f"- Repeats: {data_backend_config.get('repeats', 0)}\n"
-                f"- Total number of images: {total_image_count}\n"
-                f"- Total number of aspect buckets: {len(self.buckets)}\n"
-                f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}\n"
-                f"- Cropped: {data_backend_config.get('crop')}\n"
-                f"- Crop style: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_style')}\n"
-                f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}\n"
-                f"- Used for regularisation data: {'Yes' if self.is_regularisation_data else 'No'}\n"
-            )
+            printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
+            printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
+            printed_state.append(f"- Total number of aspect buckets: {len(self.buckets)}")
+            if self.sample_type_strs == "images":
+                printed_state.append(
+                    f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}"
+                )
+                printed_state.append(f"- Cropped: {data_backend_config.get('crop')}")
+                printed_state.append(
+                    f"- Crop style: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_style')}"
+                )
+                printed_state.append(
+                    f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}"
+                )
+            elif self.sample_type_strs == "videos":
+                printed_state.append(f"- Target frame count: {data_backend_config.get('frames_per_video')}")
+                printed_state.append(f"- FPS: {data_backend_config.get('fps')}")
+            elif self.sample_type_strs == "audio":
+                sample_rate = data_backend_config.get("sample_rate") or data_backend_config.get("audio_sample_rate")
+                target_len = data_backend_config.get("sample_size") or data_backend_config.get("audio_samples")
+                printed_state.append(f"- Sample rate: {sample_rate if sample_rate is not None else 'unknown'}")
+                printed_state.append(f"- Target samples: {target_len if target_len is not None else 'unknown'}")
+            printed_state.append(f"- Used for regularisation data: {'Yes' if self.is_regularisation_data else 'No'}")
             if self.conditioning_type:
-                printed_state += f"- Conditioning type: {self.conditioning_type}\n"
+                printed_state.append(f"- Conditioning type: {self.conditioning_type}")
+            printed_state = "\n".join(printed_state) + "\n"
         else:
             # Return a snapshot of the current state during training.
             printed_state = (
@@ -480,15 +563,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             if image_metadata is None:
                 image_metadata = {}
-            if (
-                StateTracker.get_args().model_family
-                not in [
-                    "sd1x",
-                    "sd2x",
-                    "deepfloyd",
-                ]
-                and "crop_coordinates" not in image_metadata
-            ):
+            requires_crop = StateTracker.get_args().model_family not in [
+                "sd1x",
+                "sd2x",
+                "deepfloyd",
+                "ace_step",
+            ]
+            if requires_crop and "crop_coordinates" not in image_metadata:
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
                 )
@@ -708,6 +789,26 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         Iterate over the sampler to yield image paths in batches.
         """
+        # Debug: Track bucket state at iteration start
+        if self.buckets:
+            first_bucket = self.buckets[0]
+            bucket_images = self._get_bucket_images(first_bucket)
+            all_bucket_keys = list(self.metadata_backend.aspect_ratio_bucket_indices.keys())
+            self.debug_log(
+                f"__iter__ called. Bucket {first_bucket} (type={type(first_bucket).__name__}) has {len(bucket_images)} images. "
+                f"Total buckets in sampler: {len(self.buckets)}. "
+                f"aspect_ratio_bucket_indices has {len(all_bucket_keys)} keys: {all_bucket_keys} "
+                f"(key types: {[type(k).__name__ for k in all_bucket_keys[:3]]}). "
+                f"seen_images count: {len(self.metadata_backend.seen_images)}"
+            )
+            if len(bucket_images) == 0 and len(all_bucket_keys) > 0:
+                self.logger.warning(
+                    f"BUCKET KEY MISMATCH! Looking for {first_bucket} ({type(first_bucket).__name__}) "
+                    f"but aspect_ratio_bucket_indices has keys: {all_bucket_keys}"
+                )
+        else:
+            self.logger.warning(f"__iter__ called but self.buckets is EMPTY!")
+
         self._clear_batch_accumulator()  # Initialize an empty list to accumulate images for a batch
         self.change_bucket()
         while True:

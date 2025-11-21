@@ -2,7 +2,6 @@
 """
 SimpleTuner CLI - Command-line interface for SimpleTuner
 """
-
 import argparse
 import datetime
 import json
@@ -15,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+import simpletuner.helpers.log_format  # noqa: F401
 from simpletuner.simpletuner_sdk.server.utils.paths import get_config_directory, get_template_directory
 
 CONFIG_FILENAMES = {
@@ -815,7 +815,7 @@ def cmd_server(args) -> int:
         app = create_app(mode=server_mode, ssl_no_verify=ssl_no_verify)
 
         # Configure uvicorn SSL
-        uvicorn_config = {"app": app, "host": host, "port": port, "reload": reload, "log_level": "info"}
+        uvicorn_config = {"app": app, "host": host, "port": port, "reload": reload, "log_level": "warning"}
 
         if ssl_config:
             uvicorn_config.update({"ssl_keyfile": ssl_config["keyfile"], "ssl_certfile": ssl_config["certfile"]})

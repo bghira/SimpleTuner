@@ -34,7 +34,7 @@ class BatchedTrainingSamples:
             for i, (img, size) in enumerate(zip(images, target_sizes)):
                 if isinstance(img, np.ndarray) and len(img.shape) == 3 and img.shape[2] == 3:
                     valid_images.append(img)
-                    valid_sizes.append(size)
+                    valid_sizes.append(tuple(size))
                 else:
                     logger.warning(
                         f"Skipping invalid image at index {i}: shape={img.shape if hasattr(img, 'shape') else 'unknown'}"
@@ -49,7 +49,7 @@ class BatchedTrainingSamples:
             return resized
 
         except Exception as e:
-            logger.debug(f"Batch resize failed: {e}")
+            logger.error(f"Batch resize failed: {e}", exc_info=True)
             return []
 
     def batch_center_crop_images(self, images: List[np.ndarray], target_sizes: List[Tuple[int, int]]) -> List[np.ndarray]:
@@ -63,7 +63,7 @@ class BatchedTrainingSamples:
             return cropped
 
         except Exception as e:
-            logger.debug(f"Batch center crop failed: {e}")
+            logger.error(f"Batch center crop failed: {e}", exc_info=True)
             return []
 
     def batch_random_crop_images(self, images: List[np.ndarray], target_sizes: List[Tuple[int, int]]) -> List[np.ndarray]:
@@ -77,7 +77,7 @@ class BatchedTrainingSamples:
             return cropped
 
         except Exception as e:
-            logger.debug(f"Batch random crop failed: {e}")
+            logger.error(f"Batch random crop failed: {e}", exc_info=True)
             return []
 
     def batch_calculate_luminance(self, images: List[np.ndarray]) -> List[float]:
@@ -99,7 +99,7 @@ class BatchedTrainingSamples:
             return luminances
 
         except Exception as e:
-            logger.debug(f"Batch luminance calculation failed: {e}")
+            logger.error(f"Batch luminance calculation failed: {e}", exc_info=True)
             return []
 
     def batch_resize_videos(self, videos: List[np.ndarray], target_sizes: List[Tuple[int, int]]) -> List[np.ndarray]:
@@ -107,13 +107,36 @@ class BatchedTrainingSamples:
             if not videos or not target_sizes:
                 return []
 
-            resized = ts.batch_resize_videos(videos, target_sizes)
+            valid_videos: List[np.ndarray] = []
+            valid_sizes: List[Tuple[int, int]] = []
+            for i, (video, size) in enumerate(zip(videos, target_sizes)):
+                if not isinstance(video, np.ndarray):
+                    logger.warning(f"Skipping invalid video at index {i}: type={type(video)}")
+                    continue
+                if len(video.shape) != 4 or video.shape[3] not in (1, 3, 4):
+                    logger.warning(
+                        f"Skipping invalid video at index {i}: shape={video.shape if hasattr(video, 'shape') else 'unknown'}"
+                    )
+                    continue
+                if not (isinstance(size, (list, tuple)) and len(size) == 2):
+                    logger.warning(f"Skipping video at index {i} due to invalid target_size={size}")
+                    continue
+                try:
+                    valid_sizes.append((int(size[0]), int(size[1])))
+                    valid_videos.append(video)
+                except Exception as e:
+                    logger.warning(f"Skipping video at index {i} due to size conversion error: {e}")
+
+            if not valid_videos:
+                return []
+
+            resized = ts.batch_resize_videos(valid_videos, tuple(valid_sizes))
             if self.debug_enabled:
                 logger.debug(f"Batch resized {len(resized)} videos")
             return resized
 
         except Exception as e:
-            logger.debug(f"Batch video resize failed: {e}")
+            logger.error(f"Batch video resize failed: {e}", exc_info=True)
             return []
 
     def process_aspect_grouped_images(
@@ -141,7 +164,14 @@ class BatchedTrainingSamples:
                             if metadata_backend:
                                 try:
                                     metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                                except Exception:
+                                    if self.debug_enabled:
+                                        logger.debug(
+                                            f"Retrieved metadata for {filepath}: "
+                                            f"{'found' if metadata else 'not found'}"
+                                            f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
+                                        )
+                                except Exception as e:
+                                    logger.debug(f"Exception getting metadata for {filepath}: {e}")
                                     metadata = None
                             batch_metadata.append(metadata or {})
                         else:
@@ -153,7 +183,14 @@ class BatchedTrainingSamples:
                         if metadata_backend:
                             try:
                                 metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                            except Exception:
+                                if self.debug_enabled:
+                                    logger.debug(
+                                        f"Retrieved metadata for {filepath}: "
+                                        f"{'found' if metadata else 'not found'}"
+                                        f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
+                                    )
+                            except Exception as e:
+                                logger.debug(f"Exception getting metadata for {filepath}: {e}")
                                 metadata = None
                         batch_metadata.append(metadata or {})
 
@@ -163,17 +200,21 @@ class BatchedTrainingSamples:
                 if len(batch_images) > 1:
                     try:
                         luminances = self.batch_calculate_luminance(batch_images)
+                        can_update_metadata = hasattr(metadata_backend, "update_metadata_attribute")
                         if luminances and metadata_backend:
                             for i, (filepath, luminance) in enumerate(zip(batch_filepaths, luminances)):
                                 # store luminance if missing
                                 if batch_metadata[i] and "luminance" not in batch_metadata[i]:
-                                    try:
-                                        metadata_backend.update_metadata_attribute(filepath, "luminance", luminance)
+                                    if can_update_metadata:
+                                        try:
+                                            metadata_backend.update_metadata_attribute(filepath, "luminance", luminance)
+                                            batch_metadata[i]["luminance"] = luminance
+                                        except Exception as e:
+                                            logger.debug(f"Failed to update luminance metadata for {filepath}: {e}")
+                                    else:
                                         batch_metadata[i]["luminance"] = luminance
-                                    except Exception as e:
-                                        logger.debug(f"Failed to update luminance metadata for {filepath}: {e}")
                     except Exception as e:
-                        logger.debug(f"Batch luminance calculation failed: {e}")
+                        logger.error(f"Batch luminance calculation failed: {e}", exc_info=True)
 
                 # check resize requirements
                 image_resize_indices: List[int] = []
@@ -183,10 +224,30 @@ class BatchedTrainingSamples:
 
                 for i, (filepath, metadata) in enumerate(zip(batch_filepaths, batch_metadata)):
                     try:
+                        if self.debug_enabled:
+                            logger.debug(
+                                f"Checking metadata for resize: filepath={filepath}, "
+                                f"metadata_present={'yes' if metadata else 'no'}, "
+                                f"metadata_keys={list(metadata.keys()) if metadata else 'N/A'}"
+                            )
                         # target size from metadata or fallback
                         if metadata and "target_size" in metadata:
-                            target_size = metadata["target_size"]
+                            target_value = metadata["target_size"]
+                            if isinstance(target_value, (list, tuple)) and len(target_value) == 2:
+                                target_size = (int(target_value[0]), int(target_value[1]))
+                            elif isinstance(target_value, dict) and {"width", "height"} <= set(target_value.keys()):
+                                target_size = (int(target_value["width"]), int(target_value["height"]))
+                            else:
+                                raise RuntimeError(f"Unsupported target_size format for {filepath}: {target_value}")
+                            # keep normalised tuple in metadata copy
+                            metadata["target_size"] = target_size
                         else:
+                            logger.error(
+                                f"No target_size in metadata, cannot continue. "
+                                f"Filename: {filepath}, "
+                                f"Metadata keys: {list(metadata.keys()) if metadata else 'empty/None'}, "
+                                f"Metadata: {metadata}"
+                            )
                             raise RuntimeError(
                                 f"No target_size in metadata, cannot continue. Filename: {filepath}, Metadata: {metadata}"
                             )
@@ -219,7 +280,7 @@ class BatchedTrainingSamples:
                     try:
                         resize_images = [batch_images[i] for i in image_resize_indices]
 
-                        resized_batch = self.batch_resize_images(resize_images, image_resize_targets)
+                        resized_batch = self.batch_resize_images(resize_images, tuple(image_resize_targets))
 
                         # replace with resized versions
                         for idx, resized_img in zip(image_resize_indices, resized_batch):

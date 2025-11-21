@@ -199,11 +199,16 @@ base_deps = [
     "torchmetrics>=1.1.1",
     "colorama>=0.4.6",
     "numpy>=2.2.0",
+    "num2words>=0.5.13",
     "peft>=0.17.0",
     "tensorboard>=2.18.0",
+    "py3langid>=0.2.2",
+    "pypinyin>=0.50.0",
     "sentencepiece>=0.2.0",
+    "spacy>=3.7.4",
+    "hangul-romanize>=0.1.0",
     "optimum-quanto>=0.2.7",
-    "lycoris-lora @ git+https://github.com/KohakuBlueleaf/LyCORIS@dev",
+    "lycoris-lora>=3.4.0",
     "torch-optimi>=0.2.1",
     "torchaudio>=2.4.1",
     "librosa>=0.10.2",
@@ -221,6 +226,7 @@ base_deps = [
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
     "cryptography>=41.0.0",
+    "torchcodec>=0.8.1",
 ]
 
 platform_deps_for_install = get_platform_dependencies()

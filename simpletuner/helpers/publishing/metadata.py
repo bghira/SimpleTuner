@@ -1,14 +1,15 @@
 import json
 import logging
 import os
-from typing import Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import torch
 from diffusers.utils.export_utils import export_to_gif
 from PIL import Image
 
-from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -408,6 +409,128 @@ def _pipeline_tag(args):
     return "text-to-image" if args.model_family not in ["ltxvideo"] else "text-to-video"
 
 
+def _format_sample_rate(value: Any) -> Optional[str]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric <= 0:
+        return None
+    if numeric >= 1000:
+        khz_value = numeric / 1000.0
+        khz_str = f"{khz_value:.2f}".rstrip("0").rstrip(".")
+        return f"{khz_str} kHz"
+    hz_str = f"{numeric:.2f}".rstrip("0").rstrip(".")
+    return f"{hz_str} Hz"
+
+
+def _duration_bucket_sort_key(bucket_key: str) -> tuple:
+    if not isinstance(bucket_key, str):
+        return (1, str(bucket_key))
+    stripped = bucket_key.lower().rstrip("s")
+    try:
+        numeric = float(stripped)
+        return (0, numeric)
+    except ValueError:
+        return (1, bucket_key)
+
+
+def _format_duration_buckets(metadata_backend) -> Optional[str]:
+    if metadata_backend is None:
+        return None
+    bucket_indices = getattr(metadata_backend, "aspect_ratio_bucket_indices", {}) or {}
+    if not bucket_indices:
+        return None
+    parts = []
+    for bucket in sorted(bucket_indices.keys(), key=_duration_bucket_sort_key):
+        count = len(bucket_indices.get(bucket) or [])
+        parts.append(f"{bucket} ({count})")
+    if not parts:
+        return None
+    return "- Duration buckets: " + ", ".join(parts)
+
+
+def _extract_audio_format_hints(metadata_backend, config: dict) -> tuple[Optional[Any], Optional[Any]]:
+    sample_rate = config.get("sample_rate") or config.get("audio_sample_rate")
+    num_channels = config.get("num_channels") or config.get("audio_num_channels")
+    if metadata_backend is None:
+        return sample_rate, num_channels
+    try:
+        metadata_backend.load_image_metadata()
+    except Exception:
+        # If metadata isn't available, fallback to config-only hints.
+        return sample_rate, num_channels
+    entries = getattr(metadata_backend, "image_metadata", {}) or {}
+    if not entries and hasattr(metadata_backend, "get_metadata"):
+        try:
+            entries = metadata_backend.get_metadata() or {}
+        except Exception:
+            entries = {}
+    first_entry = next(iter(entries.values()), None) if isinstance(entries, dict) else None
+    if isinstance(first_entry, dict):
+        sample_rate = sample_rate or first_entry.get("sample_rate")
+        num_channels = num_channels or first_entry.get("num_channels")
+    return sample_rate, num_channels
+
+
+def _audio_dataset_overview(dataset_id: str, dataset_backend: dict) -> str:
+    sampler = dataset_backend.get("sampler")
+    metadata_backend = dataset_backend.get("metadata_backend")
+    config = StateTracker.get_data_backend_config(dataset_id) or {}
+    lines = []
+    repeats = config.get("repeats", 0)
+    lines.append(f"- Repeats: {repeats}")
+    sample_count = None
+    if metadata_backend is not None:
+        try:
+            metadata_backend.load_image_metadata()
+            sample_count = len(getattr(metadata_backend, "image_metadata", {}) or {})
+        except Exception:
+            sample_count = None
+    if sample_count is None and sampler is not None:
+        try:
+            sample_count = len(sampler)
+        except Exception:
+            sample_count = None
+    if sample_count is not None:
+        lines.append(f"- Total number of audio files: {sample_count}")
+    sample_rate, num_channels = _extract_audio_format_hints(metadata_backend, config)
+    formatted_rate = _format_sample_rate(sample_rate)
+    if formatted_rate:
+        lines.append(f"- Sample rate: {formatted_rate}")
+    if num_channels:
+        try:
+            int_channels = int(num_channels)
+            if int_channels > 0:
+                lines.append(f"- Channels: {int_channels}")
+        except (TypeError, ValueError):
+            lines.append(f"- Channels: {num_channels}")
+    bucket_line = _format_duration_buckets(metadata_backend)
+    if bucket_line:
+        lines.append(bucket_line)
+    if sampler is not None:
+        lines.append(
+            f"- Used for regularisation data: {'Yes' if getattr(sampler, 'is_regularisation_data', False) else 'No'}"
+        )
+        conditioning_type = getattr(sampler, "conditioning_type", None)
+        if conditioning_type:
+            lines.append(f"- Conditioning type: {conditioning_type}")
+    return "\n".join(lines) + "\n"
+
+
+def _dataset_overview_for_model(model: ModelFoundation, dataset_id: str, dataset_backend: dict) -> str:
+    try:
+        dataset_type = ensure_dataset_type(dataset_backend.get("dataset_type"), default=DatasetType.IMAGE)
+    except Exception:
+        dataset_type = DatasetType.IMAGE
+    if isinstance(model, AudioModelFoundation) and dataset_type is DatasetType.AUDIO:
+        return _audio_dataset_overview(dataset_id, dataset_backend)
+    sampler = dataset_backend.get("sampler")
+    if sampler is None:
+        return ""
+    return sampler.log_state(show_rank=False, alt_stats=True)
+
+
 def save_model_card(
     model: ModelFoundation,
     repo_id: str,
@@ -433,10 +556,11 @@ def save_model_card(
     os.makedirs(assets_folder, exist_ok=True)
     datasets_str = ""
     datasettypes = ["image", "video", "audio"]
-    for dataset in StateTracker.get_data_backends(_types=datasettypes).keys():
-        if "sampler" in StateTracker.get_data_backends(_types=datasettypes)[dataset]:
-            datasets_str += f"### {dataset}\n"
-            datasets_str += f"{StateTracker.get_data_backends(_types=datasettypes)[dataset]['sampler'].log_state(show_rank=False, alt_stats=True)}"
+    data_backends = StateTracker.get_data_backends(_types=datasettypes)
+    for dataset_id, dataset_backend in data_backends.items():
+        if "sampler" in dataset_backend:
+            datasets_str += f"### {dataset_id}\n"
+            datasets_str += _dataset_overview_for_model(model, dataset_id, dataset_backend)
     widget_str = ""
     idx = 0
     shortname_idx = 0
@@ -475,6 +599,7 @@ def save_model_card(
 
             shortname_idx += 1
     args = StateTracker.get_args()
+    sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
     yaml_content = f"""---
 license: {model.MODEL_LICENSE}
 base_model: "{base_model}"
@@ -544,7 +669,8 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Base model precision: `{args.base_model_precision}`
 - Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
-{f'- SageAttention: Enabled {StateTracker.get_args().sageattention_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
+{f'- SageAttention: Enabled {sage_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
+{('- SLA: Enabled (you MUST use SLA for inference; sla_attention.pt contains attention weights)') if StateTracker.get_args().attention_mechanism == 'sla' else ''}
 {lora_info(args=StateTracker.get_args())}
 
 ## Datasets

@@ -152,6 +152,7 @@ class WebhookHandler:
         message: str | dict,
         images: list = None,
         videos: list = None,
+        audios: list = None,
         store_response: bool = False,
         raw_request: bool = False,
     ):
@@ -164,11 +165,23 @@ class WebhookHandler:
             # Prepare Discord-style payload
             data = {"content": f"{message_prefix}{message}"}
             use_video_attachments = bool(self.send_video and videos)
-            attachments = videos if use_video_attachments else images
+            attachments = []
+            attachment_type = None
+            if audios:
+                attachments = audios
+                attachment_type = "audio"
+            elif use_video_attachments:
+                attachments = videos or []
+                attachment_type = "video"
+            else:
+                attachments = images or []
+                attachment_type = "image"
 
             files = {}
             if attachments:
-                if use_video_attachments:
+                if attachment_type == "audio":
+                    files = self._prepare_audios(attachments)
+                elif attachment_type == "video":
                     files = self._prepare_videos(attachments)
                 else:
                     files = self._prepare_images(attachments)
@@ -190,6 +203,12 @@ class WebhookHandler:
                     converted = self._convert_video_to_base64(vid)
                     if converted:
                         converted_videos.append(converted)
+            converted_audios = []
+            if audios:
+                for audio in audios:
+                    converted = self._convert_audio_to_base64(audio)
+                    if converted:
+                        converted_audios.append(converted)
 
             if raw_request:
                 # If already fully formed JSON or dict, sanitize for safe JSON encoding first
@@ -199,6 +218,8 @@ class WebhookHandler:
                     data["images"] = converted_images
                 if converted_videos and isinstance(data, dict):
                     data["videos"] = converted_videos
+                if converted_audios and isinstance(data, dict):
+                    data["audios"] = converted_audios
                 files = None
             else:
                 data = {
@@ -207,6 +228,8 @@ class WebhookHandler:
                 }
                 if converted_videos:
                     data["videos"] = converted_videos
+                if converted_audios:
+                    data["audios"] = converted_audios
                 files = None
 
             request_args = {"json": data, "files": files}
@@ -351,6 +374,50 @@ class WebhookHandler:
             )
         return files
 
+    def _prepare_audios(self, audios: list):
+        """Convert audio sources to file objects for Discord uploads."""
+        files = {}
+        if not audios:
+            return files
+        if not isinstance(audios, list):
+            raise ValueError(f"Audios must be a list. Received: {type(audios)}")
+
+        for index, audio in enumerate(audios):
+            filename = f"audio{index}.wav"
+            mime_type = "audio/wav"
+
+            if isinstance(audio, BytesIO):
+                audio.seek(0)
+                buffer = audio
+                filename = getattr(audio, "name", None) or filename
+            elif isinstance(audio, (bytes, bytearray)):
+                buffer = BytesIO(bytes(audio))
+                buffer.seek(0)
+            elif isinstance(audio, str):
+                if not os.path.isfile(audio):
+                    raise ValueError(f"Unsupported audio path provided: {audio}")
+                with open(audio, "rb") as handle:
+                    buffer = BytesIO(handle.read())
+                buffer.seek(0)
+                filename = os.path.basename(audio) or filename
+            elif hasattr(audio, "read"):
+                try:
+                    payload = audio.read()
+                except Exception as exc:
+                    raise ValueError(f"Could not read audio-like object for webhook payload: {exc}") from exc
+                buffer = BytesIO(payload)
+                buffer.seek(0)
+                filename = getattr(audio, "name", None) or filename
+            else:
+                raise ValueError(f"Unsupported audio type for webhook payload: {type(audio)}")
+
+            files[f"file{index}"] = (
+                filename,
+                buffer,
+                mime_type,
+            )
+        return files
+
     def _convert_image_to_base64(self, image):
         """Convert PIL image to a base64 string (for 'raw' webhook type)."""
         from PIL import Image
@@ -442,6 +509,66 @@ class WebhookHandler:
         encoded = base64.b64encode(data_bytes).decode("utf-8")
         return {"src": f"data:{mime_type};base64,{encoded}", "mime_type": mime_type}
 
+    def _convert_audio_to_base64(self, audio, mime_type: str = "audio/wav"):
+        """Convert audio sources to data URIs for raw webhooks."""
+        if audio is None:
+            return None
+
+        if isinstance(audio, dict):
+            src = (
+                audio.get("src")
+                or audio.get("url")
+                or audio.get("data")
+                or audio.get("base64")
+                or audio.get("audio")
+                or audio.get("audio_base64")
+            )
+            if isinstance(src, str) and src.strip():
+                resolved_mime = audio.get("mime_type") or audio.get("mime") or mime_type
+                return {"src": src.strip(), "mime_type": resolved_mime}
+            return None
+
+        if isinstance(audio, str):
+            value = audio.strip()
+            if not value:
+                return None
+            if value.startswith("data:") or value.startswith(("http://", "https://", "//")):
+                return {"src": value, "mime_type": mime_type}
+            if os.path.isfile(value):
+                try:
+                    with open(value, "rb") as handle:
+                        data = handle.read()
+                except Exception:
+                    return None
+                encoded = base64.b64encode(data).decode("utf-8")
+                return {"src": f"data:{mime_type};base64,{encoded}", "mime_type": mime_type}
+            return None
+
+        data_bytes = None
+        if isinstance(audio, BytesIO):
+            position = audio.tell()
+            audio.seek(0)
+            data_bytes = audio.read()
+            audio.seek(position)
+        elif hasattr(audio, "read"):
+            try:
+                data_bytes = audio.read()
+            except Exception:
+                data_bytes = None
+            if hasattr(audio, "seek"):
+                try:
+                    audio.seek(0)
+                except Exception:
+                    pass
+        elif isinstance(audio, (bytes, bytearray)):
+            data_bytes = bytes(audio)
+
+        if not data_bytes:
+            return None
+
+        encoded = base64.b64encode(data_bytes).decode("utf-8")
+        return {"src": f"data:{mime_type};base64,{encoded}", "mime_type": mime_type}
+
     def send(
         self,
         message: str,
@@ -449,9 +576,10 @@ class WebhookHandler:
         message_level: str = "info",
         store_response: bool = False,
         videos: list | None = None,
+        audios: list | None = None,
     ):
         """
-        Send a message through Discord webhooks with optional images/videos.
+        Send a message through Discord webhooks with optional images/videos/audios.
         Raw webhooks (like WebUI callback) should use send_raw() with typed events.
         If self.send_video is True, `images` is interpreted as `videos`.
         """
@@ -463,6 +591,8 @@ class WebhookHandler:
             images = [images]
         if videos is not None and not isinstance(videos, list):
             videos = [videos]
+        if audios is not None and not isinstance(audios, list):
+            audios = [audios]
 
         # Send ONLY to Discord backends - raw backends should use send_raw()
         for backend in self.backends:
@@ -480,7 +610,17 @@ class WebhookHandler:
             # Discord limits: max 10 attachments
             max_attachments = 10
             use_videos = bool(self.send_video and videos)
-            attachments = videos if use_videos else images
+            attachment_type = None
+            attachments = []
+            if audios:
+                attachments = audios
+                attachment_type = "audio"
+            elif use_videos:
+                attachments = videos or []
+                attachment_type = "video"
+            else:
+                attachments = images or []
+                attachment_type = "image"
 
             if attachments and len(attachments) > max_attachments:
                 for i in range(0, len(attachments), max_attachments):
@@ -489,8 +629,9 @@ class WebhookHandler:
                         self._send_request_to_backend(
                             backend,
                             message,
-                            images=None if use_videos else chunk,
-                            videos=chunk if use_videos else None,
+                            images=chunk if attachment_type == "image" else None,
+                            videos=chunk if attachment_type == "video" else None,
+                            audios=chunk if attachment_type == "audio" else None,
                             store_response=store_response,
                         )
                     except Exception as e:
@@ -501,8 +642,9 @@ class WebhookHandler:
                 self._send_request_to_backend(
                     backend,
                     message,
-                    images=None if use_videos else attachments,
-                    videos=attachments if use_videos else None,
+                    images=attachments if attachment_type == "image" else None,
+                    videos=attachments if attachment_type == "video" else None,
+                    audios=attachments if attachment_type == "audio" else None,
                     store_response=store_response,
                 )
             except Exception as e:
@@ -516,9 +658,10 @@ class WebhookHandler:
         job_id: str | None = None,
         images: list | None = None,
         videos: list | None = None,
+        audios: list | None = None,
     ):
         """
-        Send structured data to all "raw" webhooks (JSON payload).
+        Send structured data to all "raw" webhooks (JSON payload) with optional media attachments.
         """
         # Only send from main process
         if self.accelerator is not None and not self.accelerator.is_main_process:
@@ -527,6 +670,13 @@ class WebhookHandler:
         if not isinstance(structured_data, dict):
             logging.error("send_raw expects a mapping payload.")
             return
+
+        if images is not None and not isinstance(images, list):
+            images = [images]
+        if videos is not None and not isinstance(videos, list):
+            videos = [videos]
+        if audios is not None and not isinstance(audios, list):
+            audios = [audios]
 
         payload = dict(structured_data)
 
@@ -555,6 +705,7 @@ class WebhookHandler:
                     message=payload,
                     images=images,
                     videos=videos,
+                    audios=audios,
                     store_response=False,
                     raw_request=True,
                 )

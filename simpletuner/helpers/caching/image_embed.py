@@ -269,13 +269,17 @@ class ImageEmbedCache(WebhookMixin):
 
     def process_files(self, filepaths: List[str], captions: Optional[List[Optional[str]]] = None) -> None:
         if not filepaths:
+            self.debug_log("process_files called with empty filepaths list")
             return
+        self.debug_log(f"process_files processing {len(filepaths)} files in batches of {self.embed_batch_size}")
         for idx in range(0, len(filepaths), self.embed_batch_size):
             batch_paths = filepaths[idx : idx + self.embed_batch_size]
             batch_captions = None
             if captions is not None:
                 batch_captions = captions[idx : idx + self.embed_batch_size]
+            self.debug_log(f"Processing batch {idx // self.embed_batch_size + 1}: {len(batch_paths)} files")
             valid_paths, embeddings = self._encode_batch(batch_paths, captions=batch_captions)
+            self.debug_log(f"Encoded {len(valid_paths)} valid embeddings from batch")
             for fp, embed in zip(valid_paths, embeddings):
                 self._write_embed(fp, embed)
         if self.cache_dir:

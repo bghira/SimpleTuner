@@ -1,10 +1,12 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
 
+from simpletuner.helpers.models.common import ModelFoundation, ModelTypes
 from simpletuner.helpers.utils import offloading as offloading_utils
 
 
@@ -40,6 +42,48 @@ class GroupOffloadHelperTests(unittest.TestCase):
                 offloading_utils.enable_group_offload_on_components(
                     {"transformer": torch.nn.Linear(4, 4)}, device=torch.device("cpu")
                 )
+
+    def test_group_offload_streams_disabled_with_checkpointing(self):
+        class DummyModel(ModelFoundation):
+            MODEL_TYPE = ModelTypes.TRANSFORMER
+
+            def __init__(self):
+                # Skip parent init to avoid pulling in unrelated setup.
+                self.config = SimpleNamespace(
+                    enable_group_offload=True,
+                    gradient_checkpointing=True,
+                    group_offload_use_stream=True,
+                )
+                self.accelerator = SimpleNamespace(device=torch.device("cuda"))
+                self.model = torch.nn.Linear(2, 2)
+                self._group_offload_configured = False
+
+            def unwrap_model(self, model=None):
+                return model or self.model
+
+            # Abstract methods not exercised in this test suite.
+            def model_predict(self, prepared_batch, custom_timesteps: list = None):
+                return prepared_batch
+
+            def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
+                return prompts
+
+            def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str):
+                return {"prompt_embeds": text_embedding}
+
+            def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str):
+                return {"negative_prompt_embeds": text_embedding}
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("simpletuner.helpers.models.common.enable_group_offload_on_components") as mock_enable,
+        ):
+            dummy = DummyModel()
+            dummy.configure_group_offload()
+
+        self.assertFalse(dummy.config.group_offload_use_stream)
+        _, kwargs = mock_enable.call_args
+        self.assertFalse(kwargs["use_stream"])
 
 
 if __name__ == "__main__":

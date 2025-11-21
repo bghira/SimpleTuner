@@ -1,0 +1,62 @@
+<div class="dataset-section" x-show="dataset.dataset_type === 'audio'" x-cloak>
+    <div class="dataset-section-header d-flex align-items-center">
+        <button type="button"
+                class="btn btn-sm btn-outline-secondary dataset-section-toggle me-2"
+                @click="toggleSectionCollapsed(dataset, 'audio')"
+                :aria-expanded="sectionIsCollapsed(dataset, 'audio') ? 'false' : 'true'"
+                :aria-controls="`dataset-audio-${datasetSafeId(dataset)}`">
+            <i class="fas fa-chevron-right"></i>
+        </button>
+        <span>Audio Settings</span>
+    </div>
+    <div class="dataset-section-body"
+         :id="`dataset-audio-${datasetSafeId(dataset)}`"
+         x-show="sectionIsExpanded(dataset, 'audio')"
+         x-transition>
+        <div class="row g-3">
+            <div class="col-md-6 col-lg-4">
+                <label class="form-label">Min Duration (seconds)</label>
+                <input type="number" class="form-control form-control-sm"
+                       x-model.number.lazy="dataset.audio_min_duration_seconds"
+                       @input="markAsUnsaved()"
+                       step="0.1" min="0">
+                 <div class="form-text">Minimum audio duration in seconds</div>
+            </div>
+             <div class="col-md-6 col-lg-4">
+                <label class="form-label">Max Duration (seconds)</label>
+                <input type="number" class="form-control form-control-sm"
+                       x-model.number.lazy="dataset.audio_max_duration_seconds"
+                       @input="markAsUnsaved()"
+                       step="0.1" min="0">
+                 <div class="form-text">Maximum audio duration in seconds</div>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <label class="form-label">Channels</label>
+                 <select class="form-select form-select-sm"
+                        x-model.number.lazy="dataset.audio_channels"
+                        @change="markAsUnsaved()">
+                     <option value="1">1 (Mono)</option>
+                     <option value="2">2 (Stereo)</option>
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <label class="form-label">Duration Interval</label>
+                <input type="number" class="form-control form-control-sm"
+                       x-model.number.lazy="dataset.audio_duration_interval"
+                       @input="markAsUnsaved()"
+                       step="0.1" min="0.1" placeholder="3.0">
+                <div class="form-text">Audio will be truncated to the nearest multiple of this value (seconds)</div>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <label class="form-label">Truncation Mode</label>
+                 <select class="form-select form-select-sm"
+                        x-model="dataset.audio_truncation_mode"
+                        @change="markAsUnsaved()">
+                     <option value="beginning">Beginning</option>
+                     <option value="end">End</option>
+                     <option value="random">Random</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>

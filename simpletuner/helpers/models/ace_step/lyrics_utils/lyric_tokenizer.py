@@ -6,9 +6,8 @@ import os
 import re
 import textwrap
 from functools import cached_property
-from typing import Dict, List, Optional, Set, Union
+from typing import List, Union
 
-import numpy as np
 import pypinyin
 import torch
 from hangul_romanize import Transliter
@@ -20,11 +19,6 @@ from spacy.lang.es import Spanish
 from spacy.lang.ja import Japanese
 from spacy.lang.zh import Chinese
 from tokenizers import Tokenizer
-
-try:
-    import tensorflow as tf
-except ImportError:  # pragma: no cover - optional dependency
-    tf = None
 
 from .zh_num2words import TextNorm as zh_num2words
 
@@ -543,7 +537,7 @@ def expand_numbers_multilingual(text, lang="en"):
             text = re.sub(_currency_re["GBP"], lambda m: _expand_currency(m, lang, "GBP"), text)
             text = re.sub(_currency_re["USD"], lambda m: _expand_currency(m, lang, "USD"), text)
             text = re.sub(_currency_re["EUR"], lambda m: _expand_currency(m, lang, "EUR"), text)
-        except:
+        except Exception:
             pass
         if lang != "tr":
             text = re.sub(_decimal_number_re, lambda m: _expand_decimal_point(m, lang), text)
@@ -569,15 +563,15 @@ def multilingual_cleaners(text, lang):
     text = lowercase(text)
     try:
         text = expand_numbers_multilingual(text, lang)
-    except:
+    except Exception:
         pass
     try:
         text = expand_abbreviations_multilingual(text, lang)
-    except:
+    except Exception:
         pass
     try:
         text = expand_symbols_multilingual(text, lang=lang)
-    except:
+    except Exception:
         pass
     text = collapse_whitespace(text)
     return text
@@ -650,11 +644,7 @@ class VoiceBpeTokenizer:
 
     def check_input_length(self, txt, lang):
         lang = lang.split("-")[0]  # remove the region
-        limit = self.char_limits.get(lang, 250)
-        # if len(txt) > limit:
-        #     print(
-        #         f"[!] Warning: The text length exceeds the character limit of {limit} for language '{lang}', this might cause truncated audio."
-        #     )
+        # limit = self.char_limits.get(lang, 250)
 
     def preprocess_text(self, txt, lang):
         if lang in {
@@ -709,14 +699,14 @@ class VoiceBpeTokenizer:
     # copy from https://github.com/huggingface/transformers/blob/main/src/transformers/tokenization_utils_base.py#L3936
     def batch_decode(
         self,
-        sequences: Union[List[int], List[List[int]], "np.ndarray", "torch.Tensor", "tf.Tensor"],
+        sequences: Union[List[int], List[List[int]], torch.Tensor],
         skip_special_tokens: bool = False,
     ) -> List[str]:
         """
         Convert a list of lists of token ids into a list of strings by calling decode.
 
         Args:
-            sequences (`Union[List[int], List[List[int]], np.ndarray, torch.Tensor, tf.Tensor]`):
+            sequences (`Union[List[int], List[List[int]], torch.Tensor]`):
                 List of tokenized input ids. Can be obtained using the `__call__` method.
             skip_special_tokens (`bool`, *optional*, defaults to `False`):
                 Whether or not to remove special tokens in the decoding.

@@ -82,6 +82,23 @@ class TestWebhookHandler(unittest.TestCase):
         self.assertIn(message, content)
 
     @patch("requests.post")
+    def test_send_with_audios(self, mock_post):
+        audio_buffer = BytesIO(b"abc")
+        audio_buffer.name = "clip.wav"
+        message = "Test message with audio"
+
+        self.handler.send(message, audios=[audio_buffer], message_level="info")
+        args, kwargs = mock_post.call_args
+        self.assertIn("files", kwargs)
+        files = kwargs.get("files") or {}
+        self.assertIn("file0", files)
+        filename, payload, mime = files["file0"]
+        self.assertEqual(filename, "clip.wav")
+        self.assertEqual(mime, "audio/wav")
+        content = kwargs.get("data", {}).get("content", "")
+        self.assertIn(message, content)
+
+    @patch("requests.post")
     def test_response_storage(self, mock_post):
         # Mock response object
         mock_response = MagicMock()
@@ -154,6 +171,25 @@ class TestWebhookHandler(unittest.TestCase):
         # Check that verify=True is passed to requests.post
         args, kwargs = mock_post.call_args
         self.assertTrue(kwargs.get("verify", True))
+
+    @patch("requests.post")
+    def test_send_raw_with_audio_payload(self, mock_post):
+        config = {"webhook_type": "raw", "callback_url": "https://example.com/webhook", "log_level": "info"}
+        handler = WebhookHandler(accelerator=self.mock_accelerator, project_name="TestProject", webhook_config=config)
+        audio_bytes = b"hello"
+
+        handler.send_raw(
+            structured_data={"message": "Test message"},
+            message_type="notification",
+            message_level="info",
+            audios=[audio_bytes],
+        )
+
+        args, kwargs = mock_post.call_args
+        payload = kwargs.get("json", {})
+        self.assertIn("audios", payload)
+        self.assertIsInstance(payload["audios"], list)
+        self.assertTrue(payload["audios"][0]["src"].startswith("data:audio/wav;base64,"))
 
     @patch("requests.post")
     def test_ssl_verification_disabled_via_config(self, mock_post):

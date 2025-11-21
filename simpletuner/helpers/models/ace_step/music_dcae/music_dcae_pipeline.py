@@ -19,7 +19,6 @@ from diffusers import AutoencoderDC
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin
 from diffusers.models.modeling_utils import ModelMixin
-from tqdm import tqdm
 
 try:
     from .music_vocoder import ADaMoSHiFiGANV1
@@ -42,8 +41,18 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
     ):
         super(MusicDCAE, self).__init__()
 
-        self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path)
-        self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path)
+        # Load directly from the known subfolders to avoid diffusers root-probing errors.
+        try:
+            self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path, subfolder="music_dcae_f8c8")
+        except Exception:
+            # Final fallback: try the checkpoint path as-is
+            self.dcae = AutoencoderDC.from_pretrained(dcae_checkpoint_path)
+
+        try:
+            self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path, subfolder="music_vocoder")
+        except Exception:
+            # Final fallback: try the checkpoint path as-is
+            self.vocoder = ADaMoSHiFiGANV1.from_pretrained(vocoder_checkpoint_path)
 
         if source_sample_rate is None:
             source_sample_rate = 48000
@@ -55,6 +64,8 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 transforms.Normalize(0.5, 0.5),
             ]
         )
+        # Place heavy submodules on the init device when the model is moved later.
+        self._init_device = None
         self.min_mel_value = -11.0
         self.max_mel_value = 3.0
         self.audio_chunk_size = int(round((1024 * 512 / 44100 * 48000)))
@@ -71,6 +82,7 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         return audio, sr
 
     def forward_mel(self, audios):
+        # Ensure submodules follow the audio device/dtype (MPS safety)
         mels = []
         for i in range(len(audios)):
             image = self.vocoder.mel_transform(audios[i])
@@ -90,7 +102,7 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
 
         if sr is None:
             sr = 48000
-            resampler = self.resampler
+            resampler = self.resampler.to(device).to(dtype)
         else:
             resampler = torchaudio.transforms.Resample(sr, 44100).to(device).to(dtype)
 
@@ -267,12 +279,6 @@ class MusicDCAE(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 # p_audio_samples tracks the start of the *next* audio segment to generate (in conceptual total audio samples)
                 p_audio_samples = vocoder_hop_len_audio
                 conceptual_total_audio_len_native_sr = mel_total_frames * VOCODER_AUDIO_SAMPLES_PER_MEL_FRAME
-
-                pbar_total = (
-                    1
-                    + max(0, (conceptual_total_audio_len_native_sr - (vocoder_win_len_audio - vocoder_overlap_len_audio)))
-                    // vocoder_hop_len_audio
-                )
 
                 # Use tqdm if you want a progress bar for the vocoder part
                 # with tqdm(total=pbar_total, desc=f"Vocoder {latent_idx+1}/{len(latents)}", leave=False) as pbar:

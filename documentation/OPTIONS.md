@@ -8,6 +8,8 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 The JSON filename expected is `config.json` and the key names are the same as the below `--arguments`. The leading `--` is not required for the JSON file, but it can be left in as well.
 
+Looking for ready-to-run examples? See the curated presets in [simpletuner/examples/README.md](/simpletuner/examples/README.md).
+
 ### Easy configure script (***RECOMMENDED***)
 
 The `simpletuner configure` command can be used to set up a `config.json` file with mostly-ideal default settings.
@@ -23,7 +25,6 @@ simpletuner configure config/foo/config.json
 Where `foo` is your config environment - or just use `config/config.json` if you're not using config environments.
 
 <img width="1484" height="560" alt="image" src="https://github.com/user-attachments/assets/67dec8d8-3e41-42df-96e6-f95892d2814c" />
-
 
 > ⚠️ For users located in countries where Hugging Face Hub is not readily accessible, you should add `HF_ENDPOINT=https://hf-mirror.com` to your `~/.bashrc` or `~/.zshrc` depending on which `$SHELL` your system uses.
 
@@ -95,12 +96,12 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--pretrained_model_name_or_path`
 
-- **What**: Path to the pretrained model or its identifier from https://huggingface.co/models.
+- **What**: Path to the pretrained model or its identifier from <https://huggingface.co/models>.
 - **Why**: To specify the base model you'll start training from. Use `--revision` and `--variant` to specify specific versions from a repository. This also supports single-file `.safetensors` paths for SDXL, Flux, and SD3.x.
 
 ### `--pretrained_t5_model_name_or_path`
 
-- **What**: Path to the pretrained T5 model or its identifier from https://huggingface.co/models.
+- **What**: Path to the pretrained T5 model or its identifier from <https://huggingface.co/models>.
 - **Why**: When training PixArt, you might want to use a specific source for your T5 weights so that you can avoid downloading them multiple times when switching the base model you train from.
 
 ### `--gradient_checkpointing`
@@ -109,7 +110,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--gradient_checkpointing_interval`
 
-- **What**: Checkpoint only every _n_ blocks, where _n_ is a value greater than zero. A value of 1 is effectively the same as just leaving `--gradient_checkpointing` enabled, and a value of 2 will checkpoint every other block.
+- **What**: Checkpoint only every *n* blocks, where *n* is a value greater than zero. A value of 1 is effectively the same as just leaving `--gradient_checkpointing` enabled, and a value of 2 will checkpoint every other block.
 - **Note**: SDXL and Flux are currently the only models supporting this option. SDXL uses a hackish implementation.
 
 ### `--refiner_training`
@@ -123,7 +124,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Choices**: `cpu`, `accelerator`
   - On `accelerator`, it may work moderately faster at the risk of possibly OOM'ing on 24G cards for a model as large as Flux.
   - On `cpu`, quantisation takes about 30 seconds. (**Default**)
-
 
 ### `--base_model_precision`
 
@@ -194,15 +194,26 @@ Omit any entries you want to inherit from Accelerate’s defaults (for example, 
 
 ### `--attention_mechanism`
 
-Alternative attention mechanisms are supported, with varying levels of compatibility or other trade-offs;
+Alternative attention mechanisms are supported, with varying levels of compatibility or other trade-offs:
 
-- `diffusers` uses the native Pytorch SDPA functions and is the default attention mechanism
-- `xformers` allows the use of Meta's [xformers](https://github.com/facebook/xformers) attention implementation which supports both training and inference fully
-- `sageattention` is an inference-focused attention mechanism which does not fully support being used for training ([SageAttention](https://github.com/thu-ml/SageAttention) project page)
+- `diffusers` uses PyTorch’s native SDPA kernels and is the default.
+- `xformers` enables Meta’s [xformers](https://github.com/facebookresearch/xformers) attention kernel (training + inference) when the underlying model exposes `enable_xformers_memory_efficient_attention`.
+- `flash-attn`, `flash-attn-2`, `flash-attn-3`, and `flash-attn-3-varlen` hook into Diffusers’ new `attention_backend` helper to route attention through FlashAttention v1/2/3 kernels. Install the corresponding `flash-attn` / `flash-attn-interface` wheels and note that FA3 currently requires Hopper GPUs.
+- `flex` selects PyTorch 2.5’s FlexAttention backend (FP16/BF16 on CUDA). You must compile/install the Flex kernels separately — see [documentation/attention/FLEX.md](attention/FLEX.md).
+- `cudnn`, `native-efficient`, `native-flash`, `native-math`, `native-npu`, and `native-xla` select the matching SDPA backend exposed by `torch.nn.attention.sdpa_kernel`. These are handy when you want determinism (`native-math`), the CuDNN SDPA kernel, or the vendor-native accelerators (NPU/XLA).
+- `sla` enables [Sparse–Linear Attention (SLA)](https://github.com/thu-ml/SLA), providing a fine-tunable sparse/linear hybrid kernel that can be used for both training and validation without additional gating.
+  - Install the SLA package (for example via `pip install -e ~/src/SLA`) before selecting this backend.
+  - SimpleTuner saves SLA’s learned projection weights into `sla_attention.pt` inside every checkpoint; keep this file with the rest of the checkpoint so resumes and inference retain the trained SLA state.
+  - Because the backbone is tuned around SLA’s mixed sparse/linear behaviour, SLA will be required at inference time as well. See `documentation/attention/SLA.md` for a focused guide.
+  - Use `--sla_config '{"topk":0.15,"blkq":32,"tie_feature_map_qk":false}'` (JSON or Python dict syntax) to override SLA runtime defaults if you need to experiment.
+- `sageattention`, `sageattention-int8-fp16-triton`, `sageattention-int8-fp16-cuda`, and `sageattention-int8-fp8-cuda` wrap the corresponding [SageAttention](https://github.com/thu-ml/SageAttention) kernels. These are inference-oriented and must be used with `--sageattention_usage` to guard against accidental training.
   - In simplest terms, SageAttention reduces compute requirement for inference
 
+> ℹ️ The Flash/Flex/PyTorch backend selectors rely on Diffusers’ `attention_backend` dispatcher, so they currently benefit transformer-style models that already opt into that code path (Flux, Wan 2.x, LTXVideo, QwenImage, etc.). Classic SD/SDXL UNets still use PyTorch SDPA directly.
+
 Using `--sageattention_usage` to enable training with SageAttention should be enabled with care, as it does not track or propagate gradients from its custom CUDA implementations for the QKV linears.
-  - This results in these layers being completely untrained, which might cause model collapse or, slight improvements in short training runs.
+
+- This results in these layers being completely untrained, which might cause model collapse or slight improvements in short training runs.
 
 ---
 
@@ -211,6 +222,17 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 ### `--push_to_hub`
 
 - **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes. Using `--push_checkpoints_to_hub` will additionally push every intermediary checkpoint.
+
+### `--push_to_hub_background`
+
+- **What**: Uploads to Hugging Face Hub from a background worker so checkpoint pushes do not pause the training loop.
+- **Why**: Keeps training and validation running while Hub uploads proceed asynchronously. Final uploads are still awaited before the run exits so failures surface.
+
+### `--publishing_config`
+
+- **What**: Optional JSON/dict/file path describing non-Hugging Face publishing targets (S3-compatible storage, Backblaze B2, Azure Blob Storage, Dropbox).
+- **Why**: Mirrors `--webhook_config` parsing so you can fan out artifacts beyond the Hub. Publishing runs on the main process after validation using the current `output_dir`.
+- **Notes**: Providers are additive to `--push_to_hub`. Install provider SDKs (e.g., `boto3`, `azure-storage-blob`, `dropbox`) inside your `.venv` when you enable them. See `documentation/publishing/README.md` for complete examples.
 
 ### `--hub_model_id`
 
@@ -227,7 +249,7 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 
 - **What**: Path to your SimpleTuner dataset configuration.
 - **Why**: Multiple datasets on different storage medium may be combined into a single training session.
-- **Example**: See (multidatabackend.json.example)[/multidatabackend.json.example] for an example configuration, and [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
+- **Example**: See [multidatabackend.json.example](/multidatabackend.json.example) for an example configuration, and [this document](/documentation/DATALOADER.md) for more information on configuring the data loader.
 
 ### `--override_dataset_config`
 
@@ -296,6 +318,61 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
+
+### `--validation_method`
+
+- **What**: Choose how validation runs are executed.
+- **Options**: `simpletuner-local` (default) runs the built-in pipeline; `external-script` runs a user-provided executable instead.
+- **Why**: Lets you hand off validation to an external system without pausing training for local pipeline work.
+
+### `--validation_external_script`
+
+- **What**: Executable to run when `--validation_method=external-script`. Uses shell-style splitting, so quote the command string accordingly.
+- **Placeholders**: You can embed these tokens (formatted with `.format`) to pass training context. Missing values are replaced with an empty string unless noted:
+  - `{local_checkpoint_path}` → latest checkpoint directory under `output_dir` (requires at least one checkpoint).
+  - `{global_step}` → current global step.
+  - `{tracker_run_name}` → value of `--tracker_run_name`.
+  - `{tracker_project_name}` → value of `--tracker_project_name`.
+  - `{model_family}` → value of `--model_family`.
+  - `{model_type}` / `{lora_type}` → model type and LoRA flavour.
+  - `{huggingface_path}` → value of `--hub_model_id` (if set).
+  - `{remote_checkpoint_path}` → remote URL of your last upload (empty for validation hook).
+  - Any `validation_*` config value (e.g., `validation_num_inference_steps`, `validation_guidance`, `validation_noise_scheduler`).
+- **Example**: `--validation_external_script="/opt/tools/validate.sh {local_checkpoint_path} {global_step}"`
+
+### `--validation_external_background`
+
+- **What**: When set, `--validation_external_script` is launched in the background (fire-and-forget).
+- **Why**: Keep training moving without waiting for the external script; exit codes are not checked in this mode.
+
+### `--post_upload_script`
+
+- **What**: Optional executable run after each publishing provider and Hugging Face Hub upload finishes (final model and checkpoint uploads). Runs asynchronously so training doesn't block.
+- **Placeholders**: Same replacements as `--validation_external_script`, plus `{remote_checkpoint_path}` (URI returned by the provider) so you can forward the published URL to downstream systems.
+- **Notes**:
+  - Scripts run per provider/upload; errors are logged but do not halt training.
+  - Scripts are also invoked when no remote upload occurs, so you can use them for local automation (e.g., running inference on another GPU).
+  - SimpleTuner does not ingest results from your script—log to your tracker directly if you want metrics or images recorded.
+- **Example**:
+  ```bash
+  --post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'
+  ```
+  Where `/opt/hooks/notify.sh` might post to your tracking system:
+  ```bash
+  #!/usr/bin/env bash
+  REMOTE="$1"
+  PROJECT="$2"
+  RUN="$3"
+  curl -X POST "https://tracker.internal/api/runs/${PROJECT}/${RUN}/artifacts" \
+       -H "Content-Type: application/json" \
+       -d "{\"remote_uri\":\"${REMOTE}\"}"
+  ```
+- **Working samples**:
+  - `simpletuner/examples/external-validation/replicate_post_upload.py` shows a Replicate hook that consumes `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger inference after uploads.
+  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` shows a WaveSpeed hook using the same placeholders plus WaveSpeed's async polling.
+  - `simpletuner/examples/external-validation/fal_post_upload.py` shows a fal.ai Flux LoRA hook (requires `FAL_KEY`).
+  - `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on a secondary GPU and works even without remote uploads.
+
 
 ### `--validation_adapter_path`
 
@@ -497,7 +574,7 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 ### `--checkpoint_step_interval` (alias: `--checkpointing_steps`)
 
 - **What**: Interval at which training state checkpoints are saved (in steps).
-- **Why**: Useful for resuming training and for inference. Every _n_ iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
+- **Why**: Useful for resuming training and for inference. Every *n* iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
 
 ### `--checkpoint_epoch_interval`
 
@@ -526,11 +603,11 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
 - **Choices**: wandb, tensorboard, comet_ml
 
-# Environment configuration variables
+## Environment configuration variables
 
 The above options apply for the most part, to `config.json` - but some entries must be set inside `config.env` instead.
 
-- `TRAINING_NUM_PROCESSES` should be set to the number of GPUs in the system. For most use-cases, this is enough to enable DistributedDataParallel (DDP) training
+- `TRAINING_NUM_PROCESSES` should be set to the number of GPUs in the system. For most use-cases, this is enough to enable DistributedDataParallel (DDP) training. Use `num_processes` inside `config.json` if you prefer to not use `config.env`.
 - `TRAINING_DYNAMO_BACKEND` defaults to `no` but can be set to any supported torch.compile backend (e.g. `inductor`, `aot_eager`, `cudagraphs`) and combined with `--dynamo_mode`, `--dynamo_fullgraph`, or `--dynamo_use_regional_compilation` for finer tuning
 - `SIMPLETUNER_LOG_LEVEL` defaults to `INFO` but can be set to `DEBUG` to add more information for issue reports into `debug.log`
 - `VENV_PATH` can be set to the location of your python virtual env, if it is not in the typical `.venv` location
@@ -676,7 +753,7 @@ usage: train.py [-h] --model_family
                 [--sd3_t5_uncond_behaviour {empty_string,zero}]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--mixed_precision {no,fp16,bf16,fp8}]
-                [--attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
+                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
                 [--disable_tf32 [DISABLE_TF32]]
                 [--set_grads_to_none [SET_GRADS_TO_NONE]]
@@ -757,7 +834,9 @@ usage: train.py [-h] --model_family
                 [--fuse_optimizer [FUSE_OPTIMIZER]]
                 [--optimizer_release_gradients [OPTIMIZER_RELEASE_GRADIENTS]]
                 [--push_to_hub [PUSH_TO_HUB]]
+                [--push_to_hub_background [PUSH_TO_HUB_BACKGROUND]]
                 [--push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]]
+                [--publishing_config PUBLISHING_CONFIG]
                 [--hub_model_id HUB_MODEL_ID]
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
@@ -832,6 +911,9 @@ options:
   --vae_cache_ondemand [VAE_CACHE_ONDEMAND]
                         Process VAE latents during training instead of
                         precomputing them
+  --vae_cache_disable [VAE_CACHE_DISABLE]
+                        Implicitly enables on-demand caching and disables
+                        writing embeddings to disk.
   --accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL
                         Clear the cache from VRAM every X steps to prevent
                         memory leaks
@@ -1116,7 +1198,7 @@ options:
                         Sigma data for soft min SNR weighting
   --mixed_precision {no,fp16,bf16,fp8}
                         Precision for training computations
-  --attention_mechanism {diffusers,xformers,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
+  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
                         Attention computation backend
   --sageattention_usage {training,inference,training+inference}
                         When to use SageAttention
@@ -1395,9 +1477,15 @@ options:
   --push_to_hub [PUSH_TO_HUB]
                         Automatically upload the trained model to your Hugging
                         Face Hub repository.
+  --push_to_hub_background [PUSH_TO_HUB_BACKGROUND]
+                        Run Hub uploads in a background worker so training is
+                        not blocked while pushing.
   --push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]
                         Upload intermediate checkpoints to the same Hugging
                         Face repository during training.
+  --publishing_config PUBLISHING_CONFIG
+                        Optional JSON/file path describing additional
+                        publishing targets (S3/Backblaze B2/Azure Blob/Dropbox).
   --hub_model_id HUB_MODEL_ID
                         If left blank, SimpleTuner derives a name from the
                         project settings when pushing to Hub.

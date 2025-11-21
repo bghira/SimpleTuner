@@ -26,6 +26,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                 {"value": "tensorboard", "label": "TensorBoard"},
                 {"value": "wandb", "label": "Weights & Biases"},
                 {"value": "comet_ml", "label": "Comet ML"},
+                {"value": "custom-tracker", "label": "Custom Tracker"},
                 {"value": "all", "label": "All Platforms"},
                 {"value": "none", "label": "None"},
             ],
@@ -33,6 +34,32 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="WandB provides cloud logging. TensorBoard is local. 'All' logs to all configured platforms.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="custom_tracker",
+            arg_name="--custom_tracker",
+            ui_label="Custom Tracker Module",
+            field_type=FieldType.TEXT,
+            tab="basic",
+            section="project_settings",
+            subsection="advanced",
+            default_value=None,
+            placeholder="my_tracker",
+            help_text="Module filename inside simpletuner/custom-trackers (without .py) used when report_to=custom-tracker.",
+            tooltip="Example: my_tracker.py -> --custom_tracker=my_tracker. The module must define a GeneralTracker subclass.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+            dependencies=[FieldDependency(field="report_to", operator="equals", value="custom-tracker", action="show")],
+            validation_rules=[
+                ValidationRule(
+                    ValidationRuleType.PATTERN,
+                    value=r"^[A-Za-z_][A-Za-z0-9_]*$",
+                    message="Use a valid Python module name (letters, numbers, underscores).",
+                )
+            ],
         )
     )
 
@@ -224,7 +251,11 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Local directory where training metrics are saved. Used by TensorBoard.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
-            dependencies=[FieldDependency(field="report_to", operator="in", values=["tensorboard", "all"], action="show")],
+            dependencies=[
+                FieldDependency(
+                    field="report_to", operator="in", values=["tensorboard", "all", "custom-tracker"], action="show"
+                )
+            ],
         )
     )
 

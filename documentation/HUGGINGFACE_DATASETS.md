@@ -302,3 +302,30 @@ Combine Hugging Face datasets with local data:
 ```
 
 This configuration will sample 70% from the Hugging Face dataset and 30% from local data.
+
+## Audio Datasets
+
+For audio models (like ACE-Step), you can specify `dataset_type: "audio"`.
+
+```json
+{
+    "id": "audio-dataset",
+    "type": "huggingface",
+    "dataset_type": "audio",
+    "dataset_name": "my-audio-data",
+    "audio_column": "audio",
+    "config": {
+        "audio_caption_fields": ["tags"],
+        "lyrics_column": "lyrics"
+    }
+}
+```
+
+*   **`audio_column`**: The column containing audio data (decoded or bytes). Defaults to `"audio"`.
+*   **`audio_caption_fields`**: A list of column names to combine to form the **prompt** (text conditioning). Defaults to `["prompt", "tags"]`.
+*   **`lyrics_column`**: The column containing the song lyrics. Defaults to `"lyrics"`. If this column is missing, SimpleTuner will check for `"norm_lyrics"` as a fallback.
+
+### Expected Columns
+*   **`audio`**: The audio data.
+*   **`prompt`** / **`tags`**: Descriptive tags or prompts used for the text encoder.
+*   **`lyrics`**: Song lyrics used for the lyric encoder.

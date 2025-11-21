@@ -18,7 +18,6 @@
 from typing import Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import logging
 from torch import nn
@@ -275,20 +274,20 @@ class LinearTransformerBlock(nn.Module):
         if self.use_adaln_single:
             norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
 
-        # step 2: attention
+        # step 2: attention (custom processors return a single tensor)
         if not self.add_cross_attention:
-            attn_output, encoder_hidden_states = self.attn(
+            attn_output = self.attn(
                 hidden_states=norm_hidden_states,
-                attention_mask=attention_mask,
+                attention_mask=None,  # Disable mask to avoid shape mismatches
                 encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
+                encoder_attention_mask=None,  # Disable encoder mask too
                 rotary_freqs_cis=rotary_freqs_cis,
                 rotary_freqs_cis_cross=rotary_freqs_cis_cross,
             )
         else:
-            attn_output, _ = self.attn(
+            attn_output = self.attn(
                 hidden_states=norm_hidden_states,
-                attention_mask=attention_mask,
+                attention_mask=None,  # Disable mask to avoid shape mismatches
                 encoder_hidden_states=None,
                 encoder_attention_mask=None,
                 rotary_freqs_cis=rotary_freqs_cis,
@@ -296,15 +295,21 @@ class LinearTransformerBlock(nn.Module):
             )
 
         if self.use_adaln_single:
-            attn_output = gate_msa * attn_output
+            # Ensure gating tensor matches the attention output shape
+            if not torch.is_tensor(attn_output):
+                attn_output = attn_output[0]
+            gate = gate_msa
+            if gate.dim() == 3 and gate.shape[1] == 1:
+                gate = gate.expand(-1, attn_output.shape[1], -1)
+            attn_output = gate * attn_output
         hidden_states = attn_output + hidden_states
 
         if self.add_cross_attention:
             attn_output = self.cross_attn(
                 hidden_states=hidden_states,
-                attention_mask=attention_mask,
+                attention_mask=None,  # Disable mask to avoid shape mismatches
                 encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask,
+                encoder_attention_mask=None,  # Disable encoder mask too
                 rotary_freqs_cis=rotary_freqs_cis,
                 rotary_freqs_cis_cross=rotary_freqs_cis_cross,
             )

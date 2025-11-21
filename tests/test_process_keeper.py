@@ -177,16 +177,18 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         def failing_task(config):
             raise RuntimeError("simulated failure")
 
-        submit_job(job_id, failing_task, {})
+        # Suppress stdout from ProcessKeeper's output streaming
+        with patch("simpletuner.simpletuner_sdk.process_keeper.sys.stdout", new=MagicMock()):
+            submit_job(job_id, failing_task, {})
 
-        # Wait until process transitions out of running
-        deadline = time.time() + 5
-        status = None
-        while time.time() < deadline:
-            status = get_process_status(job_id)
-            if status not in {"pending", "running"}:
-                break
-            time.sleep(0.1)
+            # Wait until process transitions out of running
+            deadline = time.time() + 5
+            status = None
+            while time.time() < deadline:
+                status = get_process_status(job_id)
+                if status not in {"pending", "running"}:
+                    break
+                time.sleep(0.1)
 
         self.assertEqual(status, "failed")
 

@@ -989,9 +989,15 @@ class Wan(VideoModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
             # "attention_mask": (
             #     text_embedding["attention_masks"].unsqueeze(0)
             #     if self.config.flux_attention_masked_training
@@ -1000,9 +1006,15 @@ class Wan(VideoModelFoundation):
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
-        # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
+        # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+
         return {
-            "negative_prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
+            "negative_prompt_embeds": prompt_embeds,
             # "negative_mask": (
             #     text_embedding["attention_masks"].unsqueeze(0)
             #     if self.config.flux_attention_masked_training

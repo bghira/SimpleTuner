@@ -23,6 +23,7 @@
                         :class="{'is-invalid': hasFieldError(dataset.id, 'dataset_type')}">
                     <option value="">Select type...</option>
                     <option value="image">🖼️ Image</option>
+                    <option value="audio">🎵 Audio</option>
                     <option value="video">🎬 Video</option>
                     <option value="conditioning"
                             :disabled="!conditioningSupported && dataset.dataset_type !== 'conditioning'">
@@ -38,7 +39,7 @@
             </div>
         </div>
         <div class="dataset-subgroup"
-             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds' && dataset.dataset_type !== 'audio'"
              :class="{'is-collapsed': sectionIsCollapsed(dataset, 'sizing')}">
             <div class="dataset-subgroup-header collapse-header">
                 <button type="button"
@@ -122,7 +123,7 @@
             </div>
         </div>
         <div class="dataset-subgroup"
-             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds' && dataset.dataset_type !== 'audio'"
              :class="{'is-collapsed': sectionIsCollapsed(dataset, 'cropping')}">
             <div class="dataset-subgroup-header collapse-header">
                 <button type="button"

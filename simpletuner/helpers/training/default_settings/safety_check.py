@@ -6,6 +6,7 @@ from os import environ
 from diffusers.utils import is_wandb_available
 from torch.version import cuda as cuda_version
 
+from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 
 logger = logging.getLogger(__name__)
@@ -122,9 +123,11 @@ def safety_check(args, accelerator):
         sys.exit(1)
 
     if "sageattention" in args.attention_mechanism:
-        if args.sageattention_usage != "inference":
+        usage = AttentionBackendMode.from_raw(getattr(args, "sageattention_usage", AttentionBackendMode.INFERENCE))
+        args.sageattention_usage = usage
+        if usage != AttentionBackendMode.INFERENCE:
             logger.error(
-                f"SageAttention usage is set to '{args.sageattention_usage}' instead of 'inference'. This is not an officially supported configuration, please be sure you understand the implications. It is recommended to set this value to 'inference' for safety."
+                f"SageAttention usage is set to '{usage.value}' instead of 'inference'. This is not an officially supported configuration, please be sure you understand the implications. It is recommended to set this value to 'inference' for safety."
             )
         if "nf4" in args.base_model_precision:
             logger.error(
@@ -135,7 +138,7 @@ def safety_check(args, accelerator):
     gradient_checkpointing_interval_supported_models = ["flux", "sana", "sdxl", "sd3", "chroma"]
     if args.gradient_checkpointing_interval is not None:
         if args.model_family.lower() not in gradient_checkpointing_interval_supported_models:
-            logger.error(
+            logger.warning(
                 f"Gradient checkpointing interval is not supported with {args.model_family} models. Please disable --gradient_checkpointing_interval by setting it to None, or remove it from your configuration. Currently supported models: {gradient_checkpointing_interval_supported_models}"
             )
             args.gradient_checkpointing_interval = None

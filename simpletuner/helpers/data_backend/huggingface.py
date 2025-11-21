@@ -40,6 +40,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         revision: str = None,
         image_column: str = "image",
         video_column: str = "video",
+        audio_column: str = "audio",
         cache_dir: Optional[str] = None,
         compress_cache: bool = False,
         streaming: bool = False,
@@ -54,11 +55,18 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self.accelerator = accelerator
         self.dataset_name = dataset_name
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
-        self.file_extension = "mp4" if self.dataset_type is DatasetType.VIDEO else "jpg"
+        if self.dataset_type is DatasetType.VIDEO:
+            default_extension = "mp4"
+        elif self.dataset_type is DatasetType.AUDIO:
+            default_extension = "wav"
+        else:
+            default_extension = "jpg"
+        self.file_extension = default_extension
         self.split = split
         self.revision = revision
         self.image_column = image_column
         self.video_column = video_column
+        self.audio_column = audio_column
         self.cache_dir = cache_dir
         self.compress_cache = compress_cache
         self.streaming = streaming
@@ -502,12 +510,74 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         try:
             # Get the item from dataset
             item = self.dataset[index]
-            column = self.video_column if self.dataset_type is DatasetType.VIDEO else self.image_column
+            if self.dataset_type is DatasetType.VIDEO:
+                column = self.video_column
+            elif self.dataset_type is DatasetType.AUDIO:
+                column = self.audio_column
+            else:
+                column = self.image_column
             sample = item.get(column)
 
             if sample is None:
                 logger.error(f"No {self.dataset_type} found in column '{column}' for index {index}")
                 return None
+
+            # New HF audio types (torchcodec AudioDecoder) need explicit decode.
+            if self.dataset_type is DatasetType.AUDIO:
+                # Prefer direct decode() on torchcodec AudioDecoder objects
+                if hasattr(sample, "decode"):
+                    try:
+                        decoded = sample.decode()
+                        sample_rate = getattr(sample, "sampling_rate", getattr(sample, "sample_rate", None))
+                        if isinstance(decoded, dict):
+                            decoded_array = decoded.get("array") or decoded.get("audio") or decoded.get("data")
+                            if decoded_array is None:
+                                decoded_array = decoded
+                            if torch.is_tensor(decoded_array):
+                                decoded_array = decoded_array.detach().cpu().numpy()
+                            sample = {"array": decoded_array, "sampling_rate": sample_rate or decoded.get("sampling_rate")}
+                        elif isinstance(decoded, (list, tuple)):
+                            wave = decoded[0]
+                            if torch.is_tensor(wave):
+                                wave = wave.detach().cpu().numpy()
+                            sr = decoded[1] if len(decoded) > 1 else sample_rate
+                            sample = {"array": wave, "sampling_rate": sr}
+                        elif torch.is_tensor(decoded):
+                            sample = {"array": decoded.detach().cpu().numpy(), "sampling_rate": sample_rate}
+                        else:
+                            sample = {"array": decoded, "sampling_rate": sample_rate}
+                    except Exception as exc:
+                        logger.error("Failed to decode audio sample for index %s: %s", index, exc)
+                        return None
+                elif hasattr(sample, "decode_example"):
+                    try:
+                        sample = sample.decode_example(None)
+                    except Exception:
+                        try:
+                            sample = sample.decode_example({"path": None, "bytes": None})
+                        except Exception as exc:
+                            logger.error("Failed to decode audio sample for index %s: %s", index, exc)
+                            return None
+                elif hasattr(sample, "get_all_samples"):
+                    try:
+                        decoded_samples = sample.get_all_samples()
+                        sample_rate = getattr(decoded_samples, "sample_rate", None)
+                        if not sample_rate:
+                            metadata = getattr(sample, "metadata", None)
+                            sample_rate = getattr(metadata, "sample_rate", None)
+                        audio_data = getattr(decoded_samples, "data", None)
+                        if audio_data is None and hasattr(decoded_samples, "samples"):
+                            audio_data = getattr(decoded_samples, "samples", None)
+                        if torch.is_tensor(audio_data):
+                            audio_data = audio_data.detach().cpu().numpy()
+                        sample = {"array": audio_data, "sampling_rate": sample_rate}
+                        if sample["array"] is None:
+                            raise ValueError("decoder did not return audio samples")
+                        if sample["sampling_rate"] is None:
+                            raise ValueError("decoder did not provide a sampling rate")
+                    except Exception as exc:
+                        logger.error("Failed to decode audio sample for index %s: %s", index, exc)
+                        return None
 
             # Handle composite images if configured
             if (
@@ -582,21 +652,47 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             elif isinstance(sample, dict):
                 bytes_data = sample.get("bytes")
                 path = sample.get("path")
+                array = sample.get("array")
+                sample_rate = sample.get("sampling_rate")
                 data = None
 
-                if bytes_data is not None:
-                    if isinstance(bytes_data, (bytes, bytearray)):
+                if array is not None and sample_rate:
+                    try:
+                        import numpy as _np
+                        import soundfile as sf  # type: ignore
+                    except Exception:
+                        import numpy as _np  # type: ignore
+
+                        sf = None
+                    try:
+                        waveform = _np.asarray(array)
+                        if waveform.ndim == 1:
+                            waveform = waveform[None, :]
+                        waveform = waveform.T  # (samples, channels)
+                        buffer = BytesIO()
+                        if sf is not None:
+                            sf.write(buffer, waveform, int(sample_rate), format="WAV")
+                        else:
+                            import torchaudio
+
+                            tensor = torch.from_numpy(waveform.T)
+                            torchaudio.save(buffer, tensor, int(sample_rate), format="wav")
+                        buffer.seek(0)
+                        data = buffer.read()
+                    except Exception as exc:
+                        logger.error("Failed to convert audio array to bytes for index %s: %s", index, exc)
+                        data = None
+
+                if data is None and bytes_data is not None:
+                    try:
                         data = bytes(bytes_data)
-                    else:
-                        try:
-                            data = bytes(bytes_data)
-                        except Exception:
-                            logger.error(
-                                "Unable to convert '%s' bytes payload to raw bytes.",
-                                self.video_column if self.dataset_type is DatasetType.VIDEO else self.image_column,
-                            )
-                            data = None
-                elif path:
+                    except Exception:
+                        logger.error(
+                            "Unable to convert '%s' bytes payload to raw bytes.",
+                            self.video_column if self.dataset_type is DatasetType.VIDEO else self.audio_column,
+                        )
+                        data = None
+                if data is None and path:
                     try:
                         if os.path.isfile(path):
                             with open(path, "rb") as f:
@@ -607,17 +703,13 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                             with xopen(path, "rb") as f:
                                 data = f.read()
                     except Exception as exc:
-                        logger.error(
-                            "Failed to read %s sample from path '%s': %s",
-                            self.dataset_type,
-                            path,
-                            exc,
-                        )
+                        logger.error("Failed to read %s sample from path '%s': %s", self.dataset_type, path, exc)
+                        data = None
 
                 if data is None:
                     logger.error(
                         "Dataset sample in column '%s' missing usable data (keys=%s)",
-                        self.video_column if self.dataset_type is DatasetType.VIDEO else self.image_column,
+                        self.video_column if self.dataset_type is DatasetType.VIDEO else self.audio_column,
                         list(sample.keys()),
                     )
                     return None

@@ -15,8 +15,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -24,11 +25,13 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.utils import BaseOutput, is_torch_version
+from diffusers.utils import BaseOutput
 from torch import nn
 
 from .attention import LinearTransformerBlock, t2i_modulate
 from .lyrics_utils.lyric_encoder import ConformerEncoder as LyricEncoder
+
+logger = logging.getLogger(__name__)
 
 
 def cross_norm(hidden_states, controlnet_input):
@@ -299,6 +302,8 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         self.final_layer = T2IFinalLayer(self.inner_dim, patch_size=patch_size, out_channels=out_channels)
         self.gradient_checkpointing = False
+        self._mps_fp32 = False
+        self._logged_dtype_mismatch = False
 
     # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
     def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
@@ -355,6 +360,12 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         bs = encoder_text_hidden_states.shape[0]
         device = encoder_text_hidden_states.device
 
+        target_dtype = self.speaker_embedder.weight.dtype
+        if speaker_embeds.dtype != target_dtype:
+            speaker_embeds = speaker_embeds.to(dtype=target_dtype)
+        if encoder_text_hidden_states.dtype != target_dtype:
+            encoder_text_hidden_states = encoder_text_hidden_states.to(dtype=target_dtype)
+
         # speaker embedding
         encoder_spk_hidden_states = self.speaker_embedder(speaker_embeds).unsqueeze(1)
         speaker_mask = torch.ones(bs, 1, device=device)
@@ -376,7 +387,31 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             ],
             dim=1,
         )
-        encoder_hidden_mask = torch.cat([speaker_mask, text_attention_mask, lyric_mask], dim=1)
+        # Build encoder mask. In training we may not have reliable per-token masks from cached embeds,
+        # so fall back to a fully valid mask if concatenation fails.
+        try:
+            mask_parts = [speaker_mask]
+            if text_attention_mask is not None:
+                tam = text_attention_mask
+                # Normalize to (bs, seq_len)
+                if tam.ndim == 1:
+                    tam = tam.unsqueeze(0).expand(bs, -1)
+                elif tam.ndim > 2:
+                    tam = tam.view(bs, -1)
+                mask_parts.append(tam.to(device=device, dtype=speaker_mask.dtype))
+            if lyric_mask is not None:
+                lm = lyric_mask
+                if lm.ndim == 1:
+                    lm = lm.unsqueeze(0).expand(bs, -1)
+                elif lm.ndim > 2:
+                    lm = lm.view(bs, -1)
+                mask_parts.append(lm.to(device=device, dtype=speaker_mask.dtype))
+            encoder_hidden_mask = torch.cat(mask_parts, dim=1)
+        except Exception:
+            # Fallback: treat all encoder tokens as valid.
+            total_len = encoder_hidden_states.shape[1]
+            encoder_hidden_mask = torch.ones(bs, total_len, device=device, dtype=speaker_mask.dtype)
+
         return encoder_hidden_states, encoder_hidden_mask
 
     def decode(
@@ -392,6 +427,34 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         controlnet_scale: Union[float, torch.Tensor] = 1.0,
         return_dict: bool = True,
     ):
+
+        param_dtype = next(self.parameters()).dtype
+        target_dtype = param_dtype
+        hidden_states = hidden_states.to(dtype=target_dtype)
+        attention_mask = attention_mask.to(dtype=target_dtype) if attention_mask is not None else attention_mask
+        encoder_hidden_states = encoder_hidden_states.to(dtype=target_dtype)
+        encoder_hidden_mask = encoder_hidden_mask.to(dtype=target_dtype)
+        if timestep is not None and torch.is_tensor(timestep):
+            timestep = timestep.to(dtype=target_dtype)
+        if block_controlnet_hidden_states is not None and torch.is_tensor(block_controlnet_hidden_states):
+            block_controlnet_hidden_states = block_controlnet_hidden_states.to(dtype=target_dtype)
+
+        if not self._logged_dtype_mismatch:
+            mismatches = []
+            for name, tensor in [
+                ("hidden_states", hidden_states),
+                ("attention_mask", attention_mask),
+                ("encoder_hidden_states", encoder_hidden_states),
+                ("encoder_hidden_mask", encoder_hidden_mask),
+                ("timestep", timestep),
+            ]:
+                if torch.is_tensor(tensor) and tensor.dtype != param_dtype:
+                    mismatches.append(f"{name}={tensor.dtype}")
+            if mismatches:
+                logger.warning(
+                    "ACEStepTransformer dtype mismatch after cast: params=%s, %s", param_dtype, ", ".join(mismatches)
+                )
+                self._logged_dtype_mismatch = True
 
         embedded_timestep = self.timestep_embedder(self.time_proj(timestep).to(dtype=hidden_states.dtype))
         temb = self.t_block(embedded_timestep)
@@ -473,6 +536,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
                 proj_losses.append((ssl_name, proj_loss / bs))
 
         output = self.final_layer(hidden_states, embedded_timestep, output_length)
+
         if not return_dict:
             return (output, proj_losses)
 

@@ -18,6 +18,19 @@ from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.state_tracker import StateTracker
 
+
+def _coerce_bucket_keys_to_float(indices: dict) -> dict:
+    """Coerce bucket keys from strings to floats (fixes JSON serialization issue)."""
+    coerced = {}
+    for key, values in (indices or {}).items():
+        try:
+            coerced_key = float(key)
+        except (TypeError, ValueError):
+            coerced_key = key
+        coerced[coerced_key] = list(values) if not isinstance(values, list) else values
+    return coerced
+
+
 logger = logging.getLogger("ParquetMetadataBackend")
 from simpletuner.helpers.training.multi_process import should_log
 
@@ -155,6 +168,15 @@ class ParquetMetadataBackend(MetadataBackend):
         filename_column = self.parquet_config.get("filename_column")
         caption_column = self.parquet_config.get("caption_column")
         fallback_caption_column = self.parquet_config.get("fallback_caption_column")
+        caption_field_preferences = []
+        try:
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            model = StateTracker.get_model()
+            if model and hasattr(model, "caption_field_preferences"):
+                caption_field_preferences = model.caption_field_preferences(dataset_type=self.dataset_type)
+        except Exception:
+            caption_field_preferences = []
         identifier_includes_extension = self.parquet_config.get("identifier_includes_extension", False)
         captions = {}
 
@@ -181,6 +203,12 @@ class ParquetMetadataBackend(MetadataBackend):
 
             if caption is None and fallback_caption_column:
                 caption = row.get(fallback_caption_column, None)
+
+            if caption is None and caption_field_preferences:
+                for field in caption_field_preferences:
+                    if field in row and row.get(field):
+                        caption = row.get(field)
+                        break
 
             if isinstance(caption, (numpy.ndarray, pd.Series)):
                 caption = [str(item) for item in caption if item is not None]
@@ -237,7 +265,9 @@ class ParquetMetadataBackend(MetadataBackend):
             except Exception as e:
                 logger.warning(f"Error loading aspect ratio bucket cache, creating new one: {e}")
                 cache_data = {}
-            self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
+            # Coerce bucket keys from strings to floats (JSON serialization converts float keys to strings)
+            loaded_indices = cache_data.get("aspect_ratio_bucket_indices", {})
+            self.aspect_ratio_bucket_indices = _coerce_bucket_keys_to_float(loaded_indices)
             if set_config:
                 self.config = cache_data.get("config", {})
                 if self.config != {}:
@@ -580,6 +610,12 @@ class ParquetMetadataBackend(MetadataBackend):
             duration_seconds = self._extract_audio_value(database_row, self.parquet_config.get("audio_duration_column"))
             num_channels = self._extract_audio_value(database_row, self.parquet_config.get("audio_channels_column"))
 
+            # Fallback to common column names if explicit config fields are missing
+            if duration_seconds is None:
+                duration_seconds = self._extract_audio_value(database_row, "duration")
+            if duration_seconds is None:
+                duration_seconds = self._extract_audio_value(database_row, "duration_seconds")
+
             if (sample_rate is None or num_samples is None) and self.data_backend.exists(image_path_str):
                 audio_payload = self.data_backend.read(image_path_str)
                 if audio_payload is None:
@@ -600,6 +636,11 @@ class ParquetMetadataBackend(MetadataBackend):
 
             if duration_seconds is None and sample_rate and num_samples:
                 duration_seconds = float(num_samples) / float(sample_rate)
+            if duration_seconds is not None:
+                try:
+                    duration_seconds = float(duration_seconds)
+                except (TypeError, ValueError):
+                    duration_seconds = None
 
             overrides = {}
             lyrics_column = self.parquet_config.get("lyrics_column")
@@ -632,6 +673,8 @@ class ParquetMetadataBackend(MetadataBackend):
             if truncated_duration is not None:
                 audio_metadata["duration_seconds"] = truncated_duration
                 audio_metadata["bucket_duration_seconds"] = truncated_duration
+            elif duration_seconds is not None:
+                audio_metadata["duration_seconds"] = duration_seconds
             aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(image_path_str)
 
             if metadata_updates is not None:

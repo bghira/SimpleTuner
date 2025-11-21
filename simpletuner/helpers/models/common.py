@@ -4,18 +4,19 @@ import math
 import os
 import random
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from enum import Enum
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from diffusers import DiffusionPipeline
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from diffusers import DiffusionPipeline
-from peft import LoraConfig
 from PIL import Image
 from torch.distributions import Beta
 from torchvision import transforms
-from transformers.utils import ContextManagers
 
 try:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -77,6 +78,7 @@ def get_model_config_path(model_family: str, model_path: str):
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
+    TEXT2AUDIO = "text2audio"
     IMG2VIDEO = "img2video"
     CONTROLNET = "controlnet"
     CONTROL = "control"
@@ -107,6 +109,12 @@ class ModelTypes(Enum):
     TRANSFORMER = "transformer"
     VAE = "vae"
     TEXT_ENCODER = "text_encoder"
+
+
+class TextEmbedCacheKey(Enum):
+    CAPTION = "caption"
+    FILENAME = "filename"
+    DATASET_AND_FILENAME = "dataset_and_filename"
 
 
 class PipelineConditioningImageEmbedder:
@@ -163,6 +171,45 @@ class ModelFoundation(ABC):
     SUPPORTS_CONTROLNET = None
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
+    DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    DEFAULT_CONTROLNET_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "ff.net.0.proj",
+        "ff.net.2",
+        "proj_in",
+        "proj_out",
+        "conv",
+        "conv1",
+        "conv2",
+        "conv_in",
+        "conv_shortcut",
+        "linear_1",
+        "linear_2",
+        "time_emb_proj",
+        "controlnet_cond_embedding.conv_in",
+        "controlnet_cond_embedding.blocks.0",
+        "controlnet_cond_embedding.blocks.1",
+        "controlnet_cond_embedding.blocks.2",
+        "controlnet_cond_embedding.blocks.3",
+        "controlnet_cond_embedding.blocks.4",
+        "controlnet_cond_embedding.blocks.5",
+        "controlnet_cond_embedding.conv_out",
+        "controlnet_down_blocks.0",
+        "controlnet_down_blocks.1",
+        "controlnet_down_blocks.2",
+        "controlnet_down_blocks.3",
+        "controlnet_down_blocks.4",
+        "controlnet_down_blocks.5",
+        "controlnet_down_blocks.6",
+        "controlnet_down_blocks.7",
+        "controlnet_down_blocks.8",
+        "controlnet_mid_block",
+    ]
+    DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
+    VALIDATION_USES_NEGATIVE_PROMPT = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -202,6 +249,85 @@ class ModelFoundation(ABC):
         Subclasses should override if chunking is supported.
         """
         return False
+
+    # -------------------------------------------------------------------------
+    # LoRA/PEFT helpers (shared across model families)
+    # -------------------------------------------------------------------------
+    def get_lora_save_layers(self):
+        return None
+
+    def get_lora_target_layers(self):
+        lora_type = getattr(self.config, "lora_type", "standard")
+        if lora_type.lower() == "standard":
+            if getattr(self.config, "controlnet", False):
+                return self.DEFAULT_CONTROLNET_LORA_TARGET
+            return self.DEFAULT_LORA_TARGET
+        if lora_type.lower() == "lycoris":
+            return self.DEFAULT_LYCORIS_TARGET
+        raise NotImplementedError(f"Unknown LoRA target type {lora_type}.")
+
+    def add_lora_adapter(self):
+        from peft import LoraConfig
+
+        target_modules = self.get_lora_target_layers()
+        save_modules = self.get_lora_save_layers()
+        addkeys, misskeys = [], []
+
+        if getattr(self.config, "controlnet", False) and getattr(self, "MODEL_TYPE", None) == ModelTypes.UNET:
+            logger.warning(
+                "ControlNet with UNet requires Conv2d layer support. "
+                "Using LyCORIS (LoHa) adapter instead of standard LoRA."
+            )
+            from peft import LoHaConfig
+
+            self.lora_config = LoHaConfig(
+                r=self.config.lora_rank,
+                alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                rank_dropout=self.config.lora_dropout,
+                module_dropout=0.0,
+                use_effective_conv2d=True,
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+            )
+        else:
+            lora_config_cls = LoraConfig
+            lora_config_kwargs = {}
+            if getattr(self.config, "peft_lora_mode", None) is not None:
+                if self.config.peft_lora_mode.lower() == "singlora":
+                    from peft_singlora import SingLoRAConfig, setup_singlora
+
+                    lora_config_cls = SingLoRAConfig
+                    lora_config_kwargs = {
+                        "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
+                    }
+
+                    logger.info("Enabling SingLoRA for LoRA training.")
+                    setup_singlora()
+            self.lora_config = lora_config_cls(
+                r=self.config.lora_rank,
+                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                lora_dropout=self.config.lora_dropout,
+                init_lora_weights=self.config.lora_initialisation_style,
+                target_modules=target_modules,
+                modules_to_save=save_modules,
+                use_dora=getattr(self.config, "use_dora", False),
+                **lora_config_kwargs,
+            )
+
+        if getattr(self.config, "controlnet", False):
+            self.controlnet.add_adapter(self.lora_config)
+        else:
+            self.model.add_adapter(self.lora_config)
+
+        if getattr(self.config, "init_lora", None):
+            use_dora = getattr(self.config, "use_dora", False) if isinstance(self.lora_config, LoraConfig) else False
+            addkeys, misskeys = load_lora_weights(
+                {self.MODEL_TYPE.value: (self.controlnet if getattr(self.config, "controlnet", False) else self.model)},
+                self.config.init_lora,
+                use_dora=use_dora,
+            )
+
+        return addkeys, misskeys
 
     def enable_chunked_feed_forward(self, *, chunk_size: Optional[int] = None, chunk_dim: int = 0) -> None:
         """
@@ -311,6 +437,20 @@ class ModelFoundation(ABC):
     def requires_conditioning_dataset(self) -> bool:
         if self.config.controlnet or self.config.control:
             return True
+        return False
+
+    def text_embed_cache_key(self) -> TextEmbedCacheKey:
+        """
+        Controls how prompt embeddings are keyed inside the cache. Most models can
+        key by caption text; edit models can override to use filenames.
+        """
+        return TextEmbedCacheKey.CAPTION
+
+    def requires_text_embed_image_context(self) -> bool:
+        """
+        Returns True when encode_text_batch must be supplied with per-prompt image
+        context (e.g., reference pixels). Defaults to False.
+        """
         return False
 
     def requires_conditioning_latents(self) -> bool:
@@ -521,9 +661,20 @@ class ModelFoundation(ABC):
         logger.info("Finished loading LoRA weights successfully.")
 
     def save_lora_weights(self, *args, **kwargs):
+        """
+        Proxy to the pipeline save_lora_weights, ensuring save_directory is passed explicitly.
+        """
+        if args:
+            save_directory, *remaining = args
+        else:
+            save_directory = kwargs.pop("save_directory", None)
+            remaining = []
+        if save_directory is None:
+            raise ValueError("save_directory is required to save LoRA weights.")
+
         self.PIPELINE_CLASSES[
             (PipelineTypes.TEXT2IMG if not self.config.controlnet else PipelineTypes.CONTROLNET)
-        ].save_lora_weights(*args, **kwargs)
+        ].save_lora_weights(save_directory=save_directory, *remaining, **kwargs)
 
     def pre_ema_creation(self):
         """
@@ -662,6 +813,21 @@ class ModelFoundation(ABC):
             latents = latents / scaling_factor
         return latents
 
+    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+        """
+        Pre-process latents before passing to validation preview decoder.
+
+        This is a hook for models that need to transform latents before decode.
+        For example, models using video decoders may need to add a frame dimension.
+
+        Args:
+            latents: The latents tensor to transform
+
+        Returns:
+            The transformed latents tensor
+        """
+        return latents
+
     def get_vae(self):
         """
         Returns the VAE model.
@@ -673,6 +839,8 @@ class ModelFoundation(ABC):
         return self.vae
 
     def load_vae(self, move_to_device: bool = True):
+        from transformers.utils import ContextManagers
+
         if not getattr(self, "AUTOENCODER_CLASS", None):
             return
 
@@ -762,6 +930,12 @@ class ModelFoundation(ABC):
         """
         return sample
 
+    def scale_vae_latents_for_cache(self, latents, vae):
+        """
+        Optional hook for caching flows to apply model-specific VAE scaling.
+        """
+        return latents
+
     def unload_vae(self):
         if self.vae is not None:
             if hasattr(self.vae, "to"):
@@ -794,6 +968,8 @@ class ModelFoundation(ABC):
             setattr(self, f"tokenizer_{tokenizer_idx}", tokenizer)
 
     def load_text_encoder(self, move_to_device: bool = True):
+        from transformers.utils import ContextManagers
+
         self.text_encoders = []
         if self.TEXT_ENCODER_CONFIGURATION is None or len(self.TEXT_ENCODER_CONFIGURATION) == 0:
             return
@@ -962,7 +1138,7 @@ class ModelFoundation(ABC):
 
         if (
             self.config.gradient_checkpointing_interval is not None
-            and self.config.gradient_checkpointing_interval > 0
+            and self.config.gradient_checkpointing_interval > 1
             and self.MODEL_TYPE is ModelTypes.UNET
         ):
             logger.warning(
@@ -1030,6 +1206,72 @@ class ModelFoundation(ABC):
                 self.model.requires_grad_(False)
         if self.config.controlnet and self.controlnet is not None:
             self.controlnet.train()
+
+    def get_lyrics_embedder_modules(self, unwrap: bool = True) -> list[tuple[str, torch.nn.Module]]:
+        """Return a list of (name, module) tuples for any lyrics embedder components."""
+        return []
+
+    def get_lyrics_embedder_parameters(
+        self, *, require_grad_only: bool = True, unwrap: bool = True
+    ) -> list[torch.nn.Parameter]:
+        """Return parameters belonging to the lyrics embedder, if present."""
+        params: list[torch.nn.Parameter] = []
+        for _, module in self.get_lyrics_embedder_modules(unwrap=unwrap):
+            if module is None:
+                continue
+            for param in module.parameters():
+                if require_grad_only and not param.requires_grad:
+                    continue
+                params.append(param)
+        return params
+
+    def enable_lyrics_embedder_training(self) -> list[str]:
+        """
+        Mark lyrics embedder parameters as trainable and return the module names enabled.
+        """
+        enabled: list[str] = []
+        for name, module in self.get_lyrics_embedder_modules(unwrap=False):
+            if module is None:
+                continue
+            module.train()
+            module.requires_grad_(True)
+            enabled.append(name)
+        return enabled
+
+    def get_lyrics_embedder_state_dict(self) -> OrderedDict:
+        """
+        Return a flattened state dict for lyrics embedder components, if any exist.
+        """
+        state = OrderedDict()
+        for name, module in self.get_lyrics_embedder_modules(unwrap=True):
+            if module is None:
+                continue
+            for key, tensor in module.state_dict().items():
+                state[f"{name}.{key}"] = tensor.detach().cpu()
+        return state
+
+    def load_lyrics_embedder_state_dict(self, state_dict: dict) -> list[str]:
+        """
+        Load the provided state dict into any available lyrics embedder components.
+        """
+        if not state_dict:
+            return []
+
+        grouped: dict[str, dict] = {}
+        for key, tensor in state_dict.items():
+            if not isinstance(key, str) or "." not in key:
+                continue
+            prefix, remainder = key.split(".", 1)
+            grouped.setdefault(prefix, {})[remainder] = tensor
+
+        loaded: list[str] = []
+        for name, module in self.get_lyrics_embedder_modules(unwrap=False):
+            module_state = grouped.get(name)
+            if not module_state:
+                continue
+            module.load_state_dict(module_state, strict=False)
+            loaded.append(name)
+        return loaded
 
     def uses_shared_modules(self):
         return False
@@ -1311,6 +1553,14 @@ class ModelFoundation(ABC):
             device = torch.device(getattr(self.accelerator, "device", "cuda") if self.accelerator is not None else "cuda")
 
         use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
+        if use_stream and bool(getattr(self.config, "gradient_checkpointing", False)):
+            logger.warning(
+                "Disabling group offload streams because gradient checkpointing replays layers during backward, "
+                "which breaks diffusers' group offload prefetch order and leads to CPU/CUDA mismatches. "
+                "Re-run without --gradient_checkpointing if you need streamed group offload."
+            )
+            use_stream = False
+            setattr(self.config, "group_offload_use_stream", False)
 
         offload_type = getattr(self.config, "group_offload_type", "block_level")
         blocks_per_group = getattr(self.config, "group_offload_blocks_per_group", 1)
@@ -1378,7 +1628,7 @@ class ModelFoundation(ABC):
             ),
         )
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> DiffusionPipeline:
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> "DiffusionPipeline":
         possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
         if self.model is not None and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None:
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
@@ -1497,6 +1747,39 @@ class ModelFoundation(ABC):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
         return batch
 
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Sample flow-matching sigmas/timesteps for the current batch.
+
+        Subclasses can override to implement model-specific sampling strategies.
+        """
+        bsz = batch["latents"].shape[0]
+        if not self.config.flux_fast_schedule and not any(
+            [
+                self.config.flow_use_beta_schedule,
+                self.config.flow_use_uniform_schedule,
+            ]
+        ):
+            sigmas = torch.sigmoid(self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device))
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        elif self.config.flow_use_uniform_schedule:
+            sigmas = torch.rand((bsz,), device=self.accelerator.device)
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        elif self.config.flow_use_beta_schedule:
+            alpha = self.config.flow_beta_schedule_alpha
+            beta = self.config.flow_beta_schedule_beta
+            beta_dist = Beta(alpha, beta)
+            sigmas = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        else:
+            available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
+            sigmas = torch.tensor(
+                random.choices(available_sigmas, k=bsz),
+                device=self.accelerator.device,
+            )
+        timesteps = sigmas * 1000.0
+        return sigmas, timesteps
+
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         """
         Moves the batch to the proper device/dtype,
@@ -1591,38 +1874,7 @@ class ModelFoundation(ABC):
             batch["input_noise"] = noise
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            if not self.config.flux_fast_schedule and not any(
-                [
-                    self.config.flow_use_beta_schedule,
-                    self.config.flow_use_uniform_schedule,
-                ]
-            ):
-                batch["sigmas"] = torch.sigmoid(
-                    self.config.flow_sigmoid_scale * torch.randn((bsz,), device=self.accelerator.device)
-                )
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
-                )
-            elif self.config.flow_use_uniform_schedule:
-                batch["sigmas"] = torch.rand((bsz,), device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
-                )
-            elif self.config.flow_use_beta_schedule:
-                alpha = self.config.flow_beta_schedule_alpha
-                beta = self.config.flow_beta_schedule_beta
-                beta_dist = Beta(alpha, beta)
-                batch["sigmas"] = beta_dist.sample((bsz,)).to(device=self.accelerator.device)
-                batch["sigmas"] = apply_flow_schedule_shift(
-                    self.config, self.noise_schedule, batch["sigmas"], batch["noise"]
-                )
-            else:
-                available_sigmas = [1.0] * 7 + [0.75, 0.5, 0.25]
-                batch["sigmas"] = torch.tensor(
-                    random.choices(available_sigmas, k=bsz),
-                    device=self.accelerator.device,
-                )
-            batch["timesteps"] = batch["sigmas"] * 1000.0
+            batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
             self.expand_sigmas(batch)
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
         else:
@@ -1649,14 +1901,24 @@ class ModelFoundation(ABC):
 
         return batch
 
-    def encode_text_batch(self, text_batch: list, is_negative_prompt: bool = False):
+    def encode_text_batch(
+        self,
+        text_batch: list,
+        is_negative_prompt: bool = False,
+        prompt_contexts: Optional[List[dict]] = None,
+    ):
         """
         Encodes a batch of text using the text encoder.
         """
         if not self.TEXT_ENCODER_CONFIGURATION:
             raise ValueError("No text encoder configuration found.")
-        encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
-        return self._format_text_embedding(encoded_text)
+        previous_context = getattr(self, "_current_prompt_contexts", None)
+        self._current_prompt_contexts = prompt_contexts
+        try:
+            encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
+            return self._format_text_embedding(encoded_text)
+        finally:
+            self._current_prompt_contexts = previous_context
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """
@@ -1670,6 +1932,47 @@ class ModelFoundation(ABC):
             torch.Tensor: The adjusted embed. By default, this method does nothing.
         """
         return text_embedding
+
+    @classmethod
+    def caption_field_preferences(cls, dataset_type: Optional[str] = None) -> list[str]:
+        """
+        Preferred caption-related fields (by name) to use when harvesting captions from metadata backends.
+        Models can override to request lyrics/tags or other domain-specific fields.
+        """
+        return []
+
+    def requires_validation_i2v_samples(self) -> bool:
+        """
+        Override for models that need to pair validation videos with their conditioning images.
+        """
+        return False
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        """
+        Whether to pre-encode negative prompts during validation setup.
+        Override for models that need per-sample negative prompt encoding (e.g., with reference images).
+        """
+        return True
+
+    def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
+        """
+        Encode the negative prompt for validation.
+
+        Args:
+            negative_prompt: The negative prompt text to encode
+            positive_prompt_embeds: Optional positive prompt embeddings to use as template for zeros
+
+        Returns:
+            Dictionary of encoded negative prompt embeddings
+        """
+        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
+
+    def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
+        """
+        Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
+        """
+        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        return self._format_text_embedding(encoded_text)
 
     def conditional_loss(
         self,
@@ -1930,11 +2233,18 @@ class ImageModelFoundation(ModelFoundation):
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     VALIDATION_USES_NEGATIVE_PROMPT = True
 
-    def requires_validation_i2v_samples(self) -> bool:
-        """
-        Override for models that need to pair validation videos with their conditioning images.
-        """
-        return False
+    def scale_vae_latents_for_cache(self, latents, vae):
+        if vae is None or not hasattr(vae, "config") or latents is None:
+            return latents
+        shift_factor = getattr(vae.config, "shift_factor", None)
+        scaling_factor = getattr(self, "AUTOENCODER_SCALING_FACTOR", getattr(vae.config, "scaling_factor", 1.0))
+        if shift_factor is not None:
+            return (latents - shift_factor) * scaling_factor
+        if isinstance(latents, torch.Tensor) and hasattr(vae.config, "scaling_factor"):
+            scaled = latents * scaling_factor
+            logger.debug("Latents shape after scaling: %s", scaled.shape)
+            return scaled
+        return latents
 
     @classmethod
     def _iter_pipeline_classes(cls):
@@ -2000,81 +2310,6 @@ class ImageModelFoundation(ModelFoundation):
         batch["sigmas"] = batch["sigmas"].view(-1, 1, 1, 1)
 
         return batch
-
-    def get_lora_save_layers(self):
-        return None
-
-    def get_lora_target_layers(self):
-        if self.config.lora_type.lower() == "standard":
-            if self.config.controlnet:
-                return self.DEFAULT_CONTROLNET_LORA_TARGET
-            return self.DEFAULT_LORA_TARGET
-        elif self.config.lora_type.lower() == "lycoris":
-            return self.DEFAULT_LYCORIS_TARGET
-        else:
-            raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
-
-    def add_lora_adapter(self):
-        target_modules = self.get_lora_target_layers()
-        save_modules = self.get_lora_save_layers()
-        addkeys, misskeys = [], []
-
-        if self.config.controlnet and self.MODEL_TYPE.value == "unet":
-            logger.warning(
-                "ControlNet with UNet requires Conv2d layer support. "
-                "Using LyCORIS (LoHa) adapter instead of standard LoRA."
-            )
-            from peft import LoHaConfig
-
-            self.lora_config = LoHaConfig(
-                r=self.config.lora_rank,
-                alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
-                rank_dropout=self.config.lora_dropout,
-                module_dropout=0.0,
-                use_effective_conv2d=True,  # Critical for Conv2d support
-                target_modules=target_modules,
-                modules_to_save=save_modules,
-                # init_weights defaults to True, which is what we want
-            )
-        else:
-            lora_config_cls = LoraConfig
-            lora_config_kwargs = {}
-            if self.config.peft_lora_mode is not None:
-                if self.config.peft_lora_mode.lower() == "singlora":
-                    from peft_singlora import SingLoRAConfig, setup_singlora
-
-                    lora_config_cls = SingLoRAConfig
-                    lora_config_kwargs = {
-                        "ramp_up_steps": self.config.singlora_ramp_up_steps or 100,
-                    }
-
-                    logger.info("Enabling SingLoRA for LoRA training.")
-                    setup_singlora()
-            self.lora_config = lora_config_cls(
-                r=self.config.lora_rank,
-                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
-                lora_dropout=self.config.lora_dropout,
-                init_lora_weights=self.config.lora_initialisation_style,
-                target_modules=target_modules,
-                modules_to_save=save_modules,
-                use_dora=self.config.use_dora,
-                **lora_config_kwargs,
-            )
-
-        if self.config.controlnet:
-            self.controlnet.add_adapter(self.lora_config)
-        else:
-            self.model.add_adapter(self.lora_config)
-
-        if self.config.init_lora:
-            use_dora = self.config.use_dora if isinstance(self.lora_config, LoraConfig) else False
-            addkeys, misskeys = load_lora_weights(
-                {self.MODEL_TYPE: (self.controlnet if self.config.controlnet else self.model)},
-                self.config.init_lora,
-                use_dora=use_dora,
-            )
-
-        return addkeys, misskeys
 
     def custom_model_card_schedule_info(self):
         """

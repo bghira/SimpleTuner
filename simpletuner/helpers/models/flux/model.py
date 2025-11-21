@@ -273,12 +273,21 @@ class Flux(ImageModelFoundation):
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         # Only unsqueeze if it's missing the batch dimension
+        prompt_embeds = text_embedding["prompt_embeds"]
+        pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
         attention_mask = text_embedding.get("attention_masks", None)
-        if attention_mask.dim() == 1:  # Shape: [512]
-            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, 512]
+
+        # Add batch dimension if missing
+        if prompt_embeds.dim() == 2:  # Shape: [seq, dim]
+            prompt_embeds = prompt_embeds.unsqueeze(0)  # Shape: [1, seq, dim]
+        if pooled_prompt_embeds.dim() == 1:  # Shape: [dim]
+            pooled_prompt_embeds = pooled_prompt_embeds.unsqueeze(0)  # Shape: [1, dim]
+        if attention_mask is not None and attention_mask.dim() == 1:  # Shape: [seq]
+            attention_mask = attention_mask.unsqueeze(0)  # Shape: [1, seq]
+
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"].unsqueeze(0),
-            "pooled_prompt_embeds": text_embedding["pooled_prompt_embeds"].unsqueeze(0),
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
             "prompt_mask": (attention_mask if self.config.flux_attention_masked_training else None),
         }
 

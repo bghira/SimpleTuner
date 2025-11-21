@@ -17,6 +17,7 @@ from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.logging import get_logger
+from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -193,6 +194,122 @@ def _parse_json_like_option(raw_value, option_name: str):
     return raw_value
 
 
+def _contains_ast_markers(candidate: str) -> bool:
+    lowered = candidate.lower()
+    return (
+        "ast." in candidate
+        or "<ast." in candidate
+        or "ast object at" in lowered
+        or (candidate.strip().startswith("<") and candidate.strip().endswith(">"))
+    )
+
+
+def _normalize_structured_config_option(raw_value, option_name: str):
+    """
+    Normalize structured CLI options such as webhook_config and publishing_config.
+
+    Returns a list (preserving order) or raises ValueError with a descriptive message.
+    """
+
+    if raw_value is None:
+        return None
+
+    logger.debug("%s at start = %s (type: %s)", option_name, raw_value, type(raw_value))
+    if isinstance(raw_value, (ast.AST, ast.Name, ast.Call, ast.Dict, ast.List, ast.Constant)) or (
+        hasattr(raw_value, "__class__") and "ast" in str(type(raw_value))
+    ):
+        ast_repr = repr(raw_value)
+        raise ValueError(
+            f"{option_name} is an AST object ({ast_repr}) instead of a JSON string or file path. "
+            f"Please check your configuration format."
+        )
+
+    if isinstance(raw_value, str):
+        import os
+
+        config_str = os.path.expanduser(str(raw_value))
+        if config_str.startswith("{") or config_str.startswith("["):
+            if _contains_ast_markers(config_str):
+                raise ValueError(f"{option_name} contains AST object patterns instead of valid JSON. Received: {config_str}")
+
+            try:
+                parsed_config = json.loads(config_str)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Could not load {option_name} (invalid JSON): {exc}") from exc
+
+            if isinstance(parsed_config, dict):
+                return [parsed_config]
+            if isinstance(parsed_config, list):
+                return parsed_config
+            raise ValueError(f"Invalid {option_name} type: {type(parsed_config)}")
+
+        if os.path.isfile(config_str):
+            try:
+                with open(config_str, "r") as handle:
+                    loaded_config = json.load(handle)
+            except Exception as exc:
+                raise ValueError(f"Could not load {option_name} from file: {exc}") from exc
+
+            if isinstance(loaded_config, dict):
+                return [loaded_config]
+            if isinstance(loaded_config, list):
+                return loaded_config
+            raise ValueError(f"Invalid {option_name} type: {type(loaded_config)}")
+
+        raise ValueError(f"Could not find {option_name} file: {config_str}")
+
+    if isinstance(raw_value, dict):
+        return [raw_value]
+
+    if isinstance(raw_value, list):
+        return raw_value
+
+    raise ValueError(f"{option_name} must be string, dict, or list, got {type(raw_value)}")
+
+
+def _normalize_sana_complex_instruction(raw_value):
+    """
+    Normalize the Sana complex human instruction value so downstream code always receives a list of strings.
+    """
+
+    if raw_value in (None, "", "None"):
+        return None
+
+    if isinstance(raw_value, (list, tuple)):
+        normalized = []
+        for entry in raw_value:
+            if entry in (None, "", "None"):
+                continue
+            entry_str = str(entry).strip()
+            if entry_str:
+                normalized.append(entry_str)
+        return normalized or None
+
+    if not isinstance(raw_value, str):
+        raise ValueError(f"Unsupported type for sana_complex_human_instruction: {type(raw_value).__name__}")
+
+    candidate = raw_value.strip()
+    if not candidate or candidate == "None":
+        return None
+
+    expanded_path = os.path.expanduser(candidate)
+    if os.path.isfile(expanded_path):
+        with open(expanded_path, "r", encoding="utf-8") as handle:
+            file_contents = handle.read()
+        return _normalize_sana_complex_instruction(file_contents)
+
+    if candidate.startswith("{") or candidate.startswith("["):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as json_error:
+            logger.error(f"Could not parse sana_complex_human_instruction as JSON: {json_error}")
+            raise
+        return _normalize_sana_complex_instruction(parsed)
+
+    instructions = [line.strip() for line in candidate.splitlines() if line.strip()]
+    return instructions or [candidate]
+
+
 def _parse_bool_flag(value):
     if isinstance(value, bool):
         return value
@@ -363,27 +480,83 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     args = None
     from simpletuner.helpers.training.state_tracker import StateTracker
 
+    parser_error = None
+
+    def _normalize_model_family(value: str) -> str:
+        normalized = (value or "").strip().lower().replace("-", "_")
+        if not normalized:
+            return normalized
+
+        try:
+            from simpletuner.helpers.models.registry import ModelRegistry
+
+            families = list(ModelRegistry.model_families().keys())
+        except Exception:
+            return normalized
+
+        if normalized in families:
+            return normalized
+
+        simplified = normalized.replace("_", "")
+        for family in families:
+            if simplified == family.replace("_", ""):
+                return family
+
+        return normalized
+
+    def _normalize_input_args(raw_args):
+        if raw_args is None:
+            return None
+
+        normalized_args = []
+        skip_next = False
+
+        for idx, arg in enumerate(raw_args):
+            if skip_next:
+                skip_next = False
+                continue
+
+            if arg.startswith(("--model_family=", "--model-family=")):
+                prefix, value = arg.split("=", 1)
+                normalized_args.append(f"{prefix}={_normalize_model_family(value)}")
+                continue
+
+            if arg in ("--model_family", "--model-family") and idx + 1 < len(raw_args):
+                normalized_args.append(arg)
+                normalized_args.append(_normalize_model_family(raw_args[idx + 1]))
+                skip_next = True
+                continue
+
+            normalized_args.append(arg)
+
+        return normalized_args
+
     try:
-        args = parser.parse_args(input_args)
+        normalized_args = _normalize_input_args(input_args)
+        args = parser.parse_args(normalized_args)
     except Exception:  # pragma: no cover - parser handles errors consistently
+        parser_error = sys.exc_info()[1]
         logger.error(f"Could not parse input: {input_args}")
         import traceback
 
         logger.error(traceback.format_exc())
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
-            logger.info(f"Sending error message to webhook: {webhook_handler.webhook_url}")
-            # Sanitize error message - don't expose raw args in webhook
-            webhook_handler.send(
-                message="Command Line Argument Error: Failed to parse command line arguments. Please check the server logs for details.",
-                message_level="error",
-            )
+            try:
+                logger.info(f"Sending error message to webhook: {webhook_handler.webhook_url}")
+                # Sanitize error message - don't expose raw args in webhook
+                webhook_handler.send(
+                    message="Command Line Argument Error: Failed to parse command line arguments. Please check the server logs for details.",
+                    message_level="error",
+                )
+            except Exception as exc:
+                logger.error(f"Failed to send webhook error message: {exc}")
             logger.error(f"Argument parsing failed for input: {input_args}")
         else:
             logger.error("No webhook handler available to send error message.")
 
     if args is None and exit_on_error:
-        raise ValueError("Could not parse command line arguments. Check the logs above for details.")
+        raise ValueError(f"Could not parse command line arguments: {parser_error or 'see above logs for details'}")
 
     if args is None:
         return None
@@ -396,126 +569,22 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 logger.error(f"Could not load controlnet_custom_config: {e}")
                 raise
     if args.webhook_config is not None:
-        logger.debug("webhook_config at start = %s (type: %s)", args.webhook_config, type(args.webhook_config))
-        # Handle different types of webhook_config
-        # First, check if it's an AST object using isinstance (the proper way)
-        if isinstance(args.webhook_config, (ast.AST, ast.Name, ast.Call, ast.Dict, ast.List, ast.Constant)):
-            # This is an AST object - this indicates a configuration parsing error
-            logger.error("webhook_config is an AST object - this indicates a configuration error")
-            logger.error("webhook_config should be a JSON string or file path, not an AST object")
-            logger.error("This typically happens when the configuration is passed incorrectly from the command line")
-            logger.error("Please ensure webhook_config is properly formatted as a JSON string")
-            # Provide a helpful error message with the AST object info
-            ast_repr = repr(args.webhook_config)
-            logger.error(f"Received AST object: {ast_repr}")
-            raise ValueError(
-                f"webhook_config is an AST object ({ast_repr}) instead of a JSON string or file path. "
-                f"Please check your configuration format. "
-                f'Expected format: \'[{{"webhook_type": "raw", "callback_url": "https://..."}}]\' '
-                f"or a file path to a JSON file."
-            )
-        elif hasattr(args.webhook_config, "__class__") and "ast" in str(type(args.webhook_config)):
-            # This is an AST object - this indicates a configuration parsing error
-            logger.error("webhook_config is an AST object - this indicates a configuration error")
-            logger.error("webhook_config should be a JSON string or file path, not an AST object")
-            logger.error("This typically happens when the configuration is passed incorrectly from the command line")
-            logger.error("Please ensure webhook_config is properly formatted as a JSON string")
-            # Provide a helpful error message with the AST object info
-            ast_repr = repr(args.webhook_config)
-            logger.error(f"Received AST object: {ast_repr}")
-            raise ValueError(
-                f"webhook_config is an AST object ({ast_repr}) instead of a JSON string or file path. "
-                f"Please check your configuration format. "
-                f'Expected format: \'[{{"webhook_type": "raw", "callback_url": "https://..."}}]\' '
-                f"or a file path to a JSON file."
-            )
-        elif isinstance(args.webhook_config, str):
-            # SAFETY CHECK FIRST: Check if the string contains AST object patterns
-            # This catches the case where AST objects get converted to strings BEFORE any other processing
-            config_str = str(args.webhook_config)
+        try:
+            args.webhook_config = _normalize_structured_config_option(args.webhook_config, "webhook_config")
+        except ValueError as exc:
+            logger.error(str(exc))
+            raise
 
-            if (
-                "ast." in config_str
-                or "<ast." in config_str
-                or "ast object at" in config_str.lower()
-                or (config_str.strip().startswith("<") and config_str.strip().endswith(">"))
-            ):
-                logger.error("webhook_config contains AST object patterns in string form")
-                logger.error("This indicates a configuration parsing error where AST objects were converted to strings")
-                logger.error(f"Received webhook_config string: {config_str}")
-                raise ValueError(
-                    f"webhook_config contains AST object patterns instead of valid JSON. "
-                    f"Received: {config_str[:200]}... "
-                    f"Please check your configuration format. "
-                    f'Expected format: \'[{{"webhook_type": "raw", "callback_url": "https://..."}}]\' '
-                    f"or a file path to a JSON file."
-                )
+    if getattr(args, "publishing_config", None) is not None:
+        try:
+            args.publishing_config = _normalize_structured_config_option(args.publishing_config, "publishing_config")
+        except ValueError as exc:
+            logger.error(str(exc))
+            raise
 
-            if args.webhook_config.startswith("{") or args.webhook_config.startswith("["):
-                try:
-                    import json
-
-                    # FINAL SAFETY CHECK: Detect AST object patterns
-                    if (
-                        "ast." in args.webhook_config
-                        or "<ast." in args.webhook_config
-                        or "ast object at" in args.webhook_config.lower()
-                        or (args.webhook_config.strip().startswith("<") and args.webhook_config.strip().endswith(">"))
-                    ):
-                        logger.error("webhook_config contains AST object patterns")
-                        logger.error(f"Received webhook_config: {args.webhook_config}")
-                        raise ValueError(
-                            f"webhook_config contains AST object patterns instead of valid JSON. "
-                            f"Received: {args.webhook_config[:200]}... "
-                            f"Please check your configuration format."
-                        )
-
-                    # Use json.loads() instead of ast.literal_eval() since we're dealing with JSON
-                    # This properly handles JSON booleans (true/false) vs Python (True/False)
-                    parsed_config = json.loads(args.webhook_config)
-                    # Normalize single dict to list for consistency
-                    if isinstance(parsed_config, dict):
-                        args.webhook_config = [parsed_config]
-                    elif isinstance(parsed_config, list):
-                        args.webhook_config = parsed_config
-                    else:
-                        logger.error(f"webhook_config must be dict or list, got {type(parsed_config)}")
-                        raise ValueError(f"Invalid webhook_config type: {type(parsed_config)}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"Could not load webhook_config (invalid JSON): {e}")
-                    raise
-                except Exception as e:
-                    logger.error(f"Could not load webhook_config: {e}")
-                    raise
-            else:
-                # try to load from file
-                if os.path.isfile(args.webhook_config):
-                    try:
-                        with open(args.webhook_config, "r") as f:
-                            import json
-
-                            loaded_config = json.load(f)
-                            # Normalize single dict to list for consistency
-                            if isinstance(loaded_config, dict):
-                                args.webhook_config = [loaded_config]
-                            elif isinstance(loaded_config, list):
-                                args.webhook_config = loaded_config
-                            else:
-                                logger.error(f"webhook_config must be dict or list, got {type(loaded_config)}")
-                                raise ValueError(f"Invalid webhook_config type: {type(loaded_config)}")
-                    except Exception as e:
-                        logger.error(f"Could not load webhook_config from file: {e}")
-                        raise
-                else:
-                    logger.error(f"Could not find webhook_config file: {args.webhook_config}")
-        elif isinstance(args.webhook_config, (dict, list)):
-            # Already a dict or list - normalize to list
-            if isinstance(args.webhook_config, dict):
-                args.webhook_config = [args.webhook_config]
-            # list is already good
-        else:
-            logger.error(f"webhook_config has unsupported type: {type(args.webhook_config)}")
-            raise ValueError(f"webhook_config must be string, dict, or list, got {type(args.webhook_config)}")
+    if isinstance(getattr(args, "post_upload_script", None), str):
+        candidate = args.post_upload_script.strip()
+        args.post_upload_script = candidate or None
 
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):
@@ -523,6 +592,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 args.tread_config = ast.literal_eval(args.tread_config)
             except Exception as e:
                 logger.error(f"Could not load tread_config: {e}")
+                raise
+
+    if args.sla_config is not None and isinstance(args.sla_config, str):
+        candidate = args.sla_config.strip()
+        if candidate.startswith("{"):
+            try:
+                args.sla_config = ast.literal_eval(candidate)
+            except Exception as e:
+                logger.error(f"Could not load sla_config: {e}")
                 raise
 
     if args.optimizer == "adam_bfloat16" and args.mixed_precision != "bf16":
@@ -612,9 +690,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             )
 
         if args.quantize_via == "accelerator":
-            error_log(
-                "MPS does not benefit from models being quantized on the accelerator device. Overriding --quantize_via to 'cpu'."
-            )
             args.quantize_via = "cpu"
 
     if args.max_train_steps is not None and args.max_train_steps > 0 and args.num_train_epochs > 0:
@@ -908,18 +983,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error(f"Could not load validation_guidance_skip_layers: {e}")
             raise
 
-    if (
-        args.model_family == "sana"
-        and args.sana_complex_human_instruction is not None
-        and type(args.sana_complex_human_instruction) is str
-        and args.sana_complex_human_instruction not in ["", "None"]
-    ):
+    if args.model_family == "sana":
         try:
-            import json
-
-            args.sana_complex_human_instruction = json.loads(args.sana_complex_human_instruction)
-        except Exception as e:
-            logger.error(f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {e}")
+            args.sana_complex_human_instruction = _normalize_sana_complex_instruction(args.sana_complex_human_instruction)
+        except Exception as exc:
+            logger.error(f"Could not load complex human instruction ({args.sana_complex_human_instruction}): {exc}")
             raise
     elif args.sana_complex_human_instruction == "None":
         args.sana_complex_human_instruction = None
@@ -964,9 +1032,27 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 f"Invalid --validation_adapter_mode '{mode_value}'. Expected one of: {', '.join(sorted(valid_modes))}."
             )
         args.validation_adapter_mode = normalized_mode
+    method_value = getattr(args, "validation_method", None)
+    normalized_method = str(method_value or "simpletuner-local").strip().lower().replace("_", "-")
+    if normalized_method == "":
+        normalized_method = "simpletuner-local"
+    valid_validation_methods = {"simpletuner-local", "external-script"}
+    if normalized_method not in valid_validation_methods:
+        raise ValueError(
+            f"Invalid --validation_method '{method_value}'. Expected one of: {', '.join(sorted(valid_validation_methods))}."
+        )
+    args.validation_method = normalized_method
+    if normalized_method == "external-script":
+        script_value = getattr(args, "validation_external_script", None)
+        if script_value in (None, "", "None"):
+            raise ValueError("--validation_external_script is required when --validation_method=external-script.")
+        args.validation_external_script = str(script_value).strip()
 
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
         warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
+
+    if hasattr(args, "sageattention_usage"):
+        args.sageattention_usage = AttentionBackendMode.from_raw(args.sageattention_usage)
 
     deprecated_options = {
         # how to deprecate options:

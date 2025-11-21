@@ -54,8 +54,8 @@
     const completedJobIds = new Set();
     let lastResetJobId = null;
     let suppressAnonymousProgress = false;
-    const TERMINAL_STAGE_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'stopped']);
-    const seenToastIndices = new Set(); // Track event indices that have triggered toasts
+    const TERMINAL_STAGE_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'stopped', 'success', 'done', 'finished']);
+    const seenToastIds = new Set(); // Track event IDs that have triggered toasts
 
     /**
      * Check if a toast should be shown for this event.
@@ -68,15 +68,35 @@
             return true; // Show toast if no payload (shouldn't happen but be safe)
         }
 
-        // If event has an index, use it for deduplication
-        const eventIndex = payload.index;
-        if (eventIndex != null && eventIndex !== undefined) {
-            if (seenToastIndices.has(eventIndex)) {
-                console.log('[TOAST-DEDUP] Skipping duplicate toast for event index:', eventIndex);
+        // Try to find a unique ID for the event
+        let eventId = payload.id || payload.message_id || payload.uuid;
+
+        // Fallback: Generate a synthetic ID from content if no explicit ID exists
+        if (!eventId) {
+            const content = payload.message || payload.headline || payload.body || '';
+            const type = payload.type || payload.message_type || 'unknown';
+            const time = payload.timestamp || '';
+            if (content) {
+                // Simple hash for content deduplication
+                eventId = `synth:${type}:${content}:${time}`;
+            }
+        }
+
+        if (eventId) {
+            if (seenToastIds.has(eventId)) {
+                // console.log('[TOAST-DEDUP] Skipping duplicate toast for event ID:', eventId);
                 return false;
             }
-            // Mark this index as seen
-            seenToastIndices.add(eventIndex);
+            // Mark this ID as seen
+            seenToastIds.add(eventId);
+
+            // Optional: cleanup old IDs to prevent memory leaks
+            if (seenToastIds.size > 1000) {
+                const it = seenToastIds.values();
+                for (let i = 0; i < 200; i++) {
+                    seenToastIds.delete(it.next().value);
+                }
+            }
         }
 
         return true;
@@ -86,7 +106,7 @@
         if (!stage) {
             return false;
         }
-        const status = String(stage.status || '').toLowerCase();
+        const status = String(stage.status || '').toLowerCase().trim();
         if (!status) {
             return true;
         }
@@ -166,7 +186,7 @@
             suppressAnonymousProgress = false;
             // Clear toast deduplication tracking when a new job starts
             // to allow notifications for the new job
-            seenToastIndices.clear();
+            seenToastIds.clear();
         }
 
         if (!isActive) {
@@ -174,7 +194,9 @@
         }
 
         const preserveDuringStartup = ['starting', 'initializing'];
-        const shouldPreserveStartup = normalized === 'disconnected';
+        const isRunningWithActiveStartup = normalized === 'running' && hasActiveStartupStages();
+        const shouldPreserveStartup = normalized === 'disconnected' || isRunningWithActiveStartup;
+
         if (!preserveDuringStartup.includes(normalized) && !shouldPreserveStartup) {
             clearStartupProgress();
         }
@@ -394,8 +416,13 @@
         console.log('[SSE-DEBUG] Stage key:', possibleKey, 'stageStatus:', stageStatus);
 
         let stageJobId = data.job_id || startupJobId || activeJobId;
-        const isSameActiveJob = !data.job_id || (activeJobId && data.job_id === activeJobId);
-        if (!startupStatusActive && currentTrainingStatus === 'running' && isSameActiveJob) {
+
+        // Improved check: If training is running, ignore startup updates unless it's clearly a new job or we have active stages
+        const isNewJob = data.job_id && activeJobId && data.job_id !== activeJobId;
+        const isRunning = currentTrainingStatus === 'running';
+        const hasKnownStages = startupStages.size > 0;
+
+        if (isRunning && !startupStatusActive && !isNewJob && !hasKnownStages) {
             console.log('[SSE-DEBUG] Ignoring lifecycle stage update because training is already running');
             return;
         }
@@ -535,6 +562,18 @@
                 setStatus('Starting', 'info');
             } else {
                 console.log('[SSE-DEBUG] All startup stages complete; keeping training state running');
+                // If we are running and all stages are done, ensure we clear the startup UI
+                if (currentTrainingStatus === 'running' && !hasActiveStartupStages()) {
+                    clearStartupProgress();
+                    const trainingStatusEl = document.getElementById('training-status');
+                    if (trainingStatusEl) {
+                        // Only clear if it contains the startup alert, to avoid wiping other status messages
+                        const alert = trainingStatusEl.querySelector('.startup-progress-alert');
+                        if (alert) {
+                            alert.remove();
+                        }
+                    }
+                }
             }
         }
     }
@@ -1199,13 +1238,17 @@
                             messageType: normalizedMessageType,
                             startupStages: Array.from(startupStages.keys())
                         });
-                        // Clear initialization stages when training actually starts running
-                        clearStartupProgress();
+                        // Don't clear immediately. Let the progress/lifecycle logic handle it.
+                        // clearStartupProgress();
                         setStatus('Running', payload.severity);
                         setTrainingState('running', { job_id: jobId });
-                        const trainingStatusEl = document.getElementById('training-status');
-                        if (trainingStatusEl) {
-                            trainingStatusEl.innerHTML = '';
+
+                        // Only wipe container if no active stages
+                        if (!hasActiveStartupStages()) {
+                            const trainingStatusEl = document.getElementById('training-status');
+                            if (trainingStatusEl) {
+                                trainingStatusEl.innerHTML = '';
+                            }
                         }
                         const store = getTrainerStore();
                         if (store) {
@@ -1351,12 +1394,9 @@
             if (!notifyMessage) {
                 return;
             }
-            handleMessage({
-                type: 'notification',
-                message: notifyMessage,
-                level: severityToLevel(data?.severity),
-                payload: data
-            });
+            if (window.showToast) {
+                window.showToast(notifyMessage, mapSeverityToBootstrap(data?.severity));
+            }
         };
         trackListener('notification', notificationHandler);
 
@@ -1523,6 +1563,23 @@
                     console.log('[SSE-DEBUG] Restoring stage:', key, stageData);
                     startupStages.set(key, stageData);
                 });
+
+                // Clean up restored stages to match "stream" behavior:
+                // If any stage is active, prune all inactive/completed stages.
+                const hasActive = Array.from(startupStages.values()).some(s => isStageActive(s));
+                if (hasActive) {
+                    const toRemove = [];
+                    startupStages.forEach((stage, key) => {
+                        if (!isStageActive(stage)) {
+                            toRemove.push(key);
+                        }
+                    });
+                    toRemove.forEach(k => startupStages.delete(k));
+                } else if (data.status === 'running') {
+                    // If running and no active startup stages, we assume startup is done.
+                    // Clear everything so we don't show a stale list of "Done" items.
+                    startupStages.clear();
+                }
 
                 console.log('[SSE-DEBUG] Total stages restored:', startupStages.size);
                 if (startupStages.size > 0) {
