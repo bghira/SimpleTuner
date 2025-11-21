@@ -251,6 +251,7 @@ class Trainer:
     sidecar_lr = None
     sidecar_is_schedulefree = False
     sidecar_scheduler_disabled = False
+    publishing_manager = None
 
     def __init__(
         self,
