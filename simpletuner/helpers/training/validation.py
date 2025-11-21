@@ -1093,6 +1093,8 @@ class Validation:
 
     def _validation_method(self) -> str:
         configured_method = getattr(self.config, "validation_method", "simpletuner-local")
+        if not isinstance(configured_method, str):
+            configured_method = "simpletuner-local"
         normalised = str(configured_method or "simpletuner-local").strip().lower().replace("_", "-")
         valid_methods = {"simpletuner-local", "external-script"}
         if normalised == "":
@@ -1109,6 +1111,22 @@ class Validation:
         values: dict[str, str] = {}
         if "local_checkpoint_path" in placeholders:
             values["local_checkpoint_path"] = self._resolve_latest_checkpoint_path()
+        if "global_step" in placeholders:
+            step_value = getattr(self, "global_step", None)
+            if step_value is None:
+                step_value = StateTracker.get_global_step()
+            values["global_step"] = "" if step_value is None else str(step_value)
+        if "tracker_run_name" in placeholders:
+            run_name = getattr(self.config, "tracker_run_name", None)
+            values["tracker_run_name"] = "" if run_name is None else str(run_name)
+        if "tracker_project_name" in placeholders:
+            project_name = getattr(self.config, "tracker_project_name", None)
+            values["tracker_project_name"] = "" if project_name is None else str(project_name)
+        if "model_family" in placeholders:
+            model_family = getattr(self.config, "model_family", None)
+            if model_family is None:
+                model_family = StateTracker.get_model_family()
+            values["model_family"] = "" if model_family is None else str(model_family)
         return values
 
     def _resolve_latest_checkpoint_path(self) -> str:
