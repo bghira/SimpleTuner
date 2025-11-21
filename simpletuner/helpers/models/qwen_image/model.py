@@ -822,29 +822,57 @@ class QwenImage(ImageModelFoundation):
             self.processor = processor
             self.device = device
             self.dtype = dtype
+            self.image_processor = getattr(processor, "image_processor", None) or processor
+            if not callable(getattr(self.image_processor, "__call__", None)):
+                raise ValueError("Conditioning processor does not expose a callable image processor.")
 
         @torch.no_grad()
         def encode(self, images, captions=None):
-            embeds: List[dict] = []
+            pil_images: List[Image.Image] = []
             for image in images:
-                if not isinstance(image, Image.Image):
-                    # convert tensors/arrays back to PIL for consistent processing
-                    if isinstance(image, torch.Tensor):
-                        tensor = image.detach().cpu()
-                        if tensor.dim() == 4 and tensor.size(0) == 1:
-                            tensor = tensor.squeeze(0)
-                        if tensor.dim() == 3:
-                            array = tensor.permute(1, 2, 0).numpy()
-                            image = Image.fromarray((np.clip(array, 0.0, 1.0) * 255.0).astype(np.uint8))
-                    elif isinstance(image, np.ndarray):
-                        image = Image.fromarray(image.astype(np.uint8))
+                if isinstance(image, Image.Image):
+                    pil_image = image
+                elif isinstance(image, torch.Tensor):
+                    tensor = image.detach().cpu()
+                    if tensor.dim() == 4 and tensor.size(0) == 1:
+                        tensor = tensor.squeeze(0)
+                    if tensor.dim() == 3:
+                        array = tensor.permute(1, 2, 0).numpy()
+                        pil_image = Image.fromarray((np.clip(array, 0.0, 1.0) * 255.0).astype(np.uint8))
                     else:
-                        raise ValueError(f"Unsupported conditioning image type: {type(image)}")
+                        raise ValueError(f"Unsupported conditioning image tensor rank: {tensor.dim()}")
+                elif isinstance(image, np.ndarray):
+                    pil_image = Image.fromarray(image.astype(np.uint8))
+                else:
+                    raise ValueError(f"Unsupported conditioning image type: {type(image)}")
 
-                array = np.array(image.convert("RGB"), copy=True)
-                tensor = torch.from_numpy(array).permute(2, 0, 1).to(dtype=self.dtype)
-                tensor = tensor / 255.0
-                embeds.append({"pixel_values": tensor})
+                pil_images.append(pil_image.convert("RGB"))
+
+            image_token = getattr(self.processor, "image_token", "<|image_pad|>")
+            text_inputs: List[str] | None = None
+            if captions is not None:
+                text_inputs = []
+                for caption in captions:
+                    caption_text = (caption or "").strip()
+                    composed = f"{caption_text} {image_token}" if caption_text else image_token
+                    text_inputs.append(composed)
+            if text_inputs is None:
+                text_inputs = [image_token] * len(pil_images)
+
+            processed = self.image_processor(
+                images=pil_images,
+                text=text_inputs,
+                return_tensors="pt",
+            )
+            pixel_values = processed["pixel_values"].to(device=self.device, dtype=self.dtype)
+            image_grid_thw = processed.get("image_grid_thw", None)
+
+            embeds: List[dict] = []
+            for idx in range(pixel_values.shape[0]):
+                entry = {"pixel_values": pixel_values[idx]}
+                if image_grid_thw is not None:
+                    entry["image_grid_thw"] = image_grid_thw[idx]
+                embeds.append(entry)
             return embeds
 
     def _model_predict_edit_v1(self, prepared_batch):
