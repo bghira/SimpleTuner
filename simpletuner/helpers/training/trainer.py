@@ -62,6 +62,7 @@ from simpletuner.helpers.training.optimizer_param import (
 )
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
+from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
@@ -1679,6 +1680,21 @@ class Trainer:
             self._hub_upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf_push_")
         return self._hub_upload_executor
 
+    def _run_post_upload_script(self, *, local_path: str | None = None, remote_path: str | None = None) -> None:
+        script_template = getattr(self.config, "post_upload_script", None)
+        if script_template in (None, "", "None"):
+            return
+        current_step = None
+        if isinstance(getattr(self, "state", None), dict):
+            current_step = self.state.get("global_step")
+        run_hook_script(
+            script_template,
+            config=self.config,
+            local_path=local_path,
+            remote_path=remote_path,
+            global_step=current_step,
+        )
+
     def _drain_hub_upload_futures(self, wait: bool = False) -> None:
         if not self._hub_upload_futures:
             return
@@ -1699,13 +1715,29 @@ class Trainer:
                 remaining.append((description, future))
         self._hub_upload_futures = remaining
 
-    def _schedule_hub_upload(self, description: str, upload_fn: Callable[[], None]) -> None:
+    def _schedule_hub_upload(self, description: str, upload_fn: Callable[[], object]) -> None:
         executor = self._get_hub_executor()
+
+        def _wrapped_upload():
+            result = upload_fn()
+            remote_path = None
+            local_path = None
+            if isinstance(result, tuple):
+                if len(result) >= 1:
+                    remote_path = result[0]
+                if len(result) >= 2:
+                    local_path = result[1]
+                # If third value looks like a repo URL and remote path is missing, use it
+                if remote_path in (None, "") and len(result) >= 3:
+                    remote_path = result[2]
+            self._run_post_upload_script(local_path=local_path, remote_path=remote_path)
+            return result
+
         if executor is None:
-            upload_fn()
+            _wrapped_upload()
             return
         self._drain_hub_upload_futures(wait=False)
-        future = executor.submit(upload_fn)
+        future = executor.submit(_wrapped_upload)
         self._hub_upload_futures.append((description, future))
         logger.info("Scheduled background Hugging Face upload: %s", description)
 
@@ -3379,10 +3411,11 @@ class Trainer:
                 validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
 
                 def _upload_latest_checkpoint():
-                    self.hub_manager.upload_latest_checkpoint(
+                    remote_path, local_path, repo_url = self.hub_manager.upload_latest_checkpoint(
                         validation_images=validation_images,
                         webhook_handler=self.webhook_handler,
                     )
+                    return remote_path, local_path, repo_url
 
                 description = f"checkpoint step {self.state.get('global_step')}"
                 try:
@@ -4516,7 +4549,8 @@ class Trainer:
             if self.hub_manager is not None and self.accelerator.is_main_process:
 
                 def _upload_final_model():
-                    self.hub_manager.upload_model(validation_images, self.webhook_handler)
+                    repo_url = self.hub_manager.upload_model(validation_images, self.webhook_handler)
+                    return repo_url, self.config.output_dir, repo_url
 
                 try:
                     self._schedule_hub_upload("final model upload", _upload_final_model)
