@@ -2,11 +2,14 @@ import ast
 import copy
 import glob
 import hashlib
+import importlib.util
+import inspect
 import json
 import logging
 import math
 import os
 import random
+import re
 import shlex
 import shutil
 import signal
@@ -174,6 +177,7 @@ import torch
 import torch.nn.functional as F
 import transformers
 from accelerate import Accelerator, DeepSpeedPlugin, FullyShardedDataParallelPlugin
+from accelerate.tracking import GeneralTracker
 from accelerate.utils import (
     DistributedType,
     DynamoBackend,
@@ -273,6 +277,7 @@ class Trainer:
         self.lycoris_config = None
         self.lr_scheduler = None
         self.webhook_handler = None
+        self.custom_tracker = None
         self.publishing_manager = None
         self.should_abort = False
         self._external_abort_checker = None
@@ -332,6 +337,115 @@ class Trainer:
         if self._manual_checkpoint_consumer is None:
             return False
         return bool(self._manual_checkpoint_consumer())
+
+    def _resolve_tracker_identifiers(self) -> tuple[str, str]:
+        """Return sanitized (project_name, run_name) pairs with sensible defaults."""
+        project_raw = getattr(self.config, "tracker_project_name", None)
+        run_raw = getattr(self.config, "tracker_run_name", None)
+        project_name = ""
+        run_name = ""
+        if isinstance(project_raw, str):
+            project_name = project_raw.strip()
+        elif project_raw:
+            project_name = str(project_raw)
+        if isinstance(run_raw, str):
+            run_name = run_raw.strip()
+        elif run_raw:
+            run_name = str(run_raw)
+
+        if not project_name:
+            project_name = "simpletuner-training"
+        if not run_name:
+            run_name = "simpletuner-training-run"
+
+        return project_name, run_name
+
+    def _load_custom_tracker(self, module_name: str, run_name: str, logging_dir: Optional[str]) -> GeneralTracker:
+        """
+        Load a GeneralTracker subclass from simpletuner/custom-trackers/<module_name>.py.
+        """
+        if not module_name or not str(module_name).strip():
+            raise ValueError("A custom tracker module name must be provided when --report_to=custom-tracker.")
+
+        normalized_name = str(module_name).strip()
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", normalized_name):
+            raise ValueError(
+                f"Invalid custom tracker module name {module_name!r}. "
+                "Use a valid Python identifier without path separators."
+            )
+
+        tracker_root = Path(__file__).resolve().parents[2] / "custom-trackers"
+        module_path = tracker_root / f"{normalized_name}.py"
+        if not module_path.is_file():
+            raise FileNotFoundError(
+                f"Custom tracker module not found at {module_path}. "
+                "Place your tracker under simpletuner/custom-trackers/<name>.py."
+            )
+
+        spec = importlib.util.spec_from_file_location(f"simpletuner.custom_trackers.{normalized_name}", module_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load custom tracker spec from {module_path}.")
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+
+        tracker_classes = [
+            obj
+            for obj in module.__dict__.values()
+            if inspect.isclass(obj)
+            and issubclass(obj, GeneralTracker)
+            and obj is not GeneralTracker
+            and obj.__module__ == module.__name__
+        ]
+
+        if not tracker_classes:
+            raise ValueError(
+                f"No GeneralTracker subclass found in {module_path}. "
+                "Ensure the module defines exactly one tracker class derived from accelerate.tracking.GeneralTracker."
+            )
+        if len(tracker_classes) > 1:
+            raise ValueError(
+                f"Multiple GeneralTracker subclasses found in {module_path}. "
+                "Expose only one tracker class per module so it can be loaded unambiguously."
+            )
+
+        tracker_cls = tracker_classes[0]
+        init_signature = inspect.signature(tracker_cls.__init__)
+        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in init_signature.parameters.values())
+        accepts_logging_dir = "logging_dir" in init_signature.parameters or accepts_kwargs
+        needs_logging_dir = bool(getattr(tracker_cls, "requires_logging_directory", False))
+
+        if needs_logging_dir and not logging_dir:
+            raise ValueError(
+                f"Custom tracker '{normalized_name}' requires a logging directory but none was provided."
+                " Set --logging_dir to a writable path."
+            )
+        if needs_logging_dir and not accepts_logging_dir:
+            raise TypeError(
+                f"Custom tracker '{normalized_name}' declares requires_logging_directory=True but its __init__"
+                " does not accept a logging_dir argument."
+            )
+
+        tracker_kwargs: Dict[str, object] = {}
+        if logging_dir and accepts_logging_dir:
+            tracker_kwargs["logging_dir"] = logging_dir
+
+        try:
+            tracker_instance = tracker_cls(run_name, **tracker_kwargs)
+        except TypeError as exc:
+            expected = "(run_name)" if not tracker_kwargs else "(run_name, logging_dir)"
+            raise TypeError(
+                f"Failed to instantiate custom tracker '{normalized_name}'. "
+                f"Ensure its __init__ signature matches {expected}."
+            ) from exc
+
+        if not isinstance(tracker_instance, GeneralTracker):
+            raise TypeError(
+                f"Loaded tracker from {module_path} is not a GeneralTracker instance (got {type(tracker_instance)})."
+            )
+
+        return tracker_instance
 
     def _update_grad_metrics(
         self, target_logs: Dict[str, float], *, require_value_method: bool = False, clone_norm_value: bool = False
@@ -516,6 +630,30 @@ class Trainer:
             report_to_value = "none"
             setattr(self.config, "report_to", report_to_value)
 
+        custom_tracker_name = getattr(self.config, "custom_tracker", None)
+        if isinstance(custom_tracker_name, str):
+            custom_tracker_name = custom_tracker_name.strip()
+        elif custom_tracker_name is not None:
+            custom_tracker_name = str(custom_tracker_name).strip()
+        if custom_tracker_name == "":
+            custom_tracker_name = None
+        setattr(self.config, "custom_tracker", custom_tracker_name)
+
+        _, tracker_run_name = self._resolve_tracker_identifiers()
+        logging_dir_value = getattr(self.config, "logging_dir", None)
+
+        custom_tracker_instance: Optional[GeneralTracker] = None
+
+        def _ensure_custom_tracker() -> GeneralTracker:
+            nonlocal custom_tracker_instance
+            if custom_tracker_instance is not None:
+                return custom_tracker_instance
+            if custom_tracker_name is None:
+                raise ValueError("--custom_tracker must be provided when --report_to=custom-tracker.")
+            custom_tracker_instance = self._load_custom_tracker(custom_tracker_name, tracker_run_name, logging_dir_value)
+            self.custom_tracker = custom_tracker_instance
+            return custom_tracker_instance
+
         checkpoint_step_interval_value = getattr(self.config, "checkpoint_step_interval", None)
         if checkpoint_step_interval_value in (None, "", "None", 0):
             legacy_checkpoint_steps = getattr(self.config, "checkpointing_steps", None)
@@ -533,9 +671,36 @@ class Trainer:
 
         if isinstance(report_to_value, str):
             normalized_report = report_to_value.strip().lower()
-            report_to = None if normalized_report == "none" else report_to_value.strip()
+            if normalized_report == "none":
+                report_to = None
+            elif normalized_report == "custom-tracker":
+                report_to = _ensure_custom_tracker()
+            else:
+                report_to = report_to_value.strip()
+        elif isinstance(report_to_value, (list, tuple)):
+            resolved_trackers: List[object] = []
+            for entry in report_to_value:
+                if isinstance(entry, str) and entry.strip().lower() == "custom-tracker":
+                    resolved_trackers.append(_ensure_custom_tracker())
+                else:
+                    resolved_trackers.append(entry)
+            report_to = resolved_trackers
         else:
             report_to = report_to_value
+
+        if custom_tracker_name is not None:
+            custom_tracker_requested = False
+            if isinstance(report_to_value, str):
+                custom_tracker_requested = report_to_value.strip().lower() == "custom-tracker"
+            elif isinstance(report_to_value, (list, tuple)):
+                custom_tracker_requested = any(
+                    isinstance(entry, str) and entry.strip().lower() == "custom-tracker" for entry in report_to_value
+                )
+            if not custom_tracker_requested:
+                raise ValueError(
+                    "--custom_tracker was provided but --report_to is not set to 'custom-tracker'. "
+                    "Set --report_to=custom-tracker to enable your custom tracker."
+                )
         if not disable_accelerator:
             accelerator_custom_config = [self.config.process_group_kwargs]
             if self.config.mixed_precision == "fp8":
@@ -3190,8 +3355,7 @@ class Trainer:
 
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
             public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
-            project_name = self.config.tracker_project_name or "simpletuner-training"
-            tracker_run_name = self.config.tracker_run_name or "simpletuner-training-run"
+            project_name, tracker_run_name = self._resolve_tracker_identifiers()
             try:
                 self.accelerator.init_trackers(
                     project_name,

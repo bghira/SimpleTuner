@@ -826,6 +826,18 @@
                             </div>
                         </div>
                     </div>
+                    <div class="row g-3 mt-1" x-show="answers.report_to === 'custom-tracker'">
+                        <div class="col-12">
+                            <label class="form-label">Custom Tracker Module</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="answers.custom_tracker"
+                                   placeholder="my_tracker">
+                            <div class="form-text">
+                                File name from <code>simpletuner/custom-trackers</code> (without .py), which must expose a single <code>GeneralTracker</code> subclass.
+                            </div>
+                        </div>
+                    </div>
                     <div class="alert alert-info mt-3" x-show="!loggingEnabled">
                         Logging is currently disabled. These values will be applied automatically once you select a provider.
                     </div>

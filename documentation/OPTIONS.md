@@ -8,6 +8,8 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 The JSON filename expected is `config.json` and the key names are the same as the below `--arguments`. The leading `--` is not required for the JSON file, but it can be left in as well.
 
+Looking for ready-to-run examples? See the curated presets in [simpletuner/examples/README.md](/simpletuner/examples/README.md).
+
 ### Easy configure script (***RECOMMENDED***)
 
 The `simpletuner configure` command can be used to set up a `config.json` file with mostly-ideal default settings.

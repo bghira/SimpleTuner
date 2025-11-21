@@ -79,6 +79,7 @@ function trainingWizardComponent() {
             gradient_accumulation_steps: 1,
             tracker_project_name: '',
             tracker_run_name: '',
+            custom_tracker: null,
             lora_rank: 16,
             base_model_precision: 'int8-quanto',
             text_encoder_1_precision: 'no_change',
@@ -232,7 +233,13 @@ function trainingWizardComponent() {
                 label: 'Logging',
                 title: 'Training Configuration Wizard - Step 8: Logging',
                 required: false,
-                validate: function() { return true; }
+                validate: function() {
+                    if (this.answers.report_to === 'custom-tracker') {
+                        const name = (this.answers.custom_tracker || '').trim();
+                        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+                    }
+                    return true;
+                }
             },
             {
                 id: 'dataset',
@@ -362,7 +369,12 @@ function trainingWizardComponent() {
             if (!this.loggingEnabled) {
                 return 'Disabled';
             }
-            return `${this.answers.report_to || 'none'} (Project: ${this.trackerProjectDisplay}, Run: ${this.trackerRunDisplay})`;
+            let provider = this.answers.report_to || 'none';
+            if (this.answers.report_to === 'custom-tracker') {
+                const name = (this.answers.custom_tracker || '').trim();
+                provider = name ? `custom-tracker (${name})` : 'custom-tracker';
+            }
+            return `${provider} (Project: ${this.trackerProjectDisplay}, Run: ${this.trackerRunDisplay})`;
         },
 
         get currentModelSupportsLyrics() {
@@ -502,6 +514,10 @@ function trainingWizardComponent() {
                     const runName = config.tracker_run_name || config['--tracker_run_name'];
                     if (runName) {
                         this.answers.tracker_run_name = runName;
+                    }
+                    const customTracker = config.custom_tracker || config['--custom_tracker'];
+                    if (customTracker && typeof customTracker === 'string' && customTracker.trim().length > 0) {
+                        this.answers.custom_tracker = customTracker.trim();
                     }
                     const loraRankValue = config.lora_rank || config['--lora_rank'];
                     if (loraRankValue) {
@@ -929,7 +945,10 @@ function trainingWizardComponent() {
                     this.loggingProviders = [
                         { value: 'none', label: 'None' },
                         { value: 'wandb', label: 'Weights & Biases' },
-                        { value: 'tensorboard', label: 'TensorBoard' }
+                        { value: 'tensorboard', label: 'TensorBoard' },
+                        { value: 'comet_ml', label: 'Comet ML' },
+                        { value: 'custom-tracker', label: 'Custom Tracker' },
+                        { value: 'all', label: 'All Platforms' }
                     ];
                     return;
                 }
@@ -949,7 +968,10 @@ function trainingWizardComponent() {
                     this.loggingProviders = [
                         { value: 'none', label: 'None' },
                         { value: 'wandb', label: 'Weights & Biases' },
-                        { value: 'tensorboard', label: 'TensorBoard' }
+                        { value: 'tensorboard', label: 'TensorBoard' },
+                        { value: 'comet_ml', label: 'Comet ML' },
+                        { value: 'custom-tracker', label: 'Custom Tracker' },
+                        { value: 'all', label: 'All Platforms' }
                     ];
                 }
             } catch (error) {
@@ -958,7 +980,10 @@ function trainingWizardComponent() {
                 this.loggingProviders = [
                     { value: 'none', label: 'None' },
                     { value: 'wandb', label: 'Weights & Biases' },
-                    { value: 'tensorboard', label: 'TensorBoard' }
+                    { value: 'tensorboard', label: 'TensorBoard' },
+                    { value: 'comet_ml', label: 'Comet ML' },
+                    { value: 'custom-tracker', label: 'Custom Tracker' },
+                    { value: 'all', label: 'All Platforms' }
                 ];
             }
         },
@@ -1314,6 +1339,12 @@ function trainingWizardComponent() {
 
             this.syncTrainingDuration();
             this.updateDeepSpeedConfig();
+            if (this.answers.report_to !== 'custom-tracker') {
+                this.answers.custom_tracker = null;
+            } else if (typeof this.answers.custom_tracker === 'string') {
+                const trimmedTracker = this.answers.custom_tracker.trim();
+                this.answers.custom_tracker = trimmedTracker || null;
+            }
             const uiOnlySet = new Set(this.uiOnlyAnswerKeys || []);
 
             // Update config values, formValueStore, AND activeEnvironmentConfig
@@ -1871,6 +1902,7 @@ function trainingWizardComponent() {
                 'validation_num_inference_steps': 'validations',
                 'disable_validations': 'validations',
                 'report_to': 'publishing',
+                'custom_tracker': 'publishing',
                 'tracker_project_name': 'basic',
                 'tracker_run_name': 'basic',
                 'hub_model_id': 'publishing',
