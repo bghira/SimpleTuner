@@ -196,6 +196,8 @@ Working sample: `simpletuner/examples/external-validation/replicate_post_upload.
 
 Another sample: `simpletuner/examples/external-validation/wavespeed_post_upload.py` calls the WaveSpeed API and polls for the result, using the same placeholders.
 
+Flux-focused sample: `simpletuner/examples/external-validation/fal_post_upload.py` calls the fal.ai Flux LoRA endpoint; it requires `FAL_KEY` and only runs when `model_family` includes `flux`.
+
 <img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
 
 #### Logging training statistics

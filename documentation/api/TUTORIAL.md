@@ -151,6 +151,7 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
   - Working samples:
     - `simpletuner/examples/external-validation/replicate_post_upload.py` triggers a Replicate inference using `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}`.
     - `simpletuner/examples/external-validation/wavespeed_post_upload.py` triggers a WaveSpeed inference and polls for completion using the same placeholders.
+    - `simpletuner/examples/external-validation/fal_post_upload.py` triggers a fal.ai Flux LoRA inference (requires `FAL_KEY` and `model_family` containing `flux`).
 
 If no job is active the endpoint returns HTTP 400, so check `/api/training/status` first when scripting retries.
 
