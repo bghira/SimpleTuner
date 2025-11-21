@@ -127,6 +127,8 @@ For `config.json`:
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS`. The dataset will not be discoverable by the trainer if it is too small.
 
+> 💡 **Tip:** For large datasets where disk space is a concern, you can use `--vae_cache_disable` to perform online VAE encoding without caching the results to disk. This is implicitly enabled if you use `--vae_cache_ondemand` but adding `--vae_cache_disable` ensures nothing is written to disk.
+
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 In your `OUTPUT_DIR` directory, create a multidatabackend.json:

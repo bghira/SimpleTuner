@@ -100,6 +100,8 @@ There are a few more if using a Mac M-series machine:
 
 - `mixed_precision` should be set to `no`.
 
+> 💡 **Tip:** For large datasets where disk space is a concern, you can use `--vae_cache_disable` to perform online VAE encoding without caching the results to disk.
+
 #### Dataset considerations
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS`. The dataset will not be discoverable by the trainer if it is too small.

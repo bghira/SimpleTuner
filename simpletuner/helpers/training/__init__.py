@@ -74,6 +74,27 @@ def steps_remaining_in_epoch(current_step: int, steps_per_epoch: int) -> int:
     return remaining_steps
 
 
+def _flatten_parameters(trainable_parameters):
+    """
+    Yield parameters from a potentially nested collection of parameter groups.
+    """
+    if trainable_parameters is None:
+        return
+
+    for entry in trainable_parameters:
+        if entry is None:
+            continue
+        if isinstance(entry, dict):
+            params = entry.get("params", [])
+            if not isinstance(params, (list, tuple, set)):
+                params = [params]
+            yield from _flatten_parameters(params)
+        elif isinstance(entry, (list, tuple, set)):
+            yield from _flatten_parameters(entry)
+        else:
+            yield entry
+
+
 def trainable_parameter_count(trainable_parameters):
     """
     Convert parameter count to human-readable format.
@@ -84,7 +105,7 @@ def trainable_parameter_count(trainable_parameters):
     Returns:
         str: Formatted string like '1.01M', '2.34B', etc.
     """
-    num_params = sum(p.numel() for p in trainable_parameters)
+    num_params = sum(p.numel() for p in _flatten_parameters(trainable_parameters))
     if num_params < 1000:
         return str(num_params)
     elif num_params < 1_000_000:

@@ -276,6 +276,50 @@ class SaveHookManager:
             return self.accelerator.get_state_dict(model, unwrap=False)
         return model.state_dict()
 
+    def _save_lyrics_embedder_state(self, output_dir: str, *, is_main_process: bool):
+        """
+        Persist lyrics embedder weights when they are being trained alongside LoRA.
+        """
+        if not is_main_process:
+            return
+        if not getattr(self.args, "lyrics_embedder_train", False):
+            return
+        if "lora" not in getattr(self.args, "model_type", ""):
+            return
+        state_fn = getattr(self.model, "get_lyrics_embedder_state_dict", None)
+        if not callable(state_fn):
+            return
+        state_dict = state_fn()
+        if not state_dict:
+            return
+
+        target_dir = os.path.join(output_dir, "lyrics_embedder")
+        os.makedirs(target_dir, exist_ok=True)
+        target_path = os.path.join(target_dir, "pytorch_model.bin")
+        torch.save(state_dict, target_path)
+        logger.info("Saved lyrics embedder weights to %s", target_path)
+
+    def _load_lyrics_embedder_state(self, input_dir: str):
+        """
+        Restore lyrics embedder weights from a checkpoint if present.
+        """
+        if not getattr(self.args, "lyrics_embedder_train", False):
+            return
+        state_fn = getattr(self.model, "load_lyrics_embedder_state_dict", None)
+        if not callable(state_fn):
+            return
+        target_path = os.path.join(input_dir, "lyrics_embedder", "pytorch_model.bin")
+        if not os.path.exists(target_path):
+            return
+        try:
+            state_dict = torch.load(target_path, map_location="cpu")
+        except Exception as exc:
+            logger.error("Failed to load lyrics embedder state from %s: %s", target_path, exc)
+            return
+        loaded = state_fn(state_dict) or []
+        if loaded:
+            logger.info("Loaded lyrics embedder weights for modules: %s", ", ".join(loaded))
+
     def _save_full_model(
         self,
         models,
@@ -380,6 +424,7 @@ class SaveHookManager:
 
             if "lora" in self.args.model_type and self.args.lora_type == "standard":
                 self._save_lora(models=models, weights=weights, output_dir=output_dir)
+                self._save_lyrics_embedder_state(output_dir=output_dir, is_main_process=is_main_process)
                 return
             elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
                 self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
@@ -467,6 +512,7 @@ class SaveHookManager:
 
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
             self._load_lora(models=models, input_dir=input_dir)
+            self._load_lyrics_embedder_state(input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
             self._load_lycoris(models=models, input_dir=input_dir)
         elif not is_fsdp2_run:

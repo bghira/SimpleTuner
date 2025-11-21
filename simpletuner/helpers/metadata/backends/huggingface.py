@@ -85,8 +85,28 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.height_column = hf_config.get("height_column", None)
         self.quality_column = hf_config.get("quality_column", "quality_assessment")
         self.description_column = hf_config.get("description_column", "description")
-        self.file_extension = "jpg" if dataset_type == "image" else "mp4"
-        self.file_extension = hf_config.get("file_extension", self.file_extension)
+        self.lyrics_column = hf_config.get("lyrics_column", "lyrics")
+        self.audio_caption_fields = hf_config.get("audio_caption_fields", ["prompt", "tags"])
+        try:
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            model = StateTracker.get_model()
+            if model and hasattr(model, "caption_field_preferences"):
+                preferred = model.caption_field_preferences(dataset_type=self.dataset_type)
+                if preferred:
+                    merged = list(dict.fromkeys(list(preferred) + list(self.audio_caption_fields or [])))
+                    self.audio_caption_fields = merged
+        except Exception:
+            # Model might not be loaded or doesn't support caption preferences; ignore.
+            pass
+        dataset_type_normalized = str(dataset_type).lower() if dataset_type is not None else "image"
+        if dataset_type_normalized == "video":
+            default_extension = "mp4"
+        elif dataset_type_normalized == "audio":
+            default_extension = "wav"
+        else:
+            default_extension = "jpg"
+        self.file_extension = hf_config.get("file_extension", default_extension)
         self.num_frames_column = hf_config.get("num_frames_column", None)
         self.fps_column = hf_config.get("fps_column", None)
         self.composite_config = hf_config.get("composite_image_config", {})
@@ -205,6 +225,16 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             fallback = self._get_nested_value(item, self.fallback_caption_column)
             if fallback:
                 caption = str(fallback)
+
+        # Audio models often store prompts/lyrics in multiple fields; combine them if no caption yet.
+        if not caption and self.dataset_type == "audio":
+            parts = []
+            for field in self.audio_caption_fields or []:
+                value = self._get_nested_value(item, field)
+                if value:
+                    parts.append(str(value).strip())
+            if parts:
+                caption = " ".join([p for p in parts if p])
 
         # handle description column if specified
         if not caption and self.description_column in item:
@@ -469,9 +499,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         aspect_ratio_bucket_indices: Dict,
         metadata_updates: Optional[Dict] = None,
         delete_problematic_images: bool = False,
-        statistics: dict = {},
+        statistics: Optional[dict] = None,
         aspect_ratio_rounding: int = 2,
     ) -> Dict:
+        if statistics is None:
+            statistics = {}
         try:
             index = self.data_backend._get_index_from_path(image_path_str)
             if index is None:
@@ -493,6 +525,57 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     statistics.setdefault("skipped", {}).setdefault("quality", 0)
                     statistics["skipped"]["quality"] += 1
                     return aspect_ratio_bucket_indices
+            if self.dataset_type == "audio":
+                sample_metadata = dict(self.image_metadata.get(image_path_str, {}))
+                # Ensure audio fields are present in metadata
+                if self.audio_caption_fields:
+                    for field in self.audio_caption_fields:
+                        val = self._get_nested_value(item, field)
+                        if val:
+                            sample_metadata[field] = str(val)
+
+                # Specific handling for lyrics column
+                if "lyrics" not in sample_metadata:
+                    lyrics_val = self._get_nested_value(item, self.lyrics_column)
+                    if lyrics_val:
+                        sample_metadata["lyrics"] = str(lyrics_val)
+                    # Fallback for norm_lyrics if not found via lyrics_column
+                    elif self.lyrics_column != "norm_lyrics":
+                        norm_lyrics = self._get_nested_value(item, "norm_lyrics")
+                        if norm_lyrics:
+                            sample_metadata["lyrics"] = str(norm_lyrics)
+
+                duration_seconds = sample_metadata.get("duration_seconds") or sample_metadata.get("bucket_duration_seconds")
+                if duration_seconds is None:
+                    # Prefer explicit duration columns if provided by the dataset.
+                    duration_seconds = item.get("audio_duration") or item.get("duration") or item.get("duration_seconds")
+                if duration_seconds is None:
+                    audio_value = item.get("audio")
+                    try:
+                        if isinstance(audio_value, dict):
+                            array = audio_value.get("array")
+                            sample_rate = audio_value.get("sampling_rate")
+                        else:
+                            array = None
+                            sample_rate = None
+                        if array is not None and sample_rate:
+                            duration_seconds = float(len(array)) / float(sample_rate)
+                            sample_metadata["sample_rate"] = sample_rate
+                            sample_metadata["num_samples"] = len(array)
+                    except Exception:
+                        pass
+                bucket_key, truncated_duration = self._compute_audio_bucket(duration_seconds)
+                if truncated_duration is not None:
+                    sample_metadata["bucket_duration_seconds"] = truncated_duration
+                    sample_metadata["duration_seconds"] = truncated_duration
+                elif duration_seconds is not None:
+                    sample_metadata["duration_seconds"] = float(duration_seconds)
+                sample_metadata.setdefault("dataset_type", "audio")
+                aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(image_path_str)
+                if metadata_updates is not None:
+                    metadata_updates[image_path_str] = sample_metadata
+                statistics["total_processed"] += 1
+                return aspect_ratio_bucket_indices
             if self.dataset_type == "image":
                 sample_metadata = self._get_image_metadata_from_item(item)
 
@@ -544,6 +627,14 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     image_metadata=sample_metadata,
                     image_path=image_path_str,
                 )
+            else:
+                training_sample = None
+
+            if training_sample is None:
+                statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)
+                statistics["skipped"]["metadata_missing"] += 1
+                return aspect_ratio_bucket_indices
+
             prepared_sample = training_sample.prepare()
 
             aspect_ratio = float(prepared_sample.aspect_ratio)

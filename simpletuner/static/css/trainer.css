@@ -434,6 +434,12 @@ body {
     color: var(--success-text);
 }
 
+.event-item-warning {
+    background-color: var(--warning-bg);
+    border-left-color: var(--warning);
+    color: var(--warning-text);
+}
+
 .event-item-success {
     background-color: rgba(168, 85, 247, 0.1);
     border-left-color: var(--purple);

@@ -3,6 +3,7 @@ import os
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from queue import Queue
 from random import shuffle
@@ -115,6 +116,7 @@ class VAECache(WebhookMixin):
         vae_batch_size: int = 4,
         max_workers: int = 32,
         vae_cache_ondemand: bool = False,
+        vae_cache_disable: bool = False,
         hash_filenames: bool = True,
         dataset_type: str = None,
     ):
@@ -156,6 +158,9 @@ class VAECache(WebhookMixin):
             self.metadata_backend.load_image_metadata()
 
         self.vae_cache_ondemand = vae_cache_ondemand
+        self.vae_cache_disable = vae_cache_disable
+        if self.vae_cache_disable:
+            self.vae_cache_ondemand = True
 
         self.max_workers = max_workers
         self.read_queue = Queue()
@@ -212,7 +217,10 @@ class VAECache(WebhookMixin):
     def _read_from_storage(self, filename: str, hide_errors: bool = False) -> torch.Tensor:
         if os.path.splitext(filename)[1] != ".pt":
             try:
-                sample = self.image_data_backend.read_image(filename)
+                if self.dataset_type_enum is DatasetType.AUDIO:
+                    sample = self.image_data_backend.read(filename, as_byteIO=False)
+                else:
+                    sample = self.image_data_backend.read_image(filename)
                 return self._normalise_loaded_sample(sample)
             except Exception as e:
                 if self.delete_problematic_images:
@@ -235,6 +243,52 @@ class VAECache(WebhookMixin):
                 )
                 return None
             raise e
+
+    def _clone_metadata_value(self, value):
+        if torch.is_tensor(value):
+            return value.clone()
+        if isinstance(value, list):
+            return [self._clone_metadata_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._clone_metadata_value(item) for item in value)
+        if isinstance(value, dict):
+            return {k: self._clone_metadata_value(v) for k, v in value.items()}
+        return value
+
+    def _slice_per_sample_metadata(self, value, index: int, batch_size: int):
+        if torch.is_tensor(value):
+            if value.shape[0] == batch_size:
+                return value[index].clone()
+            return value.clone()
+        if isinstance(value, (list, tuple)):
+            if len(value) == batch_size:
+                entry = value[index]
+                return self._clone_metadata_value(entry)
+            return self._clone_metadata_value(value)
+        return value
+
+    def _gather_sample_metadata(self, filepaths):
+        metadata_entries = []
+        for filepath in filepaths:
+            resolved_metadata = None
+            try:
+                resolved_metadata = StateTracker.get_metadata_by_filepath(filepath, data_backend_id=self.id)
+            except Exception as exc:
+                logger.debug(f"StateTracker metadata lookup failed for {filepath}: {exc}")
+            if resolved_metadata is None and self.metadata_backend:
+                try:
+                    resolved_metadata = self.metadata_backend.get_metadata_by_filepath(filepath)
+                except Exception as exc:
+                    logger.debug(f"Metadata backend lookup failed for {filepath}: {exc}")
+                    resolved_metadata = None
+            metadata_entries.append(
+                {
+                    "filepath": filepath,
+                    "data_backend_id": self.id,
+                    "metadata": resolved_metadata or {},
+                }
+            )
+        return metadata_entries
 
     def _normalise_loaded_sample(self, sample):
         if self.dataset_type_enum is DatasetType.AUDIO:
@@ -318,6 +372,7 @@ class VAECache(WebhookMixin):
             else args.pretrained_vae_model_name_or_path
         )
         self.vae = self.model.get_vae()
+        self.vae.to(self.accelerator.device, dtype=StateTracker.get_vae_dtype())
 
     def rebuild_cache(self):
         self.debug_log("Rebuilding cache.")
@@ -430,7 +485,7 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
+        if StateTracker.get_model_family() in ["ltxvideo", "wan", "sanavideo"]:
             if samples.ndim == 4:
                 original_shape = samples.shape
                 samples = samples.unsqueeze(2)
@@ -501,13 +556,63 @@ class VAECache(WebhookMixin):
             }
             logger.debug(f"Video latent processing results: {output_cache_entry}")
             output_cache_entry["latents"] = latents_uncached
-        elif StateTracker.get_model_family() in ["wan"]:
+        elif StateTracker.get_model_family() in ["wan", "sanavideo"]:
             logger.debug(
-                f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
+                "Shape for Wan VAE encode: %s with latents_mean: %s and latents_std: %s",
+                latents_uncached.shape,
+                getattr(self.vae, "latents_mean", None),
+                getattr(self.vae, "latents_std", None),
             )
-            posterior = compute_wan_posterior(latents_uncached, self.vae.latents_mean, self.vae.latents_std)
-            # use deterministic posterior sampling (mode) for reproducibility
-            latents_uncached = posterior.mode()
+            try:
+                target_mu_channels = latents_uncached.shape[1] // 2
+                latents_mean = getattr(self.vae, "latents_mean", None)
+                latents_std = getattr(self.vae, "latents_std", None)
+
+                if latents_mean is None or latents_std is None or target_mu_channels <= 0:
+                    raise ValueError("Missing latent stats for WAN VAE.")
+
+                latents_mean_t = torch.as_tensor(latents_mean, device=latents_uncached.device).flatten()
+                latents_std_t = torch.as_tensor(latents_std, device=latents_uncached.device).flatten()
+
+                config_mu_channels = getattr(self.vae, "z_dim", None) or target_mu_channels
+                if config_mu_channels != target_mu_channels:
+                    logger.warning(
+                        "Latent stats mismatch for %s VAE: config z_dim=%s but latents supply %s channels. "
+                        "Using the channel count from the encoded latents.",
+                        StateTracker.get_model_family(),
+                        config_mu_channels,
+                        target_mu_channels,
+                    )
+
+                def _align_stats(name: str, tensor: torch.Tensor) -> torch.Tensor:
+                    if tensor.numel() == target_mu_channels:
+                        return tensor
+                    if tensor.numel() > target_mu_channels:
+                        logger.warning(
+                            "Truncating %s from %s to %s channels to match encoded latents.",
+                            name,
+                            tensor.numel(),
+                            target_mu_channels,
+                        )
+                        return tensor[:target_mu_channels]
+                    # Too few stats: fail with a clear error to avoid silently duplicating.
+                    raise ValueError(
+                        f"{name} has {tensor.numel()} channels but {target_mu_channels} are required to normalize WAN latents."
+                    )
+
+                latents_mean_t = _align_stats("latents_mean", latents_mean_t)
+                latents_std_t = _align_stats("latents_std", latents_std_t)
+                latents_std_t = latents_std_t.clamp_min(torch.finfo(latents_std_t.dtype).eps)
+
+                posterior = compute_wan_posterior(latents_uncached, latents_mean_t, latents_std_t)
+                # use deterministic posterior sampling (mode) for reproducibility
+                latents_uncached = posterior.mode()
+            except Exception as exc:
+                logger.warning(
+                    "WAN latent normalization failed for %s, falling back to raw latents: %s",
+                    StateTracker.get_model_family(),
+                    exc,
+                )
             output_cache_entry = latents_uncached
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
@@ -571,15 +676,22 @@ class VAECache(WebhookMixin):
 
         if len(uncached_images) > 0 and (len(images) != len(latents) or len(filepaths) != len(latents)):
             with torch.no_grad():
+                if hasattr(self.vae, "device") and self.vae.device != self.accelerator.device:
+                    self.vae.to(self.accelerator.device, dtype=StateTracker.get_vae_dtype())
                 processed_images = torch.stack(uncached_images).to(
                     self.accelerator.device, dtype=StateTracker.get_vae_dtype()
                 )
                 processed_images = self.prepare_video_latents(processed_images)
                 processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
-                latents_uncached = self.model.encode_with_vae(self.vae, processed_images)
+                metadata_for_batch = self._gather_sample_metadata([filepaths[i] for i in uncached_image_indices])
+                latents_uncached = self.model.encode_cache_batch(
+                    self.vae,
+                    processed_images,
+                    metadata_entries=metadata_for_batch,
+                )
                 latents_uncached = self.model.post_vae_encode_transform_sample(latents_uncached)
 
-                if StateTracker.get_model_family() in ["wan"]:
+                if StateTracker.get_model_family() in ["wan", "sanavideo"]:
                     if hasattr(latents_uncached, "latent_dist"):
                         latents_uncached = latents_uncached.latent_dist.parameters
                     latents_uncached = self.process_video_latents(latents_uncached)
@@ -590,34 +702,16 @@ class VAECache(WebhookMixin):
                         latents_uncached = latents_uncached.sample()
                     latents_uncached = self.process_video_latents(latents_uncached)
 
-                if (
-                    hasattr(self.vae, "config")
-                    and hasattr(self.vae.config, "shift_factor")
-                    and self.vae.config.shift_factor is not None
-                ):
-                    latents_uncached = (latents_uncached - self.vae.config.shift_factor) * getattr(
-                        self.model,
-                        "AUTOENCODER_SCALING_FACTOR",
-                        self.vae.config.scaling_factor,
-                    )
-                elif isinstance(latents_uncached, torch.Tensor) and hasattr(self.vae.config, "scaling_factor"):
-                    latents_uncached = latents_uncached * getattr(
-                        self.model,
-                        "AUTOENCODER_SCALING_FACTOR",
-                        self.vae.config.scaling_factor,
-                    )
-                    logger.debug(f"Latents shape after scaling: {latents_uncached.shape}")
+                latents_uncached = self.model.scale_vae_latents_for_cache(latents_uncached, self.vae)
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
+                extra_fields = {k: v for k, v in latents_uncached.items() if k != "latents"}
                 for i in range(num_samples):
                     single_latent = raw_latents[i : i + 1].squeeze(0)
-                    chunk = {
-                        "latents": single_latent,
-                        "num_frames": latents_uncached["num_frames"],
-                        "height": latents_uncached["height"],
-                        "width": latents_uncached["width"],
-                    }
+                    chunk = {"latents": single_latent}
+                    for key, value in extra_fields.items():
+                        chunk[key] = self._slice_per_sample_metadata(value, i, num_samples)
                     latents.append(chunk)
             elif hasattr(latents_uncached, "latent"):
                 raw_latents = latents_uncached["latent"]
@@ -655,18 +749,41 @@ class VAECache(WebhookMixin):
                 output_file, filepath, latent_vector = input_latents.pop()
             else:
                 output_file, filepath, latent_vector = self.write_queue.get()
-            file_extension = os.path.splitext(output_file)[1]
-            if file_extension != ".pt":
-                raise ValueError(f"Cannot write a latent embedding to an image path, {output_file}")
-            filepaths.append(output_file)
+
+            if not self.vae_cache_disable:
+                file_extension = os.path.splitext(output_file)[1]
+                if file_extension != ".pt":
+                    raise ValueError(f"Cannot write a latent embedding to an image path, {output_file}")
+                filepaths.append(output_file)
+
             # pytorch will hold onto all of the tensors in the list if we do not use clone()
             if isinstance(latent_vector, dict):
-                latent_vector["latents"] = latent_vector["latents"].clone()
-                latents.append(latent_vector)
+                # For audio (ACE-Step) keep metadata such as latent_lengths/lyrics in the cache.
+                keep_metadata = (
+                    StateTracker.get_model_family() in ["ace_step"] or self.dataset_type_enum is DatasetType.AUDIO
+                )
+                if keep_metadata:
+                    cloned_entry = {}
+                    for key, value in latent_vector.items():
+                        if torch.is_tensor(value):
+                            cloned_entry[key] = value.clone()
+                        else:
+                            cloned_entry[key] = self._clone_metadata_value(value)
+                    latents.append(cloned_entry)
+                    continue
+
+                cloned_entry = {}
+                for key, value in latent_vector.items():
+                    if key == "latents":
+                        cloned_entry[key] = value.clone()
+                    else:
+                        cloned_entry[key] = self._clone_metadata_value(value)
+                latents.append(cloned_entry["latents"])
             else:
                 latents.append(latent_vector.clone())
 
-        self.cache_data_backend.write_batch(filepaths, latents)
+        if not self.vae_cache_disable:
+            self.cache_data_backend.write_batch(filepaths, latents)
 
         return latents
 
@@ -886,6 +1003,15 @@ class VAECache(WebhookMixin):
                 waveform = sample[0]
             if len(sample) > 1 and isinstance(sample[1], (int, float)):
                 sample_rate = int(sample[1])
+        elif isinstance(sample, (bytes, bytearray, memoryview, BytesIO)):
+            try:
+                import soundfile as sf  # type: ignore
+
+                buffer = BytesIO(sample) if not isinstance(sample, BytesIO) else sample
+                waveform_np, sample_rate = sf.read(buffer, dtype="float32", always_2d=True)
+                waveform = torch.from_numpy(waveform_np.T)
+            except Exception as exc:
+                raise ValueError(f"Unable to decode audio bytes for {filepath}: {exc}") from exc
         else:
             waveform = sample
 
@@ -1017,6 +1143,23 @@ class VAECache(WebhookMixin):
         image_paths = [p for p in paths if not p.endswith(".pt")]
         cache_paths = [p for p in paths if p.endswith(".pt")]
 
+        if self.dataset_type_enum is DatasetType.AUDIO:
+            for path in image_paths:
+                try:
+                    yield path, self._read_from_storage(path, hide_errors=hide_errors)
+                except Exception as e:
+                    logger.error(f"Error reading audio sample {path}: {e}")
+                    if hide_errors:
+                        yield path, None
+            for path in cache_paths:
+                try:
+                    yield path, self._read_from_storage(path, hide_errors=hide_errors)
+                except Exception as e:
+                    logger.error(f"Error reading cache {path}: {e}")
+                    if hide_errors:
+                        yield path, None
+            return
+
         # Read images in batch if available
         if image_paths:
             try:
@@ -1065,8 +1208,18 @@ class VAECache(WebhookMixin):
         if not filepaths:
             return
 
-        # Use backend batch reading capabilities
+        # Use backend batch reading capabilities; audio datasets fall back to per-file reads.
         try:
+            if self.dataset_type_enum is DatasetType.AUDIO:
+                for filepath, aspect_bucket in zip(filepaths, aspect_buckets):
+                    try:
+                        sample = self._read_from_storage(filepath)
+                        if sample is not None:
+                            self.process_queue.put((filepath, sample, aspect_bucket))
+                    except Exception as read_e:
+                        logger.error(f"Error reading audio sample {filepath}: {read_e}")
+                return
+
             available_filepaths, batch_output = self.image_data_backend.read_image_batch(
                 filepaths, delete_problematic_images=self.delete_problematic_images
             )

@@ -433,6 +433,7 @@ Since Cosmos2 cannot be quantized during training, memory usage will be higher t
 - Use batch size of 1
 - Consider using `adamw_8bit` optimizer if memory is tight
 - Setting the environment variable `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` helps minimize VRAM usage when training multiple aspect ratios
+- Use `--vae_cache_disable` to perform online VAE encoding without caching to disk, which can save disk space but increases training time/memory pressure.
 
 ### Training considerations
 

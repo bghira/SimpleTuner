@@ -50,8 +50,9 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 ### Core Training Features
 
 - **User-friendly web UI** - Manage your entire training lifecycle through a sleek dashboard
+- **Multi-modal training** - Unified pipeline for **Image, Video, and Audio** generative models
 - **Multi-GPU training** - Distributed training across multiple GPUs with automatic optimization
-- **Advanced caching** - Image, video, and caption embeddings cached to disk for faster training
+- **Advanced caching** - Image, video, audio, and caption embeddings cached to disk for faster training
 - **Aspect bucketing** - Support for varied image/video sizes and aspect ratios
 - **Memory optimization** - Most models trainable on 24G GPU, many on 16G with optimizations
 - **DeepSpeed & FSDP2 integration** - Train large models on smaller GPUs with optim/grad/parameter sharding, context parallel attention, gradient checkpointing, and optimizer state offload
@@ -65,6 +66,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 | **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L/G |
 | **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
+| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
 | **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
 | **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
@@ -109,6 +111,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 Detailed quickstart guides are available for all supported models:
 
 - **[Flux.1 Guide](/documentation/quickstart/FLUX.md)** - Includes Kontext editing support and QKV fusion
+- **[ACE-Step Guide](/documentation/quickstart/ACE_STEP.md)** - **NEW!** Audio generation model training (text-to-music)
 - **[Chroma Guide](/documentation/quickstart/CHROMA.md)** - Lodestone's flow-matching transformer with Chroma-specific schedules
 - **[Stable Diffusion 3 Guide](/documentation/quickstart/SD3.md)** - Full and LoRA training with ControlNet
 - **[Stable Diffusion XL Guide](/documentation/quickstart/SDXL.md)** - Complete SDXL training pipeline

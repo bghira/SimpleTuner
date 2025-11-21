@@ -66,6 +66,7 @@ function trainingWizardComponent() {
             enable_validations: true,
             validation_steps: 100,
             validation_prompt: '',
+            validation_lyrics: '',
             validation_preview: false,
             validation_preview_steps: 1,
             report_to: 'none',
@@ -129,6 +130,7 @@ function trainingWizardComponent() {
 
         // Configuration
         modelFamilyOptions: [],
+        groupedModelFamilyOptionsList: [],
 
         // Step definitions
         steps: [
@@ -362,6 +364,22 @@ function trainingWizardComponent() {
             return `${this.answers.report_to || 'none'} (Project: ${this.trackerProjectDisplay}, Run: ${this.trackerRunDisplay})`;
         },
 
+        get currentModelSupportsLyrics() {
+            if (!this.answers.model_family) {
+                return false;
+            }
+            const details = this.modelDetailsCache[this.answers.model_family];
+            return Boolean(details?.capabilities?.supports_lyrics);
+        },
+
+        get currentModelIsAudio() {
+            if (!this.answers.model_family) {
+                return false;
+            }
+            const details = this.modelDetailsCache[this.answers.model_family];
+            return Boolean(details?.capabilities?.is_audio_model);
+        },
+
         // Initialization
         async init() {
             console.log('[TRAINING WIZARD] Initializing...');
@@ -437,6 +455,7 @@ function trainingWizardComponent() {
                     }
                     if (config.validation_steps) this.answers.validation_steps = parseInt(config.validation_steps);
                     if (config.validation_prompt) this.answers.validation_prompt = config.validation_prompt;
+                    if (config.validation_lyrics) this.answers.validation_lyrics = config.validation_lyrics;
                     if (config.validation_resolution !== undefined && config.validation_resolution !== null) {
                         this.answers.validation_resolution = String(config.validation_resolution);
                     }
@@ -600,8 +619,10 @@ function trainingWizardComponent() {
                 this.modelFamilyOptions = data.models.map(model => ({
                     value: model.family,
                     label: model.name,
-                    description: model.description
+                    description: model.description,
+                    category: (model.category || 'image').toLowerCase()
                 }));
+                this.groupedModelFamilyOptionsList = this.buildGroupedModelFamilies();
 
                 console.log('[TRAINING WIZARD] Transformed model options:', this.modelFamilyOptions);
             } catch (error) {
@@ -609,9 +630,49 @@ function trainingWizardComponent() {
                 this.modelsError = error.message;
                 // Fallback to empty array - user will see error message
                 this.modelFamilyOptions = [];
+                this.groupedModelFamilyOptionsList = [];
             } finally {
                 this.modelsLoading = false;
             }
+        },
+
+        buildGroupedModelFamilies() {
+            const preferredOrder = ['image', 'video', 'audio', 'other'];
+            const labels = {
+                image: 'Image models',
+                video: 'Video models',
+                audio: 'Audio models',
+                other: 'Other models'
+            };
+
+            const buckets = {};
+            this.modelFamilyOptions.forEach((option) => {
+                const category = (option.category || 'other').toLowerCase();
+                buckets[category] = buckets[category] || [];
+                buckets[category].push(option);
+            });
+
+            const ordered = preferredOrder
+                .filter((category) => Array.isArray(buckets[category]) && buckets[category].length > 0)
+                .map((category) => ({
+                    category,
+                    label: labels[category] || category,
+                    options: buckets[category].slice().sort((a, b) => a.label.localeCompare(b.label))
+                }));
+
+            const remainingCategories = Object.keys(buckets)
+                .filter((category) => !preferredOrder.includes(category))
+                .sort();
+
+            remainingCategories.forEach((category) => {
+                ordered.push({
+                    category,
+                    label: labels[category] || category,
+                    options: buckets[category].slice().sort((a, b) => a.label.localeCompare(b.label))
+                });
+            });
+
+            return ordered;
         },
 
         closeWizard() {
@@ -1750,6 +1811,7 @@ function trainingWizardComponent() {
                 'checkpoint_epoch_interval': 'checkpoints',
                 'validation_step_interval': 'validations',
                 'validation_prompt': 'validations',
+                'validation_lyrics': 'validations',
                 'validation_resolution': 'validations',
                 'validation_num_inference_steps': 'validations',
                 'disable_validations': 'validations',

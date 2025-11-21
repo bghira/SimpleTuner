@@ -302,7 +302,7 @@ def compute_latents(filepaths, data_backend_id: str, model):
             latents = deepfloyd_pixels(filepaths, data_backend_id, model)
 
             return latents
-        if StateTracker.get_args().vae_cache_ondemand:
+        if StateTracker.get_args().vae_cache_ondemand or getattr(StateTracker.get_args(), "vae_cache_disable", False):
             latents = StateTracker.get_vaecache(id=data_backend_id).encode_images([None] * len(filepaths), filepaths)
         else:
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -498,7 +498,7 @@ def check_latent_shapes(latents, filepaths, data_backend_id, batch, is_condition
         for example in batch:
             aspect_ratio = None
             if isinstance(example, dict):
-                aspect_ratio = example["aspect_ratio"]
+                aspect_ratio = example.get("aspect_ratio")
             elif isinstance(example, TrainingSample):
                 if hasattr(example, "aspect_ratio"):
                     aspect_ratio = example.aspect_ratio
@@ -595,10 +595,25 @@ def collate_fn(batch):
     debug_log("Compute latents")
     model = StateTracker.get_model()
     batch_data = compute_latents(filepaths, data_backend_id, model)
+    latent_metadata = None
     if isinstance(batch_data[0], dict):
+        latent_metadata = []
+        for idx, entry in enumerate(batch_data):
+            metadata_entry = {k: v for k, v in entry.items() if k != "latents"}
+            metadata_entry.setdefault("filepath", filepaths[idx])
+            metadata_entry.setdefault("data_backend_id", examples[idx]["data_backend_id"])
+            latent_metadata.append(metadata_entry)
         latent_batch = [v["latents"] for v in batch_data]
     else:
         latent_batch = batch_data
+        # Fallback: collect metadata so audio models (e.g. ACE-Step) can build attention masks from lengths.
+        if latent_metadata is None and StateTracker.get_args().model_family == "ace_step":
+            latent_metadata = []
+            for idx, fp in enumerate(filepaths):
+                meta = StateTracker.get_metadata_by_filepath(fp, data_backend_id=examples[idx]["data_backend_id"]) or {}
+                meta.setdefault("filepath", fp)
+                meta.setdefault("data_backend_id", examples[idx]["data_backend_id"])
+                latent_metadata.append(meta)
     if "deepfloyd" not in StateTracker.get_args().model_family:
         debug_log("Check latents")
         latent_batch = check_latent_shapes(latent_batch, filepaths, data_backend_id, examples)
@@ -934,6 +949,7 @@ def collate_fn(batch):
 
     return {
         "latent_batch": latent_batch,
+        "latent_metadata": latent_metadata,
         "prompts": captions,
         "text_encoder_output": all_text_encoder_outputs,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),

@@ -110,6 +110,25 @@
                 return Boolean(context.isVideoModel || context.supportsVideo);
             },
 
+            get isAudioModel() {
+                const trainer = Alpine.store('trainer');
+                if (!trainer) return false;
+                const context = trainer.modelContext || {};
+                // If context has explicit flag, use it
+                if (context.isAudioModel) return true;
+
+                // Fallback: check configValues directly
+                // We need to handle both dashed and underscored keys just in case
+                const config = trainer.configValues || {};
+                const family = (
+                    config['model_family'] ||
+                    config['--model_family'] ||
+                    ''
+                ).toString().toLowerCase();
+
+                return family === 'ace_step';
+            },
+
             get hasPrimaryDatasetAvailable() {
                 const excludeId = this.editingQueuedDataset ? this.currentDataset.id : null;
                 const queueHas = this.datasetQueue.some(dataset => this.isPrimaryDataset(dataset, excludeId));

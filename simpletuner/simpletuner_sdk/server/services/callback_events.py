@@ -288,6 +288,7 @@ class CallbackEvent:
     validation: ValidationData | None = None
     images: Sequence[str] = field(default_factory=tuple)
     videos: Sequence[Any] = field(default_factory=tuple)
+    audios: Sequence[Any] = field(default_factory=tuple)
     data: Mapping[str, Any] = field(default_factory=dict)
     raw: Mapping[str, Any] = field(default_factory=dict)
     index: int | None = None
@@ -311,6 +312,7 @@ class CallbackEvent:
             "timestamp": self.timestamp.isoformat(),
             "images": list(self.images),
             "videos": list(self.videos),
+            "audios": list(self.audios),
         }
         if self.progress:
             payload["progress"] = self.progress.to_dict()
@@ -395,6 +397,29 @@ class CallbackEvent:
                     if value:
                         videos.append(value)
 
+        audios = []
+        raw_audios = raw.get("audios") or raw.get("audio")
+        if isinstance(raw_audios, Sequence) and not isinstance(raw_audios, (str, bytes, bytearray)):
+            for audio in raw_audios:
+                if isinstance(audio, Mapping):
+                    candidate_src = None
+                    for key in ("src", "url", "data", "base64", "audio", "audio_base64"):
+                        value = audio.get(key)
+                        if isinstance(value, str) and value.strip():
+                            candidate_src = value.strip()
+                            break
+                    if not candidate_src:
+                        continue
+                    candidate_mime = audio.get("mime_type") or audio.get("mime")
+                    payload = {"src": candidate_src}
+                    if isinstance(candidate_mime, str) and candidate_mime.strip():
+                        payload["mime_type"] = candidate_mime.strip()
+                    audios.append(payload)
+                else:
+                    value = _safe_str(audio)
+                    if value:
+                        audios.append(value)
+
         data = raw.get("data") or raw.get("extras") or {}
         data = dict(data) if isinstance(data, Mapping) else {}
 
@@ -416,6 +441,7 @@ class CallbackEvent:
             validation=validation,
             images=tuple(images),
             videos=tuple(videos),
+            audios=tuple(audios),
             data=data,
             raw=dict(raw),
             reset_history=reset_history,

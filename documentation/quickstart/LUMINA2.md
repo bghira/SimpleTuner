@@ -153,6 +153,8 @@ Add to your config:
 
 Lumina2 benefits from high-quality training data. Create a `--data_backend_config` (`config/multidatabackend.json`):
 
+> 💡 **Tip:** For large datasets where disk space is a concern, you can use `--vae_cache_disable` to perform online VAE encoding without caching the results to disk.
+
 ```json
 [
   {

@@ -60,13 +60,20 @@
                 </div>
 
                 <!-- Model options -->
-                <div x-show="!modelsLoading && !modelsError" class="wizard-options">
-                    <template x-for="option in modelFamilyOptions" :key="option.value">
-                        <div class="wizard-option-card"
-                             :class="{ 'selected': answers.model_family === option.value }"
-                             @click="selectAnswer('model_family', option.value)">
-                            <h6 x-text="option.label"></h6>
-                            <p class="text-muted small" x-text="option.description"></p>
+                <div x-show="!modelsLoading && !modelsError">
+                    <template x-for="group in groupedModelFamilyOptionsList" :key="group.category">
+                        <div class="mb-3">
+                            <div class="text-uppercase text-muted small fw-semibold mb-2" x-text="group.label"></div>
+                            <div class="wizard-options">
+                                <template x-for="option in group.options" :key="option.value">
+                                    <div class="wizard-option-card"
+                                         :class="{ 'selected': answers.model_family === option.value }"
+                                         @click="selectAnswer('model_family', option.value)">
+                                        <h6 x-text="option.label"></h6>
+                                        <p class="text-muted small" x-text="option.description"></p>
+                                    </div>
+                                </template>
+                            </div>
                         </div>
                     </template>
                 </div>
@@ -679,8 +686,23 @@
                         </div>
                     </div>
 
+                    <div class="mb-3" x-show="currentModelSupportsLyrics">
+                        <label class="form-label">
+                            Validation Lyrics
+                            <span class="badge bg-info-subtle text-info-emphasis ms-2">Audio Model</span>
+                        </label>
+                        <textarea class="form-control"
+                                  x-model="answers.validation_lyrics"
+                                  @input="wizardNavigateToField('validation_lyrics')"
+                                  rows="5"
+                                  placeholder="[Verse]&#10;First line of the verse&#10;Second line of the verse&#10;&#10;[Chorus]&#10;Chorus lyrics sung here&#10;More chorus lyrics"></textarea>
+                        <div class="form-text">
+                            Lyrics provide additional conditioning for audio generation. Use [Section] tags like [Verse], [Chorus], [Bridge] to mark different parts. This field is optional.
+                        </div>
+                    </div>
+
                     <div class="row g-3">
-                        <div class="col-md-6">
+                        <div class="col-md-6" x-show="!currentModelIsAudio">
                             <label class="form-label">Validation Resolution</label>
                             <input type="text"
                                    class="form-control"
@@ -688,7 +710,7 @@
                                    placeholder="1024x1024">
                             <div class="form-text">Match the aspect ratios or sizes you plan to render (supports comma-separated values).</div>
                         </div>
-                        <div class="col-md-6">
+                        <div :class="currentModelIsAudio ? 'col-12' : 'col-md-6'">
                             <label class="form-label">Validation Inference Steps</label>
                             <input type="number"
                                    class="form-control"
@@ -700,7 +722,7 @@
                         </div>
                     </div>
 
-                    <div class="mt-3">
+                    <div class="mt-3" x-show="!currentModelIsAudio">
                         <div class="form-check">
                             <input class="form-check-input"
                                    type="checkbox"
@@ -972,6 +994,11 @@
                     <div class="review-item" x-show="answers.enable_validations">
                         <label>Validation Prompt:</label>
                         <span x-text="answers.validation_prompt || 'Not set'" class="text-truncate" style="max-width: 300px;"></span>
+                        <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
+                    </div>
+                    <div class="review-item" x-show="answers.enable_validations && currentModelSupportsLyrics">
+                        <label>Validation Lyrics:</label>
+                        <span x-text="answers.validation_lyrics ? (answers.validation_lyrics.substring(0, 50) + (answers.validation_lyrics.length > 50 ? '...' : '')) : 'Not set'" class="text-truncate" style="max-width: 300px;"></span>
                         <button class="btn btn-sm btn-link" @click="goToStep(needsModelFlavour() ? 6 : 5)">Edit</button>
                     </div>
                     <div class="review-item">

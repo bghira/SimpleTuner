@@ -12,7 +12,7 @@ def gather_dict_of_tensors_shapes(tensors: dict) -> dict:
         # some models like HiDream return a list of batched tensors..
         return {k: [x.shape for x in v] for k, v in tensors.items()}
     else:
-        return {k: v.shape for k, v in tensors.items()}
+        return {k: v.shape if v is not None else None for k, v in tensors.items()}
 
 
 def move_dict_of_tensors_to_device(tensors: dict, device) -> dict:
@@ -29,4 +29,4 @@ def move_dict_of_tensors_to_device(tensors: dict, device) -> dict:
     if "prompt_embeds" in tensors and isinstance(tensors["prompt_embeds"], list):
         return {k: [x.to(device) for x in v] for k, v in tensors.items()}
     else:
-        return {k: v.to(device) for k, v in tensors.items()}
+        return {k: v.to(device) if v is not None else None for k, v in tensors.items()}

@@ -168,6 +168,15 @@ class ParquetMetadataBackend(MetadataBackend):
         filename_column = self.parquet_config.get("filename_column")
         caption_column = self.parquet_config.get("caption_column")
         fallback_caption_column = self.parquet_config.get("fallback_caption_column")
+        caption_field_preferences = []
+        try:
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            model = StateTracker.get_model()
+            if model and hasattr(model, "caption_field_preferences"):
+                caption_field_preferences = model.caption_field_preferences(dataset_type=self.dataset_type)
+        except Exception:
+            caption_field_preferences = []
         identifier_includes_extension = self.parquet_config.get("identifier_includes_extension", False)
         captions = {}
 
@@ -194,6 +203,12 @@ class ParquetMetadataBackend(MetadataBackend):
 
             if caption is None and fallback_caption_column:
                 caption = row.get(fallback_caption_column, None)
+
+            if caption is None and caption_field_preferences:
+                for field in caption_field_preferences:
+                    if field in row and row.get(field):
+                        caption = row.get(field)
+                        break
 
             if isinstance(caption, (numpy.ndarray, pd.Series)):
                 caption = [str(item) for item in caption if item is not None]
@@ -595,6 +610,12 @@ class ParquetMetadataBackend(MetadataBackend):
             duration_seconds = self._extract_audio_value(database_row, self.parquet_config.get("audio_duration_column"))
             num_channels = self._extract_audio_value(database_row, self.parquet_config.get("audio_channels_column"))
 
+            # Fallback to common column names if explicit config fields are missing
+            if duration_seconds is None:
+                duration_seconds = self._extract_audio_value(database_row, "duration")
+            if duration_seconds is None:
+                duration_seconds = self._extract_audio_value(database_row, "duration_seconds")
+
             if (sample_rate is None or num_samples is None) and self.data_backend.exists(image_path_str):
                 audio_payload = self.data_backend.read(image_path_str)
                 if audio_payload is None:
@@ -615,15 +636,27 @@ class ParquetMetadataBackend(MetadataBackend):
 
             if duration_seconds is None and sample_rate and num_samples:
                 duration_seconds = float(num_samples) / float(sample_rate)
+            if duration_seconds is not None:
+                try:
+                    duration_seconds = float(duration_seconds)
+                except (TypeError, ValueError):
+                    duration_seconds = None
 
-            audio_metadata = {
-                "audio_path": image_path_str,
-                "sample_rate": sample_rate,
-                "num_samples": num_samples,
-                "duration_seconds": duration_seconds,
-                "num_channels": num_channels,
-                "truncation_mode": self.audio_truncation_mode,
-            }
+            overrides = {}
+            lyrics_column = self.parquet_config.get("lyrics_column")
+            if lyrics_column:
+                lyrics_value = self._extract_audio_value(database_row, lyrics_column)
+                if lyrics_value:
+                    overrides["lyrics"] = lyrics_value
+
+            audio_metadata = self._build_audio_metadata_entry(
+                sample_path=image_path_str,
+                sample_rate=sample_rate,
+                num_channels=num_channels,
+                num_samples=num_samples,
+                duration_seconds=duration_seconds,
+                overrides=overrides,
+            )
 
             max_duration = self.audio_max_duration_seconds
             if max_duration is not None and duration_seconds and duration_seconds > max_duration:
@@ -640,6 +673,8 @@ class ParquetMetadataBackend(MetadataBackend):
             if truncated_duration is not None:
                 audio_metadata["duration_seconds"] = truncated_duration
                 audio_metadata["bucket_duration_seconds"] = truncated_duration
+            elif duration_seconds is not None:
+                audio_metadata["duration_seconds"] = duration_seconds
             aspect_ratio_bucket_indices.setdefault(bucket_key, []).append(image_path_str)
 
             if metadata_updates is not None:
