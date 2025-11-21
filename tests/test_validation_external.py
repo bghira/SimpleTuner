@@ -63,6 +63,45 @@ class ValidationExternalScriptTests(unittest.TestCase):
             ):
                 validation._build_external_validation_command()
 
+    def test_command_formats_state_and_tracker_placeholders(self):
+        validation = Validation.__new__(Validation)
+        validation.global_step = 7
+        validation.config = SimpleNamespace(
+            validation_external_script="echo {global_step} {tracker_run_name} {tracker_project_name} {model_family}",
+            tracker_run_name="run-123",
+            tracker_project_name="proj-abc",
+            model_family="flux",
+        )
+
+        command = validation._build_external_validation_command()
+
+        self.assertEqual(command, ["echo", "7", "run-123", "proj-abc", "flux"])
+
+    def test_global_step_placeholder_falls_back_to_state_tracker(self):
+        validation = Validation.__new__(Validation)
+        validation.global_step = None
+        validation.config = SimpleNamespace(
+            validation_external_script="echo {global_step}",
+        )
+
+        with patch("simpletuner.helpers.training.validation.StateTracker.get_global_step", return_value=12):
+            command = validation._build_external_validation_command()
+
+        self.assertEqual(command, ["echo", "12"])
+
+    def test_model_family_placeholder_falls_back_to_state_tracker(self):
+        validation = Validation.__new__(Validation)
+        validation.global_step = None
+        validation.config = SimpleNamespace(
+            validation_external_script="echo {model_family}",
+            model_family=None,
+        )
+
+        with patch("simpletuner.helpers.training.validation.StateTracker.get_model_family", return_value="sdxl"):
+            command = validation._build_external_validation_command()
+
+        self.assertEqual(command, ["echo", "sdxl"])
+
     @patch("simpletuner.helpers.training.validation.StateTracker.get_webhook_handler", return_value=None)
     def test_run_validations_invokes_external_runner(self, _mock_webhook):
         validation = Validation.__new__(Validation)
