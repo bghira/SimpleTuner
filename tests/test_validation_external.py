@@ -102,6 +102,31 @@ class ValidationExternalScriptTests(unittest.TestCase):
 
         self.assertEqual(command, ["echo", "sdxl"])
 
+    def test_model_and_lora_type_placeholders(self):
+        validation = Validation.__new__(Validation)
+        validation.global_step = None
+        validation.config = SimpleNamespace(
+            validation_external_script="echo {model_type} {lora_type}",
+            model_type="lora",
+            lora_type="standard",
+        )
+
+        command = validation._build_external_validation_command()
+
+        self.assertEqual(command, ["echo", "lora", "standard"])
+
+    def test_validation_prefix_placeholder_uses_config(self):
+        validation = Validation.__new__(Validation)
+        validation.global_step = None
+        validation.config = SimpleNamespace(
+            validation_external_script="echo {validation_num_inference_steps}",
+            validation_num_inference_steps=22,
+        )
+
+        command = validation._build_external_validation_command()
+
+        self.assertEqual(command, ["echo", "22"])
+
     @patch("simpletuner.helpers.training.validation.StateTracker.get_webhook_handler", return_value=None)
     def test_run_validations_invokes_external_runner(self, _mock_webhook):
         validation = Validation.__new__(Validation)
