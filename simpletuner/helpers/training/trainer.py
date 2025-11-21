@@ -3403,10 +3403,12 @@ class Trainer:
                 self.config.checkpoints_total_limit,
             )
 
+        save_path = None
         if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
-            self.checkpoint_state_save(self.config.output_dir)
+            save_path = self.checkpoint_state_save(self.config.output_dir)
 
-        if upload_to_hub and self.hub_manager is not None:
+        hub_upload_planned = upload_to_hub and self.hub_manager is not None
+        if hub_upload_planned:
             if self.accelerator.is_main_process:
                 validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
 
@@ -3422,6 +3424,9 @@ class Trainer:
                     self._schedule_hub_upload(description, _upload_latest_checkpoint)
                 except Exception as e:
                     logger.error(f"Error uploading to hub: {e}, continuing training.")
+        else:
+            if save_path:
+                self._run_post_upload_script(local_path=save_path, remote_path=None)
 
     def _send_webhook_msg(
         self, message: str, message_level: str = "info", store_response: bool = False, emit_event: bool = True
@@ -3847,6 +3852,7 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
+        return save_path
 
     def checkpoint_state_latest(self, output_dir):
         if self.checkpoint_manager:
@@ -4557,6 +4563,8 @@ class Trainer:
                 except Exception as e:
                     logger.error(f"Error uploading final model to hub: {e}")
                 self._finish_hub_uploads()
+            else:
+                self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(

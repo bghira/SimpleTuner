@@ -349,6 +349,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **Placeholders**: Same replacements as `--validation_external_script`, plus `{remote_checkpoint_path}` (URI returned by the provider) so you can forward the published URL to downstream systems.
 - **Notes**:
   - Scripts run per provider/upload; errors are logged but do not halt training.
+  - Scripts are also invoked when no remote upload occurs, so you can use them for local automation (e.g., running inference on another GPU).
   - SimpleTuner does not ingest results from your script—log to your tracker directly if you want metrics or images recorded.
 - **Example**:
   ```bash
@@ -368,6 +369,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
   - `simpletuner/examples/external-validation/replicate_post_upload.py` shows a Replicate hook that consumes `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger inference after uploads.
   - `simpletuner/examples/external-validation/wavespeed_post_upload.py` shows a WaveSpeed hook using the same placeholders plus WaveSpeed's async polling.
   - `simpletuner/examples/external-validation/fal_post_upload.py` shows a fal.ai Flux LoRA hook (requires `FAL_KEY`).
+  - `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on a secondary GPU and works even without remote uploads.
 
 
 ### `--validation_adapter_path`

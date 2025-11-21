@@ -5,6 +5,7 @@ This directory contains working samples that demonstrate how to run external scr
 - `replicate_post_upload.py` – triggers a Replicate inference after uploads, using placeholders like `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}`.
 - `wavespeed_post_upload.py` – triggers a WaveSpeed inference after uploads and polls for completion using the same placeholders.
 - `fal_post_upload.py` – triggers a fal.ai Flux LoRA inference after uploads (requires `FAL_KEY`; only runs when `model_family` contains `flux`).
+- `use_second_gpu.py` – runs a Flux LoRA on a secondary GPU (defaults to `cuda:1`) using local or Hub LoRA weights; can be used even when no uploads occur.
 
 Both scripts are meant to be used with `--post_upload_script`:
 
@@ -30,4 +31,5 @@ Placeholders available to hook scripts (resolved from the trainer config/state):
 Notes:
 
 - Hooks run asynchronously; failures are logged but do not block training.
+- Hooks are invoked even when no remote upload occurs so you can use them for local automation (for example, spinning up inference on another GPU).
 - SimpleTuner does not consume outputs from these scripts. If you need tracker updates or artifact logging, emit them directly from your hook.

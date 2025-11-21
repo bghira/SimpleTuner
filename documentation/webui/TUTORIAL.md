@@ -198,6 +198,8 @@ Another sample: `simpletuner/examples/external-validation/wavespeed_post_upload.
 
 Flux-focused sample: `simpletuner/examples/external-validation/fal_post_upload.py` calls the fal.ai Flux LoRA endpoint; it requires `FAL_KEY` and only runs when `model_family` includes `flux`.
 
+Local GPU sample: `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on another GPU (defaults to `cuda:1`) and can be used even when no uploads occur.
+
 <img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
 
 #### Logging training statistics
