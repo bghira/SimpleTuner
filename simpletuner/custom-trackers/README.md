@@ -24,6 +24,7 @@ class MyTracker(GeneralTracker):
     requires_logging_directory = False
 
     def __init__(self, run_name: str, logging_dir: str | None = None):
+        super().__init__(run_name)
         self.run_name = run_name
         self._records = []
 

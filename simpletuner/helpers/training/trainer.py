@@ -377,6 +377,13 @@ class Trainer:
 
         tracker_root = Path(__file__).resolve().parents[2] / "custom-trackers"
         module_path = tracker_root / f"{normalized_name}.py"
+        module_path = module_path.resolve()
+        tracker_root_resolved = tracker_root.resolve()
+        if not module_path.is_relative_to(tracker_root_resolved):
+            raise ValueError(
+                f"Custom tracker path resolves outside the allowed directory. "
+                f"Expected under {tracker_root_resolved}, got {module_path}"
+            )
         if not module_path.is_file():
             raise FileNotFoundError(
                 f"Custom tracker module not found at {module_path}. "

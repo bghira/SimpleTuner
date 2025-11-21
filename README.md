@@ -59,6 +59,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **S3 training** - Train directly from cloud storage (Cloudflare R2, Wasabi S3)
 - **EMA support** - Exponential moving average weights for improved stability and quality
 - **Custom experiment trackers** - Drop an `accelerate.GeneralTracker` into `simpletuner/custom-trackers` and use `--report_to=custom-tracker --custom_tracker=<name>`
+- **Custom experiment trackers** - Drop an `accelerate.GeneralTracker` into `simpletuner/custom-trackers` and use `--report_to=custom-tracker --custom_tracker=<name>`
 
 ### Model Architecture Support
 
