@@ -62,6 +62,7 @@ class MockArgs:
         self.output_dir = "/tmp/output"
         self.seed = 42
         self.push_to_hub = False
+        self.push_to_hub_background = False
         self.hub_model_id = None
 
         # Additional attributes that may be referenced by conditioning

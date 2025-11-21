@@ -50,6 +50,23 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="push_to_hub_background",
+            arg_name="--push_to_hub_background",
+            ui_label="Upload In Background",
+            field_type=FieldType.CHECKBOX,
+            tab="publishing",
+            section="publishing_controls",
+            default_value=False,
+            dependencies=[FieldDependency(field="push_to_hub", operator="equals", value=True, action="show")],
+            help_text="Send Hub uploads to a background worker so the training loop is not blocked.",
+            tooltip="When enabled, checkpoint and final uploads run in a separate thread while training continues.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="hub_model_id",
             arg_name="--hub_model_id",
             ui_label="Repository ID",

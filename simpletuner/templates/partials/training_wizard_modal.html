@@ -568,6 +568,19 @@
                         </button>
                     </div>
 
+                    <div class="form-check mt-3">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="push-to-hub-background"
+                               x-model="answers.push_to_hub_background">
+                        <label class="form-check-label" for="push-to-hub-background">
+                            Upload in background while training continues
+                        </label>
+                        <div class="form-text">
+                            Sends Hub uploads to a background worker so checkpoints and final saves do not block the training loop.
+                        </div>
+                    </div>
+
                     <div class="mt-4">
                         <label class="form-label">Hub Repository ID</label>
                         <input type="text"
