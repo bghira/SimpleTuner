@@ -735,6 +735,9 @@ function trainingWizardComponent() {
             // Debug: Log activeEnvironmentConfig to confirm values are set
             const trainerStore = Alpine.store('trainer');
             if (trainerStore) {
+                // Sync values to DOM to ensure FormData captures them if fields are present
+                trainerStore.applyStoredValues();
+
                 console.log('[TRAINING WIZARD] activeEnvironmentConfig after applying answers:',
                     JSON.stringify({
                         model_family: trainerStore.activeEnvironmentConfig?.model_family,
@@ -749,14 +752,57 @@ function trainingWizardComponent() {
 
             // Save the config to disk (bypass the dialog, use direct save)
             if (trainerStore && typeof trainerStore.doSaveConfig === 'function') {
-                console.log('[TRAINING WIZARD] Saving configuration to disk...');
+                console.log('[TRAINING WIZARD] Saving configuration to disk (replace mode)...');
                 try {
-                    // Use doSaveConfig to bypass the dialog
+                    // 1. Capture keys that must be preserved from the current environment
+                    // These are system-level settings that the wizard doesn't manage but shouldn't wipe
+                    const preserved = {};
+                    const keysToKeep = [
+                        'data_backend_config', '--data_backend_config',
+                        'output_dir', '--output_dir',
+                        'job_id', '--job_id',
+                        'webhook_config', '--webhook_config'
+                    ];
+
+                    const currentConfig = trainerStore.activeEnvironmentConfig || {};
+                    console.log('[TRAINING WIZARD] Keys before clean:', Object.keys(currentConfig).length);
+
+                    keysToKeep.forEach(k => {
+                        if (currentConfig[k] !== undefined) {
+                            preserved[k] = currentConfig[k];
+                        }
+                    });
+
+                    // 2. Reset the environment state to "clean"
+                    // Modify in-place to ensure reactivity/reference stability
+                    if (trainerStore.activeEnvironmentConfig) {
+                        // Delete all keys first
+                        Object.keys(trainerStore.activeEnvironmentConfig).forEach(key => {
+                            delete trainerStore.activeEnvironmentConfig[key];
+                        });
+                        // Restore preserved keys
+                        Object.assign(trainerStore.activeEnvironmentConfig, preserved);
+                    } else {
+                        trainerStore.activeEnvironmentConfig = { ...preserved };
+                    }
+
+                    console.log('[TRAINING WIZARD] Keys after clean:', Object.keys(trainerStore.activeEnvironmentConfig).length);
+
+                    // Also reset formValueStore and configValues to reflect the clean slate in the UI
+                    trainerStore.formValueStore = {}; // Will be repopulated by applyAnswersToForm
+                    trainerStore.configValues = { ...preserved };
+
+                    // 3. Apply wizard answers to the clean state
+                    this.applyAnswersToForm();
+
+                    // 4. Save using 'replace' mode to ignore stale DOM inputs
                     const autoPreserve = trainerStore.autoPreserveEnabled ? trainerStore.autoPreserveEnabled() : false;
                     await trainerStore.doSaveConfig({
                         createBackup: false,
-                        preserveDefaults: autoPreserve
+                        preserveDefaults: autoPreserve,
+                        replace: true
                     });
+
                     console.log('[TRAINING WIZARD] Configuration saved successfully');
                 } catch (error) {
                     console.error('[TRAINING WIZARD] Config save failed:', error);
@@ -1321,15 +1367,19 @@ function trainingWizardComponent() {
 
                     // 2. Update formValueStore (used by ensureCompleteFormData)
                     if (trainerStore.formValueStore) {
-                        trainerStore.formValueStore[fieldName] = {
+                        const descriptor = {
                             value: value,
                             kind: typeof value === 'boolean' ? 'checkbox' : 'text'
                         };
+
+                        // Update both dashed and bare versions to ensure consistency
+                        // This prevents stale values in formValueStore from overriding the new config
+                        trainerStore.formValueStore[fieldName] = descriptor;
+                        trainerStore.formValueStore[key] = descriptor;
+
                         if (key === 'checkpoint_step_interval') {
-                            trainerStore.formValueStore['--checkpointing_steps'] = {
-                                value: value,
-                                kind: 'text'
-                            };
+                            trainerStore.formValueStore['--checkpointing_steps'] = descriptor;
+                            trainerStore.formValueStore['checkpointing_steps'] = descriptor;
                         }
                     }
 
