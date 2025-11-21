@@ -2,8 +2,6 @@ import base64
 import inspect
 import logging
 import os
-import shlex
-import string
 import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
@@ -55,6 +53,7 @@ from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepSchedu
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.script_runner import build_script_command, run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_adapters import (
     ValidationAdapterRun,
@@ -1105,30 +1104,6 @@ class Validation:
             )
         return normalised
 
-    def _external_script_placeholder_values(self, script_template: str) -> dict[str, str]:
-        formatter = string.Formatter()
-        placeholders = {field_name for _, field_name, _, _ in formatter.parse(script_template) if field_name}
-        values: dict[str, str] = {}
-        if "local_checkpoint_path" in placeholders:
-            values["local_checkpoint_path"] = self._resolve_latest_checkpoint_path()
-        if "global_step" in placeholders:
-            step_value = getattr(self, "global_step", None)
-            if step_value is None:
-                step_value = StateTracker.get_global_step()
-            values["global_step"] = "" if step_value is None else str(step_value)
-        if "tracker_run_name" in placeholders:
-            run_name = getattr(self.config, "tracker_run_name", None)
-            values["tracker_run_name"] = "" if run_name is None else str(run_name)
-        if "tracker_project_name" in placeholders:
-            project_name = getattr(self.config, "tracker_project_name", None)
-            values["tracker_project_name"] = "" if project_name is None else str(project_name)
-        if "model_family" in placeholders:
-            model_family = getattr(self.config, "model_family", None)
-            if model_family is None:
-                model_family = StateTracker.get_model_family()
-            values["model_family"] = "" if model_family is None else str(model_family)
-        return values
-
     def _resolve_latest_checkpoint_path(self) -> str:
         checkpoint_manager = CheckpointManager(self.config.output_dir)
         latest_checkpoint = checkpoint_manager.get_latest_checkpoint()
@@ -1148,17 +1123,34 @@ class Validation:
         if script_template in (None, "", "None"):
             raise ValueError("--validation_external_script is required when --validation_method=external-script.")
         script_template = str(script_template).strip()
-        placeholder_values = self._external_script_placeholder_values(script_template)
-        try:
-            formatted = script_template.format(**placeholder_values)
-        except KeyError as exc:
-            missing = exc.args[0]
-            raise ValueError(f"Unknown placeholder '{missing}' in --validation_external_script.") from None
-        expanded = os.path.expandvars(os.path.expanduser(formatted))
-        command = shlex.split(expanded)
-        if not command:
-            raise ValueError("validation_external_script produced an empty command after formatting.")
-        return command
+        output_dir = getattr(self.config, "output_dir", None)
+
+        def _resolver(name: str):
+            if name == "local_checkpoint_path":
+                return self._resolve_latest_checkpoint_path()
+            if name == "remote_checkpoint_path":
+                return ""
+            if name == "global_step":
+                step_value = getattr(self, "global_step", None) or StateTracker.get_global_step()
+                return "" if step_value is None else str(step_value)
+            if name == "tracker_run_name":
+                return getattr(self.config, "tracker_run_name", "") or ""
+            if name == "tracker_project_name":
+                return getattr(self.config, "tracker_project_name", "") or ""
+            if name == "model_family":
+                model_family = getattr(self.config, "model_family", None) or StateTracker.get_model_family()
+                return "" if model_family is None else str(model_family)
+            if name == "huggingface_path":
+                return getattr(self.config, "hub_model_id", "") or ""
+            if name == "model_type":
+                return getattr(self.config, "model_type", "") or ""
+            if name == "lora_type":
+                return getattr(self.config, "lora_type", "") or ""
+            if name.startswith("validation_"):
+                return getattr(self.config, name, "") or ""
+            raise KeyError(name)
+
+        return build_script_command(script_template, _resolver)
 
     def _run_external_validation(self, validation_type: str | None, step: int):
         command = self._build_external_validation_command()
@@ -3037,13 +3029,29 @@ class Validation:
         }
 
         try:
-            self.publishing_manager.publish(
+            results = self.publishing_manager.publish(
                 artifact_root_path,
                 artifact_name=artifact_name,
                 metadata=metadata,
             )
         except Exception as exc:
             logger.error("Failed to publish artifacts via publishing_config: %s", exc)
+            return
+
+        script_template = getattr(self.config, "post_upload_script", None)
+        if results and script_template not in (None, "", "None"):
+            for result in results:
+                if result is None:
+                    continue
+                remote_uri = getattr(result, "uri", None)
+                local_path = str(getattr(result, "artifact_path", "") or "")
+                run_hook_script(
+                    script_template,
+                    config=self.config,
+                    local_path=local_path or None,
+                    remote_path=remote_uri,
+                    global_step=self.global_step,
+                )
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""
