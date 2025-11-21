@@ -61,6 +61,7 @@ function trainingWizardComponent() {
             max_train_steps: 0,
             push_to_hub: false,  // Default to keeping files local
             push_checkpoints_to_hub: null,
+            push_to_hub_background: false,
             checkpoint_step_interval: 100,  // Default to 100 steps
             checkpoint_epoch_interval: null,
             enable_validations: true,
@@ -435,6 +436,9 @@ function trainingWizardComponent() {
                     }
                     if (config.push_checkpoints_to_hub !== undefined) {
                         this.answers.push_checkpoints_to_hub = config.push_checkpoints_to_hub === true || config.push_checkpoints_to_hub === 'true';
+                    }
+                    if (config.push_to_hub_background !== undefined) {
+                        this.answers.push_to_hub_background = config.push_to_hub_background === true || config.push_to_hub_background === 'true';
                     }
                     const rawCheckpointSteps = config.checkpoint_step_interval
                         ?? config['--checkpoint_step_interval']
@@ -1807,6 +1811,7 @@ function trainingWizardComponent() {
                 'model_type': 'basic',
                 'push_to_hub': 'publishing',
                 'push_checkpoints_to_hub': 'publishing',
+                'push_to_hub_background': 'publishing',
                 'checkpoint_step_interval': 'checkpoints',
                 'checkpoint_epoch_interval': 'checkpoints',
                 'validation_step_interval': 'validations',

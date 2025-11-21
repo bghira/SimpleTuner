@@ -221,6 +221,11 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 
 - **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes. Using `--push_checkpoints_to_hub` will additionally push every intermediary checkpoint.
 
+### `--push_to_hub_background`
+
+- **What**: Uploads to Hugging Face Hub from a background worker so checkpoint pushes do not pause the training loop.
+- **Why**: Keeps training and validation running while Hub uploads proceed asynchronously. Final uploads are still awaited before the run exits so failures surface.
+
 ### `--hub_model_id`
 
 - **What**: The name of the Huggingface Hub model and local results directory.
@@ -766,6 +771,7 @@ usage: train.py [-h] --model_family
                 [--fuse_optimizer [FUSE_OPTIMIZER]]
                 [--optimizer_release_gradients [OPTIMIZER_RELEASE_GRADIENTS]]
                 [--push_to_hub [PUSH_TO_HUB]]
+                [--push_to_hub_background [PUSH_TO_HUB_BACKGROUND]]
                 [--push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]]
                 [--hub_model_id HUB_MODEL_ID]
                 [--model_card_private [MODEL_CARD_PRIVATE]]
@@ -1407,6 +1413,9 @@ options:
   --push_to_hub [PUSH_TO_HUB]
                         Automatically upload the trained model to your Hugging
                         Face Hub repository.
+  --push_to_hub_background [PUSH_TO_HUB_BACKGROUND]
+                        Run Hub uploads in a background worker so training is
+                        not blocked while pushing.
   --push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]
                         Upload intermediate checkpoints to the same Hugging
                         Face repository during training.

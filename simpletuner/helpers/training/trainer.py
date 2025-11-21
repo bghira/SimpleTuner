@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -280,6 +281,8 @@ class Trainer:
         self.sidecar_lr = None
         self.sidecar_is_schedulefree = False
         self.sidecar_scheduler_disabled = False
+        self._hub_upload_executor: ThreadPoolExecutor | None = None
+        self._hub_upload_futures: deque[tuple[str, Future]] = deque()
         StateTracker.set_job_id(job_id)
         try:
             self.parse_arguments(
@@ -1465,6 +1468,8 @@ class Trainer:
             self._emit_event(status_event, message_level="critical")
 
             raise e
+        finally:
+            self._finish_hub_uploads()
 
     def _initialize_components_with_signal_check(self, initializers):
         """
@@ -1637,6 +1642,56 @@ class Trainer:
             return int(float(framerate))
         except (ValueError, TypeError):
             return None
+
+    def _push_to_hub_background_enabled(self) -> bool:
+        return (
+            bool(getattr(self.config, "push_to_hub_background", False))
+            and bool(getattr(self.config, "push_to_hub", False))
+            and (not self.accelerator or self.accelerator.is_main_process)
+        )
+
+    def _get_hub_executor(self) -> ThreadPoolExecutor | None:
+        if not self._push_to_hub_background_enabled():
+            return None
+        if self._hub_upload_executor is None:
+            self._hub_upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf_push_")
+        return self._hub_upload_executor
+
+    def _drain_hub_upload_futures(self, wait: bool = False) -> None:
+        if not self._hub_upload_futures:
+            return
+        remaining: deque[tuple[str, Future]] = deque()
+        while self._hub_upload_futures:
+            description, future = self._hub_upload_futures.popleft()
+            if wait or future.done():
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.error("Hugging Face upload task '%s' failed: %s", description, exc, exc_info=True)
+                    if self.webhook_handler:
+                        self.webhook_handler.send(
+                            message=f"Hugging Face upload failed for {description}: {exc}",
+                            message_level="error",
+                        )
+            else:
+                remaining.append((description, future))
+        self._hub_upload_futures = remaining
+
+    def _schedule_hub_upload(self, description: str, upload_fn: Callable[[], None]) -> None:
+        executor = self._get_hub_executor()
+        if executor is None:
+            upload_fn()
+            return
+        self._drain_hub_upload_futures(wait=False)
+        future = executor.submit(upload_fn)
+        self._hub_upload_futures.append((description, future))
+        logger.info("Scheduled background Hugging Face upload: %s", description)
+
+    def _finish_hub_uploads(self) -> None:
+        self._drain_hub_upload_futures(wait=True)
+        if self._hub_upload_executor is not None:
+            self._hub_upload_executor.shutdown(wait=True)
+            self._hub_upload_executor = None
 
     def _misc_init(self):
         """things that do not really need an order."""
@@ -3295,13 +3350,17 @@ class Trainer:
 
         if upload_to_hub and self.hub_manager is not None:
             if self.accelerator.is_main_process:
-                try:
+                validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
+
+                def _upload_latest_checkpoint():
                     self.hub_manager.upload_latest_checkpoint(
-                        validation_images=(
-                            getattr(self.validation, "validation_images") if self.validation is not None else None
-                        ),
+                        validation_images=validation_images,
                         webhook_handler=self.webhook_handler,
                     )
+
+                description = f"checkpoint step {self.state.get('global_step')}"
+                try:
+                    self._schedule_hub_upload(description, _upload_latest_checkpoint)
                 except Exception as e:
                     logger.error(f"Error uploading to hub: {e}, continuing training.")
 
@@ -4429,7 +4488,15 @@ class Trainer:
                 logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
 
             if self.hub_manager is not None and self.accelerator.is_main_process:
-                self.hub_manager.upload_model(validation_images, self.webhook_handler)
+
+                def _upload_final_model():
+                    self.hub_manager.upload_model(validation_images, self.webhook_handler)
+
+                try:
+                    self._schedule_hub_upload("final model upload", _upload_final_model)
+                except Exception as e:
+                    logger.error(f"Error uploading final model to hub: {e}")
+                self._finish_hub_uploads()
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(

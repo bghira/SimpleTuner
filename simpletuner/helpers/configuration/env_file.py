@@ -16,6 +16,7 @@ env_to_args_map = {
     "LORA_TYPE": "--lora_type",
     "LYCORIS_CONFIG": "--lycoris_config",
     "PUSH_TO_HUB": "--push_to_hub",
+    "PUSH_TO_HUB_BACKGROUND": "--push_to_hub_background",
     "PUSH_CHECKPOINTS": "--push_checkpoints_to_hub",
     "MAX_NUM_STEPS": "--max_train_steps",
     "NUM_EPOCHS": "--num_train_epochs",
