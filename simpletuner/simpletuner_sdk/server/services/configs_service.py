@@ -1154,6 +1154,7 @@ class ConfigsService:
         json_path_fields = {
             "--data_backend_config",
             "--webhook_config",
+            "--publishing_config",
             "--lycoris_config",
             "--user_prompt_library",
         }
@@ -1241,7 +1242,7 @@ class ConfigsService:
                     config_dict[config_key] = converted_value
                     continue
                 # webhook_config should preserve list structure (can contain multiple webhook configs)
-                if config_key in {"--webhook_config", "webhook_config"}:
+                if config_key in {"--webhook_config", "webhook_config", "--publishing_config", "publishing_config"}:
                     config_dict[config_key] = value
                     continue
                 # Filter out empty strings from list before taking last element

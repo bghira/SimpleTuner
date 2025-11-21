@@ -6,6 +6,7 @@ import sys
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Union
 
 import diffusers
@@ -1018,6 +1019,7 @@ class Validation:
         is_fsdp: bool = False,
         model_evaluator=None,
         trainable_parameters=None,
+        publishing_manager=None,
     ):
         self.trainable_parameters = trainable_parameters
         self.accelerator = accelerator
@@ -1044,6 +1046,7 @@ class Validation:
         self.embed_cache = embed_cache
         self.ema_model = ema_model
         self.ema_enabled = False
+        self.publishing_manager = publishing_manager
         self.deepfloyd = True if "deepfloyd" in self.config.model_family else False
         self.deepfloyd_stage2 = True if str(self.config.model_flavour).startswith("ii-") else False
         preset_validation_inputs = None
@@ -1497,6 +1500,7 @@ class Validation:
                     )
             self.validation_images = master_validation_images
             self.finalize_validation(validation_type)
+            self._publish_validation_artifacts(validation_type)
             if self.evaluation_result is not None:
                 logger.info(f"Evaluation result: {self.evaluation_result}")
             logger.debug("Validation process completed.")
@@ -2890,6 +2894,45 @@ class Validation:
 
         else:
             logger.debug("Skipping EMA model restoration for validation, as we are not using EMA.")
+
+    def _publish_validation_artifacts(self, validation_type: str | None):
+        if self.publishing_manager is None or not getattr(self.publishing_manager, "configured", False):
+            return
+        if hasattr(self.accelerator, "is_main_process") and not self.accelerator.is_main_process:
+            return
+
+        artifact_root = getattr(self.config, "output_dir", None)
+        if not artifact_root:
+            logger.warning("publishing_config provided but output_dir is missing; skipping publishing.")
+            return
+
+        artifact_root_path = Path(artifact_root)
+        if not artifact_root_path.exists():
+            logger.warning("Publishing target %s does not exist; skipping publishing.", artifact_root_path)
+            return
+
+        artifact_name = artifact_root_path.name
+        if not artifact_name:
+            artifact_name = getattr(self.config, "tracker_run_name", None) or getattr(
+                self.config, "tracker_project_name", None
+            )
+
+        metadata = {
+            "validation_type": validation_type,
+            "job_id": StateTracker.get_job_id(),
+            "tracker_project_name": getattr(self.config, "tracker_project_name", None),
+            "tracker_run_name": getattr(self.config, "tracker_run_name", None),
+            "global_step": StateTracker.get_global_step(),
+        }
+
+        try:
+            self.publishing_manager.publish(
+                artifact_root_path,
+                artifact_name=artifact_name,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.error("Failed to publish artifacts via publishing_config: %s", exc)
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""

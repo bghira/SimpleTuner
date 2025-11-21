@@ -226,6 +226,12 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 - **What**: Uploads to Hugging Face Hub from a background worker so checkpoint pushes do not pause the training loop.
 - **Why**: Keeps training and validation running while Hub uploads proceed asynchronously. Final uploads are still awaited before the run exits so failures surface.
 
+### `--publishing_config`
+
+- **What**: Optional JSON/dict/file path describing non-Hugging Face publishing targets (S3-compatible storage, Backblaze B2, Azure Blob Storage, Dropbox).
+- **Why**: Mirrors `--webhook_config` parsing so you can fan out artifacts beyond the Hub. Publishing runs on the main process after validation using the current `output_dir`.
+- **Notes**: Providers are additive to `--push_to_hub`. Install provider SDKs (e.g., `boto3`, `azure-storage-blob`, `dropbox`) inside your `.venv` when you enable them. See `documentation/publishing/README.md` for complete examples.
+
 ### `--hub_model_id`
 
 - **What**: The name of the Huggingface Hub model and local results directory.
@@ -773,6 +779,7 @@ usage: train.py [-h] --model_family
                 [--push_to_hub [PUSH_TO_HUB]]
                 [--push_to_hub_background [PUSH_TO_HUB_BACKGROUND]]
                 [--push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]]
+                [--publishing_config PUBLISHING_CONFIG]
                 [--hub_model_id HUB_MODEL_ID]
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
@@ -1419,6 +1426,9 @@ options:
   --push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]
                         Upload intermediate checkpoints to the same Hugging
                         Face repository during training.
+  --publishing_config PUBLISHING_CONFIG
+                        Optional JSON/file path describing additional
+                        publishing targets (S3/Backblaze B2/Azure Blob/Dropbox).
   --hub_model_id HUB_MODEL_ID
                         If left blank, SimpleTuner derives a name from the
                         project settings when pushing to Hub.
