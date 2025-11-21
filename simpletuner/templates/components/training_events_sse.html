@@ -55,7 +55,7 @@
     let lastResetJobId = null;
     let suppressAnonymousProgress = false;
     const TERMINAL_STAGE_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'stopped']);
-    const seenToastIndices = new Set(); // Track event indices that have triggered toasts
+    const seenToastIds = new Set(); // Track event IDs that have triggered toasts
 
     /**
      * Check if a toast should be shown for this event.
@@ -68,15 +68,35 @@
             return true; // Show toast if no payload (shouldn't happen but be safe)
         }
 
-        // If event has an index, use it for deduplication
-        const eventIndex = payload.index;
-        if (eventIndex != null && eventIndex !== undefined) {
-            if (seenToastIndices.has(eventIndex)) {
-                console.log('[TOAST-DEDUP] Skipping duplicate toast for event index:', eventIndex);
+        // Try to find a unique ID for the event
+        let eventId = payload.id || payload.message_id || payload.uuid;
+
+        // Fallback: Generate a synthetic ID from content if no explicit ID exists
+        if (!eventId) {
+            const content = payload.message || payload.headline || payload.body || '';
+            const type = payload.type || payload.message_type || 'unknown';
+            const time = payload.timestamp || '';
+            if (content) {
+                // Simple hash for content deduplication
+                eventId = `synth:${type}:${content}:${time}`;
+            }
+        }
+
+        if (eventId) {
+            if (seenToastIds.has(eventId)) {
+                // console.log('[TOAST-DEDUP] Skipping duplicate toast for event ID:', eventId);
                 return false;
             }
-            // Mark this index as seen
-            seenToastIndices.add(eventIndex);
+            // Mark this ID as seen
+            seenToastIds.add(eventId);
+
+            // Optional: cleanup old IDs to prevent memory leaks
+            if (seenToastIds.size > 1000) {
+                const it = seenToastIds.values();
+                for (let i = 0; i < 200; i++) {
+                    seenToastIds.delete(it.next().value);
+                }
+            }
         }
 
         return true;
@@ -166,7 +186,7 @@
             suppressAnonymousProgress = false;
             // Clear toast deduplication tracking when a new job starts
             // to allow notifications for the new job
-            seenToastIndices.clear();
+            seenToastIds.clear();
         }
 
         if (!isActive) {
