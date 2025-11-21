@@ -74,13 +74,13 @@
             });
 
             // Also listen for direct event types
-            window.sseManager.addEventListener('notification', function(payload) {
-                renderEvent('notification', payload);
-            });
+            // window.sseManager.addEventListener('notification', function(payload) {
+            //     renderEvent('notification', payload);
+            // });
 
-            window.sseManager.addEventListener('error', function(payload) {
-                renderEvent('error', payload);
-            });
+            // window.sseManager.addEventListener('error', function(payload) {
+            //     renderEvent('error', payload);
+            // });
 
             listenersRegistered = true;
             console.log('[EventRenderer] Registered SSE event listeners');
@@ -94,8 +94,24 @@
                 return;
             }
 
-            // Check for duplicate events by ID
+            // Check for duplicate events by ID or content hash
             var eventId = payload.id;
+
+            // If no ID, generate a content hash for deduplication
+            if (!eventId) {
+                var contentKey = (payload.timestamp || '') + ':' +
+                               (payload.type || category) + ':' +
+                               (payload.headline || payload.body || payload.message || '');
+                // Simple hash function
+                var hash = 0;
+                for (var i = 0; i < contentKey.length; i++) {
+                    var char = contentKey.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash; // Convert to 32bit integer
+                }
+                eventId = 'synth:' + hash;
+            }
+
             if (eventId && processedEventIds.has(eventId)) {
                 // Skip duplicate event
                 return;

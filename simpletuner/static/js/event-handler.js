@@ -23,6 +23,7 @@ class EventHandler {
         this.isActive = false;
         this.sseRegistered = false;
         this.stateSyncInFlight = null;
+        this.processedEventIds = new Set(); // Track processed event IDs for deduplication
 
         // WebSocket support
         this.websocket = null;
@@ -153,6 +154,7 @@ class EventHandler {
 
                     this.updateEventList([
                         {
+                            id: payload.id || payload.message_id || payload.uuid,
                             timestamp: payload.timestamp || new Date().toISOString(),
                             message_type: messageType,
                             message,
@@ -365,6 +367,27 @@ class EventHandler {
         this.getDisplayLimit();
 
         events.forEach(event => {
+            // Deduplication logic
+            let eventId = event.id || event.uuid || event.message_id;
+            if (!eventId) {
+                // Generate synthetic ID from content
+                const contentKey = (event.timestamp || '') + ':' +
+                                 (event.message_type || '') + ':' +
+                                 (event.message || '');
+                let hash = 0;
+                for (let i = 0; i < contentKey.length; i++) {
+                    const char = contentKey.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash;
+                }
+                eventId = 'synth:' + hash;
+            }
+
+            if (this.processedEventIds.has(eventId)) {
+                return;
+            }
+            this.processedEventIds.add(eventId);
+
             // Parse structured data for specific event types
             this.parseStructuredData(event);
 
@@ -373,6 +396,7 @@ class EventHandler {
 
             const eventItem = document.createElement('div');
             eventItem.className = 'event-item';
+            const severity = this.normalizeSeverity(this.getEventSeverity(event));
 
             // Apply specific styles based on event type
             switch (event.message_type) {
@@ -386,12 +410,22 @@ class EventHandler {
                 case '_train_initial_msg':
                     eventItem.classList.add('event-item-train');
                     break;
+                case 'warning':
+                    eventItem.classList.add('event-item-warning');
+                    break;
                 case 'info':
                     eventItem.classList.add('event-item-info');
                     break;
                 case 'validation':
                 case 'checkpoint':
+                case 'success':
                     eventItem.classList.add('event-item-success');
+                    break;
+                case 'notification':
+                    if (severity === 'error') eventItem.classList.add('event-item-error');
+                    else if (severity === 'warning') eventItem.classList.add('event-item-warning');
+                    else if (severity === 'success') eventItem.classList.add('event-item-success');
+                    else eventItem.classList.add('event-item-info');
                     break;
                 default:
                     eventItem.classList.add('event-item-default');
@@ -405,7 +439,6 @@ class EventHandler {
 
             // Create structured content with enhanced data display
             const messageContent = this.formatEnhancedMessage(event);
-            const severity = this.normalizeSeverity(this.getEventSeverity(event));
 
             eventItem.innerHTML = `
                 <div class="event-header">
@@ -426,6 +459,15 @@ class EventHandler {
             // Handle special events
             this.handleSpecialEvents(event);
         });
+
+        // Clean up old IDs if the set gets too large
+        if (this.processedEventIds.size > 2000) {
+            const it = this.processedEventIds.values();
+            for (let i = 0; i < 500; i++) {
+                this.processedEventIds.delete(it.next().value);
+            }
+        }
+
         this.reconcileEventDisplay();
         this.applyEventFilters();
 
@@ -1684,6 +1726,7 @@ class EventHandler {
         const formattedEvents = events.map(event => {
             const jobId = this.extractJobId(event, event.data);
             const baseEvent = {
+                id: event.id || event.uuid || event.message_id || event.data?.id,
                 timestamp: event.timestamp || new Date().toISOString(),
                 message_type: event.type || 'info'
             };
@@ -1876,6 +1919,12 @@ style.textContent = `
         background-color: #d4edda;
         color: #155724;
         border-left: 4px solid #28a745;
+    }
+
+    .event-item-warning {
+        background-color: rgba(255, 193, 7, 0.15);
+        color: #ffcd39;
+        border-left: 4px solid #ffc107;
     }
 
     .event-item-state {
