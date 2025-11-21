@@ -145,6 +145,14 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
 - The server responds with the active `job_id`.
 - The trainer queues a validation run that fires immediately after the next gradient synchronization (it does not interrupt the current micro-batch).
 - The run reuses your configured validation prompts/settings so the resulting images appear in the usual event/log streams.
+- To offload validation to an external executable instead of the built-in pipeline, set `--validation_method=external-script` in your config (or payload) and point `--validation_external_script` at your script. You can pass training context to the script with placeholders: `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, `{model_family}`, `{huggingface_path}`, `{remote_checkpoint_path}` (empty for validation), plus any `validation_*` config values (e.g., `validation_num_inference_steps`, `validation_guidance`, `validation_noise_scheduler`). Enable `--validation_external_background` if you want the script to fire-and-forget without blocking training.
+- Prefer to keep SimpleTuner's built-in uploads and hand the resulting remote URL to your own tool? Configure `--post_upload_script` instead; it fires once per publishing provider/Hugging Face Hub upload with `{remote_checkpoint_path}` (if provided by the backend) and the same context placeholders. SimpleTuner does not ingest results from your script, so log artifacts/metrics to your tracker yourself.
+  - Example: `--post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'` where `notify.sh` calls your tracker API.
+  - Working samples:
+    - `simpletuner/examples/external-validation/replicate_post_upload.py` triggers a Replicate inference using `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}`.
+    - `simpletuner/examples/external-validation/wavespeed_post_upload.py` triggers a WaveSpeed inference and polls for completion using the same placeholders.
+    - `simpletuner/examples/external-validation/fal_post_upload.py` triggers a fal.ai Flux LoRA inference (requires `FAL_KEY` and `model_family` containing `flux`).
+    - `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on another GPU without requiring uploads.
 
 If no job is active the endpoint returns HTTP 400, so check `/api/training/status` first when scripting retries.
 

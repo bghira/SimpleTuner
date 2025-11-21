@@ -317,6 +317,61 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
 
+### `--validation_method`
+
+- **What**: Choose how validation runs are executed.
+- **Options**: `simpletuner-local` (default) runs the built-in pipeline; `external-script` runs a user-provided executable instead.
+- **Why**: Lets you hand off validation to an external system without pausing training for local pipeline work.
+
+### `--validation_external_script`
+
+- **What**: Executable to run when `--validation_method=external-script`. Uses shell-style splitting, so quote the command string accordingly.
+- **Placeholders**: You can embed these tokens (formatted with `.format`) to pass training context. Missing values are replaced with an empty string unless noted:
+  - `{local_checkpoint_path}` → latest checkpoint directory under `output_dir` (requires at least one checkpoint).
+  - `{global_step}` → current global step.
+  - `{tracker_run_name}` → value of `--tracker_run_name`.
+  - `{tracker_project_name}` → value of `--tracker_project_name`.
+  - `{model_family}` → value of `--model_family`.
+  - `{model_type}` / `{lora_type}` → model type and LoRA flavour.
+  - `{huggingface_path}` → value of `--hub_model_id` (if set).
+  - `{remote_checkpoint_path}` → remote URL of your last upload (empty for validation hook).
+  - Any `validation_*` config value (e.g., `validation_num_inference_steps`, `validation_guidance`, `validation_noise_scheduler`).
+- **Example**: `--validation_external_script="/opt/tools/validate.sh {local_checkpoint_path} {global_step}"`
+
+### `--validation_external_background`
+
+- **What**: When set, `--validation_external_script` is launched in the background (fire-and-forget).
+- **Why**: Keep training moving without waiting for the external script; exit codes are not checked in this mode.
+
+### `--post_upload_script`
+
+- **What**: Optional executable run after each publishing provider and Hugging Face Hub upload finishes (final model and checkpoint uploads). Runs asynchronously so training doesn't block.
+- **Placeholders**: Same replacements as `--validation_external_script`, plus `{remote_checkpoint_path}` (URI returned by the provider) so you can forward the published URL to downstream systems.
+- **Notes**:
+  - Scripts run per provider/upload; errors are logged but do not halt training.
+  - Scripts are also invoked when no remote upload occurs, so you can use them for local automation (e.g., running inference on another GPU).
+  - SimpleTuner does not ingest results from your script—log to your tracker directly if you want metrics or images recorded.
+- **Example**:
+  ```bash
+  --post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'
+  ```
+  Where `/opt/hooks/notify.sh` might post to your tracking system:
+  ```bash
+  #!/usr/bin/env bash
+  REMOTE="$1"
+  PROJECT="$2"
+  RUN="$3"
+  curl -X POST "https://tracker.internal/api/runs/${PROJECT}/${RUN}/artifacts" \
+       -H "Content-Type: application/json" \
+       -d "{\"remote_uri\":\"${REMOTE}\"}"
+  ```
+- **Working samples**:
+  - `simpletuner/examples/external-validation/replicate_post_upload.py` shows a Replicate hook that consumes `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger inference after uploads.
+  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` shows a WaveSpeed hook using the same placeholders plus WaveSpeed's async polling.
+  - `simpletuner/examples/external-validation/fal_post_upload.py` shows a fal.ai Flux LoRA hook (requires `FAL_KEY`).
+  - `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on a secondary GPU and works even without remote uploads.
+
+
 ### `--validation_adapter_path`
 
 - **What**: Temporarily loads a single LoRA adapter when running scheduled validations.

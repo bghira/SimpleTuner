@@ -42,6 +42,16 @@ class HubManager:
             private=self.config.model_card_private,
         ).repo_id
 
+    def _repo_url(self, subpath: str | None = None) -> str:
+        repo_id = getattr(self, "_repo_id", None) or self.config.hub_model_id or self.config.tracker_project_name
+        if not repo_id:
+            return ""
+        base = f"https://huggingface.co/{repo_id}"
+        if subpath:
+            clean = subpath.strip("/")
+            return f"{base}/tree/main/{clean}"
+        return base
+
     def _vae_string(self):
         if "deepfloyd" in self.config.model_type:
             return "\nDeepFloyd Pixel diffusion (no VAE)."
@@ -154,16 +164,16 @@ class HubManager:
                         message_level="info",
                         job_id=StateTracker.get_job_id(),
                     )
+        repo_url = self._repo_url()
         if webhook_handler:
-            webhook_handler.send(
-                message=f"Model is now available [on Hugging Face Hub](https://huggingface.co/{self._repo_id})."
-            )
+            webhook_handler.send(message=f"Model is now available [on Hugging Face Hub]({repo_url}).")
             webhook_handler.send_raw(
                 structured_data={"status": "model_available"},
                 message_type="training.status",
                 message_level="info",
                 job_id=StateTracker.get_job_id(),
             )
+        return repo_url
 
     def upload_full_model(self, override_path=None):
         if not self.config.push_to_hub:
@@ -294,16 +304,19 @@ class HubManager:
                 # images in the model card.
                 images_to_upload = filtered_images if filtered_images else None
 
-                self.upload_model(
+                repo_url = self.upload_model(
                     validation_images=images_to_upload,
                     override_path=checkpoint_path,
                     webhook_handler=webhook_handler,
                 )
+                remote_path = self._repo_url(checkpoint_path.name)
+                return remote_path, str(checkpoint_path), repo_url
             except Exception as e:
                 logger.error(f"Failed to upload latest checkpoint: {e}")
                 import traceback
 
                 logger.error(traceback.format_exc())
+        return None, str(checkpoint_path) if checkpoint_path else None, self._repo_url() if self.config.push_to_hub else None
 
     def upload_validation_images(self, validation_images, webhook_handler=None, override_path=None):
         logging.info(f"Validation images for upload: {validation_images}")
