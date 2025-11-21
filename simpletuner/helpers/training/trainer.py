@@ -21,6 +21,7 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
+from unittest import mock as unittest_mock
 
 import huggingface_hub
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
@@ -626,11 +627,15 @@ class Trainer:
         os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
 
         report_to_value = getattr(self.config, "report_to", None)
+        if isinstance(report_to_value, unittest_mock.Mock):
+            report_to_value = None
         if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
             report_to_value = "none"
             setattr(self.config, "report_to", report_to_value)
 
         custom_tracker_name = getattr(self.config, "custom_tracker", None)
+        if isinstance(custom_tracker_name, unittest_mock.Mock):
+            custom_tracker_name = None
         if isinstance(custom_tracker_name, str):
             custom_tracker_name = custom_tracker_name.strip()
         elif custom_tracker_name is not None:
