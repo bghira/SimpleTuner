@@ -364,7 +364,9 @@ A lot of settings are instead set through the [dataloader config](/documentation
        -H "Content-Type: application/json" \
        -d "{\"remote_uri\":\"${REMOTE}\"}"
   ```
-- **Working sample**: See `simpletuner/examples/external-validation/replicate_post_upload.py` for a Replicate-based hook that consumes `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger inference after uploads.
+- **Working samples**:
+  - `simpletuner/examples/external-validation/replicate_post_upload.py` shows a Replicate hook that consumes `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger inference after uploads.
+  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` shows a WaveSpeed hook using the same placeholders plus WaveSpeed's async polling.
 
 
 ### `--validation_adapter_path`

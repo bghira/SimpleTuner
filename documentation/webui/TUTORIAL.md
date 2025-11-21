@@ -194,6 +194,8 @@ Where `notify.sh` posts the URL to your tracker web API. Feel free to adapt to S
 
 Working sample: `simpletuner/examples/external-validation/replicate_post_upload.py` demonstrates using `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger a Replicate inference after uploads.
 
+Another sample: `simpletuner/examples/external-validation/wavespeed_post_upload.py` calls the WaveSpeed API and polls for the result, using the same placeholders.
+
 <img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
 
 #### Logging training statistics
