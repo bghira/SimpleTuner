@@ -33,6 +33,24 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="publishing_config",
+            arg_name="--publishing_config",
+            ui_label="Additional Publishing Targets",
+            field_type=FieldType.TEXTAREA,
+            tab="publishing",
+            section="publishing_controls",
+            default_value=None,
+            allow_empty=True,
+            placeholder='[{"provider":"s3","bucket":"my-bucket"}]',
+            help_text="Optional JSON list/dict or path to a JSON file describing extra publishing providers (S3-compatible, Backblaze B2, Azure Blob, Dropbox).",
+            tooltip="Accepts inline JSON, file paths, or dict-like values from the CLI. Leave blank to disable non-Hugging Face publishing.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="push_checkpoints_to_hub",
             arg_name="--push_checkpoints_to_hub",
             ui_label="Push Intermediate Checkpoints",

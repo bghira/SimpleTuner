@@ -18,6 +18,7 @@ env_to_args_map = {
     "PUSH_TO_HUB": "--push_to_hub",
     "PUSH_TO_HUB_BACKGROUND": "--push_to_hub_background",
     "PUSH_CHECKPOINTS": "--push_checkpoints_to_hub",
+    "PUBLISHING_CONFIG": "--publishing_config",
     "MAX_NUM_STEPS": "--max_train_steps",
     "NUM_EPOCHS": "--num_train_epochs",
     "CHECKPOINTING_STEPS": "--checkpoint_step_interval",

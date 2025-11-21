@@ -38,6 +38,7 @@ from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -270,6 +271,7 @@ class Trainer:
         self.lycoris_config = None
         self.lr_scheduler = None
         self.webhook_handler = None
+        self.publishing_manager = None
         self.should_abort = False
         self._external_abort_checker = None
         self._manual_validation_consumer: Optional[Callable[[], bool]] = None
@@ -365,6 +367,25 @@ class Trainer:
             except Exception:
                 continue
         return False
+
+    def _init_publishing_manager(self):
+        publishing_config = getattr(self.config, "publishing_config", None)
+        if publishing_config in (None, "", [], {}, "None"):
+            return
+
+        is_main_process = True
+        if getattr(self, "accelerator", None) is not None:
+            is_main_process = getattr(self.accelerator, "is_main_process", True)
+        if not is_main_process:
+            logger.debug("Skipping publishing manager initialisation on non-main process.")
+            return
+
+        try:
+            self.publishing_manager = PublishingManager(publishing_config)
+            logger.info("Publishing manager initialised with %s provider(s).", len(self.publishing_manager.providers))
+        except Exception as exc:
+            logger.error("Failed to initialise publishing providers: %s", exc)
+            self.publishing_manager = None
 
     def _enable_dynamo_dynamic_output_capture(self) -> None:
         try:
@@ -1717,6 +1738,7 @@ class Trainer:
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
         StateTracker.set_global_step(self.state["global_step"])
+        self._init_publishing_manager()
         self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = prepare_model_for_deepspeed(
             self.accelerator, self.config
         )
@@ -2929,6 +2951,7 @@ class Trainer:
             model_evaluator=model_evaluator,
             is_deepspeed=use_deepspeed_optimizer,
             is_fsdp=self.config.use_fsdp,
+            publishing_manager=self.publishing_manager,
         )
         if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
@@ -3123,6 +3146,8 @@ class Trainer:
             delattr(public_args, "accelerator_project_config")
             delattr(public_args, "process_group_kwargs")
             delattr(public_args, "webhook_config")
+            if hasattr(public_args, "publishing_config"):
+                delattr(public_args, "publishing_config")
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
             if hasattr(public_args, "vae_kwargs"):
@@ -4861,13 +4886,18 @@ def run_trainer_job(config):
                 "--same_network",
             }:
                 train_cli_payload.pop(accel_key, None)
-            for webhook_key in ("--webhook_config", "webhook_config"):
-                webhook_value = train_cli_payload.get(webhook_key)
+            for config_key in (
+                "--webhook_config",
+                "webhook_config",
+                "--publishing_config",
+                "publishing_config",
+            ):
+                webhook_value = train_cli_payload.get(config_key)
                 if isinstance(webhook_value, (dict, list)):
                     try:
-                        train_cli_payload[webhook_key] = json.dumps(webhook_value)
+                        train_cli_payload[config_key] = json.dumps(webhook_value)
                     except Exception:
-                        train_cli_payload.pop(webhook_key, None)
+                        train_cli_payload.pop(config_key, None)
             from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 
             cli_args = mapping_to_cli_args(train_cli_payload)
