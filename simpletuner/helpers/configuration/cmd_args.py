@@ -582,6 +582,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error(str(exc))
             raise
 
+    if isinstance(getattr(args, "post_upload_script", None), str):
+        candidate = args.post_upload_script.strip()
+        args.post_upload_script = candidate or None
+
     if args.tread_config is not None and type(args.tread_config) is str:
         if args.tread_config.startswith("{"):
             try:
