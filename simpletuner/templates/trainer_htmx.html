@@ -150,6 +150,22 @@ function trainerComponent() {
     return {
         versionInfo: null,
         _versionLoading: false,
+        handleTrainingStatus(e) {
+            const detail = e.detail || {};
+            const status = (detail.status || '').toLowerCase();
+            const isTraining = ['running', 'starting', 'initializing'].includes(status);
+
+            // Don't reset isTraining to false if we just got a disconnected event but have active startup stages
+            // This prevents the UI from flashing to "idle" during a quick reconnect
+            if (status === 'disconnected' && this.isTraining) {
+                return;
+            }
+
+            this.isTraining = isTraining;
+            if (!isTraining) {
+                this.showTrainingProgress = false;
+            }
+        },
         async loadVersionInfo(force = false) {
             if (this._versionLoading) {
                 return;

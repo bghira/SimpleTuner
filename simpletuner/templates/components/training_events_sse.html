@@ -54,7 +54,7 @@
     const completedJobIds = new Set();
     let lastResetJobId = null;
     let suppressAnonymousProgress = false;
-    const TERMINAL_STAGE_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'stopped']);
+    const TERMINAL_STAGE_STATUSES = new Set(['completed', 'complete', 'failed', 'error', 'cancelled', 'stopped', 'success', 'done', 'finished']);
     const seenToastIds = new Set(); // Track event IDs that have triggered toasts
 
     /**
@@ -106,7 +106,7 @@
         if (!stage) {
             return false;
         }
-        const status = String(stage.status || '').toLowerCase();
+        const status = String(stage.status || '').toLowerCase().trim();
         if (!status) {
             return true;
         }
@@ -194,7 +194,9 @@
         }
 
         const preserveDuringStartup = ['starting', 'initializing'];
-        const shouldPreserveStartup = normalized === 'disconnected';
+        const isRunningWithActiveStartup = normalized === 'running' && hasActiveStartupStages();
+        const shouldPreserveStartup = normalized === 'disconnected' || isRunningWithActiveStartup;
+
         if (!preserveDuringStartup.includes(normalized) && !shouldPreserveStartup) {
             clearStartupProgress();
         }
@@ -415,11 +417,12 @@
 
         let stageJobId = data.job_id || startupJobId || activeJobId;
 
-        // Improved check: If training is running, ignore startup updates unless it's clearly a new job
+        // Improved check: If training is running, ignore startup updates unless it's clearly a new job or we have active stages
         const isNewJob = data.job_id && activeJobId && data.job_id !== activeJobId;
         const isRunning = currentTrainingStatus === 'running';
+        const hasKnownStages = startupStages.size > 0;
 
-        if (isRunning && !startupStatusActive && !isNewJob) {
+        if (isRunning && !startupStatusActive && !isNewJob && !hasKnownStages) {
             console.log('[SSE-DEBUG] Ignoring lifecycle stage update because training is already running');
             return;
         }
@@ -559,6 +562,18 @@
                 setStatus('Starting', 'info');
             } else {
                 console.log('[SSE-DEBUG] All startup stages complete; keeping training state running');
+                // If we are running and all stages are done, ensure we clear the startup UI
+                if (currentTrainingStatus === 'running' && !hasActiveStartupStages()) {
+                    clearStartupProgress();
+                    const trainingStatusEl = document.getElementById('training-status');
+                    if (trainingStatusEl) {
+                        // Only clear if it contains the startup alert, to avoid wiping other status messages
+                        const alert = trainingStatusEl.querySelector('.startup-progress-alert');
+                        if (alert) {
+                            alert.remove();
+                        }
+                    }
+                }
             }
         }
     }
@@ -1223,13 +1238,17 @@
                             messageType: normalizedMessageType,
                             startupStages: Array.from(startupStages.keys())
                         });
-                        // Clear initialization stages when training actually starts running
-                        clearStartupProgress();
+                        // Don't clear immediately. Let the progress/lifecycle logic handle it.
+                        // clearStartupProgress();
                         setStatus('Running', payload.severity);
                         setTrainingState('running', { job_id: jobId });
-                        const trainingStatusEl = document.getElementById('training-status');
-                        if (trainingStatusEl) {
-                            trainingStatusEl.innerHTML = '';
+
+                        // Only wipe container if no active stages
+                        if (!hasActiveStartupStages()) {
+                            const trainingStatusEl = document.getElementById('training-status');
+                            if (trainingStatusEl) {
+                                trainingStatusEl.innerHTML = '';
+                            }
                         }
                         const store = getTrainerStore();
                         if (store) {
@@ -1544,6 +1563,23 @@
                     console.log('[SSE-DEBUG] Restoring stage:', key, stageData);
                     startupStages.set(key, stageData);
                 });
+
+                // Clean up restored stages to match "stream" behavior:
+                // If any stage is active, prune all inactive/completed stages.
+                const hasActive = Array.from(startupStages.values()).some(s => isStageActive(s));
+                if (hasActive) {
+                    const toRemove = [];
+                    startupStages.forEach((stage, key) => {
+                        if (!isStageActive(stage)) {
+                            toRemove.push(key);
+                        }
+                    });
+                    toRemove.forEach(k => startupStages.delete(k));
+                } else if (data.status === 'running') {
+                    // If running and no active startup stages, we assume startup is done.
+                    // Clear everything so we don't show a stale list of "Done" items.
+                    startupStages.clear();
+                }
 
                 console.log('[SSE-DEBUG] Total stages restored:', startupStages.size);
                 if (startupStages.size > 0) {

@@ -23,6 +23,7 @@ class EventHandler {
         this.isActive = false;
         this.sseRegistered = false;
         this.stateSyncInFlight = null;
+        this.processedEventIds = new Set(); // Track processed event IDs for deduplication
 
         // WebSocket support
         this.websocket = null;
@@ -153,6 +154,7 @@ class EventHandler {
 
                     this.updateEventList([
                         {
+                            id: payload.id || payload.message_id || payload.uuid,
                             timestamp: payload.timestamp || new Date().toISOString(),
                             message_type: messageType,
                             message,
@@ -365,6 +367,27 @@ class EventHandler {
         this.getDisplayLimit();
 
         events.forEach(event => {
+            // Deduplication logic
+            let eventId = event.id || event.uuid || event.message_id;
+            if (!eventId) {
+                // Generate synthetic ID from content
+                const contentKey = (event.timestamp || '') + ':' +
+                                 (event.message_type || '') + ':' +
+                                 (event.message || '');
+                let hash = 0;
+                for (let i = 0; i < contentKey.length; i++) {
+                    const char = contentKey.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash;
+                }
+                eventId = 'synth:' + hash;
+            }
+
+            if (this.processedEventIds.has(eventId)) {
+                return;
+            }
+            this.processedEventIds.add(eventId);
+
             // Parse structured data for specific event types
             this.parseStructuredData(event);
 
@@ -436,6 +459,15 @@ class EventHandler {
             // Handle special events
             this.handleSpecialEvents(event);
         });
+
+        // Clean up old IDs if the set gets too large
+        if (this.processedEventIds.size > 2000) {
+            const it = this.processedEventIds.values();
+            for (let i = 0; i < 500; i++) {
+                this.processedEventIds.delete(it.next().value);
+            }
+        }
+
         this.reconcileEventDisplay();
         this.applyEventFilters();
 
@@ -1694,6 +1726,7 @@ class EventHandler {
         const formattedEvents = events.map(event => {
             const jobId = this.extractJobId(event, event.data);
             const baseEvent = {
+                id: event.id || event.uuid || event.message_id || event.data?.id,
                 timestamp: event.timestamp || new Date().toISOString(),
                 message_type: event.type || 'info'
             };
