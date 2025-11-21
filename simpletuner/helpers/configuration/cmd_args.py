@@ -1028,6 +1028,21 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 f"Invalid --validation_adapter_mode '{mode_value}'. Expected one of: {', '.join(sorted(valid_modes))}."
             )
         args.validation_adapter_mode = normalized_mode
+    method_value = getattr(args, "validation_method", None)
+    normalized_method = str(method_value or "simpletuner-local").strip().lower().replace("_", "-")
+    if normalized_method == "":
+        normalized_method = "simpletuner-local"
+    valid_validation_methods = {"simpletuner-local", "external-script"}
+    if normalized_method not in valid_validation_methods:
+        raise ValueError(
+            f"Invalid --validation_method '{method_value}'. Expected one of: {', '.join(sorted(valid_validation_methods))}."
+        )
+    args.validation_method = normalized_method
+    if normalized_method == "external-script":
+        script_value = getattr(args, "validation_external_script", None)
+        if script_value in (None, "", "None"):
+            raise ValueError("--validation_external_script is required when --validation_method=external-script.")
+        args.validation_external_script = str(script_value).strip()
 
     if args.attention_mechanism != "diffusers" and not torch.cuda.is_available():
         warning_log("For non-CUDA systems, only Diffusers attention mechanism is officially supported.")
