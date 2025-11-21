@@ -4496,7 +4496,7 @@ class Trainer:
                     self._schedule_hub_upload("final model upload", _upload_final_model)
                 except Exception as e:
                     logger.error(f"Error uploading final model to hub: {e}")
-        self._finish_hub_uploads()
+                self._finish_hub_uploads()
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(
