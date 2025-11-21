@@ -332,12 +332,40 @@ A lot of settings are instead set through the [dataloader config](/documentation
   - `{tracker_run_name}` → value of `--tracker_run_name`.
   - `{tracker_project_name}` → value of `--tracker_project_name`.
   - `{model_family}` → value of `--model_family`.
+  - `{model_type}` / `{lora_type}` → model type and LoRA flavour.
+  - `{huggingface_path}` → value of `--hub_model_id` (if set).
+  - `{remote_checkpoint_path}` → remote URL of your last upload (empty for validation hook).
+  - Any `validation_*` config value (e.g., `validation_num_inference_steps`, `validation_guidance`, `validation_noise_scheduler`).
 - **Example**: `--validation_external_script="/opt/tools/validate.sh {local_checkpoint_path} {global_step}"`
 
 ### `--validation_external_background`
 
 - **What**: When set, `--validation_external_script` is launched in the background (fire-and-forget).
 - **Why**: Keep training moving without waiting for the external script; exit codes are not checked in this mode.
+
+### `--post_upload_script`
+
+- **What**: Optional executable run after each publishing provider and Hugging Face Hub upload finishes (final model and checkpoint uploads). Runs asynchronously so training doesn't block.
+- **Placeholders**: Same replacements as `--validation_external_script`, plus `{remote_checkpoint_path}` (URI returned by the provider) so you can forward the published URL to downstream systems.
+- **Notes**:
+  - Scripts run per provider/upload; errors are logged but do not halt training.
+  - SimpleTuner does not ingest results from your script—log to your tracker directly if you want metrics or images recorded.
+- **Example**:
+  ```bash
+  --post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'
+  ```
+  Where `/opt/hooks/notify.sh` might post to your tracking system:
+  ```bash
+  #!/usr/bin/env bash
+  REMOTE="$1"
+  PROJECT="$2"
+  RUN="$3"
+  curl -X POST "https://tracker.internal/api/runs/${PROJECT}/${RUN}/artifacts" \
+       -H "Content-Type: application/json" \
+       -d "{\"remote_uri\":\"${REMOTE}\"}"
+  ```
+- **Working sample**: See `simpletuner/examples/external-validation/replicate_post_upload.py` for a Replicate-based hook that consumes `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger inference after uploads.
+
 
 ### `--validation_adapter_path`
 
