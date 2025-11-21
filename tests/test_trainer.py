@@ -1016,6 +1016,7 @@ class TestTrainer(unittest.TestCase):
         mock_config.weight_dtype = torch.bfloat16
         mock_config.attention_mechanism = "diffusers"
         mock_config.sageattention_usage = AttentionBackendMode.INFERENCE
+        mock_config.publishing_config = None
         mock_load_config.return_value = mock_config
 
         with test_config.QuietLogs():
@@ -1238,7 +1239,8 @@ class TestTrainer(unittest.TestCase):
                 mock_logger.info.assert_called()
                 trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-200")
 
-    def test_init_resume_checkpoint_prodigy_without_split_groups(self):
+    @patch("simpletuner.helpers.training.trainer.logger")
+    def test_init_resume_checkpoint_prodigy_without_split_groups(self, mock_logger):
         """Test that prodigy optimizer works with optimizers that don't have split_groups attribute"""
         trainer = object.__new__(Trainer)
         trainer.model = Mock()
@@ -1297,7 +1299,8 @@ class TestTrainer(unittest.TestCase):
         self.assertEqual(param_group["running_d_denom"].device, mock_param.device)
         self.assertFalse(param_group["use_focus"])
 
-    def test_init_resume_checkpoint_prodigy_with_split_groups(self):
+    @patch("simpletuner.helpers.training.trainer.logger")
+    def test_init_resume_checkpoint_prodigy_with_split_groups(self, mock_logger):
         """Test that prodigy optimizer works correctly when split_groups=True"""
         trainer = object.__new__(Trainer)
         trainer.model = Mock()

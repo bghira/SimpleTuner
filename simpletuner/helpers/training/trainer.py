@@ -1527,7 +1527,7 @@ class Trainer:
             else:
                 # argparse.Namespace - use getattr
                 webhook_config = getattr(raw_config, "webhook_config", getattr(raw_config, "__webhook_config", None))
-            logging.info(f"Creating webhook: {webhook_config}")
+            logging.debug(f"Creating webhook: {webhook_config}")
         else:
             webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
         if webhook_config is None:
