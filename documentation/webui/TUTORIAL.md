@@ -180,7 +180,19 @@ If you do select to publish your model, be mindful to select `Private repo` if y
 
 If you want the trainer to generate images periodically, you can configure a single validation prompt at this point of the wizard. Multiple prompt library can be configured inside the `Validations & Output` tab after the wizard is complete.
 
-Want to outsource validation to your own script or service? Switch the **Validation Method** to `external-script` in the validation tab after the wizard and provide `--validation_external_script`. You can pass training context into the script with placeholders like `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, and `{model_family}`. Enable `--validation_external_background` to fire-and-forget without blocking training.
+Want to outsource validation to your own script or service? Switch the **Validation Method** to `external-script` in the validation tab after the wizard and provide `--validation_external_script`. You can pass training context into the script with placeholders like `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, `{model_family}`, `{huggingface_path}`, and any `validation_*` config value (e.g., `validation_num_inference_steps`, `validation_guidance`, `validation_noise_scheduler`). Enable `--validation_external_background` to fire-and-forget without blocking training.
+
+If you want to keep SimpleTuner's built-in publishing providers (or Hugging Face Hub uploads) but still trigger your own automation with the remote URL, use `--post_upload_script` instead. It runs once per upload with placeholders `{remote_checkpoint_path}`, `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, `{model_family}`, `{huggingface_path}`. SimpleTuner doesn't capture the script's output—emit any tracker updates directly from your script.
+
+Example hook:
+
+```bash
+--post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'
+```
+
+Where `notify.sh` posts the URL to your tracker web API. Feel free to adapt to Slack, custom dashboards, or any other integration.
+
+Working sample: `simpletuner/examples/external-validation/replicate_post_upload.py` demonstrates using `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger a Replicate inference after uploads.
 
 <img width="1101" height="1357" alt="image" src="https://github.com/user-attachments/assets/97bdd3f1-b54c-4087-b4d5-05da8b271751" />
 
