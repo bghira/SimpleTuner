@@ -618,9 +618,9 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         logger.debug(
                             f"Video {image_path_str} has {num_frames} frames, above maximum {self.maximum_num_frames}"
                         )
-                    statistics.setdefault("skipped", {}).setdefault("too_many_frames", 0)
-                    statistics["skipped"]["too_many_frames"] += 1
-                    return aspect_ratio_bucket_indices
+                        statistics.setdefault("skipped", {}).setdefault("too_many_frames", 0)
+                        statistics["skipped"]["too_many_frames"] += 1
+                        return aspect_ratio_bucket_indices
                 training_sample = TrainingSample(
                     image=None,  # We don't load actual data here
                     data_backend_id=self.id,

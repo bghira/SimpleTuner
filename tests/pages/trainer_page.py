@@ -823,6 +823,14 @@ class TrainerPage(BasePage):
             if any(keyword in status_text for keyword in ("error", "failed")):
                 return "failed"
 
+            # Check for success/info toasts indicating start
+            success_toast = driver.execute_script(
+                "const el = document.querySelector('.toast.success .toast-body, .toast.info .toast-body');"
+                "return el ? (el.textContent || '').toLowerCase() : '';"
+            )
+            if any(k in success_toast for k in ("training started", "training is starting")):
+                return "active"
+
             toast_text = driver.execute_script(
                 "const el = document.querySelector('.toast.error .toast-body');"
                 "return el ? (el.textContent || '').toLowerCase() : '';"

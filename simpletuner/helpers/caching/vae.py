@@ -485,7 +485,7 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() in ["ltxvideo", "wan"]:
+        if StateTracker.get_model_family() in ["ltxvideo", "wan", "sanavideo"]:
             if samples.ndim == 4:
                 original_shape = samples.shape
                 samples = samples.unsqueeze(2)
@@ -556,13 +556,63 @@ class VAECache(WebhookMixin):
             }
             logger.debug(f"Video latent processing results: {output_cache_entry}")
             output_cache_entry["latents"] = latents_uncached
-        elif StateTracker.get_model_family() in ["wan"]:
+        elif StateTracker.get_model_family() in ["wan", "sanavideo"]:
             logger.debug(
-                f"Shape for Wan VAE encode: {latents_uncached.shape} with latents_mean: {self.vae.latents_mean} and latents_std: {self.vae.latents_std}"
+                "Shape for Wan VAE encode: %s with latents_mean: %s and latents_std: %s",
+                latents_uncached.shape,
+                getattr(self.vae, "latents_mean", None),
+                getattr(self.vae, "latents_std", None),
             )
-            posterior = compute_wan_posterior(latents_uncached, self.vae.latents_mean, self.vae.latents_std)
-            # use deterministic posterior sampling (mode) for reproducibility
-            latents_uncached = posterior.mode()
+            try:
+                target_mu_channels = latents_uncached.shape[1] // 2
+                latents_mean = getattr(self.vae, "latents_mean", None)
+                latents_std = getattr(self.vae, "latents_std", None)
+
+                if latents_mean is None or latents_std is None or target_mu_channels <= 0:
+                    raise ValueError("Missing latent stats for WAN VAE.")
+
+                latents_mean_t = torch.as_tensor(latents_mean, device=latents_uncached.device).flatten()
+                latents_std_t = torch.as_tensor(latents_std, device=latents_uncached.device).flatten()
+
+                config_mu_channels = getattr(self.vae, "z_dim", None) or target_mu_channels
+                if config_mu_channels != target_mu_channels:
+                    logger.warning(
+                        "Latent stats mismatch for %s VAE: config z_dim=%s but latents supply %s channels. "
+                        "Using the channel count from the encoded latents.",
+                        StateTracker.get_model_family(),
+                        config_mu_channels,
+                        target_mu_channels,
+                    )
+
+                def _align_stats(name: str, tensor: torch.Tensor) -> torch.Tensor:
+                    if tensor.numel() == target_mu_channels:
+                        return tensor
+                    if tensor.numel() > target_mu_channels:
+                        logger.warning(
+                            "Truncating %s from %s to %s channels to match encoded latents.",
+                            name,
+                            tensor.numel(),
+                            target_mu_channels,
+                        )
+                        return tensor[:target_mu_channels]
+                    # Too few stats: fail with a clear error to avoid silently duplicating.
+                    raise ValueError(
+                        f"{name} has {tensor.numel()} channels but {target_mu_channels} are required to normalize WAN latents."
+                    )
+
+                latents_mean_t = _align_stats("latents_mean", latents_mean_t)
+                latents_std_t = _align_stats("latents_std", latents_std_t)
+                latents_std_t = latents_std_t.clamp_min(torch.finfo(latents_std_t.dtype).eps)
+
+                posterior = compute_wan_posterior(latents_uncached, latents_mean_t, latents_std_t)
+                # use deterministic posterior sampling (mode) for reproducibility
+                latents_uncached = posterior.mode()
+            except Exception as exc:
+                logger.warning(
+                    "WAN latent normalization failed for %s, falling back to raw latents: %s",
+                    StateTracker.get_model_family(),
+                    exc,
+                )
             output_cache_entry = latents_uncached
         elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
             raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
@@ -641,7 +691,7 @@ class VAECache(WebhookMixin):
                 )
                 latents_uncached = self.model.post_vae_encode_transform_sample(latents_uncached)
 
-                if StateTracker.get_model_family() in ["wan"]:
+                if StateTracker.get_model_family() in ["wan", "sanavideo"]:
                     if hasattr(latents_uncached, "latent_dist"):
                         latents_uncached = latents_uncached.latent_dist.parameters
                     latents_uncached = self.process_video_latents(latents_uncached)

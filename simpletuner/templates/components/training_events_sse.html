@@ -394,8 +394,12 @@
         console.log('[SSE-DEBUG] Stage key:', possibleKey, 'stageStatus:', stageStatus);
 
         let stageJobId = data.job_id || startupJobId || activeJobId;
-        const isSameActiveJob = !data.job_id || (activeJobId && data.job_id === activeJobId);
-        if (!startupStatusActive && currentTrainingStatus === 'running' && isSameActiveJob) {
+
+        // Improved check: If training is running, ignore startup updates unless it's clearly a new job
+        const isNewJob = data.job_id && activeJobId && data.job_id !== activeJobId;
+        const isRunning = currentTrainingStatus === 'running';
+
+        if (isRunning && !startupStatusActive && !isNewJob) {
             console.log('[SSE-DEBUG] Ignoring lifecycle stage update because training is already running');
             return;
         }
@@ -1351,12 +1355,9 @@
             if (!notifyMessage) {
                 return;
             }
-            handleMessage({
-                type: 'notification',
-                message: notifyMessage,
-                level: severityToLevel(data?.severity),
-                payload: data
-            });
+            if (window.showToast) {
+                window.showToast(notifyMessage, mapSeverityToBootstrap(data?.severity));
+            }
         };
         trackListener('notification', notificationHandler);
 
