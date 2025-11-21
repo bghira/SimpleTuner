@@ -16,6 +16,9 @@ os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["DATASETS_VERBOSITY"] = "error"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TQDM_DISABLE"] = "1"
+os.environ["SIMPLETUNER_DISABLE_COLORS"] = "1"
+os.environ["CLICOLOR"] = "0"
+os.environ["FORCE_COLOR"] = "0"
 
 logging.disable(logging.WARNING)
 noisy_loggers = [

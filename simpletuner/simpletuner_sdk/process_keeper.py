@@ -274,8 +274,11 @@ def _patch_tqdm():
         pass
 
 # Set up logging
-logging.basicConfig(level=logging.WARNING)
+log_level_name = os.environ.get("SIMPLETUNER_LOG_LEVEL", "WARNING").upper()
+log_level = getattr(logging, log_level_name, logging.WARNING)
+logging.basicConfig(level=log_level)
 logger = logging.getLogger("SubprocessRunner")
+logger.setLevel(log_level)
 
 # IPC paths
 command_file = r"{self.command_file}"
@@ -516,8 +519,8 @@ logger.info("Subprocess exiting")
         # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
         env.pop("SIMPLETUNER_WEB_MODE", None)
         env.pop("SIMPLETUNER_DISABLE_COLORS", None)
-        env["FORCE_COLOR"] = "1"
-        env["CLICOLOR_FORCE"] = "1"
+        # env["FORCE_COLOR"] = "1"
+        # env["CLICOLOR_FORCE"] = "1"
 
         env.setdefault("WANDB_CONSOLE", "off")
         env.setdefault("WANDB_SILENT", "true")

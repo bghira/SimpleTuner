@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 import unittest
@@ -28,7 +29,8 @@ class TestCliEnvironmentValidation(unittest.TestCase):
                 self.fail(f"Expected environment to be valid but raised: {error}")
 
     def test_run_training_returns_error_for_missing_env(self) -> None:
-        result = run_training(env="this-env-should-not-exist", extra_args=[])
+        with unittest.mock.patch("sys.stdout", new=io.StringIO()):
+            result = run_training(env="this-env-should-not-exist", extra_args=[])
         self.assertEqual(result, 1)
 
     def test_load_json_config_raises_for_missing_env(self) -> None:
