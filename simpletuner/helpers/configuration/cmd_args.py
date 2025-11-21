@@ -225,10 +225,9 @@ def _normalize_structured_config_option(raw_value, option_name: str):
         )
 
     if isinstance(raw_value, str):
-        import json
         import os
 
-        config_str = str(raw_value)
+        config_str = os.path.expanduser(str(raw_value))
         if config_str.startswith("{") or config_str.startswith("["):
             if _contains_ast_markers(config_str):
                 raise ValueError(f"{option_name} contains AST object patterns instead of valid JSON. Received: {config_str}")

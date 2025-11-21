@@ -48,9 +48,10 @@ class AzureBlobPublishingProvider(PublishingProvider):
         self._container_client = self._service_client.get_container_client(container)
         try:
             self._container_client.create_container()
+        except ResourceExistsError:
+            pass  # Container already exists, this is expected
         except Exception as exc:  # pragma: no cover - dependency guard
-            if "ResourceExists" not in exc.__class__.__name__:
-                logger.debug("Container creation raised %s; proceeding with existing container.", exc)
+            logger.debug("Container creation raised %s; proceeding with existing container.", exc)
 
         self._content_settings_cls = ContentSettings
 

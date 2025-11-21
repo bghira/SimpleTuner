@@ -22,7 +22,7 @@ def _base_args():
 
 class _StubProvider(PublishingProvider):
     def __init__(self, config):
-        super().__init__("stub", config)
+        super().__init__(provider_type="stub", config=config, display_name=config.get("name"))
         self.calls = []
 
     def publish(self, artifact_path, *, artifact_name=None, metadata=None):

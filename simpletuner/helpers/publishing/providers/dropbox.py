@@ -83,7 +83,6 @@ class DropboxPublishingProvider(PublishingProvider):
             raise ValueError(f"No files found to publish under {path}")
 
         destination_root = self._destination_root(artifact_name or path.name)
-        last_path = destination_root
 
         for file_path in files:
             remote_path = "/".join(
@@ -97,7 +96,6 @@ class DropboxPublishingProvider(PublishingProvider):
             if not remote_path.startswith("/"):
                 remote_path = f"/{remote_path}"
             self._upload_file(file_path, remote_path)
-            last_path = remote_path
 
         uri = self._ensure_shared_link(destination_root) or f"dropbox://{destination_root.lstrip('/')}"
         logger.info("Published %s file(s) to Dropbox at %s", len(files), uri)

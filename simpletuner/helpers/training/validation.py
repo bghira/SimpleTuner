@@ -2911,7 +2911,7 @@ class Validation:
             logger.warning("Publishing target %s does not exist; skipping publishing.", artifact_root_path)
             return
 
-        artifact_name = artifact_root_path.name or None
+        artifact_name = artifact_root_path.name
         if not artifact_name:
             artifact_name = getattr(self.config, "tracker_run_name", None) or getattr(
                 self.config, "tracker_project_name", None

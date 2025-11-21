@@ -31,7 +31,8 @@ Install optional dependencies inside the project `.venv` when you use a provider
   }
 ]
 ```
-`endpoint_url` and `public_base_url` are optional and useful for custom S3-compatible hosts or CDNs.
+
+⚠️ **Security Note**: Never commit credentials to version control. Use environment variable substitution or a secrets manager for production deployments.
 
 ### Azure Blob Storage
 - Provider: `azure_blob` (alias `azure`)
