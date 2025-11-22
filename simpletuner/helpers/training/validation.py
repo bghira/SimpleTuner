@@ -13,9 +13,9 @@ from typing import Any, Union
 import diffusers
 import numpy as np
 import torch
+import wandb
 from tqdm import tqdm
 
-import wandb
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training import validation_audio
 from simpletuner.helpers.training import validation_images as validation_images_utils
