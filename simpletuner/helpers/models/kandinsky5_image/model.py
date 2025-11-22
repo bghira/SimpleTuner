@@ -7,6 +7,7 @@ import torch
 from diffusers import AutoencoderKL
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
 
+from simpletuner.helpers.configuration.registry import ConfigRegistry, ConfigRule, RuleType, make_default_rule
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.kandinsky5_image.pipeline_kandinsky5_t2i import Kandinsky5T2IPipeline
 from simpletuner.helpers.models.kandinsky5_image.transformer_kandinsky5 import Kandinsky5Transformer3DModel
@@ -219,5 +220,32 @@ class Kandinsky5Image(ImageModelFoundation):
 
         self.PIPELINE_CLASSES[PipelineTypes.IMG2IMG] = Kandinsky5I2IPipeline
 
+    def check_user_config(self):
+        """
+        Apply Kandinsky-specific defaults when user input is missing.
+        """
+        if getattr(self.config, "tokenizer_max_length", None) is None or int(self.config.tokenizer_max_length) > 256:
+            logger.warning("Kandinsky5Image caps tokenizer_max_length at 256 tokens. Overriding provided value.")
+            self.config.tokenizer_max_length = 256
 
+    @classmethod
+    def register_config_requirements(cls):
+        rules = [
+            make_default_rule(
+                field_name="tokenizer_max_length",
+                default_value=256,
+                message="Kandinsky5-Image defaults to a 256 token context window.",
+            ),
+            ConfigRule(
+                field_name="tokenizer_max_length",
+                rule_type=RuleType.MAX,
+                value=256,
+                message="Kandinsky5-Image supports a maximum of 256 tokens.",
+                error_level="warning",
+            ),
+        ]
+        ConfigRegistry.register_rules("kandinsky5-image", rules)
+
+
+Kandinsky5Image.register_config_requirements()
 ModelRegistry.register("kandinsky5-image", Kandinsky5Image)
