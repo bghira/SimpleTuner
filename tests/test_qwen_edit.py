@@ -136,6 +136,30 @@ class QwenEditTests(unittest.TestCase):
             self.assertIn("pixel_values", entry)
             self.assertIsInstance(entry["pixel_values"], torch.Tensor)
             self.assertEqual(entry["pixel_values"].shape, torch.Size([3, 2, 2]))
+            self.assertIn("image_grid_thw", entry)
+
+    def test_conditioning_image_embedder_truncates_when_processor_overproduces_patches(self):
+        class PatchyProcessor:
+            def __call__(self, images, return_tensors="pt", **kwargs):
+                batch_size = len(images)
+                pixel_values = torch.arange(batch_size * 2 * 3 * 2 * 2, dtype=torch.float32).view(batch_size * 2, 3, 2, 2)
+                image_grid_thw = torch.ones(batch_size, 3, dtype=torch.int64)
+                return {"pixel_values": pixel_values, "image_grid_thw": image_grid_thw}
+
+        embedder = QwenImage._EditV1ConditioningImageEmbedder(
+            processor=PatchyProcessor(),
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
+        sample_images = [
+            torch.zeros(3, 2, 2),
+            torch.ones(3, 2, 2),
+        ]
+        outputs = embedder.encode(sample_images)
+        self.assertEqual(len(outputs), 2)
+        for entry in outputs:
+            self.assertEqual(entry["pixel_values"].shape, torch.Size([3, 2, 2]))
+            self.assertIn("image_grid_thw", entry)
 
     def test_prepare_edit_batch_sets_prompt_and_control_latents(self):
         prompt_embeds = torch.ones(2, 4, 8)

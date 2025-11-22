@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.kandinsky5_image.model import Kandinsky5Image
 from simpletuner.helpers.models.kandinsky5_image.pipeline_kandinsky5_i2i import Kandinsky5I2IPipeline
 from simpletuner.helpers.models.kandinsky5_image.pipeline_kandinsky5_t2i import Kandinsky5T2IPipeline
@@ -106,6 +107,36 @@ def _make_flow_scheduler():
     return scheduler
 
 
+class DummyPromptPipeline:
+    def __init__(self):
+        self.calls = []
+
+    def encode_prompt(
+        self,
+        prompt,
+        num_images_per_prompt=None,
+        num_videos_per_prompt=None,
+        max_sequence_length=None,
+        device=None,
+        dtype=None,
+    ):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "num_images_per_prompt": num_images_per_prompt,
+                "num_videos_per_prompt": num_videos_per_prompt,
+                "max_sequence_length": max_sequence_length,
+                "device": device,
+                "dtype": dtype,
+            }
+        )
+        batch = len(prompt)
+        prompt_embeds_qwen = torch.zeros(batch, 2, 8, device=device, dtype=dtype or torch.float32)
+        prompt_embeds_clip = torch.ones(batch, 4, device=device, dtype=dtype or torch.float32)
+        prompt_cu_seqlens = torch.arange(0, batch + 1, device=device, dtype=torch.int32)
+        return prompt_embeds_qwen, prompt_embeds_clip, prompt_cu_seqlens
+
+
 class Kandinsky5ImageModelTests(unittest.TestCase):
     def setUp(self):
         self.scheduler_patch = patch(
@@ -129,6 +160,7 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
             weight_dtype=torch.float32,
             controlnet=False,
             control=False,
+            tokenizer_max_length=None,
         )
         self.model = Kandinsky5Image(self.config, self.accelerator)
         self.model.unwrap_model = lambda model=None: model or self.model
@@ -150,6 +182,16 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(converted["prompt_embeds_qwen"], embeds))
         self.assertTrue(torch.equal(converted["prompt_embeds_clip"], pooled))
         self.assertTrue(torch.equal(converted["prompt_cu_seqlens"], expected_cu))
+
+    def test_check_user_config_sets_tokenizer_limit(self):
+        # default None -> set to 256
+        self.model.check_user_config()
+        self.assertEqual(self.model.config.tokenizer_max_length, 256)
+
+        # values above limit are clamped
+        self.model.config.tokenizer_max_length = 300
+        self.model.check_user_config()
+        self.assertEqual(self.model.config.tokenizer_max_length, 256)
 
     def test_model_predict_injects_visual_conditioning(self):
         self.model.model = make_tiny_kandinsky_transformer(visual_cond=True)
@@ -238,6 +280,24 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
 
         self.assertEqual(output.frames.shape, (1, 1, 16, 16, 16))
 
+    def test_encode_prompts_passes_expected_args_to_pipeline(self):
+        pipeline = DummyPromptPipeline()
+        self.model.pipelines = {PipelineTypes.TEXT2IMG: pipeline}
+        self.model.config.tokenizer_max_length = 8
+
+        prompt_embeds_qwen, prompt_embeds_clip, prompt_cu_seqlens, attention_mask = self.model._encode_prompts(
+            ["a prompt", "b prompt"]
+        )
+
+        self.assertEqual(len(pipeline.calls), 1)
+        call = pipeline.calls[0]
+        self.assertEqual(call["num_images_per_prompt"], 1)
+        self.assertEqual(call["max_sequence_length"], 8)
+        self.assertEqual(call["device"], self.accelerator.device)
+        self.assertTrue(torch.equal(prompt_cu_seqlens, torch.tensor([0, 1, 2], dtype=torch.int32)))
+        self.assertEqual(attention_mask.shape, torch.Size([2, prompt_embeds_qwen.shape[1]]))
+        self.assertEqual(prompt_embeds_clip.shape, torch.Size([2, 4]))
+
 
 class Kandinsky5VideoModelTests(unittest.TestCase):
     def setUp(self):
@@ -262,6 +322,8 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
             weight_dtype=torch.float32,
             controlnet=False,
             control=False,
+            tokenizer_max_length=None,
+            framerate=None,
         )
         self.model = Kandinsky5Video(self.config, self.accelerator)
         self.model.unwrap_model = lambda model=None: model or self.model
@@ -286,6 +348,17 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
 
         negative = self.model.convert_negative_text_embed_for_pipeline(text_embedding, prompt="ok")
         self.assertTrue(torch.equal(negative["negative_prompt_cu_seqlens"], expected_cu))
+
+    def test_check_user_config_sets_default_framerate_and_tokenizer_cap(self):
+        self.model.check_user_config()
+        self.assertEqual(self.model.config.framerate, 24)
+        self.assertEqual(self.model.config.tokenizer_max_length, 256)
+
+        self.model.config.tokenizer_max_length = 999
+        self.model.config.framerate = None
+        self.model.check_user_config()
+        self.assertEqual(self.model.config.tokenizer_max_length, 256)
+        self.assertEqual(self.model.config.framerate, 24)
 
     def test_model_predict_video_visual_cond_expands_channels(self):
         self.model.model = make_tiny_kandinsky_transformer(visual_cond=True)
@@ -362,6 +435,22 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
         )
 
         self.assertEqual(output.frames.shape, (1, 4, 16, 16, 16))
+
+    def test_encode_prompts_video_uses_pipeline_and_builds_mask(self):
+        pipeline = DummyPromptPipeline()
+        self.model.pipelines = {PipelineTypes.TEXT2IMG: pipeline}
+        self.model.config.tokenizer_max_length = 6
+
+        prompt_embeds_qwen, prompt_embeds_clip, prompt_cu_seqlens, attention_mask = self.model._encode_prompts(["clip"])
+
+        self.assertEqual(len(pipeline.calls), 1)
+        call = pipeline.calls[0]
+        self.assertEqual(call["num_videos_per_prompt"], 1)
+        self.assertEqual(call["max_sequence_length"], 6)
+        self.assertEqual(call["device"], self.accelerator.device)
+        self.assertTrue(torch.equal(prompt_cu_seqlens, torch.tensor([0, 1], dtype=torch.int32)))
+        self.assertEqual(attention_mask.shape, torch.Size([1, prompt_embeds_qwen.shape[1]]))
+        self.assertEqual(prompt_embeds_clip.shape, torch.Size([1, 4]))
 
 
 if __name__ == "__main__":
