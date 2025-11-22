@@ -78,10 +78,12 @@ class TestAudioValidation(unittest.TestCase):
     @patch("simpletuner.helpers.training.validation.prepare_validation_prompt_list")
     @patch("simpletuner.helpers.training.validation._normalise_validation_sample")
     @patch("simpletuner.helpers.training.validation.Validation.setup_scheduler")
+    @patch("simpletuner.helpers.training.validation.tqdm")
     def test_audio_validation_flow(
-        self, mock_setup_scheduler, mock_normalise, mock_prepare_prompts, mock_save_audio, mock_state_tracker
+        self, mock_tqdm, mock_setup_scheduler, mock_normalise, mock_prepare_prompts, mock_save_audio, mock_state_tracker
     ):
         # Setup mocks
+        mock_tqdm.side_effect = lambda x, **kwargs: x
         mock_setup_scheduler.return_value = None
         mock_normalise.return_value = "mock_sample"
         mock_prepare_prompts.return_value = {

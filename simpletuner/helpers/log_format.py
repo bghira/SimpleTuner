@@ -76,7 +76,9 @@ logger.setLevel(logging.DEBUG)  # Set lowest level to capture everything
 
 # Create handlers
 console_handler = logging.StreamHandler(sys.stdout)
-console_handler.setLevel(logging.INFO)  # Change to ERROR if you want to suppress INFO messages too
+default_console_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "ERROR").upper()
+console_numeric_level = getattr(logging, default_console_level, logging.INFO)
+console_handler.setLevel(console_numeric_level)
 console_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 
 # blank out the existing debug.log, if exists

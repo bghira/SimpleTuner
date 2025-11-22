@@ -99,7 +99,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             json.dump(config_data, f, indent=2)
         return config_path
 
-    def test_config_file_not_found(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_config_file_not_found(self, mock_torch_save):
         """Test behavior when config file doesn't exist."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -317,7 +318,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
             self.assertIn("Only one text embed backend can be marked as default", str(context.exception))
 
-    def test_deepfloyd_model_warnings(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_deepfloyd_model_warnings(self, mock_torch_save):
         """Test DeepFloyd model specific warnings and handling."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -363,7 +365,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # Check that warnings were logged (the exact calls depend on the implementation)
                 # We mainly want to ensure no exceptions are raised for DeepFloyd
 
-    def test_pixel_area_resolution_conversion(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_pixel_area_resolution_conversion(self, mock_torch_save):
         """Test pixel_area to area resolution type conversion."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -427,7 +430,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 expected_resolution = (1024 * 1024) / (1000**2)  # Convert to megapixels
                 self.assertAlmostEqual(backend_config["resolution"], expected_resolution, places=6)
 
-    def test_csv_backend_invalid_config(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_csv_backend_invalid_config(self, mock_torch_save):
         """Test CSV backend with invalid configuration."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -507,7 +511,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
             with self.assertRaises((ValueError, KeyError)):
                 factory.configure_data_backends(loaded_config)
 
-    def test_parquet_backend_missing_config(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_parquet_backend_missing_config(self, mock_torch_save):
         """Test parquet metadata backend with missing parquet config."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -577,7 +582,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._finalize_metrics()
         self.assertGreater(factory.metrics["initialization_time"], 0)
 
-    def test_no_data_backends_error(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_no_data_backends_error(self, mock_torch_save):
         """Test error when no data backends are found after configuration."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -898,7 +904,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     if "Dataset configuration will produce zero usable batches" in str(e):
                         self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
 
-    def test_oversubscription_auto_adjustment(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_oversubscription_auto_adjustment(self, mock_torch_save):
         """Test that --allow_dataset_oversubscription automatically adjusts repeats."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -979,7 +986,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 self.assertIn("manually set repeats=2", error_msg)
                 self.assertIn("will not override manual repeats", error_msg)
 
-    def test_oversubscription_disabled_raises_error(self):
+    @patch("simpletuner.helpers.data_backend.local.torch.save")
+    def test_oversubscription_disabled_raises_error(self, mock_torch_save):
         """Test that error is raised when oversubscription is disabled."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
         from simpletuner.helpers.training.state_tracker import StateTracker

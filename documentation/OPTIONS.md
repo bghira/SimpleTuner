@@ -8,6 +8,8 @@ This guide provides a user-friendly breakdown of the command-line options availa
 
 The JSON filename expected is `config.json` and the key names are the same as the below `--arguments`. The leading `--` is not required for the JSON file, but it can be left in as well.
 
+Looking for ready-to-run examples? See the curated presets in [simpletuner/examples/README.md](/simpletuner/examples/README.md).
+
 ### Easy configure script (***RECOMMENDED***)
 
 The `simpletuner configure` command can be used to set up a `config.json` file with mostly-ideal default settings.
@@ -221,6 +223,17 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 
 - **What**: If provided, your model will be uploaded to [Huggingface Hub](https://huggingface.co) once training completes. Using `--push_checkpoints_to_hub` will additionally push every intermediary checkpoint.
 
+### `--push_to_hub_background`
+
+- **What**: Uploads to Hugging Face Hub from a background worker so checkpoint pushes do not pause the training loop.
+- **Why**: Keeps training and validation running while Hub uploads proceed asynchronously. Final uploads are still awaited before the run exits so failures surface.
+
+### `--publishing_config`
+
+- **What**: Optional JSON/dict/file path describing non-Hugging Face publishing targets (S3-compatible storage, Backblaze B2, Azure Blob Storage, Dropbox).
+- **Why**: Mirrors `--webhook_config` parsing so you can fan out artifacts beyond the Hub. Publishing runs on the main process after validation using the current `output_dir`.
+- **Notes**: Providers are additive to `--push_to_hub`. Install provider SDKs (e.g., `boto3`, `azure-storage-blob`, `dropbox`) inside your `.venv` when you enable them. See `documentation/publishing/README.md` for complete examples.
+
 ### `--hub_model_id`
 
 - **What**: The name of the Huggingface Hub model and local results directory.
@@ -305,6 +318,61 @@ A lot of settings are instead set through the [dataloader config](/documentation
 
 - **What**: Output image resolution, measured in pixels, or, formatted as: `widthxheight`, as in `1024x1024`. Multiple resolutions can be defined, separated by commas.
 - **Why**: All images generated during validation will be this resolution. Useful if the model is being trained with a different resolution.
+
+### `--validation_method`
+
+- **What**: Choose how validation runs are executed.
+- **Options**: `simpletuner-local` (default) runs the built-in pipeline; `external-script` runs a user-provided executable instead.
+- **Why**: Lets you hand off validation to an external system without pausing training for local pipeline work.
+
+### `--validation_external_script`
+
+- **What**: Executable to run when `--validation_method=external-script`. Uses shell-style splitting, so quote the command string accordingly.
+- **Placeholders**: You can embed these tokens (formatted with `.format`) to pass training context. Missing values are replaced with an empty string unless noted:
+  - `{local_checkpoint_path}` → latest checkpoint directory under `output_dir` (requires at least one checkpoint).
+  - `{global_step}` → current global step.
+  - `{tracker_run_name}` → value of `--tracker_run_name`.
+  - `{tracker_project_name}` → value of `--tracker_project_name`.
+  - `{model_family}` → value of `--model_family`.
+  - `{model_type}` / `{lora_type}` → model type and LoRA flavour.
+  - `{huggingface_path}` → value of `--hub_model_id` (if set).
+  - `{remote_checkpoint_path}` → remote URL of your last upload (empty for validation hook).
+  - Any `validation_*` config value (e.g., `validation_num_inference_steps`, `validation_guidance`, `validation_noise_scheduler`).
+- **Example**: `--validation_external_script="/opt/tools/validate.sh {local_checkpoint_path} {global_step}"`
+
+### `--validation_external_background`
+
+- **What**: When set, `--validation_external_script` is launched in the background (fire-and-forget).
+- **Why**: Keep training moving without waiting for the external script; exit codes are not checked in this mode.
+
+### `--post_upload_script`
+
+- **What**: Optional executable run after each publishing provider and Hugging Face Hub upload finishes (final model and checkpoint uploads). Runs asynchronously so training doesn't block.
+- **Placeholders**: Same replacements as `--validation_external_script`, plus `{remote_checkpoint_path}` (URI returned by the provider) so you can forward the published URL to downstream systems.
+- **Notes**:
+  - Scripts run per provider/upload; errors are logged but do not halt training.
+  - Scripts are also invoked when no remote upload occurs, so you can use them for local automation (e.g., running inference on another GPU).
+  - SimpleTuner does not ingest results from your script—log to your tracker directly if you want metrics or images recorded.
+- **Example**:
+  ```bash
+  --post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'
+  ```
+  Where `/opt/hooks/notify.sh` might post to your tracking system:
+  ```bash
+  #!/usr/bin/env bash
+  REMOTE="$1"
+  PROJECT="$2"
+  RUN="$3"
+  curl -X POST "https://tracker.internal/api/runs/${PROJECT}/${RUN}/artifacts" \
+       -H "Content-Type: application/json" \
+       -d "{\"remote_uri\":\"${REMOTE}\"}"
+  ```
+- **Working samples**:
+  - `simpletuner/examples/external-validation/replicate_post_upload.py` shows a Replicate hook that consumes `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, and `{huggingface_path}` to trigger inference after uploads.
+  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` shows a WaveSpeed hook using the same placeholders plus WaveSpeed's async polling.
+  - `simpletuner/examples/external-validation/fal_post_upload.py` shows a fal.ai Flux LoRA hook (requires `FAL_KEY`).
+  - `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on a secondary GPU and works even without remote uploads.
+
 
 ### `--validation_adapter_path`
 
@@ -766,7 +834,9 @@ usage: train.py [-h] --model_family
                 [--fuse_optimizer [FUSE_OPTIMIZER]]
                 [--optimizer_release_gradients [OPTIMIZER_RELEASE_GRADIENTS]]
                 [--push_to_hub [PUSH_TO_HUB]]
+                [--push_to_hub_background [PUSH_TO_HUB_BACKGROUND]]
                 [--push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]]
+                [--publishing_config PUBLISHING_CONFIG]
                 [--hub_model_id HUB_MODEL_ID]
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
@@ -1407,9 +1477,15 @@ options:
   --push_to_hub [PUSH_TO_HUB]
                         Automatically upload the trained model to your Hugging
                         Face Hub repository.
+  --push_to_hub_background [PUSH_TO_HUB_BACKGROUND]
+                        Run Hub uploads in a background worker so training is
+                        not blocked while pushing.
   --push_checkpoints_to_hub [PUSH_CHECKPOINTS_TO_HUB]
                         Upload intermediate checkpoints to the same Hugging
                         Face repository during training.
+  --publishing_config PUBLISHING_CONFIG
+                        Optional JSON/file path describing additional
+                        publishing targets (S3/Backblaze B2/Azure Blob/Dropbox).
   --hub_model_id HUB_MODEL_ID
                         If left blank, SimpleTuner derives a name from the
                         project settings when pushing to Hub.

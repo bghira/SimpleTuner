@@ -61,6 +61,7 @@ function trainingWizardComponent() {
             max_train_steps: 0,
             push_to_hub: false,  // Default to keeping files local
             push_checkpoints_to_hub: null,
+            push_to_hub_background: false,
             checkpoint_step_interval: 100,  // Default to 100 steps
             checkpoint_epoch_interval: null,
             enable_validations: true,
@@ -78,6 +79,7 @@ function trainingWizardComponent() {
             gradient_accumulation_steps: 1,
             tracker_project_name: '',
             tracker_run_name: '',
+            custom_tracker: null,
             lora_rank: 16,
             base_model_precision: 'int8-quanto',
             text_encoder_1_precision: 'no_change',
@@ -231,7 +233,13 @@ function trainingWizardComponent() {
                 label: 'Logging',
                 title: 'Training Configuration Wizard - Step 8: Logging',
                 required: false,
-                validate: function() { return true; }
+                validate: function() {
+                    if (this.answers.report_to === 'custom-tracker') {
+                        const name = (this.answers.custom_tracker || '').trim();
+                        return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
+                    }
+                    return true;
+                }
             },
             {
                 id: 'dataset',
@@ -361,7 +369,12 @@ function trainingWizardComponent() {
             if (!this.loggingEnabled) {
                 return 'Disabled';
             }
-            return `${this.answers.report_to || 'none'} (Project: ${this.trackerProjectDisplay}, Run: ${this.trackerRunDisplay})`;
+            let provider = this.answers.report_to || 'none';
+            if (this.answers.report_to === 'custom-tracker') {
+                const name = (this.answers.custom_tracker || '').trim();
+                provider = name ? `custom-tracker (${name})` : 'custom-tracker';
+            }
+            return `${provider} (Project: ${this.trackerProjectDisplay}, Run: ${this.trackerRunDisplay})`;
         },
 
         get currentModelSupportsLyrics() {
@@ -436,6 +449,9 @@ function trainingWizardComponent() {
                     if (config.push_checkpoints_to_hub !== undefined) {
                         this.answers.push_checkpoints_to_hub = config.push_checkpoints_to_hub === true || config.push_checkpoints_to_hub === 'true';
                     }
+                    if (config.push_to_hub_background !== undefined) {
+                        this.answers.push_to_hub_background = config.push_to_hub_background === true || config.push_to_hub_background === 'true';
+                    }
                     const rawCheckpointSteps = config.checkpoint_step_interval
                         ?? config['--checkpoint_step_interval']
                         ?? config.checkpointing_steps
@@ -498,6 +514,10 @@ function trainingWizardComponent() {
                     const runName = config.tracker_run_name || config['--tracker_run_name'];
                     if (runName) {
                         this.answers.tracker_run_name = runName;
+                    }
+                    const customTracker = config.custom_tracker || config['--custom_tracker'];
+                    if (customTracker && typeof customTracker === 'string' && customTracker.trim().length > 0) {
+                        this.answers.custom_tracker = customTracker.trim();
                     }
                     const loraRankValue = config.lora_rank || config['--lora_rank'];
                     if (loraRankValue) {
@@ -731,6 +751,9 @@ function trainingWizardComponent() {
             // Debug: Log activeEnvironmentConfig to confirm values are set
             const trainerStore = Alpine.store('trainer');
             if (trainerStore) {
+                // Sync values to DOM to ensure FormData captures them if fields are present
+                trainerStore.applyStoredValues();
+
                 console.log('[TRAINING WIZARD] activeEnvironmentConfig after applying answers:',
                     JSON.stringify({
                         model_family: trainerStore.activeEnvironmentConfig?.model_family,
@@ -745,14 +768,57 @@ function trainingWizardComponent() {
 
             // Save the config to disk (bypass the dialog, use direct save)
             if (trainerStore && typeof trainerStore.doSaveConfig === 'function') {
-                console.log('[TRAINING WIZARD] Saving configuration to disk...');
+                console.log('[TRAINING WIZARD] Saving configuration to disk (replace mode)...');
                 try {
-                    // Use doSaveConfig to bypass the dialog
+                    // 1. Capture keys that must be preserved from the current environment
+                    // These are system-level settings that the wizard doesn't manage but shouldn't wipe
+                    const preserved = {};
+                    const keysToKeep = [
+                        'data_backend_config', '--data_backend_config',
+                        'output_dir', '--output_dir',
+                        'job_id', '--job_id',
+                        'webhook_config', '--webhook_config'
+                    ];
+
+                    const currentConfig = trainerStore.activeEnvironmentConfig || {};
+                    console.log('[TRAINING WIZARD] Keys before clean:', Object.keys(currentConfig).length);
+
+                    keysToKeep.forEach(k => {
+                        if (currentConfig[k] !== undefined) {
+                            preserved[k] = currentConfig[k];
+                        }
+                    });
+
+                    // 2. Reset the environment state to "clean"
+                    // Modify in-place to ensure reactivity/reference stability
+                    if (trainerStore.activeEnvironmentConfig) {
+                        // Delete all keys first
+                        Object.keys(trainerStore.activeEnvironmentConfig).forEach(key => {
+                            delete trainerStore.activeEnvironmentConfig[key];
+                        });
+                        // Restore preserved keys
+                        Object.assign(trainerStore.activeEnvironmentConfig, preserved);
+                    } else {
+                        trainerStore.activeEnvironmentConfig = { ...preserved };
+                    }
+
+                    console.log('[TRAINING WIZARD] Keys after clean:', Object.keys(trainerStore.activeEnvironmentConfig).length);
+
+                    // Also reset formValueStore and configValues to reflect the clean slate in the UI
+                    trainerStore.formValueStore = {}; // Will be repopulated by applyAnswersToForm
+                    trainerStore.configValues = { ...preserved };
+
+                    // 3. Apply wizard answers to the clean state
+                    this.applyAnswersToForm();
+
+                    // 4. Save using 'replace' mode to ignore stale DOM inputs
                     const autoPreserve = trainerStore.autoPreserveEnabled ? trainerStore.autoPreserveEnabled() : false;
                     await trainerStore.doSaveConfig({
                         createBackup: false,
-                        preserveDefaults: autoPreserve
+                        preserveDefaults: autoPreserve,
+                        replace: true
                     });
+
                     console.log('[TRAINING WIZARD] Configuration saved successfully');
                 } catch (error) {
                     console.error('[TRAINING WIZARD] Config save failed:', error);
@@ -879,7 +945,10 @@ function trainingWizardComponent() {
                     this.loggingProviders = [
                         { value: 'none', label: 'None' },
                         { value: 'wandb', label: 'Weights & Biases' },
-                        { value: 'tensorboard', label: 'TensorBoard' }
+                        { value: 'tensorboard', label: 'TensorBoard' },
+                        { value: 'comet_ml', label: 'Comet ML' },
+                        { value: 'custom-tracker', label: 'Custom Tracker' },
+                        { value: 'all', label: 'All Platforms' }
                     ];
                     return;
                 }
@@ -899,7 +968,10 @@ function trainingWizardComponent() {
                     this.loggingProviders = [
                         { value: 'none', label: 'None' },
                         { value: 'wandb', label: 'Weights & Biases' },
-                        { value: 'tensorboard', label: 'TensorBoard' }
+                        { value: 'tensorboard', label: 'TensorBoard' },
+                        { value: 'comet_ml', label: 'Comet ML' },
+                        { value: 'custom-tracker', label: 'Custom Tracker' },
+                        { value: 'all', label: 'All Platforms' }
                     ];
                 }
             } catch (error) {
@@ -908,7 +980,10 @@ function trainingWizardComponent() {
                 this.loggingProviders = [
                     { value: 'none', label: 'None' },
                     { value: 'wandb', label: 'Weights & Biases' },
-                    { value: 'tensorboard', label: 'TensorBoard' }
+                    { value: 'tensorboard', label: 'TensorBoard' },
+                    { value: 'comet_ml', label: 'Comet ML' },
+                    { value: 'custom-tracker', label: 'Custom Tracker' },
+                    { value: 'all', label: 'All Platforms' }
                 ];
             }
         },
@@ -1264,6 +1339,12 @@ function trainingWizardComponent() {
 
             this.syncTrainingDuration();
             this.updateDeepSpeedConfig();
+            if (this.answers.report_to !== 'custom-tracker') {
+                this.answers.custom_tracker = null;
+            } else if (typeof this.answers.custom_tracker === 'string') {
+                const trimmedTracker = this.answers.custom_tracker.trim();
+                this.answers.custom_tracker = trimmedTracker || null;
+            }
             const uiOnlySet = new Set(this.uiOnlyAnswerKeys || []);
 
             // Update config values, formValueStore, AND activeEnvironmentConfig
@@ -1317,15 +1398,19 @@ function trainingWizardComponent() {
 
                     // 2. Update formValueStore (used by ensureCompleteFormData)
                     if (trainerStore.formValueStore) {
-                        trainerStore.formValueStore[fieldName] = {
+                        const descriptor = {
                             value: value,
                             kind: typeof value === 'boolean' ? 'checkbox' : 'text'
                         };
+
+                        // Update both dashed and bare versions to ensure consistency
+                        // This prevents stale values in formValueStore from overriding the new config
+                        trainerStore.formValueStore[fieldName] = descriptor;
+                        trainerStore.formValueStore[key] = descriptor;
+
                         if (key === 'checkpoint_step_interval') {
-                            trainerStore.formValueStore['--checkpointing_steps'] = {
-                                value: value,
-                                kind: 'text'
-                            };
+                            trainerStore.formValueStore['--checkpointing_steps'] = descriptor;
+                            trainerStore.formValueStore['checkpointing_steps'] = descriptor;
                         }
                     }
 
@@ -1807,6 +1892,7 @@ function trainingWizardComponent() {
                 'model_type': 'basic',
                 'push_to_hub': 'publishing',
                 'push_checkpoints_to_hub': 'publishing',
+                'push_to_hub_background': 'publishing',
                 'checkpoint_step_interval': 'checkpoints',
                 'checkpoint_epoch_interval': 'checkpoints',
                 'validation_step_interval': 'validations',
@@ -1816,6 +1902,7 @@ function trainingWizardComponent() {
                 'validation_num_inference_steps': 'validations',
                 'disable_validations': 'validations',
                 'report_to': 'publishing',
+                'custom_tracker': 'publishing',
                 'tracker_project_name': 'basic',
                 'tracker_run_name': 'basic',
                 'hub_model_id': 'publishing',

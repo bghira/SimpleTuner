@@ -568,6 +568,19 @@
                         </button>
                     </div>
 
+                    <div class="form-check mt-3">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="push-to-hub-background"
+                               x-model="answers.push_to_hub_background">
+                        <label class="form-check-label" for="push-to-hub-background">
+                            Upload in background while training continues
+                        </label>
+                        <div class="form-text">
+                            Sends Hub uploads to a background worker so checkpoints and final saves do not block the training loop.
+                        </div>
+                    </div>
+
                     <div class="mt-4">
                         <label class="form-label">Hub Repository ID</label>
                         <input type="text"
@@ -810,6 +823,18 @@
                                    :placeholder="trackerFieldDefaults.run.placeholder">
                             <div class="form-text">
                                 Leave empty to auto-generate a timestamped name for each run.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-1" x-show="answers.report_to === 'custom-tracker'">
+                        <div class="col-12">
+                            <label class="form-label">Custom Tracker Module</label>
+                            <input type="text"
+                                   class="form-control"
+                                   x-model="answers.custom_tracker"
+                                   placeholder="my_tracker">
+                            <div class="form-text">
+                                File name from <code>simpletuner/custom-trackers</code> (without .py), which must expose a single <code>GeneralTracker</code> subclass.
                             </div>
                         </div>
                     </div>

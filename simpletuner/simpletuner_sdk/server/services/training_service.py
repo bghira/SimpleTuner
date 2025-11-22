@@ -226,6 +226,11 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
             "off",
         }
 
+    replace_config_raw = _coerce_single(form_dict.pop("__replace_active_config__", None))
+    replace_config = False
+    if replace_config_raw is not None:
+        replace_config = str(replace_config_raw).strip().lower() == "true"
+
     resolved_defaults = None
     if state_store:
         try:
@@ -578,10 +583,14 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         accelerate_mode = normalized_mode
 
         all_defaults.update({k: v for k, v in cleaned_onboarding.items() if k.startswith("--")})
-    if merge_environment_defaults:
+
+    if merge_environment_defaults and not replace_config:
         base_config = {**all_defaults, **existing_config_cli}
     else:
-        logger.debug("Skipping merge of active environment defaults at user request")
+        if not replace_config:
+            logger.debug("Skipping merge of active environment defaults at user request")
+        else:
+            logger.debug("Replacing active config - ignoring existing file content")
         base_config = dict(all_defaults)
 
     if cleared_text_fields:
@@ -593,8 +602,8 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
     selected_family = (
         config_dict.get("--model_family")
         or config_dict.get("model_family")
-        or existing_config_cli.get("--model_family")
-        or existing_config_cli.get("model_family")
+        or (existing_config_cli.get("--model_family") if not replace_config else None)
+        or (existing_config_cli.get("model_family") if not replace_config else None)
         or base_config.get("--model_family")
         or base_config.get("model_family")
     )
@@ -610,8 +619,9 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
                 alias = key.lstrip("-")
                 base_config.pop(key, None)
                 base_config.pop(alias, None)
-                existing_config_cli.pop(key, None)
-                existing_config_cli.pop(alias, None)
+                if not replace_config:
+                    existing_config_cli.pop(key, None)
+                    existing_config_cli.pop(alias, None)
                 config_dict.pop(key, None)
                 config_dict.pop(alias, None)
 
@@ -627,11 +637,17 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
 
     if interval_cleared or config_dict.get("--accelerator_cache_clear_interval") is None:
         config_dict.pop("--accelerator_cache_clear_interval", None)
-        existing_config_cli.pop("--accelerator_cache_clear_interval", None)
-        existing_config_cli.pop("accelerator_cache_clear_interval", None)
+        if not replace_config:
+            existing_config_cli.pop("--accelerator_cache_clear_interval", None)
+            existing_config_cli.pop("accelerator_cache_clear_interval", None)
         base_config.pop("--accelerator_cache_clear_interval", None)
         base_config.pop("accelerator_cache_clear_interval", None)
-    complete_config = {**base_config, **existing_config_cli, **config_dict}
+
+    if replace_config:
+        complete_config = {**base_config, **config_dict}
+    else:
+        complete_config = {**base_config, **existing_config_cli, **config_dict}
+
     fallback_complete = sanitize_optimizer_mapping(complete_config)
     if fallback_complete:
         logger.warning(
@@ -750,7 +766,9 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         if clean_key in form_dict or arg_lookup in form_dict:
             # Field is in form submission - check if it was actually changed
             # Use normalized value from complete_config for comparison
-            saved_value = existing_config_cli.get(arg_lookup) or existing_config_cli.get(key)
+            saved_value = None
+            if not replace_config:
+                saved_value = existing_config_cli.get(arg_lookup) or existing_config_cli.get(key)
 
             if saved_value is None:
                 # Field wasn't in saved config - check if it differs from default

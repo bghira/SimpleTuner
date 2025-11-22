@@ -114,39 +114,6 @@ window.sanitizeConfigName = sanitizeConfigName;
 window.sanitizeConfigEntry = sanitizeConfigEntry;
 
 function trainerComponent() {
-    const canonicalNameFor = (name) => {
-        if (!name || typeof name !== 'string' || name.startsWith('__')) {
-            return null;
-        }
-        if (name.startsWith('--')) {
-            return name;
-        }
-        const trimmed = name.replace(/^[-]+/, '');
-        return trimmed ? `--${trimmed}` : null;
-    };
-
-    const syncCanonicalFormValues = (formData) => {
-        if (!(formData instanceof FormData)) {
-            return;
-        }
-        const pending = new Map();
-        formData.forEach((value, key) => {
-            const canonical = canonicalNameFor(key);
-            if (!canonical || canonical === key) {
-                return;
-            }
-            if (!pending.has(canonical)) {
-                pending.set(canonical, []);
-            }
-            pending.get(canonical).push(value);
-        });
-
-        pending.forEach((values, canonical) => {
-            formData.delete(canonical);
-            values.forEach((val) => formData.append(canonical, val));
-        });
-    };
-
     return {
         versionInfo: null,
         _versionLoading: false,
@@ -612,7 +579,7 @@ function trainerComponent() {
             }
 
             try {
-                const response = await fetch(`/api/configs/${encodeURIComponent(active)}`);
+                const response = await fetch(`/api/configs/${encodeURIComponent(active)}?t=${Date.now()}`);
                 if (!response.ok) {
                     throw new Error(`Failed to load configuration for ${active}`);
                 }
@@ -645,12 +612,11 @@ function trainerComponent() {
                 return;
             }
 
-            if (!this.activeEnvironmentConfig) {
-                try {
-                    await this.fetchActiveEnvironmentConfig();
-                } catch (error) {
-                    console.error('Failed to fetch active configuration before opening JSON modal:', error);
-                }
+            // Always refresh configuration to ensure we have the latest values
+            try {
+                await this.fetchActiveEnvironmentConfig();
+            } catch (error) {
+                console.error('Failed to fetch active configuration before opening JSON modal:', error);
             }
 
             if (!this.activeEnvironmentConfig || typeof this.activeEnvironmentConfig !== 'object') {
@@ -668,7 +634,7 @@ function trainerComponent() {
             this.showConfigJsonModal = false;
             this.configJsonError = '';
         },
-        canonicalizeConfigKey(rawKey) {
+        toBareConfigKey(rawKey) {
             if (rawKey === null || rawKey === undefined) {
                 return null;
             }
@@ -680,7 +646,7 @@ function trainerComponent() {
             if (trimmed.startsWith('_')) {
                 return trimmed;
             }
-            const withoutPrefix = trimmed.replace(/^--+/, '').trim();
+            const withoutPrefix = trimmed.replace(/^[-]+/, '').trim();
             return withoutPrefix || trimmed;
         },
         isCliConfigKey(rawKey) {
@@ -692,13 +658,14 @@ function trainerComponent() {
             }
             const map = new Map();
             Object.entries(config).forEach(([key, value]) => {
-                const canonical = this.canonicalizeConfigKey(key);
-                if (!canonical) {
+                const bare = this.toBareConfigKey(key);
+                if (!bare) {
                     return;
                 }
                 const isCli = this.isCliConfigKey(key);
-                if (!map.has(canonical) || !isCli) {
-                    map.set(canonical, value);
+                // Prefer bare keys over CLI dashed keys for the JSON view
+                if (!map.has(bare) || !isCli) {
+                    map.set(bare, value);
                 }
             });
             const sortedKeys = Array.from(map.keys()).sort((a, b) => a.localeCompare(b));
@@ -714,7 +681,9 @@ function trainerComponent() {
             }
             const normalized = {};
             Object.entries(config).forEach(([key, value]) => {
-                const canonical = this.canonicalizeConfigKey(key);
+                // Ensure keys are stored in the canonical internal format (dashed)
+                // This matches how fields are stored in FormData and processed by the backend
+                const canonical = this.canonicalizeKey(key);
                 if (!canonical) {
                     return;
                 }
@@ -3675,8 +3644,12 @@ function trainerComponent() {
                     return;
                 }
                 processed.add(name);
+
+                // Canonicalize key to ensure consistency with config (dashed)
+                const key = this.canonicalizeKey(name) || name;
+
                 // Update only the fields present in current form
-                values[name] = this.getFieldDescriptor(form, name);
+                values[key] = this.getFieldDescriptor(form, name);
             });
             this.formValueStore = values;
         },
@@ -3719,10 +3692,25 @@ function trainerComponent() {
             }
             const form = document.getElementById('trainer-form');
             if (!form) return;
+
+            // Canonicalize key for storage consistency
+            const key = this.canonicalizeKey(field.name) || field.name;
+
             this.formValueStore = {
                 ...this.formValueStore,
-                [field.name]: this.getFieldDescriptor(form, field.name),
+                [key]: this.getFieldDescriptor(form, field.name),
             };
+        },
+
+        canonicalizeKey(name) {
+            if (!name || typeof name !== 'string' || name.startsWith('__')) {
+                return null;
+            }
+            if (name.startsWith('--')) {
+                return name;
+            }
+            const trimmed = name.replace(/^[-]+/, '');
+            return trimmed ? `--${trimmed}` : name;
         },
 
         applyStoredValues() {
@@ -3736,8 +3724,32 @@ function trainerComponent() {
 
             Object.entries(this.formValueStore).forEach(([name, entry]) => {
                 if (!entry) return;
-                const selector = `[name="${this.cssEscape(name)}"]`;
-                const nodes = form.querySelectorAll(selector);
+
+                let selector = `[name="${this.cssEscape(name)}"]`;
+                let nodes = form.querySelectorAll(selector);
+
+                // Robustness fix: If direct match not found, try alternate naming (dashed vs non-dashed)
+                // This handles the "mish-mash" of parameter naming conventions
+                if (!nodes.length) {
+                    let altName = null;
+                    if (name.startsWith('--')) {
+                        // Try stripping dashes: --report_to -> report_to
+                        altName = name.substring(2);
+                    } else {
+                        // Try adding dashes: report_to -> --report_to
+                        altName = `--${name}`;
+                    }
+
+                    if (altName) {
+                        const altSelector = `[name="${this.cssEscape(altName)}"]`;
+                        const altNodes = form.querySelectorAll(altSelector);
+                        if (altNodes.length > 0) {
+                            nodes = altNodes;
+                            // console.debug(`[TRAINER] Matched stored key "${name}" to DOM element "${altName}"`);
+                        }
+                    }
+                }
+
                 if (!nodes.length) {
                     return;
                 }
@@ -3766,7 +3778,7 @@ function trainerComponent() {
                         const oldValue = node.value;
                         node.value = entry.value ?? '';
                         if (oldValue !== (entry.value ?? '')) {
-                            console.log(`Restored ${name}: "${oldValue}" -> "${entry.value ?? ''}"`);
+                            // console.log(`Restored ${name}: "${oldValue}" -> "${entry.value ?? ''}"`);
                         }
                     });
                 }
@@ -4200,28 +4212,81 @@ function trainerComponent() {
             if (!formElement) return;
 
             try {
-                const formData = new FormData(formElement);
+                let formData;
 
-                // Normalize checkboxes to single true/false entries
-                this.normalizeCheckboxFormData(formData);
+                if (options.replace) {
+                    // Replace mode: Create fresh FormData solely from activeEnvironmentConfig
+                    // This bypasses the DOM form elements, ensuring stale UI values don't persist
+                    formData = new FormData();
 
-                // Ensure values from other tabs are included
-                this.ensureCompleteFormData(formData);
+                    // Signal server to replace the config instead of merging
+                    formData.append('__replace_active_config__', 'true');
 
-                // Add save options
-                if (options.preserveDefaults) {
-                    formData.append('preserve_defaults', 'true');
+                    if (options.preserveDefaults) {
+                        formData.append('preserve_defaults', 'true');
+                    }
+                    if (options.createBackup) {
+                        formData.append('create_backup', 'true');
+                    }
+
+                    console.log('[TRAINER] Saving config in replace mode (ignoring form DOM)');
+                    this.appendConfigValuesToFormData(formData, this.activeEnvironmentConfig);
+
+                    // Ensure job_id is present if possible
+                    if (!formData.has('--job_id')) {
+                        const jobId = this.formValueStore?.['--job_id']?.value ||
+                                      this.formValueStore?.['job_id']?.value;
+                        if (jobId) {
+                            formData.append('--job_id', String(jobId));
+                        }
+                    }
+                } else {
+                    // Normal mode: Merge form DOM with config
+                    formData = new FormData(formElement);
+
+                    // Normalize checkboxes to single true/false entries
+                    this.normalizeCheckboxFormData(formData);
+
+                    // Ensure values from other tabs are included
+                    this.ensureCompleteFormData(formData);
+
+                    // Remove forced fields from FormData so they are repopulated from the active config
+                    // This is used by the wizard to ensure its changes take precedence over stale DOM values
+                    if (options.forceFields && Array.isArray(options.forceFields)) {
+                        const variants = new Set();
+                        options.forceFields.forEach(field => {
+                            if (!field) return;
+                            variants.add(field);
+                            if (!field.startsWith('--')) {
+                                variants.add(`--${field}`);
+                            } else {
+                                variants.add(field.substring(2));
+                            }
+                        });
+
+                        // Remove all variants from formData
+                        variants.forEach(variant => {
+                            if (formData.has(variant)) {
+                                console.log(`[TRAINER] forcing update for ${variant} (removing from FormData)`);
+                                formData.delete(variant);
+                            }
+                        });
+                    }
+
+                    // Add save options
+                    if (options.preserveDefaults) {
+                        formData.append('preserve_defaults', 'true');
+                    }
+                    if (options.createBackup) {
+                        formData.append('create_backup', 'true');
+                    }
+
+                    // Ensure values from the active config are present
+                    this.appendConfigValuesToFormData(formData, this.activeEnvironmentConfig);
+
+                    // Final checkbox normalization after all merges
+                    this.normalizeCheckboxFormData(formData);
                 }
-                if (options.createBackup) {
-                    formData.append('create_backup', 'true');
-                }
-
-                // Ensure values from the active config are present
-                this.appendConfigValuesToFormData(formData, this.activeEnvironmentConfig);
-
-                // Final checkbox normalization after all merges
-                this.normalizeCheckboxFormData(formData);
-                syncCanonicalFormValues(formData);
 
                 const params = {};
                 formData.forEach((value, key) => {

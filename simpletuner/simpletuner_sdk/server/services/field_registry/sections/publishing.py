@@ -33,6 +33,41 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="publishing_config",
+            arg_name="--publishing_config",
+            ui_label="Additional Publishing Targets",
+            field_type=FieldType.TEXTAREA,
+            tab="publishing",
+            section="publishing_controls",
+            default_value=None,
+            allow_empty=True,
+            placeholder='[{"provider":"s3","bucket":"my-bucket"}]',
+            help_text="Optional JSON list/dict or path to a JSON file describing extra publishing providers (S3-compatible, Backblaze B2, Azure Blob, Dropbox).",
+            tooltip="Accepts inline JSON, file paths, or dict-like values from the CLI. Leave blank to disable non-Hugging Face publishing.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="post_upload_script",
+            arg_name="--post_upload_script",
+            ui_label="Post-upload Script",
+            field_type=FieldType.TEXT,
+            tab="publishing",
+            section="publishing_controls",
+            default_value=None,
+            placeholder="/path/to/hook.sh {remote_checkpoint_path}",
+            help_text="Optional executable to run after each publishing provider and Hugging Face Hub upload finishes.",
+            tooltip="Supports placeholders like {remote_checkpoint_path}, {local_checkpoint_path}, {global_step}, {tracker_run_name}, {tracker_project_name}, {model_family}, {huggingface_path}. Runs asynchronously.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="push_checkpoints_to_hub",
             arg_name="--push_checkpoints_to_hub",
             ui_label="Push Intermediate Checkpoints",
@@ -45,6 +80,23 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             tooltip="Enable to mirror training progress on the Hub. This will increase upload time and storage usage.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="push_to_hub_background",
+            arg_name="--push_to_hub_background",
+            ui_label="Upload In Background",
+            field_type=FieldType.CHECKBOX,
+            tab="publishing",
+            section="publishing_controls",
+            default_value=False,
+            dependencies=[FieldDependency(field="push_to_hub", operator="equals", value=True, action="show")],
+            help_text="Send Hub uploads to a background worker so the training loop is not blocked.",
+            tooltip="When enabled, checkpoint and final uploads run in a separate thread while training continues.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
         )
     )
 

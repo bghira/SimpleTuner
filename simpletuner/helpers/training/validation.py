@@ -2,10 +2,12 @@ import base64
 import inspect
 import logging
 import os
+import subprocess
 import sys
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Union
 
 import diffusers
@@ -51,12 +53,14 @@ from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepSchedu
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.script_runner import build_script_command, run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_adapters import (
     ValidationAdapterRun,
     ValidationAdapterSpec,
     build_validation_adapter_runs,
 )
+from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 logger = logging.getLogger("Validation")
 from simpletuner.helpers.training.multi_process import gather_across_processes, should_log, split_across_processes
@@ -1018,6 +1022,7 @@ class Validation:
         is_fsdp: bool = False,
         model_evaluator=None,
         trainable_parameters=None,
+        publishing_manager=None,
     ):
         self.trainable_parameters = trainable_parameters
         self.accelerator = accelerator
@@ -1044,6 +1049,7 @@ class Validation:
         self.embed_cache = embed_cache
         self.ema_model = ema_model
         self.ema_enabled = False
+        self.publishing_manager = publishing_manager
         self.deepfloyd = True if "deepfloyd" in self.config.model_family else False
         self.deepfloyd_stage2 = True if str(self.config.model_flavour).startswith("ii-") else False
         preset_validation_inputs = None
@@ -1083,6 +1089,83 @@ class Validation:
         )
         self._active_adapter_run: ValidationAdapterRun | None = None
         self.preview = ValidationPreviewer(self.model, self.accelerator, self.config)
+
+    def _validation_method(self) -> str:
+        configured_method = getattr(self.config, "validation_method", "simpletuner-local")
+        if not isinstance(configured_method, str):
+            configured_method = "simpletuner-local"
+        normalised = str(configured_method or "simpletuner-local").strip().lower().replace("_", "-")
+        valid_methods = {"simpletuner-local", "external-script"}
+        if normalised == "":
+            normalised = "simpletuner-local"
+        if normalised not in valid_methods:
+            raise ValueError(
+                f"Unsupported validation_method '{configured_method}'. Expected one of: {', '.join(sorted(valid_methods))}."
+            )
+        return normalised
+
+    def _resolve_latest_checkpoint_path(self) -> str:
+        checkpoint_manager = CheckpointManager(self.config.output_dir)
+        latest_checkpoint = checkpoint_manager.get_latest_checkpoint()
+        if latest_checkpoint is None:
+            raise ValueError(
+                "validation_external_script requires {local_checkpoint_path}, but no checkpoints exist in output_dir."
+            )
+        checkpoint_path = os.path.join(self.config.output_dir, latest_checkpoint)
+        if not os.path.isdir(checkpoint_path):
+            raise ValueError(
+                f"validation_external_script resolved checkpoint path '{checkpoint_path}', but it does not exist."
+            )
+        return checkpoint_path
+
+    def _build_external_validation_command(self) -> list[str]:
+        script_template = getattr(self.config, "validation_external_script", None)
+        if script_template in (None, "", "None"):
+            raise ValueError("--validation_external_script is required when --validation_method=external-script.")
+        script_template = str(script_template).strip()
+        output_dir = getattr(self.config, "output_dir", None)
+
+        def _resolver(name: str):
+            if name == "local_checkpoint_path":
+                return self._resolve_latest_checkpoint_path()
+            if name == "remote_checkpoint_path":
+                return ""
+            if name == "global_step":
+                step_value = getattr(self, "global_step", None) or StateTracker.get_global_step()
+                return "" if step_value is None else str(step_value)
+            if name == "tracker_run_name":
+                return getattr(self.config, "tracker_run_name", "") or ""
+            if name == "tracker_project_name":
+                return getattr(self.config, "tracker_project_name", "") or ""
+            if name == "model_family":
+                model_family = getattr(self.config, "model_family", None) or StateTracker.get_model_family()
+                return "" if model_family is None else str(model_family)
+            if name == "huggingface_path":
+                return getattr(self.config, "hub_model_id", "") or ""
+            if name == "model_type":
+                return getattr(self.config, "model_type", "") or ""
+            if name == "lora_type":
+                return getattr(self.config, "lora_type", "") or ""
+            if name.startswith("validation_"):
+                return getattr(self.config, name, "") or ""
+            raise KeyError(name)
+
+        return build_script_command(script_template, _resolver)
+
+    def _run_external_validation(self, validation_type: str | None, step: int):
+        command = self._build_external_validation_command()
+        background = bool(getattr(self.config, "validation_external_background", False))
+        logger.info(
+            "Running external validation command for %s (step=%s, background=%s): %s",
+            validation_type or "validation",
+            step,
+            background,
+            command,
+        )
+        if background:
+            subprocess.Popen(command)
+            return
+        subprocess.run(command, check=True)
 
     def _validation_multigpu_mode(self) -> str:
         """
@@ -1433,6 +1516,7 @@ class Validation:
         skip_execution: bool = False,
     ):
         self._update_state()
+        validation_method = self._validation_method()
         if self.validation_prompt_metadata is None:
             return self
         content = self.validation_prompt_metadata.get("validation_prompts", None)
@@ -1461,7 +1545,10 @@ class Validation:
             logger.debug("Not running validation because intermediary might have already fired off.")
             return self
         webhook_handler = StateTracker.get_webhook_handler()
-        if webhook_handler is not None and (self.accelerator.is_main_process or not self._use_distributed_validation()):
+        should_notify = webhook_handler is not None and (
+            self.accelerator.is_main_process or not self._use_distributed_validation()
+        )
+        if should_notify:
             webhook_handler.send(
                 message="Validations are generating.. this might take a minute! 🖼️",
                 message_level="info",
@@ -1473,41 +1560,61 @@ class Validation:
                 message="Validation is starting.",
             )
 
-        should_execute_locally = self.accelerator.is_main_process or self.deepspeed or self._use_distributed_validation()
+        should_execute_locally = (
+            self.accelerator.is_main_process
+            if validation_method == "external-script"
+            else self.accelerator.is_main_process or self.deepspeed or self._use_distributed_validation()
+        )
         if should_execute_locally:
-            logger.debug("Starting validation process...")
-            diffusers.utils.logging._tqdm_active = False
-            self.setup_pipeline(validation_type)
-            if self.model.pipeline is None:
-                logger.error("Not able to run validations, we did not obtain a valid pipeline.")
-                self.validation_images = None
-                return self
-            self.setup_scheduler()
-            master_validation_images: dict = {}
-            self.validation_prompt_dict = {}
-            self.validation_video_paths.clear()
-            self.eval_scores = {}
-            for adapter_run in self.validation_adapter_runs:
-                self._log_adapter_run(adapter_run)
-                with self._temporary_validation_adapters(adapter_run):
-                    self.process_prompts(
-                        validation_type=validation_type,
-                        adapter_run=adapter_run,
-                        image_accumulator=master_validation_images,
+            if validation_method == "external-script":
+                self.validation_images = {}
+                self.validation_prompt_dict = {}
+                self.validation_video_paths.clear()
+                self.eval_scores = {}
+                self.evaluation_result = None
+                self._run_external_validation(validation_type=validation_type, step=step)
+                if should_notify:
+                    webhook_handler.send_lifecycle_stage(
+                        stage_key="validation",
+                        stage_label="Running Validation",
+                        stage_status="completed",
+                        message="Validation completed.",
                     )
-            self.validation_images = master_validation_images
-            self.finalize_validation(validation_type)
-            if self.evaluation_result is not None:
-                logger.info(f"Evaluation result: {self.evaluation_result}")
-            logger.debug("Validation process completed.")
-            if webhook_handler is not None and (self.accelerator.is_main_process or not self._use_distributed_validation()):
-                webhook_handler.send_lifecycle_stage(
-                    stage_key="validation",
-                    stage_label="Running Validation",
-                    stage_status="completed",
-                    message="Validation completed.",
-                )
-            self.clean_pipeline()
+            else:
+                logger.debug("Starting validation process...")
+                diffusers.utils.logging._tqdm_active = False
+                self.setup_pipeline(validation_type)
+                if self.model.pipeline is None:
+                    logger.error("Not able to run validations, we did not obtain a valid pipeline.")
+                    self.validation_images = None
+                    return self
+                self.setup_scheduler()
+                master_validation_images: dict = {}
+                self.validation_prompt_dict = {}
+                self.validation_video_paths.clear()
+                self.eval_scores = {}
+                for adapter_run in self.validation_adapter_runs:
+                    self._log_adapter_run(adapter_run)
+                    with self._temporary_validation_adapters(adapter_run):
+                        self.process_prompts(
+                            validation_type=validation_type,
+                            adapter_run=adapter_run,
+                            image_accumulator=master_validation_images,
+                        )
+                self.validation_images = master_validation_images
+                self.finalize_validation(validation_type)
+                self._publish_validation_artifacts(validation_type)
+                if self.evaluation_result is not None:
+                    logger.info(f"Evaluation result: {self.evaluation_result}")
+                logger.debug("Validation process completed.")
+                if should_notify:
+                    webhook_handler.send_lifecycle_stage(
+                        stage_key="validation",
+                        stage_label="Running Validation",
+                        stage_status="completed",
+                        message="Validation completed.",
+                    )
+                self.clean_pipeline()
 
         if epoch_validation_pending and current_validation_will_execute and validation_type == "intermediary":
             self._epoch_validations_completed.add(self._pending_epoch_validation)
@@ -2890,6 +2997,61 @@ class Validation:
 
         else:
             logger.debug("Skipping EMA model restoration for validation, as we are not using EMA.")
+
+    def _publish_validation_artifacts(self, validation_type: str | None):
+        if self.publishing_manager is None or not getattr(self.publishing_manager, "configured", False):
+            return
+        if hasattr(self.accelerator, "is_main_process") and not self.accelerator.is_main_process:
+            return
+
+        artifact_root = getattr(self.config, "output_dir", None)
+        if not artifact_root:
+            logger.warning("publishing_config provided but output_dir is missing; skipping publishing.")
+            return
+
+        artifact_root_path = Path(artifact_root)
+        if not artifact_root_path.exists():
+            logger.warning("Publishing target %s does not exist; skipping publishing.", artifact_root_path)
+            return
+
+        artifact_name = artifact_root_path.name
+        if not artifact_name:
+            artifact_name = getattr(self.config, "tracker_run_name", None) or getattr(
+                self.config, "tracker_project_name", None
+            )
+
+        metadata = {
+            "validation_type": validation_type,
+            "job_id": StateTracker.get_job_id(),
+            "tracker_project_name": getattr(self.config, "tracker_project_name", None),
+            "tracker_run_name": getattr(self.config, "tracker_run_name", None),
+            "global_step": StateTracker.get_global_step(),
+        }
+
+        try:
+            results = self.publishing_manager.publish(
+                artifact_root_path,
+                artifact_name=artifact_name,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.error("Failed to publish artifacts via publishing_config: %s", exc)
+            return
+
+        script_template = getattr(self.config, "post_upload_script", None)
+        if results and script_template not in (None, "", "None"):
+            for result in results:
+                if result is None:
+                    continue
+                remote_uri = getattr(result, "uri", None)
+                local_path = str(getattr(result, "artifact_path", "") or "")
+                run_hook_script(
+                    script_template,
+                    config=self.config,
+                    local_path=local_path or None,
+                    remote_path=remote_uri,
+                    global_step=self.global_step,
+                )
 
     def finalize_validation(self, validation_type):
         """Cleans up and restores original state if necessary."""

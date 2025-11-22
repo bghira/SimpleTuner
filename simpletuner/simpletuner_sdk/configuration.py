@@ -34,6 +34,8 @@ class ConfigModel(BaseModel):
     dataloader_config: list
     # what we will write as config/webhooks.json (list of webhook configs)
     webhook_config: list | dict  # Accept both for backward compat, will normalize to list
+    # optional publishing_config
+    publishing_config: list | dict | None = None
     # optional lycoris_config
     lycoris_config: dict = None
     # optional user_prompt_library
@@ -50,6 +52,18 @@ class ConfigModel(BaseModel):
         if isinstance(v, list):
             return v
         raise ValueError(f"webhook_config must be dict or list, got {type(v)}")
+
+    @field_validator("publishing_config", mode="before")
+    @classmethod
+    def normalize_publishing_config(cls, v):
+        """Normalize publishing_config to list format for consistency."""
+        if v is None:
+            return []
+        if isinstance(v, dict):
+            return [v]
+        if isinstance(v, list):
+            return v
+        raise ValueError(f"publishing_config must be dict or list, got {type(v)}")
 
 
 class Configuration:
@@ -79,6 +93,7 @@ class Configuration:
         for file in [
             "config/multidatabackend.json",
             "config/webhooks.json",
+            "config/publishing.json",
             "config/lycoris_config.json",
             "config/user_prompt_library.json",
         ]:
@@ -96,6 +111,11 @@ class Configuration:
         with open("config/webhooks.json", mode="w") as file_handler:
             json.dump(job_config.webhook_config, file_handler, indent=4)
             job_config.trainer_config["webhook_config"] = "config/webhooks.json"
+
+        if hasattr(job_config, "publishing_config") and job_config.publishing_config:
+            with open("config/publishing.json", "w") as file_handler:
+                json.dump(job_config.publishing_config, file_handler, indent=4)
+                job_config.trainer_config["publishing_config"] = "config/publishing.json"
 
         if hasattr(job_config, "lycoris_config"):
             logger.debug(f"LyCORIS config present: {job_config.lycoris_config}")

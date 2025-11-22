@@ -58,6 +58,8 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **DeepSpeed & FSDP2 integration** - Train large models on smaller GPUs with optim/grad/parameter sharding, context parallel attention, gradient checkpointing, and optimizer state offload
 - **S3 training** - Train directly from cloud storage (Cloudflare R2, Wasabi S3)
 - **EMA support** - Exponential moving average weights for improved stability and quality
+- **Custom experiment trackers** - Drop an `accelerate.GeneralTracker` into `simpletuner/custom-trackers` and use `--report_to=custom-tracker --custom_tracker=<name>`
+- **Custom experiment trackers** - Drop an `accelerate.GeneralTracker` into `simpletuner/custom-trackers` and use `--report_to=custom-tracker --custom_tracker=<name>`
 
 ### Model Architecture Support
 
@@ -93,6 +95,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **SNR weighting** - Min-SNR gamma weighting for improved training dynamics
 - **Group offloading** - Diffusers v0.33+ module-group CPU/disk staging with optional CUDA streams
 - **Validation adapter sweeps** - Temporarily attach LoRA adapters (single or JSON presets) during validation to measure adapter-only or comparison renders without touching the training loop
+- **External validation hooks** - Swap the built-in validation pipeline or post-upload steps for your own scripts, so you can run checks on another GPU or forward artifacts to any cloud provider of your choice ([details](/documentation/OPTIONS.md#validation_method))
 
 ### Model-Specific Features
 

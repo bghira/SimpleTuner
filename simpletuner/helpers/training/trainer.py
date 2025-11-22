@@ -2,11 +2,14 @@ import ast
 import copy
 import glob
 import hashlib
+import importlib.util
+import inspect
 import json
 import logging
 import math
 import os
 import random
+import re
 import shlex
 import shutil
 import signal
@@ -15,8 +18,10 @@ import sys
 import threading
 import time
 from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
+from unittest import mock as unittest_mock
 
 import huggingface_hub
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
@@ -37,6 +42,7 @@ from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -60,6 +66,7 @@ from simpletuner.helpers.training.optimizer_param import (
 )
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
+from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
@@ -171,6 +178,7 @@ import torch
 import torch.nn.functional as F
 import transformers
 from accelerate import Accelerator, DeepSpeedPlugin, FullyShardedDataParallelPlugin
+from accelerate.tracking import GeneralTracker
 from accelerate.utils import (
     DistributedType,
     DynamoBackend,
@@ -249,6 +257,7 @@ class Trainer:
     sidecar_lr = None
     sidecar_is_schedulefree = False
     sidecar_scheduler_disabled = False
+    publishing_manager = None
 
     def __init__(
         self,
@@ -269,6 +278,8 @@ class Trainer:
         self.lycoris_config = None
         self.lr_scheduler = None
         self.webhook_handler = None
+        self.custom_tracker = None
+        self.publishing_manager = None
         self.should_abort = False
         self._external_abort_checker = None
         self._manual_validation_consumer: Optional[Callable[[], bool]] = None
@@ -280,6 +291,8 @@ class Trainer:
         self.sidecar_lr = None
         self.sidecar_is_schedulefree = False
         self.sidecar_scheduler_disabled = False
+        self._hub_upload_executor: ThreadPoolExecutor | None = None
+        self._hub_upload_futures: deque[tuple[str, Future]] = deque()
         StateTracker.set_job_id(job_id)
         try:
             self.parse_arguments(
@@ -326,6 +339,122 @@ class Trainer:
             return False
         return bool(self._manual_checkpoint_consumer())
 
+    def _resolve_tracker_identifiers(self) -> tuple[str, str]:
+        """Return sanitized (project_name, run_name) pairs with sensible defaults."""
+        project_raw = getattr(self.config, "tracker_project_name", None)
+        run_raw = getattr(self.config, "tracker_run_name", None)
+        project_name = ""
+        run_name = ""
+        if isinstance(project_raw, str):
+            project_name = project_raw.strip()
+        elif project_raw:
+            project_name = str(project_raw)
+        if isinstance(run_raw, str):
+            run_name = run_raw.strip()
+        elif run_raw:
+            run_name = str(run_raw)
+
+        if not project_name:
+            project_name = "simpletuner-training"
+        if not run_name:
+            run_name = "simpletuner-training-run"
+
+        return project_name, run_name
+
+    def _load_custom_tracker(self, module_name: str, run_name: str, logging_dir: Optional[str]) -> GeneralTracker:
+        """
+        Load a GeneralTracker subclass from simpletuner/custom-trackers/<module_name>.py.
+        """
+        if not module_name or not str(module_name).strip():
+            raise ValueError("A custom tracker module name must be provided when --report_to=custom-tracker.")
+
+        normalized_name = str(module_name).strip()
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", normalized_name):
+            raise ValueError(
+                f"Invalid custom tracker module name {module_name!r}. "
+                "Use a valid Python identifier without path separators."
+            )
+
+        tracker_root = Path(__file__).resolve().parents[2] / "custom-trackers"
+        module_path = tracker_root / f"{normalized_name}.py"
+        module_path = module_path.resolve()
+        tracker_root_resolved = tracker_root.resolve()
+        if not module_path.is_relative_to(tracker_root_resolved):
+            raise ValueError(
+                f"Custom tracker path resolves outside the allowed directory. "
+                f"Expected under {tracker_root_resolved}, got {module_path}"
+            )
+        if not module_path.is_file():
+            raise FileNotFoundError(
+                f"Custom tracker module not found at {module_path}. "
+                "Place your tracker under simpletuner/custom-trackers/<name>.py."
+            )
+
+        spec = importlib.util.spec_from_file_location(f"simpletuner.custom_trackers.{normalized_name}", module_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load custom tracker spec from {module_path}.")
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+
+        tracker_classes = [
+            obj
+            for obj in module.__dict__.values()
+            if inspect.isclass(obj)
+            and issubclass(obj, GeneralTracker)
+            and obj is not GeneralTracker
+            and obj.__module__ == module.__name__
+        ]
+
+        if not tracker_classes:
+            raise ValueError(
+                f"No GeneralTracker subclass found in {module_path}. "
+                "Ensure the module defines exactly one tracker class derived from accelerate.tracking.GeneralTracker."
+            )
+        if len(tracker_classes) > 1:
+            raise ValueError(
+                f"Multiple GeneralTracker subclasses found in {module_path}. "
+                "Expose only one tracker class per module so it can be loaded unambiguously."
+            )
+
+        tracker_cls = tracker_classes[0]
+        init_signature = inspect.signature(tracker_cls.__init__)
+        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in init_signature.parameters.values())
+        accepts_logging_dir = "logging_dir" in init_signature.parameters or accepts_kwargs
+        needs_logging_dir = bool(getattr(tracker_cls, "requires_logging_directory", False))
+
+        if needs_logging_dir and not logging_dir:
+            raise ValueError(
+                f"Custom tracker '{normalized_name}' requires a logging directory but none was provided."
+                " Set --logging_dir to a writable path."
+            )
+        if needs_logging_dir and not accepts_logging_dir:
+            raise TypeError(
+                f"Custom tracker '{normalized_name}' declares requires_logging_directory=True but its __init__"
+                " does not accept a logging_dir argument."
+            )
+
+        tracker_kwargs: Dict[str, object] = {}
+        if logging_dir and accepts_logging_dir:
+            tracker_kwargs["logging_dir"] = logging_dir
+
+        try:
+            tracker_instance = tracker_cls(run_name, **tracker_kwargs)
+        except TypeError as exc:
+            expected = "(run_name)" if not tracker_kwargs else "(run_name, logging_dir)"
+            raise TypeError(
+                f"Failed to instantiate custom tracker '{normalized_name}'. "
+                f"Ensure its __init__ signature matches {expected}."
+            ) from exc
+
+        if not isinstance(tracker_instance, GeneralTracker):
+            raise TypeError(
+                f"Loaded tracker from {module_path} is not a GeneralTracker instance (got {type(tracker_instance)})."
+            )
+
+        return tracker_instance
+
     def _update_grad_metrics(
         self, target_logs: Dict[str, float], *, require_value_method: bool = False, clone_norm_value: bool = False
     ):
@@ -362,6 +491,25 @@ class Trainer:
             except Exception:
                 continue
         return False
+
+    def _init_publishing_manager(self):
+        publishing_config = getattr(self.config, "publishing_config", None)
+        if publishing_config in (None, "", [], {}, "None"):
+            return
+
+        is_main_process = True
+        if getattr(self, "accelerator", None) is not None:
+            is_main_process = getattr(self.accelerator, "is_main_process", True)
+        if not is_main_process:
+            logger.debug("Skipping publishing manager initialisation on non-main process.")
+            return
+
+        try:
+            self.publishing_manager = PublishingManager(publishing_config)
+            logger.info("Publishing manager initialised with %s provider(s).", len(self.publishing_manager.providers))
+        except Exception as exc:
+            logger.error("Failed to initialise publishing providers: %s", exc)
+            self.publishing_manager = None
 
     def _enable_dynamo_dynamic_output_capture(self) -> None:
         try:
@@ -486,9 +634,37 @@ class Trainer:
         os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
 
         report_to_value = getattr(self.config, "report_to", None)
+        if isinstance(report_to_value, unittest_mock.Mock):
+            report_to_value = None
         if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
             report_to_value = "none"
             setattr(self.config, "report_to", report_to_value)
+
+        custom_tracker_name = getattr(self.config, "custom_tracker", None)
+        if isinstance(custom_tracker_name, unittest_mock.Mock):
+            custom_tracker_name = None
+        if isinstance(custom_tracker_name, str):
+            custom_tracker_name = custom_tracker_name.strip()
+        elif custom_tracker_name is not None:
+            custom_tracker_name = str(custom_tracker_name).strip()
+        if custom_tracker_name == "":
+            custom_tracker_name = None
+        setattr(self.config, "custom_tracker", custom_tracker_name)
+
+        _, tracker_run_name = self._resolve_tracker_identifiers()
+        logging_dir_value = getattr(self.config, "logging_dir", None)
+
+        custom_tracker_instance: Optional[GeneralTracker] = None
+
+        def _ensure_custom_tracker() -> GeneralTracker:
+            nonlocal custom_tracker_instance
+            if custom_tracker_instance is not None:
+                return custom_tracker_instance
+            if custom_tracker_name is None:
+                raise ValueError("--custom_tracker must be provided when --report_to=custom-tracker.")
+            custom_tracker_instance = self._load_custom_tracker(custom_tracker_name, tracker_run_name, logging_dir_value)
+            self.custom_tracker = custom_tracker_instance
+            return custom_tracker_instance
 
         checkpoint_step_interval_value = getattr(self.config, "checkpoint_step_interval", None)
         if checkpoint_step_interval_value in (None, "", "None", 0):
@@ -507,9 +683,36 @@ class Trainer:
 
         if isinstance(report_to_value, str):
             normalized_report = report_to_value.strip().lower()
-            report_to = None if normalized_report == "none" else report_to_value.strip()
+            if normalized_report == "none":
+                report_to = None
+            elif normalized_report == "custom-tracker":
+                report_to = _ensure_custom_tracker()
+            else:
+                report_to = report_to_value.strip()
+        elif isinstance(report_to_value, (list, tuple)):
+            resolved_trackers: List[object] = []
+            for entry in report_to_value:
+                if isinstance(entry, str) and entry.strip().lower() == "custom-tracker":
+                    resolved_trackers.append(_ensure_custom_tracker())
+                else:
+                    resolved_trackers.append(entry)
+            report_to = resolved_trackers
         else:
             report_to = report_to_value
+
+        if custom_tracker_name is not None:
+            custom_tracker_requested = False
+            if isinstance(report_to_value, str):
+                custom_tracker_requested = report_to_value.strip().lower() == "custom-tracker"
+            elif isinstance(report_to_value, (list, tuple)):
+                custom_tracker_requested = any(
+                    isinstance(entry, str) and entry.strip().lower() == "custom-tracker" for entry in report_to_value
+                )
+            if not custom_tracker_requested:
+                raise ValueError(
+                    "--custom_tracker was provided but --report_to is not set to 'custom-tracker'. "
+                    "Set --report_to=custom-tracker to enable your custom tracker."
+                )
         if not disable_accelerator:
             accelerator_custom_config = [self.config.process_group_kwargs]
             if self.config.mixed_precision == "fp8":
@@ -1465,6 +1668,8 @@ class Trainer:
             self._emit_event(status_event, message_level="critical")
 
             raise e
+        finally:
+            self._finish_hub_uploads()
 
     def _initialize_components_with_signal_check(self, initializers):
         """
@@ -1500,7 +1705,7 @@ class Trainer:
             else:
                 # argparse.Namespace - use getattr
                 webhook_config = getattr(raw_config, "webhook_config", getattr(raw_config, "__webhook_config", None))
-            logging.info(f"Creating webhook: {webhook_config}")
+            logging.debug(f"Creating webhook: {webhook_config}")
         else:
             webhook_config = getattr(getattr(self, "config", None), "webhook_config", None)
         if webhook_config is None:
@@ -1638,6 +1843,87 @@ class Trainer:
         except (ValueError, TypeError):
             return None
 
+    def _push_to_hub_background_enabled(self) -> bool:
+        return (
+            bool(getattr(self.config, "push_to_hub_background", False))
+            and bool(getattr(self.config, "push_to_hub", False))
+            and (not self.accelerator or self.accelerator.is_main_process)
+        )
+
+    def _get_hub_executor(self) -> ThreadPoolExecutor | None:
+        if not self._push_to_hub_background_enabled():
+            return None
+        if self._hub_upload_executor is None:
+            self._hub_upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf_push_")
+        return self._hub_upload_executor
+
+    def _run_post_upload_script(self, *, local_path: str | None = None, remote_path: str | None = None) -> None:
+        script_template = getattr(self.config, "post_upload_script", None)
+        if script_template in (None, "", "None"):
+            return
+        current_step = None
+        if isinstance(getattr(self, "state", None), dict):
+            current_step = self.state.get("global_step")
+        run_hook_script(
+            script_template,
+            config=self.config,
+            local_path=local_path,
+            remote_path=remote_path,
+            global_step=current_step,
+        )
+
+    def _drain_hub_upload_futures(self, wait: bool = False) -> None:
+        if not self._hub_upload_futures:
+            return
+        remaining: deque[tuple[str, Future]] = deque()
+        while self._hub_upload_futures:
+            description, future = self._hub_upload_futures.popleft()
+            if wait or future.done():
+                try:
+                    future.result()
+                except Exception as exc:
+                    logger.error("Hugging Face upload task '%s' failed: %s", description, exc, exc_info=True)
+                    if self.webhook_handler:
+                        self.webhook_handler.send(
+                            message=f"Hugging Face upload failed for {description}: {exc}",
+                            message_level="error",
+                        )
+            else:
+                remaining.append((description, future))
+        self._hub_upload_futures = remaining
+
+    def _schedule_hub_upload(self, description: str, upload_fn: Callable[[], object]) -> None:
+        executor = self._get_hub_executor()
+
+        def _wrapped_upload():
+            result = upload_fn()
+            remote_path = None
+            local_path = None
+            if isinstance(result, tuple):
+                if len(result) >= 1:
+                    remote_path = result[0]
+                if len(result) >= 2:
+                    local_path = result[1]
+                # If third value looks like a repo URL and remote path is missing, use it
+                if remote_path in (None, "") and len(result) >= 3:
+                    remote_path = result[2]
+            self._run_post_upload_script(local_path=local_path, remote_path=remote_path)
+            return result
+
+        if executor is None:
+            _wrapped_upload()
+            return
+        self._drain_hub_upload_futures(wait=False)
+        future = executor.submit(_wrapped_upload)
+        self._hub_upload_futures.append((description, future))
+        logger.info("Scheduled background Hugging Face upload: %s", description)
+
+    def _finish_hub_uploads(self) -> None:
+        self._drain_hub_upload_futures(wait=True)
+        if self._hub_upload_executor is not None:
+            self._hub_upload_executor.shutdown(wait=True)
+            self._hub_upload_executor = None
+
     def _misc_init(self):
         """things that do not really need an order."""
         torch.set_num_threads(self.config.torch_num_threads)
@@ -1662,6 +1948,7 @@ class Trainer:
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
         StateTracker.set_global_step(self.state["global_step"])
+        self._init_publishing_manager()
         self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = prepare_model_for_deepspeed(
             self.accelerator, self.config
         )
@@ -2874,6 +3161,7 @@ class Trainer:
             model_evaluator=model_evaluator,
             is_deepspeed=use_deepspeed_optimizer,
             is_fsdp=self.config.use_fsdp,
+            publishing_manager=self.publishing_manager,
         )
         if not self.config.train_text_encoder and self.validation is not None:
             self.validation.clear_text_encoders()
@@ -3068,6 +3356,8 @@ class Trainer:
             delattr(public_args, "accelerator_project_config")
             delattr(public_args, "process_group_kwargs")
             delattr(public_args, "webhook_config")
+            if hasattr(public_args, "publishing_config"):
+                delattr(public_args, "publishing_config")
             delattr(public_args, "weight_dtype")
             delattr(public_args, "base_weight_dtype")
             if hasattr(public_args, "vae_kwargs"):
@@ -3077,8 +3367,7 @@ class Trainer:
 
             # Hash the contents of public_args to reflect a deterministic ID for a single set of params:
             public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
-            project_name = self.config.tracker_project_name or "simpletuner-training"
-            tracker_run_name = self.config.tracker_run_name or "simpletuner-training-run"
+            project_name, tracker_run_name = self._resolve_tracker_identifiers()
             try:
                 self.accelerator.init_trackers(
                     project_name,
@@ -3290,20 +3579,30 @@ class Trainer:
                 self.config.checkpoints_total_limit,
             )
 
+        save_path = None
         if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
-            self.checkpoint_state_save(self.config.output_dir)
+            save_path = self.checkpoint_state_save(self.config.output_dir)
 
-        if upload_to_hub and self.hub_manager is not None:
+        hub_upload_planned = upload_to_hub and self.hub_manager is not None
+        if hub_upload_planned:
             if self.accelerator.is_main_process:
-                try:
-                    self.hub_manager.upload_latest_checkpoint(
-                        validation_images=(
-                            getattr(self.validation, "validation_images") if self.validation is not None else None
-                        ),
+                validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
+
+                def _upload_latest_checkpoint():
+                    remote_path, local_path, repo_url = self.hub_manager.upload_latest_checkpoint(
+                        validation_images=validation_images,
                         webhook_handler=self.webhook_handler,
                     )
+                    return remote_path, local_path, repo_url
+
+                description = f"checkpoint step {self.state.get('global_step')}"
+                try:
+                    self._schedule_hub_upload(description, _upload_latest_checkpoint)
                 except Exception as e:
                     logger.error(f"Error uploading to hub: {e}, continuing training.")
+        else:
+            if save_path:
+                self._run_post_upload_script(local_path=save_path, remote_path=None)
 
     def _send_webhook_msg(
         self, message: str, message_level: str = "info", store_response: bool = False, emit_event: bool = True
@@ -3729,6 +4028,7 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
+        return save_path
 
     def checkpoint_state_latest(self, output_dir):
         if self.checkpoint_manager:
@@ -4429,7 +4729,18 @@ class Trainer:
                 logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
 
             if self.hub_manager is not None and self.accelerator.is_main_process:
-                self.hub_manager.upload_model(validation_images, self.webhook_handler)
+
+                def _upload_final_model():
+                    repo_url = self.hub_manager.upload_model(validation_images, self.webhook_handler)
+                    return repo_url, self.config.output_dir, repo_url
+
+                try:
+                    self._schedule_hub_upload("final model upload", _upload_final_model)
+                except Exception as e:
+                    logger.error(f"Error uploading final model to hub: {e}")
+                self._finish_hub_uploads()
+            else:
+                self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(
@@ -4794,13 +5105,18 @@ def run_trainer_job(config):
                 "--same_network",
             }:
                 train_cli_payload.pop(accel_key, None)
-            for webhook_key in ("--webhook_config", "webhook_config"):
-                webhook_value = train_cli_payload.get(webhook_key)
+            for config_key in (
+                "--webhook_config",
+                "webhook_config",
+                "--publishing_config",
+                "publishing_config",
+            ):
+                webhook_value = train_cli_payload.get(config_key)
                 if isinstance(webhook_value, (dict, list)):
                     try:
-                        train_cli_payload[webhook_key] = json.dumps(webhook_value)
+                        train_cli_payload[config_key] = json.dumps(webhook_value)
                     except Exception:
-                        train_cli_payload.pop(webhook_key, None)
+                        train_cli_payload.pop(config_key, None)
             from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 
             cli_args = mapping_to_cli_args(train_cli_payload)

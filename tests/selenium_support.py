@@ -33,7 +33,20 @@ TEST_HOST = "127.0.0.1"
 
 
 def _run_test_server(port: int, home_path: str, webui_config_path: str) -> None:
+    import logging
+
     import uvicorn
+
+    # Redirect stdout/stderr to devnull to silence the server
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = open(os.devnull, "w")
+
+    # Suppress logging in the background server process
+    logging.getLogger("uvicorn").setLevel(logging.ERROR)
+    logging.getLogger("SimpleTuner").setLevel(logging.ERROR)
+    logging.getLogger("ProcessKeeper").setLevel(logging.ERROR)
+    logging.getLogger("multipart").setLevel(logging.ERROR)
+    os.environ["SIMPLETUNER_LOG_LEVEL"] = "ERROR"
 
     # Ensure the subprocess uses the test's temporary HOME directory
     os.environ["HOME"] = home_path

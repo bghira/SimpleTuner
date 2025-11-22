@@ -361,6 +361,66 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
     # Validation Using Datasets
     registry._add_field(
         ConfigField(
+            name="validation_method",
+            arg_name="--validation_method",
+            ui_label="Validation Method",
+            field_type=FieldType.SELECT,
+            tab="validation",
+            section="validation_options",
+            default_value="simpletuner-local",
+            choices=[
+                {"label": "SimpleTuner (local pipeline)", "value": "simpletuner-local"},
+                {"label": "External script", "value": "external-script"},
+            ],
+            help_text="Choose how validation runs are executed.",
+            tooltip="Default runs validations locally. Select external-script to call a custom executable instead of the built-in pipeline.",
+            importance=ImportanceLevel.IMPORTANT,
+            order=1,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_external_script",
+            arg_name="--validation_external_script",
+            ui_label="External Validation Script",
+            field_type=FieldType.TEXT,
+            tab="validation",
+            section="validation_options",
+            default_value=None,
+            placeholder="/path/to/script {local_checkpoint_path}",
+            help_text="Executable to run when validation_method is external-script.",
+            tooltip="Supports placeholders like {local_checkpoint_path} to pass the latest checkpoint directory to your script.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+            dependencies=[
+                FieldDependency(field="validation_method", operator="equals", value="external-script", action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_external_background",
+            arg_name="--validation_external_background",
+            ui_label="Run External Validation in Background",
+            field_type=FieldType.CHECKBOX,
+            tab="validation",
+            section="validation_options",
+            default_value=False,
+            help_text="Start the external validation script and immediately return without waiting.",
+            tooltip="When enabled, the external script runs without blocking training and its exit status is not checked.",
+            importance=ImportanceLevel.ADVANCED,
+            order=2,
+            dependencies=[
+                FieldDependency(field="validation_method", operator="equals", value="external-script", action="show")
+            ],
+        )
+    )
+
+    # Validation Using Datasets
+    registry._add_field(
+        ConfigField(
             name="validation_using_datasets",
             arg_name="--validation_using_datasets",
             ui_label="Validate Using Dataset Images",
