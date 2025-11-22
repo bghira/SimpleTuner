@@ -7,6 +7,7 @@ import torch
 from diffusers import AutoencoderKLHunyuanVideo
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
 
+from simpletuner.helpers.configuration.registry import ConfigRegistry, ConfigRule, RuleType, make_default_rule
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_i2v import Kandinsky5I2VPipeline
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_t2v import Kandinsky5T2VPipeline
@@ -219,5 +220,39 @@ class Kandinsky5Video(VideoModelFoundation):
 
         return {"model_prediction": model_pred}
 
+    def check_user_config(self):
+        """
+        Apply Kandinsky-specific defaults when user input is missing.
+        """
+        if getattr(self.config, "framerate", None) is None:
+            self.config.framerate = 24
+        if getattr(self.config, "tokenizer_max_length", None) is None or int(self.config.tokenizer_max_length) > 256:
+            logger.warning("Kandinsky5Video caps tokenizer_max_length at 256 tokens. Overriding provided value.")
+            self.config.tokenizer_max_length = 256
 
+    @classmethod
+    def register_config_requirements(cls):
+        rules = [
+            make_default_rule(
+                field_name="framerate",
+                default_value=24,
+                message="Kandinsky5-Video defaults to 24 fps.",
+            ),
+            make_default_rule(
+                field_name="tokenizer_max_length",
+                default_value=256,
+                message="Kandinsky5-Video defaults to a 256 token context window.",
+            ),
+            ConfigRule(
+                field_name="tokenizer_max_length",
+                rule_type=RuleType.MAX,
+                value=256,
+                message="Kandinsky5-Video supports a maximum of 256 tokens.",
+                error_level="warning",
+            ),
+        ]
+        ConfigRegistry.register_rules("kandinsky5-video", rules)
+
+
+Kandinsky5Video.register_config_requirements()
 ModelRegistry.register("kandinsky5-video", Kandinsky5Video)
