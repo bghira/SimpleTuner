@@ -195,9 +195,13 @@ class Kandinsky5Video(VideoModelFoundation):
             dtype = getattr(torch, dtype)
 
         timesteps = prepared_batch["timesteps"].to(device=latents.device, dtype=dtype)
-        pooled = prepared_batch.get("added_cond_kwargs", {}).get("text_embeds") or prepared_batch.get("add_text_embeds")
-        if pooled is None:
-            raise ValueError("Kandinsky5Video expects pooled text embeddings in added_cond_kwargs['text_embeds'].")
+
+        if "added_cond_kwargs" not in prepared_batch:
+            raise ValueError("Kandinsky5Video expects added_cond_kwargs containing pooled text embeddings.")
+        added_kwargs = prepared_batch["added_cond_kwargs"]
+        if "text_embeds" not in added_kwargs:
+            raise ValueError("Kandinsky5Video requires added_cond_kwargs['text_embeds'].")
+        pooled = added_kwargs["text_embeds"]
         model_pred = self.model(
             hidden_states=latents.to(dtype),
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(dtype),
