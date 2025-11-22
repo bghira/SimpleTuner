@@ -204,12 +204,11 @@ class QwenImage(ImageModelFoundation):
                 raise ValueError("Failed to resolve prompt image tensors for Qwen edit text encoding.")
 
         # Use pipeline's encode_prompt method
-        prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(
-            prompts,
-            image=prompt_image_tensor,
-            device=self.accelerator.device,
-            num_images_per_prompt=1,
-        )
+        encode_kwargs = {"device": self.accelerator.device, "num_images_per_prompt": 1}
+        if prompt_image_tensor is not None:
+            encode_kwargs["image"] = prompt_image_tensor
+
+        prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(prompts, **encode_kwargs)
 
         return prompt_embeds, prompt_embeds_mask
 
