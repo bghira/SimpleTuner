@@ -29,6 +29,8 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 | Qwen Image | 20B | ✓ | ✓ | ✓* | **required** (int8/nf4) | bf16 | ✓ | ✓ | ✗ | [QWEN_IMAGE.md](/documentation/quickstart/QWEN_IMAGE.md) |
 | Qwen Image Edit | 20B | ✓ | ✓ | ✓* | **required** (int8/nf4) | bf16 | ✓ | ✓ | ✗ | [QWEN_EDIT.md](/documentation/quickstart/QWEN_EDIT.md) |
 | Stable Cascade (C) | 1B, 3.6B prior | ✓ | ✓ | ✓* | not supported | fp32 (required) | ✓ | ✗ | ✗ | [STABLE_CASCADE_C.md](/documentation/quickstart/STABLE_CASCADE_C.md) |
+| Kandinsky 5.0 Image | — | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [KANDINSKY5_IMAGE.md](/documentation/quickstart/KANDINSKY5_IMAGE.md) |
+| Kandinsky 5.0 Video | — | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [KANDINSKY5_VIDEO.md](/documentation/quickstart/KANDINSKY5_VIDEO.md) |
 
 *✓ = supported, ✓* = requires DeepSpeed/FSDP2 for full-rank, ✗ = not supported, `✓+` indicates checkpointing is recommended due to VRAM pressure.*
 
