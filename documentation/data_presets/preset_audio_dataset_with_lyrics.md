@@ -36,12 +36,12 @@ Use this configuration in your `multidatabackend.json` to load the dataset direc
 
 ```bibtex
 @misc{jiang2025advancingfoundationmodelmusic,
-      title={Advancing the Foundation Model for Music Understanding}, 
+      title={Advancing the Foundation Model for Music Understanding},
       author={Yi Jiang and Wei Wang and Xianwen Guo and Huiyun Liu and Hanrui Wang and Youri Xu and Haoqi Gu and Zhongqian Xie and Chuanjiang Luo},
       year={2025},
       eprint={2508.01178},
       archivePrefix={arXiv},
       primaryClass={cs.SD},
-      url={https://arxiv.org/abs/2508.01178}, 
+      url={https://arxiv.org/abs/2508.01178},
 }
 ```

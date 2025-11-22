@@ -483,7 +483,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     parser_error = None
 
     def _normalize_model_family(value: str) -> str:
-        normalized = (value or "").strip().lower().replace("-", "_")
+        normalized = (value or "").strip().lower()
         if not normalized:
             return normalized
 
@@ -496,11 +496,6 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
         if normalized in families:
             return normalized
-
-        simplified = normalized.replace("_", "")
-        for family in families:
-            if simplified == family.replace("_", ""):
-                return family
 
         return normalized
 

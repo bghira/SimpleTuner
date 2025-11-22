@@ -41,8 +41,12 @@ def _pick_device(preferred_index: int) -> torch.device:
 
 def main():
     parser = argparse.ArgumentParser(description="Run Flux LoRA inference on a secondary GPU.")
-    parser.add_argument("--local", "--local_checkpoint_path", dest="local", default="", help="Local checkpoint path (optional)")
-    parser.add_argument("--hub_model_id", default="", help="Hugging Face repo ID for LoRA weights (huggingface_path placeholder)")
+    parser.add_argument(
+        "--local", "--local_checkpoint_path", dest="local", default="", help="Local checkpoint path (optional)"
+    )
+    parser.add_argument(
+        "--hub_model_id", default="", help="Hugging Face repo ID for LoRA weights (huggingface_path placeholder)"
+    )
     parser.add_argument("--model_family", default="", help="SimpleTuner model_family placeholder")
     parser.add_argument("--prompt", default="julie, in photograph style", help="Prompt to generate")
     parser.add_argument("--model_id", default="black-forest-labs/FLUX.1-dev", help="Base model ID to load")

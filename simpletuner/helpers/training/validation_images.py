@@ -3,9 +3,9 @@ import os
 
 import numpy as np
 import torch
+import wandb
 from PIL import Image
 
-import wandb
 from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from simpletuner.helpers.training.state_tracker import StateTracker
 

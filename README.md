@@ -130,6 +130,8 @@ Detailed quickstart guides are available for all supported models:
 - **[OmniGen Guide](/documentation/quickstart/OMNIGEN.md)** - Unified image generation model
 - **[Qwen Image Guide](/documentation/quickstart/QWEN_IMAGE.md)** - 20B parameter large-scale training
 - **[Stable Cascade Stage C Guide](/quickstart/STABLE_CASCADE_C.md)** - Prior LoRAs with combined prior+decoder validation
+- **[Kandinsky 5.0 Image Guide](/documentation/quickstart/KANDINSKY5_IMAGE.md)** - Image generation with Qwen2.5-VL + Flux VAE
+- **[Kandinsky 5.0 Video Guide](/documentation/quickstart/KANDINSKY5_VIDEO.md)** - Video generation with HunyuanVideo VAE
 
 ---
 
