@@ -19,7 +19,6 @@ from typing import Callable, Dict, List, Optional, Union
 import regex as re
 import torch
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
-from diffusers.loaders import KandinskyLoraLoaderMixin
 from diffusers.models import AutoencoderKLHunyuanVideo
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
@@ -28,6 +27,8 @@ from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from torch.nn import functional as F
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
+
+from simpletuner.helpers.models.kandinsky_lora_loader import KandinskyLoraLoaderMixin
 
 from .pipeline_output import KandinskyPipelineOutput
 from .transformer_kandinsky5 import Kandinsky5Transformer3DModel
