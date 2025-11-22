@@ -514,6 +514,13 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
             latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
         else:
             latents = latents.to(device=device, dtype=dtype)
+            if latents.dim() == 5 and latents.size(1) == 1:
+                latents = latents.squeeze(1)
+            if latents.dim() == 4:
+                b, c, h, w = latents.shape
+                latents = self._pack_latents(latents, b, c, h, w)
+            elif latents.dim() != 3:
+                raise ValueError(f"Unexpected latent rank {latents.dim()} for QwenImage latents")
 
         return latents, image_latents
 
