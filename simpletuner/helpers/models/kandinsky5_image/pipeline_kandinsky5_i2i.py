@@ -112,6 +112,19 @@ class Kandinsky5I2IPipeline(Kandinsky5T2IPipeline):
             latents=latents,
         )
 
+        if getattr(self.transformer.config, "visual_cond", False):
+            visual_cond = torch.zeros_like(latents)
+            visual_cond_mask = torch.zeros(
+                latents.shape[0],
+                latents.shape[1],
+                latents.shape[2],
+                latents.shape[3],
+                1,
+                dtype=latents.dtype,
+                device=latents.device,
+            )
+            latents = torch.cat([latents, visual_cond, visual_cond_mask], dim=-1)
+
         if not getattr(self.transformer.config, "visual_cond", False):
             return latents
         if image is None:
