@@ -37,6 +37,7 @@ class Kandinsky5Image(ImageModelFoundation):
         PipelineTypes.TEXT2IMG: Kandinsky5T2IPipeline,
         PipelineTypes.IMG2IMG: None,  # filled below for I2I
     }
+    DEFAULT_LORA_TARGET = ["to_key", "to_query", "to_value", "out_layer"]
 
     DEFAULT_MODEL_FLAVOUR = "t2i-lite-sft"
     HUGGINGFACE_PATHS: Dict[str, str] = {
