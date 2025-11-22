@@ -208,6 +208,10 @@
             }
         }
 
+        if (normalized === 'starting' || normalized === 'initializing') {
+            hideTrainingProgressCard();
+        }
+
         if (payload.job_id == null && activeJobId) {
             payload.job_id = activeJobId;
         }
@@ -417,14 +421,13 @@
 
         let stageJobId = data.job_id || startupJobId || activeJobId;
 
-        // Improved check: If training is running, ignore startup updates unless it's clearly a new job or we have active stages
+        // If we get lifecycle updates while status is running, still process them so refreshes can restore startup UI
         const isNewJob = data.job_id && activeJobId && data.job_id !== activeJobId;
         const isRunning = currentTrainingStatus === 'running';
         const hasKnownStages = startupStages.size > 0;
 
         if (isRunning && !startupStatusActive && !isNewJob && !hasKnownStages) {
-            console.log('[SSE-DEBUG] Ignoring lifecycle stage update because training is already running');
-            return;
+            console.log('[SSE-DEBUG] Running state but received lifecycle stage; treating as startup activity');
         }
 
         // Check if this is a new job starting
@@ -537,6 +540,7 @@
         const shouldReflectStage = stageIsActive || resolvedStageStatus === 'failed';
 
         if (shouldReflectStage) {
+            hideTrainingProgressCard();
             reflectStartupProgressInCard(key, stageData, stageJobId);
             const targetStatus = 'starting';
             const statusLabel = 'Starting';
@@ -548,6 +552,7 @@
         const nextActiveEntry = findLatestActiveStageEntry();
         if (nextActiveEntry) {
             const [nextKey, nextStageData] = nextActiveEntry;
+            hideTrainingProgressCard();
             reflectStartupProgressInCard(nextKey, nextStageData, stageJobId);
             const targetStatus = 'starting';
             const statusLabel = 'Starting';
@@ -634,6 +639,18 @@
         };
 
         return progressCard;
+    }
+
+    function hideTrainingProgressCard() {
+        const store = getTrainerStore();
+        if (store) {
+            store.showTrainingProgress = false;
+        }
+
+        const card = progressCard || document.querySelector('.training-progress-card');
+        if (card && !card.classList.contains('d-none')) {
+            card.classList.add('d-none');
+        }
     }
 
     function resetTrainingProgressUI(status, jobId) {
@@ -1642,9 +1659,10 @@
 
                     // Only show training progress if there are NO active startup stages
                     const activeStagesPresent = hasActiveStartupStages();
+                    const progressPayload = data.progress && typeof data.progress === 'object' ? data.progress : null;
                     console.log('[SSE-DEBUG] Has active startup stages:', activeStagesPresent, 'Count:', startupStages.size);
 
-                    if (!activeStagesPresent) {
+                    if (!activeStagesPresent && progressPayload) {
                         console.log('[SSE-DEBUG] No active startup stages, showing training progress card (history will remain visible)');
                         clearStartupProgress();
                         const store = getTrainerStore();
@@ -1658,22 +1676,24 @@
                         }
 
                         // Process progress data - the API returns it with 'step' instead of 'current_step'
-                        if (data.progress && typeof data.progress === 'object') {
+                        if (progressPayload) {
                             // Convert backend format to frontend format
                             const progressData = {
-                                percentage: data.progress.percent || 0,
-                                current_step: data.progress.step || 0,
-                                total_steps: data.progress.total_steps || 0,
-                                epoch: data.progress.epoch || 0,
-                                total_epochs: data.progress.total_epochs || 0,
-                                loss: data.progress.loss,
-                                lr: data.progress.learning_rate,
+                                percentage: progressPayload.percent || 0,
+                                current_step: progressPayload.step || 0,
+                                total_steps: progressPayload.total_steps || 0,
+                                epoch: progressPayload.epoch || 0,
+                                total_epochs: progressPayload.total_epochs || 0,
+                                loss: progressPayload.loss,
+                                lr: progressPayload.learning_rate,
                                 raw: { job_id: data.job_id }
                             };
                             console.log('[SSE-DEBUG] Converted progress data:', progressData);
                             updateProgressCard(progressData, data.job_id);
                             syncTrainerProgress(progressData, data.job_id);
                         }
+                    } else if (!activeStagesPresent) {
+                        console.log('[SSE-DEBUG] No startup stages reported but progress payload missing; deferring training progress card until updates arrive');
                     } else {
                         console.log('[SSE-DEBUG] Startup stages still active, NOT showing training progress card yet');
                     }
