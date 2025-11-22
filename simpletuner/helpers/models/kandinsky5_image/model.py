@@ -168,9 +168,13 @@ class Kandinsky5Image(ImageModelFoundation):
             device=latents.device,
         )
         timesteps = prepared_batch["timesteps"].to(device=latents.device, dtype=dtype)
-        pooled = prepared_batch.get("added_cond_kwargs", {}).get("text_embeds") or prepared_batch.get("add_text_embeds")
-        if pooled is None:
-            raise ValueError("Kandinsky5Image expects pooled text embeddings in added_cond_kwargs['text_embeds'].")
+
+        if "added_cond_kwargs" not in prepared_batch:
+            raise ValueError("Kandinsky5Image expects added_cond_kwargs containing pooled text embeddings.")
+        added_kwargs = prepared_batch["added_cond_kwargs"]
+        if "text_embeds" not in added_kwargs:
+            raise ValueError("Kandinsky5Image requires added_cond_kwargs['text_embeds'].")
+        pooled = added_kwargs["text_embeds"]
 
         if getattr(self.unwrap_model(self.model).config, "visual_cond", False):
             visual_cond = torch.zeros_like(latents)
