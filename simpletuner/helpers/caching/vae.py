@@ -485,21 +485,30 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() in ["ltxvideo", "wan", "sanavideo"]:
+        if StateTracker.get_model_family() in ["ltxvideo", "wan", "sanavideo", "kandinsky5-video"]:
             if samples.ndim == 4:
                 original_shape = samples.shape
                 samples = samples.unsqueeze(2)
                 logger.debug(f"PROCESSING IMAGE to VIDEO LATENTS CONVERSION ({original_shape} to {samples.shape})")
             assert samples.ndim == 5, f"Expected 5D tensor, got {samples.ndim}D tensor"
             logger.debug(f"PROCESSING VIDEO to VIDEO LATENTS CONVERSION ({samples.shape})")
-            # permute video latents (B, F, C, H, W) to match image latents (B, C, F, H, W)
+            # permute video latents to match image latents (B, C, F, H, W)
             num_frames = samples.shape[1]
             if samples.shape[2] == 3:
+                # Input is (B, F, C, H, W)
                 original_shape = samples.shape
                 samples = samples.permute(0, 2, 1, 3, 4)  # (B, C, F, H, W)
                 num_frames = samples.shape[2]
                 logger.debug(
                     f"Found video latent of shape: {original_shape} (B, F, C, H, W) to (B, C, F, H, W) {samples.shape}"
+                )
+            elif samples.shape[-1] == 3:
+                # Input is (B, F, H, W, C)
+                original_shape = samples.shape
+                samples = samples.permute(0, 4, 1, 2, 3)  # (B, C, F, H, W)
+                num_frames = samples.shape[2]
+                logger.debug(
+                    f"Found video latent of shape: {original_shape} (B, F, H, W, C) to (B, C, F, H, W) {samples.shape}"
                 )
 
             num_frames = samples.shape[2]
