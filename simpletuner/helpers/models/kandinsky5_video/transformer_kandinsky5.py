@@ -44,6 +44,15 @@ except Exception:
 logger = logging.get_logger(__name__)
 
 
+def _describe_tensor_debug(name: str, tensor: Optional[Tensor]) -> str:
+    if tensor is None:
+        return f"{name}=None"
+    try:
+        return f"{name}(shape={tuple(tensor.shape)}, dim={tensor.dim()}, dtype={tensor.dtype}, device={tensor.device})"
+    except Exception:
+        return f"{name}=unavailable"
+
+
 def get_freqs(dim, max_period=10000.0):
     freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=dim, dtype=torch.float32) / dim)
     return freqs
@@ -488,7 +497,21 @@ class Kandinsky5TransformerEncoderBlock(nn.Module):
     def forward(self, x, time_embed, rope):
         self_attn_params, ff_params = torch.chunk(self.text_modulation(time_embed).unsqueeze(dim=1), 2, dim=-1)
         shift, scale, gate = torch.chunk(self_attn_params, 3, dim=-1)
-        out = (self.self_attention_norm(x.float()) * (scale.float() + 1.0) + shift.float()).type_as(x)
+        try:
+            out = (self.self_attention_norm(x.float()) * (scale.float() + 1.0) + shift.float()).type_as(x)
+        except RuntimeError as err:
+            debug_msg = "; ".join(
+                [
+                    "K5 text block modulation broadcast failed",
+                    _describe_tensor_debug("x", x),
+                    _describe_tensor_debug("shift", shift),
+                    _describe_tensor_debug("scale", scale),
+                    _describe_tensor_debug("gate", gate),
+                    _describe_tensor_debug("time_embed", time_embed),
+                    _describe_tensor_debug("rope", rope),
+                ]
+            )
+            raise RuntimeError(debug_msg) from err
         out = self.self_attention(out, rotary_emb=rope)
         x = (x.float() + gate.float() * out.float()).type_as(x)
 
