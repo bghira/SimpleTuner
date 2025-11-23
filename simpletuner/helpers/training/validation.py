@@ -2656,7 +2656,6 @@ class Validation:
                         }
                         pipeline_kwargs.update(
                             self.model.convert_negative_text_embed_for_pipeline(
-                                prompt=StateTracker.get_args().validation_negative_prompt,
                                 text_embedding=negative_embed_data,
                             )
                         )

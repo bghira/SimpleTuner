@@ -443,7 +443,7 @@ class QwenImage(ImageModelFoundation):
             "attention_masks": torch.cat(masks, dim=0) if masks else None,
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         """
         Convert negative text embeddings for pipeline use.
         """

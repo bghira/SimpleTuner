@@ -129,7 +129,7 @@ class Lumina2(ImageModelFoundation):
             "prompt_attention_mask": attention_mask.to(torch.int32),
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         """Convert negative text embeddings for pipeline usage"""
         if self.config.validation_guidance is None or self.config.validation_guidance <= 1.0:
             # CFG is disabled, no negative prompts.

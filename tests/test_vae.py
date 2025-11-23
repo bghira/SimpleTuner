@@ -158,10 +158,10 @@ class MiniAudioModel(AudioModelFoundation):
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         return {}
 
-    def convert_text_embed_for_pipeline(self, text_embedding, prompt: str = "") -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding) -> dict:
         return {}
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding) -> dict:
         return {}
 
     def model_predict(self, *args, **kwargs):

@@ -539,18 +539,14 @@ class ModelFoundation(ABC):
         """
         Converts the text embedding to the format expected by the pipeline.
         This is a stub and should be implemented in subclasses.
-
-        Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
         """
         raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
 
     @abstractmethod
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         """
         Converts the text embedding to the format expected by the pipeline for negative prompt inputs.
         This is a stub and should be implemented in subclasses.
-
-        Prompt may be useful to inspect if your pipeline requires eg. zeroing empty inputs.
         """
         raise NotImplementedError("convert_text_embed_for_pipeline must be implemented in the child class.")
 

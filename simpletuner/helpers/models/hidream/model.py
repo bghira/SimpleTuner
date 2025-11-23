@@ -275,7 +275,7 @@ class HiDream(ImageModelFoundation):
             "pooled_prompt_embeds": pooled_embeds.to(self.accelerator.device),
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # Only unsqueeze if it's missing the batch dimension
         t5_embeds = text_embedding["t5_prompt_embeds"]
         llama_embeds = text_embedding["llama_prompt_embeds"]

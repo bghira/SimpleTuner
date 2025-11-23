@@ -305,7 +305,7 @@ class StableCascadeStageC(ImageModelFoundation):
             "prompt_embeds_pooled": pooled_prompt_embeds,
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> dict:
         # Only unsqueeze if it's missing the batch dimension
         prompt_embeds = text_embedding["prompt_embeds"]
         pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]

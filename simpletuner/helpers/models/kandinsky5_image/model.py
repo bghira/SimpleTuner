@@ -106,7 +106,7 @@ class Kandinsky5Image(ImageModelFoundation):
             "prompt_cu_seqlens": prompt_cu_seqlens,
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: dict, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]
         pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
         attention_mask = text_embedding.get("attention_masks")
