@@ -1,7 +1,7 @@
 # This was MIT-licensed by Kandinsky Lab; now AGPL-3.0-or-later, SimpleTuner (c) bghira
 import logging
 import os
-from typing import Dict
+from typing import Dict, Optional
 
 import torch
 from diffusers import AutoencoderKL
@@ -113,13 +113,92 @@ class Kandinsky5Image(ImageModelFoundation):
         prompt_cu_seqlens = None
         if attention_mask is not None:
             prompt_cu_seqlens = torch.cumsum(attention_mask.sum(1), dim=0)
-            prompt_cu_seqlens = torch.cat([torch.zeros_like(prompt_cu_seqlens)[:1], prompt_cu_seqlens]).to(dtype=torch.int32)
+        prompt_cu_seqlens = torch.cat([torch.zeros_like(prompt_cu_seqlens)[:1], prompt_cu_seqlens]).to(dtype=torch.int32)
 
         return {
             "negative_prompt_embeds_qwen": prompt_embeds,
             "negative_prompt_embeds_clip": pooled_prompt_embeds,
             "negative_prompt_cu_seqlens": prompt_cu_seqlens,
         }
+
+    def _find_attention_mask(self, embeddings: dict):
+        for key in ("attention_masks", "attention_mask", "prompt_attention_mask"):
+            mask = embeddings.get(key)
+            if mask is not None and torch.is_tensor(mask):
+                return key, mask
+        return None, None
+
+    def pack_text_embeddings_for_cache(self, embeddings):
+        """
+        Trim trailing pad tokens (keeping one pad token) to shrink cache storage.
+        """
+        if not isinstance(embeddings, dict):
+            return embeddings
+        _, mask = self._find_attention_mask(embeddings)
+        if mask is None or mask.dim() < 2:
+            return embeddings
+
+        pad_to = getattr(self.config, "tokenizer_max_length", None)
+        if not pad_to or mask.shape[-1] != pad_to:
+            return embeddings
+        token_lens = mask.sum(dim=-1)
+        max_tokens = int(token_lens.max().item())
+        if max_tokens <= 0 or max_tokens >= pad_to:
+            return embeddings
+
+        trimmed_len = min(pad_to, max_tokens + 1)
+        packed = dict(embeddings)
+        pad_slices: Dict[str, torch.Tensor] = {}
+        for key, val in embeddings.items():
+            if not torch.is_tensor(val):
+                continue
+            if val.dim() >= 2 and val.shape[-2] == pad_to:
+                pad_slices[key] = val[..., trimmed_len - 1 : trimmed_len, :]
+                packed[key] = val[..., :trimmed_len, :]
+            elif val.dim() >= 1 and val.shape[-1] == pad_to:
+                packed[key] = val[..., :trimmed_len]
+        if pad_slices:
+            packed["_pad_slices"] = pad_slices
+        return packed
+
+    def unpack_text_embeddings_from_cache(self, embeddings):
+        """
+        Restore cached embeds to their original padded length using stored pad token.
+        Protect pooled_prompt_embeds from accidental padding/reshaping.
+        """
+        if not isinstance(embeddings, dict):
+            return embeddings
+        pad_to = getattr(self.config, "tokenizer_max_length", None)
+        if not pad_to:
+            return embeddings
+
+        pad_slices = embeddings.get("_pad_slices", {})
+        unpacked = {k: v for k, v in embeddings.items() if k != "_pad_slices"}
+        for key, val in list(unpacked.items()):
+            if not torch.is_tensor(val):
+                continue
+
+            if key == "pooled_prompt_embeds":
+                if val.dim() == 3:
+                    logger.warning(
+                        "Cached pooled_prompt_embeds has an unexpected sequence dimension; using first token. shape=%s",
+                        val.shape,
+                    )
+                    unpacked[key] = val[:, 0, :]
+                elif val.dim() != 2:
+                    raise ValueError(f"Unexpected pooled_prompt_embeds shape {val.shape}")
+                continue
+
+            if val.dim() >= 2 and val.shape[-2] < pad_to:
+                pad_len = pad_to - val.shape[-2]
+                pad_token = pad_slices.get(key, val[..., -1:, :])
+                pad_repeat = pad_token.expand(*pad_token.shape[:-2], pad_len, pad_token.shape[-1])
+                unpacked[key] = torch.cat([val, pad_repeat], dim=-2)
+            elif val.dim() >= 1 and val.shape[-1] < pad_to:
+                pad_len = pad_to - val.shape[-1]
+                pad_shape = val.shape[:-1] + (pad_len,)
+                unpacked[key] = torch.cat([val, val.new_zeros(pad_shape)], dim=-1)
+        return unpacked
 
     def _is_i2i_flavour(self) -> bool:
         flavour = getattr(self.config, "model_flavour", None)
