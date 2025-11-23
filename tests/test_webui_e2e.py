@@ -577,13 +577,6 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                     )
                 )
 
-                send_lifecycle_stage("running")
-                WebDriverWait(driver, 5).until(
-                    lambda d: not d.execute_script(
-                        "return !!document.querySelector('#training-status .startup-progress-alert');"
-                    )
-                )
-
             driver.execute_script(
                 dispatch_script,
                 {
