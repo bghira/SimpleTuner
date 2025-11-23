@@ -585,9 +585,10 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 )
 
                 send_lifecycle_stage("running")
-                self.assertFalse(
-                    driver.execute_script("return !!document.querySelector('#training-status .startup-progress-alert');"),
-                    "Lifecycle UI should remain hidden once training is running",
+                WebDriverWait(driver, 5).until(
+                    lambda d: not d.execute_script(
+                        "return !!document.querySelector('#training-status .startup-progress-alert');"
+                    )
                 )
 
             driver.execute_script(
