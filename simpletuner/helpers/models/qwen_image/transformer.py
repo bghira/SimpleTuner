@@ -704,6 +704,7 @@ class QwenImageTransformer2DModel(
                     "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
                 )
 
+        inputs_are_tokens = hidden_states.ndim == 3
         hidden_states, patch_h, patch_w = self._tokenize_hidden_states(hidden_states)
 
         if (patch_h is None or patch_w is None) and img_shapes:
@@ -821,7 +822,10 @@ class QwenImageTransformer2DModel(
         expected_tokens = patch_h * patch_w if (patch_h is not None and patch_w is not None) else None
         actual_tokens = output.shape[1]
 
-        if expected_tokens is not None and actual_tokens != expected_tokens:
+        if inputs_are_tokens:
+            # Keep packed token layout when caller supplies tokenized latents (scheduler expects packed tensors).
+            output_image = output
+        elif expected_tokens is not None and actual_tokens != expected_tokens:
             # Token count mismatch - likely concatenated inputs for edit model
             # Return packed tokens without untokenization
             output_image = output
