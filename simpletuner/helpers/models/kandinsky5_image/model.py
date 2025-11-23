@@ -91,7 +91,7 @@ class Kandinsky5Image(ImageModelFoundation):
             "attention_masks": attention_mask,
         }
 
-    def convert_text_embed_for_pipeline(self, text_embedding: dict, prompt: str) -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]
         pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
         attention_mask = text_embedding.get("attention_masks")
@@ -176,6 +176,13 @@ class Kandinsky5Image(ImageModelFoundation):
         unpacked = {k: v for k, v in embeddings.items() if k != "_pad_slices"}
         for key, val in list(unpacked.items()):
             if not torch.is_tensor(val):
+                continue
+
+            if key in ("attention_masks", "attention_mask", "prompt_attention_mask"):
+                if val.dim() >= 1 and val.shape[-1] < pad_to:
+                    pad_len = pad_to - val.shape[-1]
+                    pad_shape = val.shape[:-1] + (pad_len,)
+                    unpacked[key] = torch.cat([val, val.new_zeros(pad_shape)], dim=-1)
                 continue
 
             if key == "pooled_prompt_embeds":

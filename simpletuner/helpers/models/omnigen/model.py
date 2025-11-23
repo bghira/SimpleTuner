@@ -50,11 +50,11 @@ class OmniGen(ImageModelFoundation):
         # OmniGen uses token IDs directly; the text encoder caching is skipped during factory init.
         raise NotImplementedError("OmniGen does not use encode_prompts during training.")
 
-    def convert_negative_text_embed_for_pipeline(self, negative_text_embed):
+    def convert_negative_text_embed_for_pipeline(self, text_embedding):
         # OmniGen does not use negative text embeddings
         return {}
 
-    def convert_text_embed_for_pipeline(self, text_embed):
+    def convert_text_embed_for_pipeline(self, text_embedding):
         # OmniGen does not use text embeddings
         return {}
 

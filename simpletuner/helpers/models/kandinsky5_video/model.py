@@ -108,7 +108,7 @@ class Kandinsky5Video(VideoModelFoundation):
             "attention_masks": attention_mask,
         }
 
-    def convert_text_embed_for_pipeline(self, text_embedding: dict, prompt: str) -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]
         pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
         attention_mask = text_embedding.get("attention_masks")
@@ -196,6 +196,13 @@ class Kandinsky5Video(VideoModelFoundation):
             if not torch.is_tensor(val):
                 continue
 
+            if key in ("attention_masks", "attention_mask", "prompt_attention_mask"):
+                if val.dim() >= 1 and val.shape[-1] < pad_to:
+                    pad_len = pad_to - val.shape[-1]
+                    pad_shape = val.shape[:-1] + (pad_len,)
+                    unpacked[key] = torch.cat([val, val.new_zeros(pad_shape)], dim=-1)
+                continue
+
             # Pooled CLIP output should stay 2D; never pad or reshape it.
             if key == "pooled_prompt_embeds":
                 if val.dim() == 3:
@@ -208,7 +215,13 @@ class Kandinsky5Video(VideoModelFoundation):
                     raise ValueError(f"Unexpected pooled_prompt_embeds shape {val.shape}")
                 continue
 
-            if val.dim() >= 2 and val.shape[-2] < pad_to:
+            if val.dim() == 2 and val.shape[-1] < pad_to:
+                pad_len = pad_to - val.shape[-1]
+                pad_shape = val.shape[:-1] + (pad_len,)
+                unpacked[key] = torch.cat([val, val.new_zeros(pad_shape)], dim=-1)
+                continue
+
+            if val.dim() >= 3 and val.shape[-2] < pad_to:
                 pad_len = pad_to - val.shape[-2]
                 pad_token = pad_slices.get(key, val[..., -1:, :])
                 pad_repeat = pad_token.expand(*pad_token.shape[:-2], pad_len, pad_token.shape[-1])

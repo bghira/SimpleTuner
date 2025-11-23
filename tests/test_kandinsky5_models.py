@@ -209,6 +209,45 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
 
         self.assertEqual(output.shape, (1, 16, 2, 2))
 
+    def test_pack_and_unpack_text_embeddings_preserve_pooled_embeds(self):
+        self.model.config.tokenizer_max_length = 6
+        prompt_embeds = torch.arange(1 * 6 * 2, dtype=torch.float32).view(1, 6, 2)
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0, 0]], dtype=torch.int32)
+        pooled = torch.tensor([[9.0, 8.0, 7.0, 6.0]], dtype=torch.float32)
+        embeddings = {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled,
+            "attention_masks": attention_mask,
+        }
+
+        packed = self.model.pack_text_embeddings_for_cache(embeddings)
+        self.assertEqual(packed["prompt_embeds"].shape, torch.Size([1, 4, 2]))
+        self.assertEqual(packed["attention_masks"].shape, torch.Size([1, 4]))
+        self.assertIn("_pad_slices", packed)
+        self.assertTrue(torch.equal(packed["_pad_slices"]["prompt_embeds"], prompt_embeds[:, 3:4]))
+        self.assertTrue(torch.equal(packed["pooled_prompt_embeds"], pooled))
+
+        unpacked = self.model.unpack_text_embeddings_from_cache(packed)
+        self.assertEqual(unpacked["prompt_embeds"].shape, torch.Size([1, 6, 2]))
+        self.assertTrue(torch.equal(unpacked["prompt_embeds"][:, :4], prompt_embeds[:, :4]))
+        pad_token = prompt_embeds[:, 3:4].expand(-1, 2, -1)
+        self.assertTrue(torch.equal(unpacked["prompt_embeds"][:, 4:], pad_token))
+        self.assertTrue(torch.equal(unpacked["attention_masks"], torch.tensor([[1, 1, 1, 0, 0, 0]], dtype=torch.int32)))
+        self.assertTrue(torch.equal(unpacked["pooled_prompt_embeds"], pooled))
+
+    def test_unpack_text_embeddings_squeezes_pooled_prompt_embeds(self):
+        self.model.config.tokenizer_max_length = 4
+        pooled = torch.ones(1, 1, 3, dtype=torch.float32)
+        embeddings = {
+            "pooled_prompt_embeds": pooled,
+            "prompt_embeds": torch.zeros(1, 4, 2),
+            "attention_masks": torch.ones(1, 4, dtype=torch.int32),
+        }
+
+        unpacked = self.model.unpack_text_embeddings_from_cache(embeddings)
+        self.assertEqual(unpacked["pooled_prompt_embeds"].shape, torch.Size([1, 3]))
+        self.assertTrue(torch.equal(unpacked["pooled_prompt_embeds"], pooled[:, 0, :]))
+
     def test_model_predict_without_visual_conditioning_preserves_channels(self):
         self.model.model = make_tiny_kandinsky_transformer(visual_cond=False)
         noisy_latents = torch.randn(1, 16, 2, 2)
@@ -451,6 +490,45 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(prompt_cu_seqlens, torch.tensor([0, 1], dtype=torch.int32)))
         self.assertEqual(attention_mask.shape, torch.Size([1, prompt_embeds_qwen.shape[1]]))
         self.assertEqual(prompt_embeds_clip.shape, torch.Size([1, 4]))
+
+    def test_pack_and_unpack_text_embeddings_preserve_pooled_embeds_video(self):
+        self.model.config.tokenizer_max_length = 6
+        prompt_embeds = torch.arange(1 * 6 * 2, dtype=torch.float32).view(1, 6, 2)
+        attention_mask = torch.tensor([[1, 1, 1, 0, 0, 0]], dtype=torch.int32)
+        pooled = torch.tensor([[5.0, 4.0, 3.0, 2.0]], dtype=torch.float32)
+        embeddings = {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled,
+            "attention_masks": attention_mask,
+        }
+
+        packed = self.model.pack_text_embeddings_for_cache(embeddings)
+        self.assertEqual(packed["prompt_embeds"].shape, torch.Size([1, 4, 2]))
+        self.assertEqual(packed["attention_masks"].shape, torch.Size([1, 4]))
+        self.assertIn("_pad_slices", packed)
+        self.assertTrue(torch.equal(packed["_pad_slices"]["prompt_embeds"], prompt_embeds[:, 3:4]))
+        self.assertTrue(torch.equal(packed["pooled_prompt_embeds"], pooled))
+
+        unpacked = self.model.unpack_text_embeddings_from_cache(packed)
+        self.assertEqual(unpacked["prompt_embeds"].shape, torch.Size([1, 6, 2]))
+        self.assertTrue(torch.equal(unpacked["prompt_embeds"][:, :4], prompt_embeds[:, :4]))
+        pad_token = prompt_embeds[:, 3:4].expand(-1, 2, -1)
+        self.assertTrue(torch.equal(unpacked["prompt_embeds"][:, 4:], pad_token))
+        self.assertTrue(torch.equal(unpacked["attention_masks"], torch.tensor([[1, 1, 1, 0, 0, 0]], dtype=torch.int32)))
+        self.assertTrue(torch.equal(unpacked["pooled_prompt_embeds"], pooled))
+
+    def test_unpack_text_embeddings_squeezes_pooled_prompt_embeds_video(self):
+        self.model.config.tokenizer_max_length = 4
+        pooled = torch.ones(1, 1, 3, dtype=torch.float32)
+        embeddings = {
+            "pooled_prompt_embeds": pooled,
+            "prompt_embeds": torch.zeros(1, 4, 2),
+            "attention_masks": torch.ones(1, 4, dtype=torch.int32),
+        }
+
+        unpacked = self.model.unpack_text_embeddings_from_cache(embeddings)
+        self.assertEqual(unpacked["pooled_prompt_embeds"].shape, torch.Size([1, 3]))
+        self.assertTrue(torch.equal(unpacked["pooled_prompt_embeds"], pooled[:, 0, :]))
 
 
 if __name__ == "__main__":

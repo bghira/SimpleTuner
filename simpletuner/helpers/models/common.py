@@ -535,7 +535,7 @@ class ModelFoundation(ABC):
         raise NotImplementedError("_encode_prompts must be implemented in the child class.")
 
     @abstractmethod
-    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         """
         Converts the text embedding to the format expected by the pipeline.
         This is a stub and should be implemented in subclasses.
