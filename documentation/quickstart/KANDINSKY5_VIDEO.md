@@ -13,7 +13,7 @@ This setup is VRAM-intensive, though the "Lite" and "Pro" variants have differen
 
 - **Lite Model Training**: Surprisingly efficient, capable of training on **~13GB VRAM**.
   - **Note**: The initial **VAE pre-caching step** requires significantly more VRAM due to the massive HunyuanVideo VAE. You may need to use CPU offloading or a larger GPU just for the caching phase.
-  - **Tip**: Use `--offload_during_startup=true` to ensure the VAE and text encoder are not loaded to the GPU at the same time, which significantly reduces pre-caching memory pressure.
+  - **Tip**: Set `"offload_during_startup": true` in your `config.json` to ensure the VAE and text encoder are not loaded to the GPU at the same time, which significantly reduces pre-caching memory pressure.
 - **Pro Model Training**: Requires **FSDP2** (multi-gpu) or aggressive **Group Offload** with LoRA to fit on consumer hardware. Specific VRAM/RAM requirements have not been established, but "the more, the merrier" applies.
 - **System RAM**: Testing was comfortable on a system with **45GB** RAM for the Lite model. 64GB+ is recommended to be safe.
 
@@ -21,13 +21,15 @@ This setup is VRAM-intensive, though the "Lite" and "Pro" variants have differen
 
 For almost any single-GPU setup training the **Pro** model, you **must** enable grouped offloading. It is optional but recommended for **Lite** to save VRAM for larger batches/resolutions.
 
-Add this to your `config.json` or `TRAINER_EXTRA_ARGS`:
+Add this to your `config.json`:
 
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
+```json
+{
+  "enable_group_offload": true,
+  "group_offload_type": "block_level",
+  "group_offload_blocks_per_group": 1,
+  "group_offload_use_stream": true
+}
 ```
 
 ## Prerequisites

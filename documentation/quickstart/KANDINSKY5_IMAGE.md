@@ -20,19 +20,21 @@ You'll need:
 
 Given the size of the text encoder, you should almost certainly use grouped offloading if you are on consumer hardware. This offloads the transformer blocks to CPU memory when they are not actively being computed.
 
-Add the following to `TRAINER_EXTRA_ARGS` or your `config.json`:
+Add the following to your `config.json`:
 
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
+```json
+{
+  "enable_group_offload": true,
+  "group_offload_type": "block_level",
+  "group_offload_blocks_per_group": 1,
+  "group_offload_use_stream": true
+}
 ```
 
 - `--group_offload_use_stream`: Only works on CUDA devices.
 - **Do not** combine this with `--enable_model_cpu_offload`.
 
-Additionally, use `--offload_during_startup=true` to reduce VRAM usage during the initialization and caching phase. This ensures the text encoder and VAE are not loaded simultaneously.
+Additionally, set `"offload_during_startup": true` in your `config.json` to reduce VRAM usage during the initialization and caching phase. This ensures the text encoder and VAE are not loaded simultaneously.
 
 ## Prerequisites
 
@@ -118,10 +120,12 @@ Inside `config/config.json` is the "primary validation prompt". You can also cre
 }
 ```
 
-Enable it by adding this to your config or arguments:
+Enable it by adding this to your `config.json`:
 
 ```json
-"--user_prompt_library": "config/user_prompt_library.json"
+{
+  "user_prompt_library": "config/user_prompt_library.json"
+}
 ```
 
 #### Flow schedule shifting
