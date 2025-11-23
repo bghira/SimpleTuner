@@ -218,6 +218,9 @@ class ModelFoundation(ABC):
         self.pipelines = {}
         self._qkv_projections_fused = False
         self._validation_preview_decoder = None
+        self._validation_preview_decoder_failed = False
+        self.setup_model_flavour()
+        self.setup_training_noise_schedule()
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -232,9 +235,6 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
-        self._validation_preview_decoder_failed = False
-        self.setup_model_flavour()
-        self.setup_training_noise_schedule()
 
     @classmethod
     def supports_lora(cls) -> bool:
