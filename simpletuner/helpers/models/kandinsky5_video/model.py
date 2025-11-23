@@ -253,14 +253,22 @@ class Kandinsky5Video(VideoModelFoundation):
             torch.arange(height // 2, device=latents.device),
             torch.arange(width // 2, device=latents.device),
         ]
-        text_rope_pos = torch.arange(
-            prepared_batch["encoder_hidden_states"].shape[1],
-            device=latents.device,
-        )
 
         dtype = self.config.weight_dtype
         if isinstance(dtype, str):
             dtype = getattr(torch, dtype)
+
+        encoder_hidden_states = prepared_batch["encoder_hidden_states"]
+        if encoder_hidden_states.dim() == 4 and encoder_hidden_states.shape[1] == 1:
+            # Cache stores prompt embeds with an extra singleton prompt dimension; drop it.
+            encoder_hidden_states = encoder_hidden_states.squeeze(1)
+        elif encoder_hidden_states.dim() != 3:
+            raise ValueError(f"Expected 3D encoder_hidden_states, got shape {encoder_hidden_states.shape}")
+
+        text_rope_pos = torch.arange(
+            encoder_hidden_states.shape[1],
+            device=latents.device,
+        )
 
         timesteps = prepared_batch["timesteps"].to(device=latents.device, dtype=dtype)
 
@@ -270,9 +278,14 @@ class Kandinsky5Video(VideoModelFoundation):
         if "text_embeds" not in added_kwargs:
             raise ValueError("Kandinsky5Video requires added_cond_kwargs['text_embeds'].")
         pooled = added_kwargs["text_embeds"]
+        if pooled.dim() == 3 and pooled.shape[1] == 1:
+            pooled = pooled.squeeze(1)
+        elif pooled.dim() != 2:
+            raise ValueError(f"Expected 2D pooled text embeddings, got shape {pooled.shape}")
+
         model_pred = self.model(
             hidden_states=latents.to(dtype),
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(dtype),
+            encoder_hidden_states=encoder_hidden_states.to(dtype),
             pooled_projections=pooled.to(dtype),
             timestep=timesteps,
             visual_rope_pos=visual_rope_pos,
