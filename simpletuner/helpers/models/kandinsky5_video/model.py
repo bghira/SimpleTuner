@@ -195,6 +195,19 @@ class Kandinsky5Video(VideoModelFoundation):
         for key, val in list(unpacked.items()):
             if not torch.is_tensor(val):
                 continue
+
+            # Pooled CLIP output should stay 2D; never pad or reshape it.
+            if key == "pooled_prompt_embeds":
+                if val.dim() == 3:
+                    logger.warning(
+                        "Cached pooled_prompt_embeds has an unexpected sequence dimension; using first token. shape=%s",
+                        val.shape,
+                    )
+                    unpacked[key] = val[:, 0, :]
+                elif val.dim() != 2:
+                    raise ValueError(f"Unexpected pooled_prompt_embeds shape {val.shape}")
+                continue
+
             if val.dim() >= 2 and val.shape[-2] < pad_to:
                 pad_len = pad_to - val.shape[-2]
                 pad_token = pad_slices.get(key, val[..., -1:, :])
