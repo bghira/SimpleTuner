@@ -1,0 +1,22 @@
+{
+    "bypass_mode": true,
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "full_matrix": true,
+    "linear_dim": 10000,
+    "linear_alpha": 1,
+    "factor": 4,
+    "apply_preset": {
+        "target_module": [
+            "Kandinsky5Attention", "Kandinsky5FeedForward"
+        ],
+        "module_algo_map": {
+            "Kandinsky5FeedForward": {
+                "factor": 4
+            },
+            "Kandinsky5Attention": {
+                "factor": 2
+            }
+        }
+    }
+}
