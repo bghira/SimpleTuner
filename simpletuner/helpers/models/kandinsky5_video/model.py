@@ -57,6 +57,9 @@ class Kandinsky5Video(VideoModelFoundation):
         "t2v-pro-sft-10s-hd": "kandinskylab/Kandinsky-5.0-T2V-Pro-sft-10s-Diffusers",
         "t2v-pro-pretrain-5s-hd": "kandinskylab/Kandinsky-5.0-T2V-Pro-pretrain-5s-Diffusers",
         "t2v-pro-pretrain-10s-hd": "kandinskylab/Kandinsky-5.0-T2V-Pro-pretrain-10s-Diffusers",
+        # I2V first-frame variants
+        "i2v-lite-5s": "kandinskylab/Kandinsky-5.0-I2V-Lite-5s-Diffusers",
+        "i2v-pro-sft-5s": "kandinskylab/Kandinsky-5.0-I2V-Pro-sft-5s-Diffusers",
     }
     MODEL_LICENSE = "mit"
 
@@ -232,6 +235,30 @@ class Kandinsky5Video(VideoModelFoundation):
                 unpacked[key] = torch.cat([val, val.new_zeros(pad_shape)], dim=-1)
         return unpacked
 
+    def _is_i2v_flavour(self) -> bool:
+        flavour = getattr(self.config, "model_flavour", None)
+        return flavour is not None and str(flavour).lower().startswith("i2v")
+
+    def requires_conditioning_dataset(self) -> bool:
+        return self._is_i2v_flavour() or super().requires_conditioning_dataset()
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        return self._is_i2v_flavour() or super().requires_conditioning_validation_inputs()
+
+    def requires_validation_i2v_samples(self) -> bool:
+        return self._is_i2v_flavour() or super().requires_validation_i2v_samples()
+
+    def requires_conditioning_latents(self) -> bool:
+        visual_cond = False
+        if self.model is not None:
+            try:
+                visual_cond = getattr(self.unwrap_model(self.model).config, "visual_cond", False)
+            except Exception:
+                visual_cond = False
+        if self._is_i2v_flavour() or visual_cond:
+            return True
+        return super().requires_conditioning_latents()
+
     def model_predict(self, prepared_batch: dict):
         """
         Forward pass through the transformer with proper rope positions and visual conditioning.
@@ -244,8 +271,11 @@ class Kandinsky5Video(VideoModelFoundation):
         # Rearrange to (B, T, H, W, C)
         latents = latents.permute(0, 2, 3, 4, 1)
 
+        is_i2v_batch = bool(prepared_batch.get("is_i2v_data", False)) or self._is_i2v_flavour()
+        visual_cond_enabled = getattr(self.unwrap_model(self.model).config, "visual_cond", False)
+
         # Append conditioning zeros + mask for visual_cond models.
-        if getattr(self.unwrap_model(self.model).config, "visual_cond", False):
+        if visual_cond_enabled:
             visual_cond = torch.zeros_like(latents)
             visual_cond_mask = torch.zeros(
                 bsz,
@@ -258,6 +288,11 @@ class Kandinsky5Video(VideoModelFoundation):
             )
 
             cond_latents = prepared_batch.get("conditioning_latents")
+            if is_i2v_batch and cond_latents is None:
+                raise ValueError(
+                    "Kandinsky5 I2V training requires conditioning_latents. "
+                    "Ensure the conditioning dataset is configured and VAE latents are cached."
+                )
             if cond_latents is not None:
                 if cond_latents.dim() == 4:
                     # (B, C, H, W) -> add frame dim
@@ -272,6 +307,8 @@ class Kandinsky5Video(VideoModelFoundation):
                 visual_cond_mask[:, 0] = 1.0
 
             latents = torch.cat([latents, visual_cond, visual_cond_mask], dim=-1)
+        elif is_i2v_batch:
+            raise ValueError("I2V training batch detected but transformer.visual_cond is disabled for this checkpoint.")
 
         # RoPE positions
         visual_rope_pos = [

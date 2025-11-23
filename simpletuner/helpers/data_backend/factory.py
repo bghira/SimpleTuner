@@ -634,15 +634,20 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
             )
         video_config = output["config"]["video"]
-        model_family = _get_arg_value(args, "model_family", "")
-        model_flavour = str(_get_arg_value(args, "model_flavour", "") or "")
-        force_i2v = model_family == "wan" and model_flavour.startswith("i2v-")
+        model_family_raw = _get_arg_value(args, "model_family", "")
+        model_flavour_raw = str(_get_arg_value(args, "model_flavour", "") or "")
+        model_family = str(model_family_raw).lower()
+        model_flavour = model_flavour_raw.lower()
+        is_i2v_flavour = model_flavour.startswith("i2v")
+        force_i2v = (model_family == "wan" and model_flavour.startswith("i2v-")) or (
+            model_family == "kandinsky5-video" and is_i2v_flavour
+        )
 
         if force_i2v:
             if not video_config.get("is_i2v", False):
                 warning_log(
-                    f"(id={backend['id']}) Forcing video->is_i2v=True for Wan flavour '{model_flavour}'. "
-                    "Wan I2V models require image-to-video conditioning datasets."
+                    f"(id={backend['id']}) Forcing video->is_i2v=True for {model_family_raw} flavour '{model_flavour_raw}'. "
+                    "I2V flavours require image-to-video conditioning datasets."
                 )
             video_config["is_i2v"] = True
         elif "is_i2v" not in video_config:

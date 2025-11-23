@@ -81,6 +81,8 @@ Key settings for Kandinsky 5 Video:
   - `t2v-lite-sft-10s`: Lite model, ~10s output.
   - `t2v-pro-sft-5s-hd`: Pro model, ~5s, higher definition training.
   - `t2v-pro-sft-10s-hd`: Pro model, ~10s, higher definition training.
+  - `i2v-lite-5s`: Image-to-video Lite, 5s outputs (requires conditioning images).
+  - `i2v-pro-sft-5s`: Image-to-video Pro SFT, 5s outputs (requires conditioning images).
   - *(Pretrain variants also available for all above)*
 - `train_batch_size`: `1`. Do not increase this unless you have an A100/H100.
 - `validation_resolution`:
