@@ -176,7 +176,7 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
             "attention_masks": attention_mask,
         }
 
-        converted = self.model.convert_text_embed_for_pipeline(text_embedding, prompt="ok")
+        converted = self.model.convert_text_embed_for_pipeline(text_embedding)
         expected_cu = torch.tensor([0, 3, 6], dtype=torch.int32)
 
         self.assertTrue(torch.equal(converted["prompt_embeds_qwen"], embeds))
@@ -378,14 +378,14 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
             "attention_masks": attention_mask,
         }
 
-        converted = self.model.convert_text_embed_for_pipeline(text_embedding, prompt="ok")
+        converted = self.model.convert_text_embed_for_pipeline(text_embedding)
         expected_cu = torch.tensor([0, 1], dtype=torch.int32)
 
         self.assertTrue(torch.equal(converted["prompt_embeds_qwen"], embeds))
         self.assertTrue(torch.equal(converted["prompt_embeds_clip"], pooled))
         self.assertTrue(torch.equal(converted["prompt_cu_seqlens"], expected_cu))
 
-        negative = self.model.convert_negative_text_embed_for_pipeline(text_embedding, prompt="ok")
+        negative = self.model.convert_negative_text_embed_for_pipeline(text_embedding)
         self.assertTrue(torch.equal(negative["negative_prompt_cu_seqlens"], expected_cu))
 
     def test_check_user_config_sets_default_framerate_and_tokenizer_cap(self):
