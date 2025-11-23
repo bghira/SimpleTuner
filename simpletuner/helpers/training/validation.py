@@ -13,9 +13,9 @@ from typing import Any, Union
 import diffusers
 import numpy as np
 import torch
+import wandb
 from tqdm import tqdm
 
-import wandb
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training import validation_audio
 from simpletuner.helpers.training import validation_images as validation_images_utils
@@ -515,7 +515,11 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             ncols=125,
             desc="Precomputing validation prompt embeddings",
         ):
-            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True, load_from_cache=False)
+            prompt_record = {
+                "prompt": prompt,
+                "key": shortname,
+            }
+            embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
 
@@ -528,7 +532,11 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             desc="Precomputing user prompt library embeddings",
         ):
             # move_text_encoders(embed_cache.text_encoders, embed_cache.accelerator.device)
-            embed_cache.compute_embeddings_for_prompts([prompt], is_validation=True, load_from_cache=False)
+            prompt_record = {
+                "prompt": prompt,
+                "key": shortname,
+            }
+            embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
             # move_text_encoders(embed_cache.text_encoders, "cpu")
             validation_prompts.append(prompt)
             validation_shortnames.append(shortname)
