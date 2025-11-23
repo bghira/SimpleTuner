@@ -289,6 +289,19 @@ class Kandinsky5AttnProcessor:
             raise ImportError(f"{self.__class__.__name__} requires PyTorch 2.0. Please upgrade your pytorch version.")
 
     def __call__(self, attn, hidden_states, encoder_hidden_states=None, rotary_emb=None, sparse_params=None):
+        def _describe_tensor(name: str, tensor: Optional[Tensor]) -> str:
+            if tensor is None:
+                return f"{name}=None"
+            return f"{name}(shape={tuple(tensor.shape)}, dim={tensor.dim()}, dtype={tensor.dtype}, device={tensor.device})"
+
+        def _describe_rotary(rope) -> str:
+            if rope is None:
+                return "rotary_emb=None"
+            if isinstance(rope, (tuple, list)):
+                parts = [_describe_tensor(f"rotary_emb[{idx}]", value) for idx, value in enumerate(rope)]
+                return "; ".join(parts)
+            return _describe_tensor("rotary_emb", rope)
+
         # query, key, value = self.get_qkv(x)
         query = attn.to_query(hidden_states)
 
@@ -334,17 +347,31 @@ class Kandinsky5AttnProcessor:
         else:
             attn_mask = None
 
-        hidden_states = dispatch_attention_fn(
-            query,
-            key,
-            value,
-            attn_mask=attn_mask,
-            backend=self._attention_backend,
-        )
+        try:
+            attn_output = dispatch_attention_fn(
+                query,
+                key,
+                value,
+                attn_mask=attn_mask,
+                backend=self._attention_backend,
+            )
+        except Exception:
+            logger.error(
+                "dispatch_attention_fn failed (backend=%s): %s; %s; %s; hidden_states=%s; encoder_hidden_states=%s; attn_mask=%s; %s",
+                self._attention_backend,
+                _describe_tensor("query", query),
+                _describe_tensor("key", key),
+                _describe_tensor("value", value),
+                _describe_tensor("hidden_states", hidden_states),
+                _describe_tensor("encoder_hidden_states", encoder_hidden_states),
+                _describe_tensor("attn_mask", attn_mask),
+                _describe_rotary(rotary_emb),
+            )
+            raise
 
-        hidden_states = hidden_states.flatten(-2, -1)
+        attn_output = attn_output.flatten(-2, -1)
 
-        attn_out = attn.out_layer(hidden_states)
+        attn_out = attn.out_layer(attn_output)
         return attn_out
 
 
