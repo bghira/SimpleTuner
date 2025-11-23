@@ -121,6 +121,32 @@ class Kandinsky5Image(ImageModelFoundation):
             "negative_prompt_cu_seqlens": prompt_cu_seqlens,
         }
 
+    def tread_init(self):
+        """
+        Initialize the TREAD model training method for Kandinsky5 image checkpoints.
+        """
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        if (
+            getattr(self.config, "tread_config", None) is None
+            or getattr(self.config, "tread_config", None) is {}
+            or getattr(self.config, "tread_config", {}).get("routes", None) is None
+        ):
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            self.config.tread_config["routes"],
+        )
+
+        logger.info("TREAD training is enabled for Kandinsky5-Image")
+
     def _find_attention_mask(self, embeddings: dict):
         for key in ("attention_masks", "attention_mask", "prompt_attention_mask"):
             mask = embeddings.get(key)
@@ -284,6 +310,11 @@ class Kandinsky5Image(ImageModelFoundation):
                 visual_cond_mask[:, 0] = 1.0
             latents = torch.cat([latents, visual_cond, visual_cond_mask], dim=-1)
 
+        force_keep_mask = None
+        raw_force_keep = prepared_batch.get("force_keep_mask")
+        if raw_force_keep is not None and getattr(self.config, "tread_config", None):
+            force_keep_mask = self._prepare_force_keep_mask(latents, raw_force_keep)
+
         model_pred = self.model(
             hidden_states=latents.to(dtype),
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(dtype),
@@ -294,11 +325,40 @@ class Kandinsky5Image(ImageModelFoundation):
             scale_factor=(1, 2, 2),
             sparse_params=None,
             return_dict=True,
+            force_keep_mask=force_keep_mask,
         ).sample
 
         model_pred = model_pred.squeeze(1).permute(0, 3, 1, 2)  # back to (B, C, H, W)
 
         return {"model_prediction": model_pred}
+
+    def _prepare_force_keep_mask(self, latents: torch.Tensor, mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        """
+        Validate and reshape the optional force_keep_mask to match token count for TREAD routing.
+        """
+        if mask is None:
+            return None
+
+        patch_size = getattr(self.unwrap_model(self.model).config, "patch_size", (1, 2, 2))
+        if len(patch_size) != 3:
+            raise ValueError(f"Unexpected patch_size format: {patch_size}")
+
+        tokens_expected = (
+            (latents.shape[1] // patch_size[0]) * (latents.shape[2] // patch_size[1]) * (latents.shape[3] // patch_size[2])
+        )
+
+        if mask.dim() > 2:
+            mask = mask.view(mask.shape[0], -1)
+
+        if mask.numel() == mask.shape[0] * tokens_expected and mask.shape[1] != tokens_expected:
+            mask = mask.view(mask.shape[0], tokens_expected)
+
+        if mask.shape[1] != tokens_expected:
+            raise ValueError(
+                f"force_keep_mask length {mask.shape[1]} does not match expected token count {tokens_expected} for patch_size {patch_size}."
+            )
+
+        return mask.to(device=latents.device, dtype=torch.bool)
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)

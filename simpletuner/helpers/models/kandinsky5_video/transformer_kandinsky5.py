@@ -15,7 +15,7 @@
 
 import inspect
 import math
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -28,6 +28,8 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import logging
 from torch import Tensor
+
+from simpletuner.helpers.training.tread import TREADRouter
 
 try:
     from diffusers.models.attention_dispatch import _CAN_USE_FLEX_ATTN, dispatch_attention_fn
@@ -553,6 +555,9 @@ class Kandinsky5Transformer3DModel(
     A 3D Diffusion Transformer model for video-like data.
     """
 
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
+
     _repeated_blocks = [
         "Kandinsky5TransformerEncoderBlock",
         "Kandinsky5TransformerDecoderBlock",
@@ -620,6 +625,27 @@ class Kandinsky5Transformer3DModel(
         self.out_layer = Kandinsky5OutLayer(model_dim, time_dim, out_visual_dim, patch_size)
         self.gradient_checkpointing = False
 
+    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
+        """Attach a TREAD router and route definitions."""
+        self._tread_router = router
+        self._tread_routes = routes
+
+    @staticmethod
+    def _route_rope(rope: torch.Tensor, info, keep_len: int) -> torch.Tensor:
+        """
+        Apply the router's shuffle/slice to the rotary embeddings so token positions stay aligned.
+        """
+        if rope is None:
+            return rope
+
+        if rope.dim() < 2:
+            raise ValueError(f"Expected rotary embedding to have at least 2 dims (B, S, ...); got {rope.shape}")
+
+        gather_idx = info.ids_shuffle.view(info.ids_shuffle.shape[0], info.ids_shuffle.shape[1], *([1] * (rope.dim() - 2)))
+        gather_idx = gather_idx.expand_as(rope)
+        routed = torch.take_along_dim(rope, gather_idx, dim=1)
+        return routed[:, :keep_len]
+
     def forward(
         self,
         hidden_states: torch.Tensor,  # x
@@ -631,6 +657,7 @@ class Kandinsky5Transformer3DModel(
         scale_factor: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         sparse_params: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
+        force_keep_mask: Optional[torch.Tensor] = None,
     ) -> Union[Transformer2DModelOutput, torch.FloatTensor]:
         """
         Forward pass of the Kandinsky5 3D Transformer.
@@ -644,6 +671,8 @@ class Kandinsky5Transformer3DModel(
             text_rope_pos (`torch.LongTensor`): Position for text RoPE
             scale_factor (`Tuple[float, float, float]`, optional): Scale factor for RoPE
             sparse_params (`Dict[str, Any]`, optional): Parameters for sparse attention
+            force_keep_mask (`torch.Tensor`, *optional*): Boolean mask used by TREAD to prevent specific tokens from
+                being dropped. Shape must match the routed token sequence length.
             return_dict (`bool`, optional): Whether to return a dictionary
 
         Returns:
@@ -672,18 +701,80 @@ class Kandinsky5Transformer3DModel(
         to_fractal = sparse_params["to_fractal"] if sparse_params is not None else False
         visual_embed, visual_rope = fractal_flatten(visual_embed, visual_rope, visual_shape, block_mask=to_fractal)
 
-        for visual_transformer_block in self.visual_transformer_blocks:
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        current_rope = visual_rope
+
+        if routes:
+            total_layers = len(self.visual_transformer_blocks)
+
+            def _to_pos(idx: int) -> int:
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
+        if use_routing and router is None:
+            raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
+
+        if use_routing and force_keep_mask is not None:
+            if force_keep_mask.dim() > 2:
+                force_keep_mask = force_keep_mask.view(force_keep_mask.shape[0], -1)
+            expected = visual_embed.shape[1]
+            if force_keep_mask.numel() == force_keep_mask.shape[0] * expected and force_keep_mask.shape[1] != expected:
+                force_keep_mask = force_keep_mask.view(force_keep_mask.shape[0], expected)
+            if force_keep_mask.shape[1] != expected:
+                raise ValueError(
+                    f"force_keep_mask has sequence length {force_keep_mask.shape[1]}, expected {expected} tokens."
+                )
+            force_keep_mask = force_keep_mask.to(device=visual_embed.device, dtype=torch.bool)
+
+        for layer_idx, visual_transformer_block in enumerate(self.visual_transformer_blocks):
+
+            if use_routing and route_ptr < len(routes) and layer_idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                tread_mask_info = router.get_mask(
+                    visual_embed,
+                    mask_ratio=mask_ratio,
+                    force_keep=force_keep_mask,
+                )
+                saved_tokens = visual_embed.clone()
+                visual_embed = router.start_route(visual_embed, tread_mask_info)
+                current_rope = self._route_rope(visual_rope, tread_mask_info, keep_len=visual_embed.size(1))
+                routing_now = True
+
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 visual_embed = self._gradient_checkpointing_func(
                     visual_transformer_block,
                     visual_embed,
                     text_embed,
                     time_embed,
-                    visual_rope,
+                    current_rope,
                     sparse_params,
                 )
             else:
-                visual_embed = visual_transformer_block(visual_embed, text_embed, time_embed, visual_rope, sparse_params)
+                visual_embed = visual_transformer_block(visual_embed, text_embed, time_embed, current_rope, sparse_params)
+
+            if routing_now and layer_idx == routes[route_ptr]["end_layer_idx"]:
+                visual_embed = router.end_route(
+                    visual_embed,
+                    tread_mask_info,
+                    original_x=saved_tokens,
+                )
+                routing_now = False
+                route_ptr += 1
+                current_rope = visual_rope
 
         visual_embed = fractal_unflatten(visual_embed, visual_shape, block_mask=to_fractal)
         x = self.out_layer(visual_embed, text_embed, time_embed)
