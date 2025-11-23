@@ -710,35 +710,101 @@ def draw_text_on_image(
     stroke_width=2,
     stroke_fill=(0, 0, 0),
 ):
-    """Draw text on a single image."""
-    draw = ImageDraw.Draw(image)
-
+    """Draw text on a single image. If position is None, adds a footer and scales text to fit."""
     if font is None:
         font = ImageFont.load_default()
 
-    if position is None:
-        # Center the text at the bottom
-        try:
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-        except AttributeError:
-            text_width, text_height = font.getsize(text)
+    # If position is provided, draw directly on the image (legacy/manual mode)
+    if position is not None:
+        draw = ImageDraw.Draw(image)
+        draw.text(
+            position,
+            text,
+            fill=fill,
+            font=font,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+        return image
 
-        margin = 10
-        x = (image.width - text_width) // 2
-        y = image.height - text_height - margin
-        position = (x, y)
+    # If position is None, create a footer and fit the text
+    dummy_draw = ImageDraw.Draw(image)
+    try:
+        bbox = dummy_draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+    except AttributeError:
+        text_width, text_height = font.getsize(text)
 
-    draw.text(
-        position,
-        text,
-        fill=fill,
-        font=font,
-        stroke_width=stroke_width,
-        stroke_fill=stroke_fill,
-    )
-    return image
+    margin = 10
+    # Ensure footer is high enough for the text
+    footer_height = text_height + (margin * 2)
+
+    # Create new image with black footer
+    new_width = image.width
+    new_height = image.height + footer_height
+    new_image = Image.new("RGB", (new_width, new_height), (0, 0, 0))
+    new_image.paste(image, (0, 0))
+
+    # Calculate available width
+    max_text_width = new_width - (margin * 2)
+
+    if text_width <= max_text_width:
+        # Text fits, draw centered in footer
+        draw = ImageDraw.Draw(new_image)
+        x = (new_width - text_width) // 2
+        y = image.height + margin
+        draw.text(
+            (x, y),
+            text,
+            fill=fill,
+            font=font,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+    else:
+        # Text is too wide, create a separate image for text, resize it, and paste
+        # Add padding for stroke
+        temp_w = text_width + (stroke_width * 2)
+        temp_h = text_height + (stroke_width * 2)
+
+        # Create RGBA image for transparent text
+        txt_img = Image.new("RGBA", (temp_w, temp_h), (0, 0, 0, 0))
+        txt_draw = ImageDraw.Draw(txt_img)
+
+        # Draw text on temp image
+        # We draw at (stroke_width, stroke_width) to avoid clipping stroke
+        txt_draw.text(
+            (stroke_width, stroke_width),
+            text,
+            font=font,
+            fill=fill,
+            stroke_width=stroke_width,
+            stroke_fill=stroke_fill,
+        )
+
+        # Calculate aspect ratio
+        aspect = temp_w / temp_h
+
+        # New target width is the max available width
+        target_w = max_text_width
+        # Ensure target_h is at least 1
+        target_h = max(1, int(target_w / aspect))
+
+        # Resize the text image
+        resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.ANTIALIAS
+        resized_txt = txt_img.resize((target_w, target_h), resample)
+
+        # Center the resized text in the footer
+        x = margin
+        # Center vertically in footer
+        # Note: footer_height was based on original text_height.
+        # target_h is smaller, so it fits.
+        y = image.height + (footer_height - target_h) // 2
+
+        new_image.paste(resized_txt, (x, y), mask=resized_txt)
+
+    return new_image
 
 
 def stitch_images_or_videos(left, right, separator_width=5, labels=None):
