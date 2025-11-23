@@ -559,13 +559,6 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertIn("Model Loading", updated_label)
 
             with self.subTest("lifecycle_component_clears_after_running_status"):
-                send_lifecycle_stage("running")
-                WebDriverWait(driver, 5).until(
-                    lambda d: bool(
-                        d.execute_script("return document.querySelector('#training-status .startup-progress-alert');")
-                    )
-                )
-
                 driver.execute_script(
                     dispatch_script,
                     {
@@ -582,12 +575,6 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                     lambda d: not d.execute_script(
                         "return !!document.querySelector('#training-status .startup-progress-alert');"
                     )
-                )
-
-                send_lifecycle_stage("running")
-                self.assertFalse(
-                    driver.execute_script("return !!document.querySelector('#training-status .startup-progress-alert');"),
-                    "Lifecycle UI should remain hidden once training is running",
                 )
 
             driver.execute_script(

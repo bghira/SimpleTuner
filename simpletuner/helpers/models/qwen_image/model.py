@@ -118,8 +118,6 @@ class QwenImage(ImageModelFoundation):
         if pipeline is None:
             return None
 
-        transformer = getattr(pipeline, "transformer", None)
-
         return pipeline
 
     def setup_training_noise_schedule(self):

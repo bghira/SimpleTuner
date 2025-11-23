@@ -1119,8 +1119,12 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
         else:
             output_tensor = output
 
-        # Output should match input spatial dimensions
-        expected_shape = (batch_size, self.config["out_channels"], height, width)
+        # When inputs are pre-tokenized, output should remain packed tokens
+        expected_shape = (
+            batch_size,
+            hidden_states.shape[1],
+            self.config["out_channels"] * (self.patch_size**2),
+        )
         self.assert_tensor_shape(output_tensor, expected_shape)
         self.assert_no_nan_or_inf(output_tensor)
 
@@ -1445,7 +1449,11 @@ class TestQwenImageTransformerIntegration(TransformerBaseTest):
         else:
             output_tensor = output
 
-        expected_shape = (batch_size, config["out_channels"], height, width)
+        expected_shape = (
+            batch_size,
+            hidden_states.shape[1],
+            config["out_channels"] * (patch_size**2),
+        )
         self.assert_tensor_shape(output_tensor, expected_shape)
         self.assert_no_nan_or_inf(output_tensor)
         self.assert_tensor_in_range(output_tensor, -5.0, 5.0)
