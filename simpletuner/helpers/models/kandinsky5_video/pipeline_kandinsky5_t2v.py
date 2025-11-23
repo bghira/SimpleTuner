@@ -297,7 +297,7 @@ class Kandinsky5T2VPipeline(DiffusionPipeline, KandinskyLoraLoaderMixin):
             max_length=max_sequence_length + self.prompt_template_encode_start_idx,
             truncation=True,
             return_tensors="pt",
-            padding=True,
+            padding="max_length",
         ).to(device)
 
         embeds = self.text_encoder(

@@ -140,6 +140,72 @@ class Kandinsky5Video(VideoModelFoundation):
             "negative_prompt_cu_seqlens": prompt_cu_seqlens,
         }
 
+    def _find_attention_mask(self, embeddings: dict):
+        for key in ("attention_masks", "attention_mask", "prompt_attention_mask"):
+            mask = embeddings.get(key)
+            if mask is not None and torch.is_tensor(mask):
+                return key, mask
+        return None, None
+
+    def pack_text_embeddings_for_cache(self, embeddings):
+        """
+        Trim trailing pad tokens (keeping one pad token) to shrink cache storage.
+        """
+        if not isinstance(embeddings, dict):
+            return embeddings
+        _, mask = self._find_attention_mask(embeddings)
+        if mask is None or mask.dim() < 2:
+            return embeddings
+
+        pad_to = getattr(self.config, "tokenizer_max_length", None)
+        if not pad_to or mask.shape[-1] != pad_to:
+            return embeddings
+        token_lens = mask.sum(dim=-1)
+        max_tokens = int(token_lens.max().item())
+        if max_tokens <= 0 or max_tokens >= pad_to:
+            return embeddings
+
+        trimmed_len = min(pad_to, max_tokens + 1)
+        packed = dict(embeddings)
+        pad_slices: Dict[str, torch.Tensor] = {}
+        for key, val in embeddings.items():
+            if not torch.is_tensor(val):
+                continue
+            if val.dim() >= 2 and val.shape[-2] == pad_to:
+                pad_slices[key] = val[..., trimmed_len - 1 : trimmed_len, :]
+                packed[key] = val[..., :trimmed_len, :]
+            elif val.dim() >= 1 and val.shape[-1] == pad_to:
+                packed[key] = val[..., :trimmed_len]
+        if pad_slices:
+            packed["_pad_slices"] = pad_slices
+        return packed
+
+    def unpack_text_embeddings_from_cache(self, embeddings):
+        """
+        Restore cached embeds to their original padded length using stored pad token.
+        """
+        if not isinstance(embeddings, dict):
+            return embeddings
+        pad_to = getattr(self.config, "tokenizer_max_length", None)
+        if not pad_to:
+            return embeddings
+
+        pad_slices = embeddings.get("_pad_slices", {})
+        unpacked = {k: v for k, v in embeddings.items() if k != "_pad_slices"}
+        for key, val in list(unpacked.items()):
+            if not torch.is_tensor(val):
+                continue
+            if val.dim() >= 2 and val.shape[-2] < pad_to:
+                pad_len = pad_to - val.shape[-2]
+                pad_token = pad_slices.get(key, val[..., -1:, :])
+                pad_repeat = pad_token.expand(*pad_token.shape[:-2], pad_len, pad_token.shape[-1])
+                unpacked[key] = torch.cat([val, pad_repeat], dim=-2)
+            elif val.dim() >= 1 and val.shape[-1] < pad_to:
+                pad_len = pad_to - val.shape[-1]
+                pad_shape = val.shape[:-1] + (pad_len,)
+                unpacked[key] = torch.cat([val, val.new_zeros(pad_shape)], dim=-1)
+        return unpacked
+
     def model_predict(self, prepared_batch: dict):
         """
         Forward pass through the transformer with proper rope positions and visual conditioning.

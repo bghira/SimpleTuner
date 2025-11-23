@@ -218,6 +218,20 @@ class ModelFoundation(ABC):
         self.pipelines = {}
         self._qkv_projections_fused = False
         self._validation_preview_decoder = None
+
+    def pack_text_embeddings_for_cache(self, embeddings):
+        """
+        Optional hook for models to compress or adjust text embeds before caching.
+        Defaults to no-op.
+        """
+        return embeddings
+
+    def unpack_text_embeddings_from_cache(self, embeddings):
+        """
+        Optional hook for models to restore cached text embeds to training format.
+        Defaults to no-op.
+        """
+        return embeddings
         self._validation_preview_decoder_failed = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
