@@ -468,10 +468,6 @@ class TextEmbeddingCache(WebhookMixin):
             local_records = self.split_prompt_records_between_processes(records)
         else:
             local_records = records
-        if hasattr(args, "cache_clear_validation_prompts") and args.cache_clear_validation_prompts and is_validation:
-            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
-            load_from_cache = False
-            should_encode = True
 
         if self.webhook_handler is not None:
             last_reported_index = 0

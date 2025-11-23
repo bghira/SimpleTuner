@@ -782,7 +782,6 @@ usage: train.py [-h] --model_family
                 [--override_dataset_config [OVERRIDE_DATASET_CONFIG]]
                 [--cache_dir CACHE_DIR] [--cache_dir_text CACHE_DIR_TEXT]
                 [--cache_dir_vae CACHE_DIR_VAE]
-                [--cache_clear_validation_prompts [CACHE_CLEAR_VALIDATION_PROMPTS]]
                 [--compress_disk_cache [COMPRESS_DISK_CACHE]]
                 [--aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]]
                 [--keep_vae_loaded [KEEP_VAE_LOADED]]
@@ -1301,9 +1300,6 @@ options:
   --cache_dir_vae CACHE_DIR_VAE
                         This is the path to a local directory that will
                         contain your VAE outputs
-  --cache_clear_validation_prompts [CACHE_CLEAR_VALIDATION_PROMPTS]
-                        When provided, any validation prompt entries in the
-                        text embed cache will be recreated
   --compress_disk_cache [COMPRESS_DISK_CACHE]
                         If set, will gzip-compress the disk cache for Pytorch
                         files. This will save substantial disk space, but may
