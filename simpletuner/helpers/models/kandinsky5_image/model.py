@@ -289,6 +289,17 @@ class Kandinsky5Image(ImageModelFoundation):
         if "text_embeds" not in added_kwargs:
             raise ValueError("Kandinsky5Image requires added_cond_kwargs['text_embeds'].")
         pooled = added_kwargs["text_embeds"]
+        if pooled.dim() == 3 and pooled.shape[1] == 1:
+            pooled = pooled.squeeze(1)
+        elif pooled.dim() == 3 and pooled.shape[1] > 1:
+            logger.warning(
+                "Kandinsky5Image expected pooled text embeddings with a singleton prompt dimension; got shape %s. "
+                "Using the first token to continue.",
+                pooled.shape,
+            )
+            pooled = pooled[:, 0, :]
+        elif pooled.dim() != 2:
+            raise ValueError(f"Expected 2D pooled text embeddings, got shape {pooled.shape}")
 
         if getattr(self.unwrap_model(self.model).config, "visual_cond", False):
             visual_cond = torch.zeros_like(latents)
