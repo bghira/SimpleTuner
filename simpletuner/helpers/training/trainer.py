@@ -24,10 +24,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
+import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
-import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
@@ -4257,10 +4257,29 @@ class Trainer:
                         ):
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
                             if self.config.fsdp_enable:
-                                # For FSDP, use the native clip_grad_norm_ method of the FSDP module
+                                # For FSDP, handle FSDP1/FSDP2 separately and surface failures instead of crashing.
                                 if self.config.grad_clip_method == "norm":
                                     fsdp_model = self.model.get_trained_component(unwrap_model=False)
-                                    self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
+                                    is_fsdp2 = bool(getattr(self.accelerator, "is_fsdp2", False))
+                                    # Ensure gradients are unscaled before clipping when using AMP.
+                                    self.accelerator.unscale_gradients()
+                                    try:
+                                        if is_fsdp2:
+                                            self.grad_norm = torch.nn.utils.clip_grad_norm_(
+                                                fsdp_model.parameters(),
+                                                self.config.max_grad_norm,
+                                            )
+                                        else:
+                                            self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
+                                    except Exception as exc:
+                                        if is_fsdp2:
+                                            logger.warning(
+                                                "FSDP2 gradient clipping failed (%s); skipping clipping.",
+                                                exc,
+                                            )
+                                            self.grad_norm = None
+                                        else:
+                                            raise
                                 elif self.config.grad_clip_method == "value":
                                     logger.warning(
                                         "FSDP does not support grad_clip_method='value'. Skipping gradient clipping."
