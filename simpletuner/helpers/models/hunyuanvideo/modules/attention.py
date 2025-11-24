@@ -38,7 +38,8 @@ except Exception:
     logger.warning("Could not load Sliding Tile Attention of FlexAttn.")
 
 from simpletuner.helpers.models.hunyuanvideo.commons.infer_state import get_infer_state
-from simpletuner.helpers.models.hunyuanvideo.transformers.modules.ssta_attention import ssta_3d_attention
+
+from .ssta_attention import ssta_3d_attention
 
 
 @torch.compiler.disable
