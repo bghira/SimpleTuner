@@ -112,7 +112,7 @@ class SanaVideo(VideoModelFoundation):
             "negative_prompt_attention_mask": text_embedding.get("negative_prompt_attention_mask"),
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: dict, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         """
         Prepare cached negative prompt embeddings for pipeline execution.
         Falls back to the stored prompt embedding if the cache omits explicit negative entries.

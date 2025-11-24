@@ -291,7 +291,7 @@ class Flux(ImageModelFoundation):
             "prompt_mask": (attention_mask if self.config.flux_attention_masked_training else None),
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # logger.info(f"Converting embeds with shapes: {text_embedding['prompt_embeds'].shape} {text_embedding['pooled_prompt_embeds'].shape}")
         if self.config.validation_guidance_real is None or self.config.validation_guidance_real <= 1.0:
             # CFG is disabled, no negative prompts.

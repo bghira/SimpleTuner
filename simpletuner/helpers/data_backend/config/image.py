@@ -342,7 +342,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         model_family = args.get("model_family", "")
         model_flavour = str(args.get("model_flavour", "") or "")
-        force_i2v = model_family == "wan" and model_flavour.startswith("i2v-")
+        force_i2v = model_family in ["wan", "kandinsky5-video"] and model_flavour.startswith("i2v-")
 
         if force_i2v:
             if not self.video.get("is_i2v", False):

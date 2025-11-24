@@ -219,7 +219,8 @@ class TextEmbeddingCache(WebhookMixin):
             self.process_write_batches = True
             self.batch_write_thread = Thread(target=self.batch_write_embeddings)
             self.batch_write_thread.start()
-        self.write_queue.put((embeddings, filename))
+        packed = self.model.pack_text_embeddings_for_cache(embeddings)
+        self.write_queue.put((packed, filename))
         logger.debug(
             f"save_to_cache called for {filename}, write queue has {self.write_queue.qsize()} items, and the write thread's status: {self.batch_write_thread.is_alive()}"
         )
@@ -314,8 +315,7 @@ class TextEmbeddingCache(WebhookMixin):
                     f"Loaded tuple format from cache but model doesn't have _format_text_embedding method. "
                     f"This cache file may be incompatible: {filename}"
                 )
-
-        return result
+        return self.model.unpack_text_embeddings_from_cache(result)
 
     def encode_wan_prompt(
         self,
@@ -468,10 +468,6 @@ class TextEmbeddingCache(WebhookMixin):
             local_records = self.split_prompt_records_between_processes(records)
         else:
             local_records = records
-        if hasattr(args, "cache_clear_validation_prompts") and args.cache_clear_validation_prompts and is_validation:
-            # If --cache_clear_validation_prompts was provided, we will forcibly overwrite them.
-            load_from_cache = False
-            should_encode = True
 
         if self.webhook_handler is not None:
             last_reported_index = 0

@@ -169,7 +169,7 @@ class Chroma(ImageModelFoundation):
             "prompt_attention_mask": attention_mask,
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> dict:
         neg_embeds = text_embedding["prompt_embeds"]
         neg_mask = text_embedding["attention_masks"]
 

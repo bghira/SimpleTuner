@@ -634,15 +634,20 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
             )
         video_config = output["config"]["video"]
-        model_family = _get_arg_value(args, "model_family", "")
-        model_flavour = str(_get_arg_value(args, "model_flavour", "") or "")
-        force_i2v = model_family == "wan" and model_flavour.startswith("i2v-")
+        model_family_raw = _get_arg_value(args, "model_family", "")
+        model_flavour_raw = str(_get_arg_value(args, "model_flavour", "") or "")
+        model_family = str(model_family_raw).lower()
+        model_flavour = model_flavour_raw.lower()
+        is_i2v_flavour = model_flavour.startswith("i2v")
+        force_i2v = (model_family == "wan" and model_flavour.startswith("i2v-")) or (
+            model_family == "kandinsky5-video" and is_i2v_flavour
+        )
 
         if force_i2v:
             if not video_config.get("is_i2v", False):
                 warning_log(
-                    f"(id={backend['id']}) Forcing video->is_i2v=True for Wan flavour '{model_flavour}'. "
-                    "Wan I2V models require image-to-video conditioning datasets."
+                    f"(id={backend['id']}) Forcing video->is_i2v=True for {model_family_raw} flavour '{model_flavour_raw}'. "
+                    "I2V flavours require image-to-video conditioning datasets."
                 )
             video_config["is_i2v"] = True
         elif "is_i2v" not in video_config:
@@ -1415,11 +1420,11 @@ class FactoryRegistry:
 
     def _inject_i2v_conditioning_configs(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Auto-configure Wan I2V datasets to generate first-frame conditioning data and
+        Auto-configure Wan/Kandinsky5-Video I2V datasets to generate first-frame conditioning data and
         matching conditioning-image-embed backends when none were supplied explicitly.
         """
         model_family = str(getattr(self.args, "model_family", "") or "")
-        if model_family.lower() != "wan":
+        if model_family.lower() not in ["wan", "kandinsky5-video"]:
             return data_backend_config
 
         auto_embed_configs: List[Dict[str, Any]] = []
@@ -1429,7 +1434,7 @@ class FactoryRegistry:
         for backend in data_backend_config:
             if not isinstance(backend, dict):
                 continue
-            if backend.get("_wan_i2v_autoconditioning_attached", False):
+            if backend.get("_i2v_autoconditioning_attached", False):
                 continue
             if backend.get("disabled", False) or backend.get("disable", False):
                 continue
@@ -1461,7 +1466,7 @@ class FactoryRegistry:
             if not source_id:
                 continue
 
-            backend["_wan_i2v_autoconditioning_attached"] = True
+            backend["_i2v_autoconditioning_attached"] = True
 
             new_conditioning_entry = {
                 "type": "i2v_first_frame",

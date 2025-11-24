@@ -118,8 +118,6 @@ class QwenImage(ImageModelFoundation):
         if pipeline is None:
             return None
 
-        transformer = getattr(pipeline, "transformer", None)
-
         return pipeline
 
     def setup_training_noise_schedule(self):
@@ -204,12 +202,11 @@ class QwenImage(ImageModelFoundation):
                 raise ValueError("Failed to resolve prompt image tensors for Qwen edit text encoding.")
 
         # Use pipeline's encode_prompt method
-        prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(
-            prompts,
-            image=prompt_image_tensor,
-            device=self.accelerator.device,
-            num_images_per_prompt=1,
-        )
+        encode_kwargs = {"device": self.accelerator.device, "num_images_per_prompt": 1}
+        if prompt_image_tensor is not None:
+            encode_kwargs["image"] = prompt_image_tensor
+
+        prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(prompts, **encode_kwargs)
 
         return prompt_embeds, prompt_embeds_mask
 
@@ -444,7 +441,7 @@ class QwenImage(ImageModelFoundation):
             "attention_masks": torch.cat(masks, dim=0) if masks else None,
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         """
         Convert negative text embeddings for pipeline use.
         """

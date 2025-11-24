@@ -1040,24 +1040,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Cache Clear Validation Prompts
-    registry._add_field(
-        ConfigField(
-            name="cache_clear_validation_prompts",
-            arg_name="--cache_clear_validation_prompts",
-            ui_label="Clear Validation Prompts from Cache",
-            field_type=FieldType.CHECKBOX,
-            tab="basic",
-            section="caching",
-            subsection="advanced",
-            default_value=False,
-            help_text="When provided, any validation prompt entries in the text embed cache will be recreated",
-            tooltip="This is useful if you've modified any of the existing prompts.",
-            importance=ImportanceLevel.ADVANCED,
-            order=52,
-        )
-    )
-
     # Compress Disk Cache
     registry._add_field(
         ConfigField(

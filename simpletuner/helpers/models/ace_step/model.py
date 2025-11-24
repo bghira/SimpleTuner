@@ -392,15 +392,13 @@ class ACEStep(AudioModelFoundation):
             "attention_masks": attention_mask,
         }
 
-    def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor], prompt: Optional[str] = None) -> dict:
+    def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> dict:
         return {
             "encoder_text_hidden_states": text_embedding["prompt_embeds"],
             "text_attention_mask": text_embedding.get("attention_masks"),
         }
 
-    def convert_negative_text_embed_for_pipeline(
-        self, text_embedding: Dict[str, torch.Tensor], prompt: Optional[str] = None
-    ) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> dict:
         return {
             "negative_encoder_text_hidden_states": text_embedding["prompt_embeds"].unsqueeze(0),
             "negative_text_attention_mask": text_embedding.get("attention_masks"),

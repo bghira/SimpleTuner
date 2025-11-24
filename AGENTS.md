@@ -5,6 +5,8 @@
 - Venv location: `.venv`
 - Python version: `3.12`
 - Test framework: `unittest` (NOT `pytest`)
+- Test command: `.venv/bin/python -m unittest -v -f`
+- Test average runtime: ~300 seconds
 
 ## Code style
 
@@ -13,6 +15,7 @@
 - Use type: ignore only when absolutely necessary
 - NEVER add a code fallback path unless it is explicit to the requirements
 - Do not make assumptions if confusion arises. Instead, stop working, and request clarification.
+- Let's not add wandering, rambling comments in notes. Be concise and to the point or leave no comment at all since the code should be self-explanatory.
 
 ## Plan inspection guidelines
 
@@ -27,3 +30,10 @@
 ## File preservation
 
 - Do not remove untracked files from the repository unless explicitly instructed to do so
+
+## Problem solving
+
+- It's always tempting to jump right into declaring an answer, but the best solutions come from carefully-developed understanding of the root cause
+- Problems should always be provable through tests, logging, or other means
+- Generally speaking, it's fine to run the full application end-to-end to verify a fix, "it's heavy" is not a valid excuse to avoid verification - we're on a ML development workstation that's designed to allow running these workloads
+- For the most part, things should not be marked as CUDA-only unless it relies on third-party compiled CUDA kernels or similar. Don't be afraid to use the available accelerator eg. mps, cuda, if available on the system opportunistically.

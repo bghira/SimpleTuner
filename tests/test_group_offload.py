@@ -68,10 +68,10 @@ class GroupOffloadHelperTests(unittest.TestCase):
             def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
                 return prompts
 
-            def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str):
+            def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor):
                 return {"prompt_embeds": text_embedding}
 
-            def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str):
+            def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor):
                 return {"negative_prompt_embeds": text_embedding}
 
         with (
