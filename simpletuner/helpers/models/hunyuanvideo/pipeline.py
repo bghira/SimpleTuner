@@ -20,6 +20,7 @@ from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import BaseOutput, deprecate, logging
 from einops import rearrange
+from huggingface_hub import snapshot_download
 from PIL import Image
 from torch import distributed as dist
 
@@ -1483,8 +1484,30 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         return {"sample_size": sample_size, "tile_overlap_factor": tile_overlap_factor, "dtype": dtype}
 
     @classmethod
+    def _resolve_model_root(cls, pretrained_model_path: str) -> str:
+        """
+        Ensure the checkpoint assets exist locally; download text encoder bits when given an HF repo id.
+        """
+        if os.path.isdir(pretrained_model_path):
+            return pretrained_model_path
+        try:
+            cache_dir = snapshot_download(
+                repo_id=pretrained_model_path,
+                allow_patterns=["text_encoder/*", "text_encoder/llm/*", "vision_encoder/*", "vision_encoder/siglip/*"],
+            )
+            return cache_dir
+        except Exception as exc:  # pragma: no cover - download failures should surface
+            msg = (
+                f"{pretrained_model_path} assets not found locally and download failed: {exc}. "
+                "Please refer to checkpoints-download.md to download the required checkpoints."
+            )
+            loguru.logger.error(msg)
+            raise FileNotFoundError(msg) from exc
+
+    @classmethod
     def _load_text_encoders(cls, pretrained_model_path, device):
-        text_encoder_path = f"{pretrained_model_path}/text_encoder/llm"
+        base_path = cls._resolve_model_root(pretrained_model_path)
+        text_encoder_path = os.path.join(base_path, "text_encoder", "llm")
         if not os.path.exists(text_encoder_path):
             msg = f"{text_encoder_path} not found. Please refer to checkpoints-download.md to download the text encoder checkpoints."
             loguru.logger.error(msg)
@@ -1509,7 +1532,8 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
 
     @classmethod
     def _load_vision_encoder(cls, pretrained_model_name_or_path, device):
-        vision_encoder_path = f"{pretrained_model_name_or_path}/vision_encoder/siglip"
+        base_path = cls._resolve_model_root(pretrained_model_name_or_path)
+        vision_encoder_path = os.path.join(base_path, "vision_encoder", "siglip")
         if not os.path.exists(vision_encoder_path):
             msg = f"{vision_encoder_path} not found. Please refer to checkpoints-download.md to download the vision encoder checkpoints."
             loguru.logger.error(msg)
