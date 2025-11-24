@@ -48,7 +48,7 @@ else:
     logger.setLevel("ERROR")
 
 
-flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma"]
+flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma", "hunyuanvideo"]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
@@ -60,6 +60,7 @@ upstream_config_sources = {
     "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "hunyuanvideo": "tencent/HunyuanVideo-1.5",
 }
 
 
