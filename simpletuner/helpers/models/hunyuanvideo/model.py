@@ -202,8 +202,12 @@ class HunyuanVideo(VideoModelFoundation):
             if fallback_repo == "Qwen/Qwen2.5-VL-7B-Instruct" and not override_text_subpath:
                 fallback_subpath = None
 
+            # Explicitly allow patterns for the fallback repo to ensure we get config.json, weights, etc.
+            # The default patterns in _resolve_model_root are too restrictive for standard HF repos.
+            fallback_patterns = ["*.json", "*.safetensors", "*.model", "*.txt", "*.py", "tokenizer*"]
+
             resolved_fallback = self._resolve_model_root(
-                fallback_repo, allow_patterns=None, required_subdir=fallback_subpath
+                fallback_repo, allow_patterns=fallback_patterns, required_subdir=fallback_subpath
             )
 
             if resolved_fallback:
