@@ -163,10 +163,10 @@ class TestCollatePromptEmbedsDimensions(unittest.TestCase):
             def _encode_prompts(self, prompts, is_negative_prompt=False):
                 pass
 
-            def convert_text_embed_for_pipeline(self, text_embedding, prompt):
+            def convert_text_embed_for_pipeline(self, text_embedding):
                 pass
 
-            def convert_negative_text_embed_for_pipeline(self, text_embedding, prompt):
+            def convert_negative_text_embed_for_pipeline(self, text_embedding):
                 pass
 
             def model_predict(self, prepared_batch):

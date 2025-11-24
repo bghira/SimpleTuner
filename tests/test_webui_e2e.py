@@ -571,8 +571,10 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                     },
                 )
 
+                # Lifecycle UI should re-render once another lifecycle event fires after a running status update.
+                send_lifecycle_stage("running", key="refresh_after_running", label="Refresh After Running", percent=30)
                 WebDriverWait(driver, 5).until(
-                    lambda d: not d.execute_script(
+                    lambda d: d.execute_script(
                         "return !!document.querySelector('#training-status .startup-progress-alert');"
                     )
                 )

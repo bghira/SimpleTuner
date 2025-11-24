@@ -96,7 +96,7 @@ class Auraflow(ImageModelFoundation):
             "prompt_attention_mask": prompt_attention_mask,
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # Only unsqueeze if it's missing the batch dimension
         negative_prompt_embeds = text_embedding["prompt_embeds"]
         negative_prompt_attention_mask = text_embedding["prompt_attention_mask"]

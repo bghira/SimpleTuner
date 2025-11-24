@@ -178,7 +178,7 @@ class PixartSigma(ImageModelFoundation):
             "prompt_attention_mask": attention_mask,
         }
 
-    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor, prompt: str) -> dict:
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         # Only unsqueeze if it's missing the batch dimension
         prompt_embeds = text_embedding["prompt_embeds"]
         attention_mask = text_embedding["attention_mask"]

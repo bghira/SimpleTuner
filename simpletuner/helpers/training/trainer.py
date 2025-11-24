@@ -24,10 +24,10 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
+import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
-import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
@@ -536,6 +536,7 @@ class Trainer:
     def parse_arguments(self, args=None, disable_accelerator: bool = False, exit_on_error: bool = False):
         skip_config_fallback = False
         args_payload = args
+        self.config = None
 
         if isinstance(args, dict):
             args_payload = dict(args)
@@ -550,13 +551,27 @@ class Trainer:
                 args_payload.pop(key, None)
 
         self.configure_webhook(raw_config=args_payload if isinstance(args_payload, dict) else args)
-        self.config = load_config(args_payload, exit_on_error=exit_on_error)
+        try:
+            self.config = load_config(args_payload, exit_on_error=True)
+        except Exception as exc:
+            logger.error("Failed to parse training configuration from provided arguments.", exc_info=exc)
+            if not skip_config_fallback:
+                logger.info("Attempting to load persisted configuration as fallback after parse failure.")
+                try:
+                    self.config = load_config(None, exit_on_error=True)
+                except Exception:
+                    # Preserve the original parser failure as the primary error.
+                    raise exc
+            if self.config is None:
+                # Preserve the original parser failure as the primary error.
+                raise exc
+
         if self.config is None and args_payload and not skip_config_fallback:
             # Fallback to the user's persisted defaults when ad-hoc CLI args are incomplete.
             # This mirrors historical behaviour where we would silently load the active
             # environment when parsing failed, while still surfacing an explicit failure if
             # no configuration can be resolved at all.
-            self.config = load_config(None, exit_on_error=exit_on_error)
+            self.config = load_config(None, exit_on_error=True)
 
         if self.config is None:
             raise ValueError("Training configuration could not be parsed")
