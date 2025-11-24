@@ -7,6 +7,7 @@ import os
 import random
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import loguru
@@ -1407,8 +1408,17 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
             transformer.set_attn_mode("flex-block-attn")
 
         byt5_kwargs, prompt_format = cls._load_byt5(cached_folder, True, 256, device=device)
-        text_encoder, text_encoder_2 = cls._load_text_encoders(cached_folder, device=device)
-        vision_encoder = cls._load_vision_encoder(cached_folder, device=device)
+        text_encoder_path_override = kwargs.pop("text_encoder_path", None) or os.environ.get(
+            "HUNYUANVIDEO_TEXT_ENCODER_PATH"
+        )
+        vision_encoder_path_override = kwargs.pop("vision_encoder_path", None) or os.environ.get(
+            "HUNYUANVIDEO_VISION_ENCODER_PATH"
+        )
+
+        text_encoder, text_encoder_2 = cls._load_text_encoders(
+            cached_folder, device=device, override_path=text_encoder_path_override
+        )
+        vision_encoder = cls._load_vision_encoder(cached_folder, device=device, override_path=vision_encoder_path_override)
 
         group_offloading_kwargs = {
             "onload_device": torch.device("cuda"),
@@ -1484,18 +1494,59 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         return {"sample_size": sample_size, "tile_overlap_factor": tile_overlap_factor, "dtype": dtype}
 
     @classmethod
-    def _resolve_model_root(cls, pretrained_model_path: str) -> str:
+    def _find_cached_snapshot(cls, repo_id: str) -> Optional[str]:
         """
-        Ensure the checkpoint assets exist locally; download text encoder bits when given an HF repo id.
+        Locate an existing Hugging Face snapshot on disk for the given repo.
         """
+        try:
+            repo_cache = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{repo_id.replace('/', '--')}"
+            ref_main = repo_cache / "refs" / "main"
+            if ref_main.exists():
+                snapshot_hash = ref_main.read_text().strip()
+                snap_dir = repo_cache / "snapshots" / snapshot_hash
+                if snap_dir.exists():
+                    return str(snap_dir)
+        except Exception:
+            return None
+        return None
+
+    @classmethod
+    def _resolve_model_root(
+        cls,
+        pretrained_model_path: str,
+        allow_patterns: Optional[List[str]] = None,
+        required_subdir: Optional[str] = None,
+    ) -> str:
+        """
+        Ensure the checkpoint assets exist locally; download requested parts when given an HF repo id.
+        """
+        candidate_paths: List[str] = []
         if os.path.isdir(pretrained_model_path):
-            return pretrained_model_path
+            candidate_paths.append(pretrained_model_path)
+        cached = cls._find_cached_snapshot(pretrained_model_path)
+        if cached:
+            candidate_paths.append(cached)
+
+        def _has_required(path: str) -> bool:
+            return required_subdir is None or os.path.exists(os.path.join(path, required_subdir))
+
+        for path in candidate_paths:
+            if _has_required(path):
+                return path
+
         try:
             cache_dir = snapshot_download(
                 repo_id=pretrained_model_path,
-                allow_patterns=["text_encoder/*", "text_encoder/llm/*", "vision_encoder/*", "vision_encoder/siglip/*"],
+                allow_patterns=allow_patterns
+                or [
+                    "text_encoder/*",
+                    "text_encoder/llm/*",
+                    "vision_encoder/*",
+                    "vision_encoder/siglip/*",
+                ],
             )
-            return cache_dir
+            if _has_required(cache_dir):
+                return cache_dir
         except Exception as exc:  # pragma: no cover - download failures should surface
             msg = (
                 f"{pretrained_model_path} assets not found locally and download failed: {exc}. "
@@ -1504,12 +1555,27 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
             loguru.logger.error(msg)
             raise FileNotFoundError(msg) from exc
 
+        msg = (
+            f"Required assets{f' ({required_subdir})' if required_subdir else ''} not found in {pretrained_model_path}. "
+            "Set HUNYUANVIDEO_TEXT_ENCODER_PATH / HUNYUANVIDEO_VISION_ENCODER_PATH to downloaded folders, "
+            "or manually download the checkpoints."
+        )
+        loguru.logger.error(msg)
+        raise FileNotFoundError(msg)
+
     @classmethod
-    def _load_text_encoders(cls, pretrained_model_path, device):
-        base_path = cls._resolve_model_root(pretrained_model_path)
+    def _load_text_encoders(cls, pretrained_model_path, device, override_path: Optional[str] = None):
+        base_path = cls._resolve_model_root(
+            override_path or pretrained_model_path,
+            allow_patterns=["text_encoder/*", "text_encoder/llm/*"],
+            required_subdir="text_encoder/llm",
+        )
         text_encoder_path = os.path.join(base_path, "text_encoder", "llm")
         if not os.path.exists(text_encoder_path):
-            msg = f"{text_encoder_path} not found. Please refer to checkpoints-download.md to download the text encoder checkpoints."
+            msg = (
+                f"{text_encoder_path} not found. Set HUNYUANVIDEO_TEXT_ENCODER_PATH to a downloaded text_encoder/llm "
+                "directory or refer to checkpoints-download.md to fetch the text encoder checkpoints."
+            )
             loguru.logger.error(msg)
             raise FileNotFoundError(msg)
         text_encoder = TextEncoder(
@@ -1531,11 +1597,18 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         return text_encoder, text_encoder_2
 
     @classmethod
-    def _load_vision_encoder(cls, pretrained_model_name_or_path, device):
-        base_path = cls._resolve_model_root(pretrained_model_name_or_path)
+    def _load_vision_encoder(cls, pretrained_model_name_or_path, device, override_path: Optional[str] = None):
+        base_path = cls._resolve_model_root(
+            override_path or pretrained_model_name_or_path,
+            allow_patterns=["vision_encoder/*", "vision_encoder/siglip/*"],
+            required_subdir="vision_encoder/siglip",
+        )
         vision_encoder_path = os.path.join(base_path, "vision_encoder", "siglip")
         if not os.path.exists(vision_encoder_path):
-            msg = f"{vision_encoder_path} not found. Please refer to checkpoints-download.md to download the vision encoder checkpoints."
+            msg = (
+                f"{vision_encoder_path} not found. Set HUNYUANVIDEO_VISION_ENCODER_PATH to a downloaded vision_encoder "
+                "directory or refer to checkpoints-download.md to fetch the vision encoder checkpoints."
+            )
             loguru.logger.error(msg)
             raise FileNotFoundError(msg)
         vision_encoder = VisionEncoder(

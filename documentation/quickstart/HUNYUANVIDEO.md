@@ -72,6 +72,17 @@ pip install simpletuner[cuda]
 
 For manual installation or development setup, see the [installation documentation](/documentation/INSTALL.md).
 
+### Required checkpoints
+
+The main `tencent/HunyuanVideo-1.5` repo contains the transformer/vae/scheduler, but the **text encoder** (`text_encoder/llm`) and **vision encoder** (`vision_encoder/siglip`) live in separate downloads. Point SimpleTuner at your local copies before launching:
+
+```bash
+export HUNYUANVIDEO_TEXT_ENCODER_PATH=/path/to/text_encoder_root
+export HUNYUANVIDEO_VISION_ENCODER_PATH=/path/to/vision_encoder_root
+```
+
+If these are unset, SimpleTuner tries to pull them from the model repo; most mirrors do not bundle them, so set the paths explicitly to avoid startup errors.
+
 ## Setting up the environment
 
 ### Web interface method
