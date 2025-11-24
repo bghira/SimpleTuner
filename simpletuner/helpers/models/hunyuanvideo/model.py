@@ -247,6 +247,9 @@ class HunyuanVideo(VideoModelFoundation):
         self.text_encoder_1 = text_encoder
         self.text_encoder_2 = None
 
+        self.tokenizers = [text_encoder.tokenizer]
+        self.tokenizer_1 = text_encoder.tokenizer
+
     def load_text_tokenizer(self):
         """
         Tokenization is handled by the custom TextEncoder stack.

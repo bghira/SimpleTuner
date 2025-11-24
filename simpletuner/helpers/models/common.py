@@ -1334,6 +1334,8 @@ class ModelFoundation(ABC):
             pipeline_kwargs["vae"] = self.get_vae()
 
         text_encoder_idx = 0
+        pipeline_init_signature = inspect.signature(pipeline_class.__init__)
+
         for (
             text_encoder_attr,
             text_encoder_config,
@@ -1341,11 +1343,18 @@ class ModelFoundation(ABC):
             tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
             if self.text_encoders is not None and len(self.text_encoders) >= text_encoder_idx:
                 pipeline_kwargs[text_encoder_attr] = self.unwrap_model(self.text_encoders[text_encoder_idx])
-                logger.info(f"Adding {tokenizer_attr}")
-                pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+
+                # Only add tokenizer if the pipeline expects it and we have it
+                if tokenizer_attr in pipeline_init_signature.parameters:
+                    if self.tokenizers is not None and len(self.tokenizers) >= text_encoder_idx:
+                        logger.info(f"Adding {tokenizer_attr}")
+                        pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+                    else:
+                        pipeline_kwargs[tokenizer_attr] = None
             else:
                 pipeline_kwargs[text_encoder_attr] = None
-                pipeline_kwargs[tokenizer_attr] = None
+                if tokenizer_attr in pipeline_init_signature.parameters:
+                    pipeline_kwargs[tokenizer_attr] = None
 
             text_encoder_idx += 1
 
