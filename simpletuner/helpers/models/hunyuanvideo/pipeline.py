@@ -1408,17 +1408,27 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
             transformer.set_attn_mode("flex-block-attn")
 
         byt5_kwargs, prompt_format = cls._load_byt5(cached_folder, True, 256, device=device)
-        text_encoder_path_override = kwargs.pop("text_encoder_path", None) or os.environ.get(
-            "HUNYUANVIDEO_TEXT_ENCODER_PATH"
-        )
-        vision_encoder_path_override = kwargs.pop("vision_encoder_path", None) or os.environ.get(
-            "HUNYUANVIDEO_VISION_ENCODER_PATH"
-        )
+        text_encoder_path_override = kwargs.pop("text_encoder_path", None)
+        text_encoder_repo_override = kwargs.pop("text_encoder_repo", None)
+        text_encoder_subpath_override = kwargs.pop("text_encoder_subpath", None)
+        vision_encoder_path_override = kwargs.pop("vision_encoder_path", None)
+        vision_encoder_repo_override = kwargs.pop("vision_encoder_repo", None)
+        vision_encoder_subpath_override = kwargs.pop("vision_encoder_subpath", None)
 
         text_encoder, text_encoder_2 = cls._load_text_encoders(
-            cached_folder, device=device, override_path=text_encoder_path_override
+            cached_folder,
+            device=device,
+            override_path=text_encoder_path_override,
+            override_repo=text_encoder_repo_override,
+            override_subpath=text_encoder_subpath_override,
         )
-        vision_encoder = cls._load_vision_encoder(cached_folder, device=device, override_path=vision_encoder_path_override)
+        vision_encoder = cls._load_vision_encoder(
+            cached_folder,
+            device=device,
+            override_path=vision_encoder_path_override,
+            override_repo=vision_encoder_repo_override,
+            override_subpath=vision_encoder_subpath_override,
+        )
 
         group_offloading_kwargs = {
             "onload_device": torch.device("cuda"),
@@ -1564,17 +1574,45 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         raise FileNotFoundError(msg)
 
     @classmethod
-    def _load_text_encoders(cls, pretrained_model_path, device, override_path: Optional[str] = None):
+    def _load_text_encoders(
+        cls,
+        pretrained_model_path,
+        device,
+        override_path: Optional[str] = None,
+        override_repo: Optional[str] = None,
+        override_subpath: Optional[str] = None,
+    ):
+        subpath = override_subpath or "text_encoder/llm"
+        fallback_repo = override_repo or "Qwen/Qwen2.5-VL-7B-Instruct"
         base_path = cls._resolve_model_root(
             override_path or pretrained_model_path,
             allow_patterns=["text_encoder/*", "text_encoder/llm/*"],
-            required_subdir="text_encoder/llm",
+            required_subdir=subpath,
         )
-        text_encoder_path = os.path.join(base_path, "text_encoder", "llm")
-        if not os.path.exists(text_encoder_path):
+        candidate_paths = [os.path.join(base_path, subpath)]
+
+        if fallback_repo:
+            try:
+                repo_base = cls._resolve_model_root(
+                    fallback_repo,
+                    allow_patterns=None,
+                    required_subdir=subpath if subpath else None,
+                )
+                candidate_paths.append(os.path.join(repo_base, subpath) if subpath else repo_base)
+            except Exception as exc:
+                loguru.logger.warning("Attempt to download text encoder from %s failed: %s", fallback_repo, exc)
+
+        text_encoder_path = None
+        for path in candidate_paths:
+            if path and os.path.exists(path):
+                text_encoder_path = path
+                break
+
+        if text_encoder_path is None:
             msg = (
-                f"{text_encoder_path} not found. Set HUNYUANVIDEO_TEXT_ENCODER_PATH to a downloaded text_encoder/llm "
-                "directory or refer to checkpoints-download.md to fetch the text encoder checkpoints."
+                f"Required assets ({subpath}) not found under {pretrained_model_path}. "
+                "Set HUNYUANVIDEO_TEXT_ENCODER_PATH or HUNYUANVIDEO_TEXT_ENCODER_REPO to a downloaded text encoder "
+                "or follow checkpoints-download.md to fetch the dependencies."
             )
             loguru.logger.error(msg)
             raise FileNotFoundError(msg)
@@ -1597,17 +1635,45 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         return text_encoder, text_encoder_2
 
     @classmethod
-    def _load_vision_encoder(cls, pretrained_model_name_or_path, device, override_path: Optional[str] = None):
+    def _load_vision_encoder(
+        cls,
+        pretrained_model_name_or_path,
+        device,
+        override_path: Optional[str] = None,
+        override_repo: Optional[str] = None,
+        override_subpath: Optional[str] = None,
+    ):
+        subpath = override_subpath or "vision_encoder/siglip"
+        fallback_repo = override_repo or "black-forest-labs/FLUX.1-Redux-dev"
         base_path = cls._resolve_model_root(
             override_path or pretrained_model_name_or_path,
             allow_patterns=["vision_encoder/*", "vision_encoder/siglip/*"],
-            required_subdir="vision_encoder/siglip",
+            required_subdir=subpath,
         )
-        vision_encoder_path = os.path.join(base_path, "vision_encoder", "siglip")
-        if not os.path.exists(vision_encoder_path):
+        candidate_paths = [os.path.join(base_path, subpath)]
+
+        if fallback_repo:
+            try:
+                repo_base = cls._resolve_model_root(
+                    fallback_repo,
+                    allow_patterns=None,
+                    required_subdir=subpath if subpath else None,
+                )
+                candidate_paths.append(os.path.join(repo_base, subpath) if subpath else repo_base)
+            except Exception as exc:
+                loguru.logger.warning("Attempt to download vision encoder from %s failed: %s", fallback_repo, exc)
+
+        vision_encoder_path = None
+        for path in candidate_paths:
+            if path and os.path.exists(path):
+                vision_encoder_path = path
+                break
+
+        if vision_encoder_path is None:
             msg = (
-                f"{vision_encoder_path} not found. Set HUNYUANVIDEO_VISION_ENCODER_PATH to a downloaded vision_encoder "
-                "directory or refer to checkpoints-download.md to fetch the vision encoder checkpoints."
+                f"Required assets ({subpath}) not found under {pretrained_model_name_or_path}. "
+                "Set HUNYUANVIDEO_VISION_ENCODER_PATH or HUNYUANVIDEO_VISION_ENCODER_REPO to a downloaded vision encoder "
+                "or follow checkpoints-download.md to fetch the dependencies."
             )
             loguru.logger.error(msg)
             raise FileNotFoundError(msg)

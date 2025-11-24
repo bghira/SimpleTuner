@@ -108,13 +108,15 @@ class HunyuanVideo(VideoModelFoundation):
         Use the upstream helper to load the custom TextEncoder (llm) stack.
         """
         device = self.accelerator.device if move_to_device else torch.device("cpu")
-        override_text = getattr(self.config, "hunyuan_text_encoder_path", None) or os.environ.get(
-            "HUNYUANVIDEO_TEXT_ENCODER_PATH"
-        )
+        override_text = getattr(self.config, "hunyuan_text_encoder_path", None)
+        override_text_repo = getattr(self.config, "hunyuan_text_encoder_repo", None)
+        override_text_subpath = getattr(self.config, "hunyuan_text_encoder_subpath", None)
         text_encoder, text_encoder_2 = HunyuanVideo_1_5_Pipeline._load_text_encoders(
             getattr(self.config, "pretrained_model_name_or_path", None),
             device=device,
             override_path=override_text,
+            override_repo=override_text_repo,
+            override_subpath=override_text_subpath,
         )
         self.text_encoders = [text_encoder]
         self.text_encoder_1 = text_encoder
