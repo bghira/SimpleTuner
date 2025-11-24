@@ -2,10 +2,13 @@
 
 import logging
 import os
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
+import loguru
 import torch
 import torch.nn.functional as F
+from huggingface_hub import snapshot_download
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
@@ -13,6 +16,7 @@ from simpletuner.helpers.models.hunyuanvideo.autoencoder import AutoencoderKLCon
 from simpletuner.helpers.models.hunyuanvideo.commons import PIPELINE_CONFIGS, TRANSFORMER_VERSION_TO_SR_VERSION
 from simpletuner.helpers.models.hunyuanvideo.pipeline import HunyuanVideo_1_5_Pipeline
 from simpletuner.helpers.models.hunyuanvideo.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
+from simpletuner.helpers.models.hunyuanvideo.text_encoders import PROMPT_TEMPLATE, TextEncoder
 from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo_1_5_DiffusionTransformer
 from simpletuner.helpers.models.hunyuanvideo.utils.multitask_utils import merge_tensor_by_mask
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -103,6 +107,64 @@ class HunyuanVideo(VideoModelFoundation):
         )
         return self.config, self.noise_schedule
 
+    def _find_cached_snapshot(self, repo_id: str) -> Optional[str]:
+        """
+        Locate an existing Hugging Face snapshot on disk for the given repo.
+        """
+        try:
+            repo_cache = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{repo_id.replace('/', '--')}"
+            ref_main = repo_cache / "refs" / "main"
+            if ref_main.exists():
+                snapshot_hash = ref_main.read_text().strip()
+                snap_dir = repo_cache / "snapshots" / snapshot_hash
+                if snap_dir.exists():
+                    return str(snap_dir)
+        except Exception:
+            return None
+        return None
+
+    def _resolve_model_root(
+        self,
+        pretrained_model_path: str,
+        allow_patterns: Optional[List[str]] = None,
+        required_subdir: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Ensure the checkpoint assets exist locally; download requested parts when given an HF repo id.
+        """
+        candidate_paths: List[str] = []
+        if pretrained_model_path and os.path.isdir(pretrained_model_path):
+            candidate_paths.append(pretrained_model_path)
+        cached = self._find_cached_snapshot(pretrained_model_path)
+        if cached:
+            candidate_paths.append(cached)
+
+        def _has_required(path: str) -> bool:
+            return required_subdir is None or os.path.exists(os.path.join(path, required_subdir))
+
+        for path in candidate_paths:
+            if _has_required(path):
+                return path
+
+        try:
+            cache_dir = snapshot_download(
+                repo_id=pretrained_model_path,
+                allow_patterns=allow_patterns
+                or [
+                    "text_encoder/*",
+                    "text_encoder/llm/*",
+                    "vision_encoder/*",
+                    "vision_encoder/siglip/*",
+                ],
+            )
+            if _has_required(cache_dir):
+                return cache_dir
+        except Exception as exc:
+            logger.warning(f"Failed to resolve model root for {pretrained_model_path}: {exc}")
+            pass
+
+        return None
+
     def load_text_encoder(self, move_to_device: bool = True):
         """
         Use the upstream helper to load the custom TextEncoder (llm) stack.
@@ -111,18 +173,75 @@ class HunyuanVideo(VideoModelFoundation):
         override_text = getattr(self.config, "hunyuan_text_encoder_path", None)
         override_text_repo = getattr(self.config, "hunyuan_text_encoder_repo", None)
         override_text_subpath = getattr(self.config, "hunyuan_text_encoder_subpath", None)
-        text_encoder, text_encoder_2 = HunyuanVideo_1_5_Pipeline._load_text_encoders(
-            getattr(self.config, "pretrained_model_name_or_path", None),
+
+        subpath = override_text_subpath or "text_encoder/llm"
+        fallback_repo = override_text_repo or "Qwen/Qwen2.5-VL-7B-Instruct"
+        base_model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+
+        text_encoder_path = None
+        # 1. Try override path if provided
+        if override_text and os.path.exists(override_text):
+            text_encoder_path = override_text
+
+        # 2. Try base model path with subpath
+        if not text_encoder_path and base_model_path:
+            resolved_base = self._resolve_model_root(
+                override_text or base_model_path,
+                allow_patterns=["text_encoder/*", "text_encoder/llm/*"],
+                required_subdir=subpath,
+            )
+            if resolved_base:
+                check_path = os.path.join(resolved_base, subpath)
+                if os.path.exists(check_path):
+                    text_encoder_path = check_path
+
+        # 3. Try fallback repo
+        if not text_encoder_path and fallback_repo:
+            # For Qwen fallback, we expect files at ROOT, unless user overrode subpath
+            fallback_subpath = subpath
+            if fallback_repo == "Qwen/Qwen2.5-VL-7B-Instruct" and not override_text_subpath:
+                fallback_subpath = None
+
+            resolved_fallback = self._resolve_model_root(
+                fallback_repo, allow_patterns=None, required_subdir=fallback_subpath
+            )
+
+            if resolved_fallback:
+                if fallback_subpath:
+                    check_path = os.path.join(resolved_fallback, fallback_subpath)
+                    if os.path.exists(check_path):
+                        text_encoder_path = check_path
+                else:
+                    text_encoder_path = resolved_fallback
+
+        if text_encoder_path is None:
+            msg = (
+                f"Required assets ({subpath}) not found under {base_model_path} or {fallback_repo}. "
+                "Set HUNYUANVIDEO_TEXT_ENCODER_PATH or HUNYUANVIDEO_TEXT_ENCODER_REPO to a downloaded text encoder "
+                "or follow checkpoints-download.md to fetch the dependencies."
+            )
+            loguru.logger.error(msg)
+            raise FileNotFoundError(msg)
+
+        logger.info(f"Loading HunyuanVideo text encoder from {text_encoder_path}")
+        text_encoder = TextEncoder(
+            text_encoder_type="llm",
+            tokenizer_type="llm",
+            text_encoder_path=text_encoder_path,
+            max_length=1000,
+            text_encoder_precision="fp16",
+            prompt_template=PROMPT_TEMPLATE["li-dit-encode-image-json"],
+            prompt_template_video=PROMPT_TEMPLATE["li-dit-encode-video-json"],
+            hidden_state_skip_layer=2,
+            apply_final_norm=False,
+            reproduce=False,
+            logger=loguru.logger,
             device=device,
-            override_path=override_text,
-            override_repo=override_text_repo,
-            override_subpath=override_text_subpath,
         )
+
         self.text_encoders = [text_encoder]
         self.text_encoder_1 = text_encoder
-        if text_encoder_2 is not None:
-            self.text_encoders.append(text_encoder_2)
-            self.text_encoder_2 = text_encoder_2
+        self.text_encoder_2 = None
 
     def load_text_tokenizer(self):
         """
