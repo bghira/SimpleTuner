@@ -125,7 +125,7 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
             self.byt5_model = None
             self.byt5_tokenizer = None
 
-        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if self.vae is not None else 16
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.text_len = text_encoder.max_length
         self.target_dtype = torch.bfloat16
