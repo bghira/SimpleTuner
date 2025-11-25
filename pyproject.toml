@@ -7,7 +7,7 @@ name = "simpletuner"
 dynamic = ["version", "dependencies"]
 description = "Stable Diffusion 2.x and XL tuner."
 readme = "README.md"
-license = "AGPL-3.0-or-later"
+license = {text = "AGPL-3.0-or-later"}
 authors = [
     {name = "bghira"},
 ]

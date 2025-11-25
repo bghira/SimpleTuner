@@ -75,56 +75,52 @@ def build_rocm_wheel_url(package: str, version: str, rocm_version: str) -> str:
 
 def get_cuda_dependencies():
     return [
-        "torch>=2.9.0",
-        "torchvision>=0.24.0",
-        "torchaudio>=2.4.1",
-        "triton>=3.3.0",
-        "bitsandbytes>=0.45.0",
-        "deepspeed>=0.17.2",
-        "torchao>=0.14.1",
+        "triton==3.5.1",
+        "bitsandbytes==0.48.2",
+        "deepspeed==0.18.2",
+        "torchao==0.14.1",
         "nvidia-cudnn-cu12",
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
-        "lm-eval>=0.4.4",
     ]
 
 
 def get_rocm_dependencies():
     rocm_version = os.environ.get("SIMPLETUNER_ROCM_VERSION", "6.4")
-    torch_version = os.environ.get("SIMPLETUNER_ROCM_TORCH_VERSION", "2.9.0")
-    torchvision_version = os.environ.get("SIMPLETUNER_ROCM_TORCHVISION_VERSION", "0.24.0")
+    torch_version = os.environ.get("SIMPLETUNER_ROCM_TORCH_VERSION", "2.7.0")
+    torchvision_version = os.environ.get("SIMPLETUNER_ROCM_TORCHVISION_VERSION", "0.22.0")
     torchaudio_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "2.4.1")
-    triton_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "3.5.0")
+    triton_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "3.2.0")
 
     try:
         return [
             build_rocm_wheel_url("torch", torch_version, rocm_version),
             build_rocm_wheel_url("torchvision", torchvision_version, rocm_version),
             "pytorch_triton_rocm @ https://download.pytorch.org/whl/pytorch_triton_rocm-3.5.0-cp312-cp312-linux_x86_64.whl#sha256=b3a209621d0433367c489e8dce90ebc4c7c9e3bfe1c2b7adc928344f8290d5f5",
-            "torchao>=0.14.1",
+            "torchao>=0.11.0",
         ]
     except Exception as exc:
         print(f"Warning: falling back to CPU PyTorch packages because ROCm wheel configuration failed: {exc}")
         return [
-            "torch>=2.9.0",
-            "torchvision>=0.24.0",
-            "torchao>=0.14.1",
+            "torch>=2.7.0",
+            "torchvision>=0.22.0",
+            "torchao>=0.11.0",
         ]
 
 
 def get_apple_dependencies():
     return [
-        "torch>=2.9.0",
-        "torchvision>=0.24.0",
-        "torchao>=0.14.1",
+        "torch>=2.7.0",
+        "torchvision>=0.22.0",
+        "torchao>=0.11.0",
     ]
 
 
 def get_cpu_dependencies():
     return [
-        "torch>=2.9.0",
-        "torchvision>=0.24.0",
-        "torchao>=0.14.1",
+        "torch>=2.7.0",
+        "torchvision>=0.22.0",
+        "torchao>=0.11.0",
     ]
 
 
@@ -176,57 +172,53 @@ def _collect_package_files(*directories: str):
 
 # Base dependencies (minimal, works on all platforms)
 base_deps = [
-    "diffusers>=0.35.1",
-    "transformers>=4.55.0",
+    "diffusers>=0.35.1,<0.36",
+    "transformers>=4.55.0,<5.0",
     "hf_transfer>=0.1.0",
-    "datasets>=3.0.1",
-    "wandb>=0.21.0",
-    "requests>=2.32.4",
-    "pillow>=11.3.0",
-    "trainingsample>=0.2.10",
-    "accelerate>=1.5.2",
+    "wandb>=0.21.0,<1.0",
+    "requests>=2.32.2",
+    "pillow>=11.0.0",
+    "trainingsample>=0.2.10,<0.3",
+    "accelerate>=1.5.2,<2.0",
     "safetensors>=0.5.3",
-    "compel>=2.1.1",
-    "clip-interrogator>=0.6.0",
-    "open-clip-torch>=2.26.1",
+    "compel>=2.1.1,<3.0",
+    "clip-interrogator>=0.6.0,<0.7",
+    "open-clip-torch>=2.26.1,<3.0",
     "iterutils>=0.1.6",
     "scipy>=1.11.1",
     "boto3>=1.35.83",
     "pandas>=2.2.3",
     "botocore>=1.35.83",
-    "urllib3<1.27",
     "torchsde>=0.2.6",
-    "torchmetrics>=1.1.1",
+    "torchmetrics>=1.1.1,<2.0",
     "colorama>=0.4.6",
-    "numpy>=2.2.0",
     "num2words>=0.5.13",
-    "peft>=0.17.0",
-    "tensorboard>=2.18.0",
-    "py3langid>=0.2.2",
+    "peft==0.17.0",
+    "tensorboard>=2.16.0",
+    "py3langid==0.2.2",
     "pypinyin>=0.50.0",
     "sentencepiece>=0.2.0",
-    "spacy>=3.7.4",
+    "spacy>=3.7.4,<4.0",
     "hangul-romanize>=0.1.0",
-    "optimum-quanto>=0.2.7",
-    "lycoris-lora>=3.4.0",
-    "torch-optimi>=0.2.1",
-    "torchaudio>=2.4.1",
-    "librosa>=0.10.2",
+    "optimum-quanto>=0.2.7,<0.3",
+    "lycoris-lora>=3.4.0,<4.0",
+    "torch-optimi==0.2.1",
+    "librosa>=0.10.1",
     "loguru>=0.7.2",
     "toml>=0.10.2",
-    "fastapi[standard]>=0.115.0",
+    "fastapi[standard]>=0.115.0,<0.123",
     "sse-starlette>=1.6.5",
     "atomicwrites>=1.4.1",
     "beautifulsoup4>=4.12.3",
-    "prodigy-plus-schedule-free>=1.9.2",
+    "prodigy-plus-schedule-free>=1.9.2,<2.1",
     "tokenizers>=0.21.0",
     "huggingface-hub>=0.34.3",
     "imageio-ffmpeg>=0.6.0",
     "imageio[pyav]>=2.37.0",
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
-    "cryptography>=41.0.0",
-    "torchcodec>=0.8.1",
+    "cryptography>=41.0.0,<47.0",
+    "torchcodec>=0.8.1,<0.9",
 ]
 
 platform_deps_for_install = get_platform_dependencies()
