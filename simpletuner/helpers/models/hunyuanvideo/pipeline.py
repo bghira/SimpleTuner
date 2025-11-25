@@ -7,7 +7,6 @@ import os
 import random
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import loguru
@@ -158,41 +157,34 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         )
         return scheduler
 
+    # ByT5 Glyph repository
+    GLYPH_BYT5_REPO = "DiffusersVersionsOfModels/Glyph-ByT5"
+
     @classmethod
     def _load_byt5(cls, cached_folder, glyph_byT5_v2, byt5_max_length, device):
+        """Load ByT5 glyph encoder from dedicated repo."""
         if not glyph_byT5_v2:
-            byt5_kwargs = None
-            prompt_format = None
-            return byt5_kwargs, prompt_format
+            return None, None
         try:
-            load_from = os.path.join(cached_folder, "text_encoder")
-            glyph_root = os.path.join(load_from, "Glyph-SDXL-v2")
-            if not os.path.exists(glyph_root):
-                raise RuntimeError(
-                    f"Glyph checkpoint not found from '{glyph_root}'. \n"
-                    "Please download from https://modelscope.cn/models/AI-ModelScope/Glyph-SDXL-v2/files.\n\n"
-                    "- Required files:\n"
-                    "    Glyph-SDXL-v2\n"
-                    "    ├── assets\n"
-                    "    │   ├── color_idx.json\n"
-                    "    │   └── multilingual_10-lang_idx.json\n"
-                    "    └── checkpoints\n"
-                    "        └── byt5_model.pt\n"
-                )
+            from huggingface_hub import snapshot_download
 
-            byT5_google_path = os.path.join(load_from, "byt5-small")
-            if not os.path.exists(byT5_google_path):
-                loguru.logger.warning(
-                    f"ByT5 google path not found from: {byT5_google_path}. Try downloading from https://huggingface.co/google/byt5-small."
-                )
-                byT5_google_path = "google/byt5-small"
+            # Download from dedicated ByT5 repo
+            glyph_root = snapshot_download(repo_id=cls.GLYPH_BYT5_REPO)
 
+            # Assets should be at root level in the dedicated repo
             multilingual_prompt_format_color_path = os.path.join(glyph_root, "assets/color_idx.json")
             multilingual_prompt_format_font_path = os.path.join(glyph_root, "assets/multilingual_10-lang_idx.json")
+            byt5_ckpt_path = os.path.join(glyph_root, "checkpoints/byt5_model.pt")
+
+            if not os.path.exists(byt5_ckpt_path):
+                raise RuntimeError(
+                    f"Glyph checkpoint not found at '{byt5_ckpt_path}'. "
+                    f"Please ensure {cls.GLYPH_BYT5_REPO} contains the expected structure."
+                )
 
             byt5_args = dict(
-                byT5_google_path=byT5_google_path,
-                byT5_ckpt_path=os.path.join(glyph_root, "checkpoints/byt5_model.pt"),
+                byT5_google_path="google/byt5-small",
+                byT5_ckpt_path=byt5_ckpt_path,
                 multilingual_prompt_format_color_path=multilingual_prompt_format_color_path,
                 multilingual_prompt_format_font_path=multilingual_prompt_format_font_path,
                 byt5_max_length=byt5_max_length,
@@ -1503,75 +1495,9 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
             dtype = torch.float32
         return {"sample_size": sample_size, "tile_overlap_factor": tile_overlap_factor, "dtype": dtype}
 
-    @classmethod
-    def _find_cached_snapshot(cls, repo_id: str) -> Optional[str]:
-        """
-        Locate an existing Hugging Face snapshot on disk for the given repo.
-        """
-        try:
-            repo_cache = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{repo_id.replace('/', '--')}"
-            ref_main = repo_cache / "refs" / "main"
-            if ref_main.exists():
-                snapshot_hash = ref_main.read_text().strip()
-                snap_dir = repo_cache / "snapshots" / snapshot_hash
-                if snap_dir.exists():
-                    return str(snap_dir)
-        except Exception:
-            return None
-        return None
-
-    @classmethod
-    def _resolve_model_root(
-        cls,
-        pretrained_model_path: str,
-        allow_patterns: Optional[List[str]] = None,
-        required_subdir: Optional[str] = None,
-    ) -> str:
-        """
-        Ensure the checkpoint assets exist locally; download requested parts when given an HF repo id.
-        """
-        candidate_paths: List[str] = []
-        if os.path.isdir(pretrained_model_path):
-            candidate_paths.append(pretrained_model_path)
-        cached = cls._find_cached_snapshot(pretrained_model_path)
-        if cached:
-            candidate_paths.append(cached)
-
-        def _has_required(path: str) -> bool:
-            return required_subdir is None or os.path.exists(os.path.join(path, required_subdir))
-
-        for path in candidate_paths:
-            if _has_required(path):
-                return path
-
-        try:
-            cache_dir = snapshot_download(
-                repo_id=pretrained_model_path,
-                allow_patterns=allow_patterns
-                or [
-                    "text_encoder/*",
-                    "text_encoder/llm/*",
-                    "vision_encoder/*",
-                    "vision_encoder/siglip/*",
-                ],
-            )
-            if _has_required(cache_dir):
-                return cache_dir
-        except Exception as exc:  # pragma: no cover - download failures should surface
-            msg = (
-                f"{pretrained_model_path} assets not found locally and download failed: {exc}. "
-                "Please refer to checkpoints-download.md to download the required checkpoints."
-            )
-            loguru.logger.error(msg)
-            raise FileNotFoundError(msg) from exc
-
-        msg = (
-            f"Required assets{f' ({required_subdir})' if required_subdir else ''} not found in {pretrained_model_path}. "
-            "Set HUNYUANVIDEO_TEXT_ENCODER_PATH / HUNYUANVIDEO_VISION_ENCODER_PATH to downloaded folders, "
-            "or manually download the checkpoints."
-        )
-        loguru.logger.error(msg)
-        raise FileNotFoundError(msg)
+    # Component repositories for direct loading
+    TEXT_ENCODER_REPO = "Qwen/Qwen2.5-VL-7B-Instruct"
+    VISION_ENCODER_REPO = "black-forest-labs/FLUX.1-Redux-dev"
 
     @classmethod
     def _load_text_encoders(
@@ -1582,40 +1508,14 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         override_repo: Optional[str] = None,
         override_subpath: Optional[str] = None,
     ):
-        subpath = override_subpath or "text_encoder/llm"
-        fallback_repo = override_repo or "Qwen/Qwen2.5-VL-7B-Instruct"
-        base_path = cls._resolve_model_root(
-            override_path or pretrained_model_path,
-            allow_patterns=["text_encoder/*", "text_encoder/llm/*"],
-            required_subdir=subpath,
-        )
-        candidate_paths = [os.path.join(base_path, subpath)]
+        """Load text encoder directly from Qwen repo."""
+        # Use override path if provided and exists, otherwise use TEXT_ENCODER_REPO
+        if override_path and os.path.exists(override_path):
+            text_encoder_path = override_path
+        else:
+            text_encoder_path = override_repo or cls.TEXT_ENCODER_REPO
 
-        if fallback_repo:
-            try:
-                repo_base = cls._resolve_model_root(
-                    fallback_repo,
-                    allow_patterns=None,
-                    required_subdir=subpath if subpath else None,
-                )
-                candidate_paths.append(os.path.join(repo_base, subpath) if subpath else repo_base)
-            except Exception as exc:
-                loguru.logger.warning("Attempt to download text encoder from %s failed: %s", fallback_repo, exc)
-
-        text_encoder_path = None
-        for path in candidate_paths:
-            if path and os.path.exists(path):
-                text_encoder_path = path
-                break
-
-        if text_encoder_path is None:
-            msg = (
-                f"Required assets ({subpath}) not found under {pretrained_model_path}. "
-                "Set HUNYUANVIDEO_TEXT_ENCODER_PATH or HUNYUANVIDEO_TEXT_ENCODER_REPO to a downloaded text encoder "
-                "or follow checkpoints-download.md to fetch the dependencies."
-            )
-            loguru.logger.error(msg)
-            raise FileNotFoundError(msg)
+        loguru.logger.info(f"Loading HunyuanVideo text encoder from {text_encoder_path}")
         text_encoder = TextEncoder(
             text_encoder_type="llm",
             tokenizer_type="llm",
@@ -1643,40 +1543,20 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         override_repo: Optional[str] = None,
         override_subpath: Optional[str] = None,
     ):
-        subpath = override_subpath or "vision_encoder/siglip"
-        fallback_repo = override_repo or "black-forest-labs/FLUX.1-Redux-dev"
-        base_path = cls._resolve_model_root(
-            override_path or pretrained_model_name_or_path,
-            allow_patterns=["vision_encoder/*", "vision_encoder/siglip/*"],
-            required_subdir=subpath,
-        )
-        candidate_paths = [os.path.join(base_path, subpath)]
+        """Load vision encoder from BFL FLUX Redux repo."""
+        # Use override path if provided and exists, otherwise use VISION_ENCODER_REPO with siglip subfolder
+        if override_path and os.path.exists(override_path):
+            vision_encoder_path = override_path
+        else:
+            repo = override_repo or cls.VISION_ENCODER_REPO
+            subpath = override_subpath or "siglip"
+            # Download the repo and use the siglip subfolder
+            from huggingface_hub import snapshot_download
 
-        if fallback_repo:
-            try:
-                repo_base = cls._resolve_model_root(
-                    fallback_repo,
-                    allow_patterns=None,
-                    required_subdir=subpath if subpath else None,
-                )
-                candidate_paths.append(os.path.join(repo_base, subpath) if subpath else repo_base)
-            except Exception as exc:
-                loguru.logger.warning("Attempt to download vision encoder from %s failed: %s", fallback_repo, exc)
+            cached_folder = snapshot_download(repo_id=repo)
+            vision_encoder_path = os.path.join(cached_folder, subpath)
 
-        vision_encoder_path = None
-        for path in candidate_paths:
-            if path and os.path.exists(path):
-                vision_encoder_path = path
-                break
-
-        if vision_encoder_path is None:
-            msg = (
-                f"Required assets ({subpath}) not found under {pretrained_model_name_or_path}. "
-                "Set HUNYUANVIDEO_VISION_ENCODER_PATH or HUNYUANVIDEO_VISION_ENCODER_REPO to a downloaded vision encoder "
-                "or follow checkpoints-download.md to fetch the dependencies."
-            )
-            loguru.logger.error(msg)
-            raise FileNotFoundError(msg)
+        loguru.logger.info(f"Loading HunyuanVideo vision encoder from {vision_encoder_path}")
         vision_encoder = VisionEncoder(
             vision_encoder_type="siglip",
             vision_encoder_precision="fp16",

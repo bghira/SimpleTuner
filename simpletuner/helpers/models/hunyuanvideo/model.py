@@ -2,20 +2,18 @@
 
 import logging
 import os
-from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 import loguru
 import torch
 import torch.nn.functional as F
-from huggingface_hub import snapshot_download
+from diffusers import FlowMatchEulerDiscreteScheduler
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.hunyuanvideo.autoencoder import AutoencoderKLConv3D
 from simpletuner.helpers.models.hunyuanvideo.commons import PIPELINE_CONFIGS, TRANSFORMER_VERSION_TO_SR_VERSION
 from simpletuner.helpers.models.hunyuanvideo.pipeline import HunyuanVideo_1_5_Pipeline
-from simpletuner.helpers.models.hunyuanvideo.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
 from simpletuner.helpers.models.hunyuanvideo.text_encoders import PROMPT_TEMPLATE, TextEncoder
 from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo_1_5_DiffusionTransformer
 from simpletuner.helpers.models.hunyuanvideo.utils.multitask_utils import merge_tensor_by_mask
@@ -44,7 +42,7 @@ class HunyuanVideo(VideoModelFoundation):
     LATENT_CHANNEL_COUNT = 4
     DEFAULT_NOISE_SCHEDULER = "flow_match_discrete"
     MODEL_CLASS = HunyuanVideo_1_5_DiffusionTransformer
-    MODEL_SUBFOLDER = "transformer/480p_t2v"
+    MODEL_SUBFOLDER = None  # Direct repos load from root
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: HunyuanVideo_1_5_Pipeline,
         PipelineTypes.IMG2VIDEO: HunyuanVideo_1_5_Pipeline,
@@ -52,24 +50,25 @@ class HunyuanVideo(VideoModelFoundation):
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     DEFAULT_MODEL_FLAVOUR = "t2v-480p"
     HUGGINGFACE_PATHS: Dict[str, str] = {
-        "t2v-480p": "tencent/HunyuanVideo-1.5",
-        "t2v-720p": "tencent/HunyuanVideo-1.5",
-        "i2v-480p": "tencent/HunyuanVideo-1.5",
-        "i2v-720p": "tencent/HunyuanVideo-1.5",
+        "t2v-480p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-480p_t2v",
+        "t2v-720p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-720p_t2v",
+        "i2v-480p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-480p_i2v",
+        "i2v-720p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-720p_i2v",
     }
     MODEL_LICENSE = "agpl-3.0"
 
-    TRANSFORMER_SUBFOLDERS: Dict[str, str] = {
-        "t2v-480p": "transformer/480p_t2v",
-        "t2v-720p": "transformer/720p_t2v",
-        "i2v-480p": "transformer/480p_i2v",
-        "i2v-720p": "transformer/720p_i2v",
-    }
-    UPSAMPLER_SUBFOLDERS: Dict[str, str] = {
-        "t2v-480p": "upsampler/720p_sr_distilled",
-        "t2v-720p": "upsampler/1080p_sr_distilled",
-        "i2v-480p": "upsampler/720p_sr_distilled",
-        "i2v-720p": "upsampler/1080p_sr_distilled",
+    # Component repositories - direct loading without subfolders
+    VAE_REPO = "DiffusersVersionsOfModels/HunyuanVideo-1.5-vae"
+    GLYPH_BYT5_REPO = "DiffusersVersionsOfModels/Glyph-ByT5"
+    TEXT_ENCODER_REPO = "Qwen/Qwen2.5-VL-7B-Instruct"
+    VISION_ENCODER_REPO = "black-forest-labs/FLUX.1-Redux-dev"
+
+    # Transformer version mapping for pipeline configs
+    TRANSFORMER_VERSIONS: Dict[str, str] = {
+        "t2v-480p": "480p_t2v",
+        "t2v-720p": "720p_t2v",
+        "i2v-480p": "480p_i2v",
+        "i2v-720p": "720p_i2v",
     }
     STRICT_I2V_FLAVOURS = ("i2v-480p", "i2v-720p")
 
@@ -80,10 +79,8 @@ class HunyuanVideo(VideoModelFoundation):
         super().__init__(config, accelerator)
         self._transformer_version = self._resolve_transformer_version()
         self._sr_version = TRANSFORMER_VERSION_TO_SR_VERSION.get(self._transformer_version)
-        if not getattr(self.config, "pretrained_transformer_subfolder", None):
-            self.config.pretrained_transformer_subfolder = self.TRANSFORMER_SUBFOLDERS.get(
-                self.config.model_flavour, self.MODEL_SUBFOLDER
-            )
+        # Direct repos load from root - no subfolder needed
+        self.config.pretrained_transformer_subfolder = None
         if getattr(self.config, "flow_schedule_shift", None) is None:
             default_cfg = PIPELINE_CONFIGS.get(self._transformer_version, {})
             self.config.flow_schedule_shift = default_cfg.get("flow_shift", 7.0)
@@ -93,139 +90,31 @@ class HunyuanVideo(VideoModelFoundation):
 
     def _resolve_transformer_version(self) -> str:
         flavour = getattr(self.config, "model_flavour", self.DEFAULT_MODEL_FLAVOUR) or self.DEFAULT_MODEL_FLAVOUR
-        if flavour not in self.TRANSFORMER_SUBFOLDERS:
+        if flavour not in self.TRANSFORMER_VERSIONS:
             raise ValueError(
-                f"Unsupported HunyuanVideo flavour '{flavour}'. Expected one of {list(self.TRANSFORMER_SUBFOLDERS)}"
+                f"Unsupported HunyuanVideo flavour '{flavour}'. Expected one of {list(self.TRANSFORMER_VERSIONS)}"
             )
-        return self.TRANSFORMER_SUBFOLDERS[flavour].split("/", maxsplit=1)[-1]
+        return self.TRANSFORMER_VERSIONS[flavour]
 
     def setup_training_noise_schedule(self):
-        self.noise_schedule = FlowMatchDiscreteScheduler(
+        self.noise_schedule = FlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
             shift=self.config.flow_schedule_shift,
-            reverse=True,
-            solver="euler",
         )
         return self.config, self.noise_schedule
 
-    def _find_cached_snapshot(self, repo_id: str) -> Optional[str]:
-        """
-        Locate an existing Hugging Face snapshot on disk for the given repo.
-        """
-        try:
-            repo_cache = Path.home() / ".cache" / "huggingface" / "hub" / f"models--{repo_id.replace('/', '--')}"
-            ref_main = repo_cache / "refs" / "main"
-            if ref_main.exists():
-                snapshot_hash = ref_main.read_text().strip()
-                snap_dir = repo_cache / "snapshots" / snapshot_hash
-                if snap_dir.exists():
-                    return str(snap_dir)
-        except Exception:
-            return None
-        return None
-
-    def _resolve_model_root(
-        self,
-        pretrained_model_path: str,
-        allow_patterns: Optional[List[str]] = None,
-        required_subdir: Optional[str] = None,
-    ) -> Optional[str]:
-        """
-        Ensure the checkpoint assets exist locally; download requested parts when given an HF repo id.
-        """
-        candidate_paths: List[str] = []
-        if pretrained_model_path and os.path.isdir(pretrained_model_path):
-            candidate_paths.append(pretrained_model_path)
-        cached = self._find_cached_snapshot(pretrained_model_path)
-        if cached:
-            candidate_paths.append(cached)
-
-        def _has_required(path: str) -> bool:
-            return required_subdir is None or os.path.exists(os.path.join(path, required_subdir))
-
-        for path in candidate_paths:
-            if _has_required(path):
-                return path
-
-        try:
-            cache_dir = snapshot_download(
-                repo_id=pretrained_model_path,
-                allow_patterns=allow_patterns
-                or [
-                    "text_encoder/*",
-                    "text_encoder/llm/*",
-                    "vision_encoder/*",
-                    "vision_encoder/siglip/*",
-                ],
-            )
-            if _has_required(cache_dir):
-                return cache_dir
-        except Exception as exc:
-            logger.warning(f"Failed to resolve model root for {pretrained_model_path}: {exc}")
-            pass
-
-        return None
-
     def load_text_encoder(self, move_to_device: bool = True):
         """
-        Use the upstream helper to load the custom TextEncoder (llm) stack.
+        Load the custom TextEncoder (llm) stack from Qwen repo.
         """
         device = self.accelerator.device if move_to_device else torch.device("cpu")
-        override_text = getattr(self.config, "hunyuan_text_encoder_path", None)
-        override_text_repo = getattr(self.config, "hunyuan_text_encoder_repo", None)
-        override_text_subpath = getattr(self.config, "hunyuan_text_encoder_subpath", None)
+        override_path = getattr(self.config, "hunyuan_text_encoder_path", None)
 
-        subpath = override_text_subpath or "text_encoder/llm"
-        fallback_repo = override_text_repo or "Qwen/Qwen2.5-VL-7B-Instruct"
-        base_model_path = getattr(self.config, "pretrained_model_name_or_path", None)
-
-        text_encoder_path = None
-        # 1. Try override path if provided
-        if override_text and os.path.exists(override_text):
-            text_encoder_path = override_text
-
-        # 2. Try base model path with subpath
-        if not text_encoder_path and base_model_path:
-            resolved_base = self._resolve_model_root(
-                override_text or base_model_path,
-                allow_patterns=["text_encoder/*", "text_encoder/llm/*"],
-                required_subdir=subpath,
-            )
-            if resolved_base:
-                check_path = os.path.join(resolved_base, subpath)
-                if os.path.exists(check_path):
-                    text_encoder_path = check_path
-
-        # 3. Try fallback repo
-        if not text_encoder_path and fallback_repo:
-            # For Qwen fallback, we expect files at ROOT, unless user overrode subpath
-            fallback_subpath = subpath
-            if fallback_repo == "Qwen/Qwen2.5-VL-7B-Instruct" and not override_text_subpath:
-                fallback_subpath = None
-
-            # Explicitly allow patterns for the fallback repo to ensure we get config.json, weights, etc.
-            # The default patterns in _resolve_model_root are too restrictive for standard HF repos.
-            fallback_patterns = ["*.json", "*.safetensors", "*.model", "*.txt", "*.py", "tokenizer*"]
-
-            resolved_fallback = self._resolve_model_root(
-                fallback_repo, allow_patterns=fallback_patterns, required_subdir=fallback_subpath
-            )
-
-            if resolved_fallback:
-                if fallback_subpath:
-                    check_path = os.path.join(resolved_fallback, fallback_subpath)
-                    if os.path.exists(check_path):
-                        text_encoder_path = check_path
-                else:
-                    text_encoder_path = resolved_fallback
-
-        if text_encoder_path is None:
-            msg = (
-                f"Required assets ({subpath}) not found under {base_model_path} or {fallback_repo}. "
-                "Set HUNYUANVIDEO_TEXT_ENCODER_PATH or HUNYUANVIDEO_TEXT_ENCODER_REPO to a downloaded text encoder "
-                "or follow checkpoints-download.md to fetch the dependencies."
-            )
-            loguru.logger.error(msg)
-            raise FileNotFoundError(msg)
+        # Use override path if provided and exists, otherwise use TEXT_ENCODER_REPO
+        if override_path and os.path.exists(override_path):
+            text_encoder_path = override_path
+        else:
+            text_encoder_path = self.TEXT_ENCODER_REPO
 
         logger.info(f"Loading HunyuanVideo text encoder from {text_encoder_path}")
         text_encoder = TextEncoder(
@@ -255,6 +144,37 @@ class HunyuanVideo(VideoModelFoundation):
         Tokenization is handled by the custom TextEncoder stack.
         """
         return
+
+    def load_vae(self, move_to_device: bool = True):
+        """
+        Load VAE from the dedicated HunyuanVideo VAE repo.
+        """
+        from transformers.utils import ContextManagers
+
+        from simpletuner.helpers.models.common import deepspeed_zero_init_disabled_context_manager
+
+        logger.info(f"Loading {self.AUTOENCODER_CLASS.__name__} from {self.VAE_REPO}")
+        self.vae = None
+        self.config.vae_kwargs = {
+            "pretrained_model_name_or_path": self.VAE_REPO,
+            "subfolder": None,  # Direct repo, no subfolder
+            "revision": self.config.revision,
+            "force_upcast": False,
+            "variant": self.config.variant,
+        }
+        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+            self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+        if self.vae is None:
+            raise ValueError(f"Could not load VAE from {self.VAE_REPO}.")
+        if self.config.vae_enable_tiling and hasattr(self.vae, "enable_tiling"):
+            logger.info("Enabling VAE tiling.")
+            self.vae.enable_tiling()
+        if move_to_device and self.vae.device != self.accelerator.device:
+            _vae_dtype = torch.bfloat16
+            if hasattr(self.config, "vae_dtype") and self.config.vae_dtype == "fp32":
+                _vae_dtype = torch.float32
+            self.vae.to(self.accelerator.device, dtype=_vae_dtype)
+        self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
 
     def _prepare_cond_latents(self, cond_latents: Optional[torch.Tensor], latents: torch.Tensor, task_type: str):
         if cond_latents is not None:
