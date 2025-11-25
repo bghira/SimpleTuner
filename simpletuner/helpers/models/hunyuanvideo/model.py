@@ -14,6 +14,7 @@ from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, Predict
 from simpletuner.helpers.models.hunyuanvideo.autoencoder import AutoencoderKLConv3D
 from simpletuner.helpers.models.hunyuanvideo.commons import PIPELINE_CONFIGS, TRANSFORMER_VERSION_TO_SR_VERSION
 from simpletuner.helpers.models.hunyuanvideo.pipeline import HunyuanVideo_1_5_Pipeline
+from simpletuner.helpers.models.hunyuanvideo.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
 from simpletuner.helpers.models.hunyuanvideo.text_encoders import PROMPT_TEMPLATE, TextEncoder
 from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo_1_5_DiffusionTransformer
 from simpletuner.helpers.models.hunyuanvideo.utils.multitask_utils import merge_tensor_by_mask
@@ -175,6 +176,65 @@ class HunyuanVideo(VideoModelFoundation):
                 _vae_dtype = torch.float32
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        """
+        Return the HunyuanVideo inference pipeline with pre-loaded components.
+
+        Unlike the base class implementation which uses from_pretrained(),
+        we instantiate the pipeline directly since our transformer repos
+        don't contain model_index.json.
+        """
+        active_pipelines = getattr(self, "pipelines", {})
+        if pipeline_type in active_pipelines:
+            pipeline = active_pipelines[pipeline_type]
+            if load_base_model and self.model is not None:
+                pipeline.transformer = self.unwrap_model(self.model)
+            return pipeline
+
+        device = self.accelerator.device
+        flow_shift = getattr(self.config, "flow_schedule_shift", 7.0)
+        guidance_scale = getattr(self.config, "validation_guidance", 6.0)
+
+        # Create scheduler for inference
+        scheduler = FlowMatchDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=flow_shift,
+        )
+
+        # Load ByT5 glyph encoder for the pipeline
+        byt5_kwargs, prompt_format = HunyuanVideo_1_5_Pipeline._load_byt5(
+            cached_folder=None,
+            glyph_byT5_v2=True,
+            byt5_max_length=256,
+            device=device,
+        )
+        byt5_model = byt5_kwargs.get("byt5_model") if byt5_kwargs else None
+        byt5_tokenizer = byt5_kwargs.get("byt5_tokenizer") if byt5_kwargs else None
+
+        # Instantiate the pipeline directly with pre-loaded components
+        pipeline = HunyuanVideo_1_5_Pipeline(
+            vae=self.unwrap_model(self.vae) if self.vae is not None else None,
+            text_encoder=self.text_encoder_1,
+            transformer=self.unwrap_model(self.model) if load_base_model and self.model is not None else None,
+            scheduler=scheduler,
+            text_encoder_2=getattr(self, "text_encoder_2", None),
+            flow_shift=flow_shift,
+            guidance_scale=guidance_scale,
+            glyph_byT5_v2=True,
+            byt5_model=byt5_model,
+            byt5_tokenizer=byt5_tokenizer,
+            byt5_max_length=256,
+            prompt_format=prompt_format,
+            execution_device=device,
+            vision_encoder=None,
+            enable_offloading=False,
+        )
+
+        if not hasattr(self, "pipelines"):
+            self.pipelines = {}
+        self.pipelines[pipeline_type] = pipeline
+        return pipeline
 
     def _prepare_cond_latents(self, cond_latents: Optional[torch.Tensor], latents: torch.Tensor, task_type: str):
         if cond_latents is not None:
