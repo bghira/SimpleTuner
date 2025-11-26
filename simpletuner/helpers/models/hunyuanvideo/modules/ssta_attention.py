@@ -348,7 +348,6 @@ def create_sta_3d_mask_optimize(canvas_thw, tile_thw, kernel_thw):
     block_size = np.prod(tile_thw)
     block_num = int(seq_len / block_size)
 
-    block_mask = np.full((block_num, block_num), False, dtype=bool)
     tile_thw_num = (canvas_thw[0] // tile_thw[0], canvas_thw[1] // tile_thw[1], canvas_thw[2] // tile_thw[2])
 
     i_indices = np.arange(block_num)

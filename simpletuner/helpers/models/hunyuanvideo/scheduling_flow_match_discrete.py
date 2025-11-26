@@ -35,7 +35,6 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union
 
-import numpy as np
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.schedulers.scheduling_utils import SchedulerMixin

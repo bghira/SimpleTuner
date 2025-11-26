@@ -27,7 +27,7 @@ def get_activation_layer(act_type):
         torch.nn.functional: the activation layer
     """
     if act_type == "gelu":
-        return lambda: nn.GELU()
+        return nn.GELU
     elif act_type == "gelu_tanh":
         # Approximate `tanh` requires torch >= 1.13
         return lambda: nn.GELU(approximate="tanh")

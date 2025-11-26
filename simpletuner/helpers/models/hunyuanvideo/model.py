@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Dict, Optional, Union
+from typing import Dict, Optional
 
 import loguru
 import torch
@@ -391,11 +391,8 @@ class HunyuanVideo(VideoModelFoundation):
         """
         Initialize TREAD routing for HunyuanVideo.
         """
-        if (
-            getattr(self.config, "tread_config", None) is None
-            or getattr(self.config, "tread_config", None) is {}
-            or getattr(self.config, "tread_config", {}).get("routes", None) is None
-        ):
+        tread_cfg = getattr(self.config, "tread_config", None)
+        if not isinstance(tread_cfg, dict) or tread_cfg == {} or tread_cfg.get("routes") is None:
             raise ValueError("TREAD training requires a non-empty tread_config with routes.")
 
         self.unwrap_model(model=self.model).set_router(
@@ -403,7 +400,7 @@ class HunyuanVideo(VideoModelFoundation):
                 seed=getattr(self.config, "seed", None) or 42,
                 device=self.accelerator.device,
             ),
-            self.config.tread_config["routes"],
+            tread_cfg["routes"],
         )
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
