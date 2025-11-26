@@ -1,3 +1,4 @@
+import importlib
 import logging
 from fnmatch import fnmatch
 from functools import lru_cache
@@ -14,7 +15,7 @@ def _ramtorch_imports():
     """
     Import RamTorch lazily to avoid hard dependencies when the feature is unused.
     """
-    import ramtorch  # noqa: F401
+    importlib.import_module("ramtorch")  # noqa: F401
 
     from simpletuner.helpers import ramtorch_workarounds
 
