@@ -15,8 +15,9 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 | Kwai Kolors | 2.7B | ✓ | ✓ | ✓ | not recommended | bf16 | ✓ | ✗ | ✗ | [KOLORS.md](/documentation/quickstart/KOLORS.md) |
 | Stable Diffusion 3 | 2B–8B | ✓ | ✓ | ✓ | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ (SLG) | ✓ | [SD3.md](/documentation/quickstart/SD3.md) |
 | Flux.1 | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✓ | [FLUX.md](/documentation/quickstart/FLUX.md) |
-| ACE-Step | 3.5B | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [ACE_STEP.md](/documentation/quickstart/ACE_STEP.md) |
+| Flux.2 | 32B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✗ | [FLUX2.md](/documentation/quickstart/FLUX2.md) |
 | Flux Kontext | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✓ | [FLUX_KONTEXT.md](/documentation/quickstart/FLUX_KONTEXT.md) |
+| ACE-Step | 3.5B | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [ACE_STEP.md](/documentation/quickstart/ACE_STEP.md) |
 | Chroma 1 | 8.9B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✗ | [CHROMA.md](/documentation/quickstart/CHROMA.md) |
 | Auraflow | 6B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ (SLG) | ✓ | [AURAFLOW.md](/documentation/quickstart/AURAFLOW.md) |
 | HiDream I1 | 17B (8.5B MoE) | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓ | ✓ | ✓ | [HIDREAM.md](/documentation/quickstart/HIDREAM.md) |

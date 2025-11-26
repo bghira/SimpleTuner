@@ -318,6 +318,40 @@ def register_training_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="group_offload_text_encoder",
+            arg_name="--group_offload_text_encoder",
+            ui_label="Include Text Encoder in Group Offload",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Include text encoder(s) in group offloading to reduce VRAM during embedding caching.",
+            tooltip="Recommended for large text encoders (e.g., FLUX.2's 24B Mistral). Only useful during text embed generation.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8,
+            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="group_offload_vae",
+            arg_name="--group_offload_vae",
+            ui_label="Include VAE in Group Offload",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Include VAE in group offloading to reduce VRAM during latent caching.",
+            tooltip="Useful for memory-constrained setups during VAE encoding. Only affects latent cache generation.",
+            importance=ImportanceLevel.ADVANCED,
+            order=9,
+            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="offload_during_save",
             arg_name="--offload_during_save",
             ui_label="Offload During Save",
