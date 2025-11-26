@@ -546,7 +546,6 @@ class Flux2LoraLoaderMixin(LoraBaseMixin):
         )
 
     @classmethod
-    # Copied from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.save_lora_weights
     def save_lora_weights(
         cls,
         save_directory: Union[str, os.PathLike],
@@ -558,26 +557,43 @@ class Flux2LoraLoaderMixin(LoraBaseMixin):
         transformer_lora_adapter_metadata: Optional[dict] = None,
     ):
         r"""
-        See [`~loaders.StableDiffusionLoraLoaderMixin.save_lora_weights`] for more information.
+        Save the LoRA parameters corresponding to the transformer.
+
+        Arguments:
+            save_directory (`str` or `os.PathLike`):
+                Directory to save LoRA parameters to. Will be created if it doesn't exist.
+            transformer_lora_layers (`Dict[str, torch.nn.Module]` or `Dict[str, torch.Tensor]`):
+                State dict of the LoRA layers corresponding to the `transformer`.
+            is_main_process (`bool`, *optional*, defaults to `True`):
+                Whether the process calling this is the main process or not.
+            weight_name (`str`, *optional*):
+                Name of the file to save the weights to.
+            save_function (`Callable`):
+                The function to use to save the state dictionary.
+            safe_serialization (`bool`, *optional*, defaults to `True`):
+                Whether to save the model using `safetensors` or the traditional PyTorch way with `pickle`.
+            transformer_lora_adapter_metadata (`dict`, *optional*):
+                Metadata to save with the transformer LoRA layers.
         """
-        lora_layers = {}
-        lora_metadata = {}
+        state_dict = {}
+        lora_adapter_metadata = {}
 
-        if transformer_lora_layers:
-            lora_layers[cls.transformer_name] = transformer_lora_layers
-            lora_metadata[cls.transformer_name] = transformer_lora_adapter_metadata
+        if not transformer_lora_layers:
+            raise ValueError("You must pass `transformer_lora_layers`.")
 
-        if not lora_layers:
-            raise ValueError("You must pass at least one of `transformer_lora_layers` or `text_encoder_lora_layers`.")
+        state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
 
-        cls._save_lora_weights(
+        if transformer_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
+
+        cls.write_lora_layers(
+            state_dict=state_dict,
             save_directory=save_directory,
-            lora_layers=lora_layers,
-            lora_metadata=lora_metadata,
             is_main_process=is_main_process,
             weight_name=weight_name,
             save_function=save_function,
             safe_serialization=safe_serialization,
+            lora_adapter_metadata=lora_adapter_metadata,
         )
 
     # Copied from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.fuse_lora
