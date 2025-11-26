@@ -56,6 +56,7 @@ upstream_config_sources = {
     "sd3": "stabilityai/stable-diffusion-3.5-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
+    "flux2": "black-forest-labs/flux.2-dev",
     "chroma": "lodestones/Chroma1-Base",
     "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sd2x": "stabilityai/stable-diffusion-v2-1",
