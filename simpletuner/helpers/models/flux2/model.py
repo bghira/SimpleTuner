@@ -139,13 +139,6 @@ class Flux2(ImageModelFoundation):
         bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + self.vae.config.batch_norm_eps)
         return (latents - bn_mean) / bn_std
 
-    @staticmethod
-    def _latents_appear_normalized(latents: Tensor) -> bool:
-        """Heuristic to avoid double-normalizing already normalized latents."""
-        mean = latents.mean().abs().item()
-        std = latents.std(unbiased=False).item()
-        return mean < 0.05 and 0.8 < std < 1.25
-
     def load_model(self, move_to_device: bool = True):
         """Load the FLUX.2 transformer using diffusers from_pretrained."""
         dtype = self.config.weight_dtype
@@ -483,7 +476,7 @@ class Flux2(ImageModelFoundation):
 
     def post_vae_encode_transform_sample(self, sample):
         """
-        Ensure cached latents are patchified to match the transformer input expectations (128 channels).
+        Patchify (32 -> 128 channels) and normalize cached latents for transformer input.
         """
         if sample is None:
             return sample
@@ -494,8 +487,7 @@ class Flux2(ImageModelFoundation):
         if isinstance(sample, Tensor) and sample.dim() == 4:
             if sample.shape[1] == 32:
                 sample = self._patchify_latents(sample)
-            if sample.shape[1] == 128 and not self._latents_appear_normalized(sample):
-                sample = self._normalize_latents(sample)
+            sample = self._normalize_latents(sample)
         return sample
 
     def get_loss_target(self, noise: Tensor, batch: dict) -> Tensor:
