@@ -94,6 +94,37 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: Useful for extremely tight CPU RAM budgets (e.g., workstation with large NVMe drive).
 - **Tip**: Use a fast local SSD; network filesystems will significantly slow training.
 
+### `--ramtorch`
+
+- **What**: Replaces `nn.Linear` layers with RamTorch CPU-streamed implementations.
+- **Why**: Shares Linear weights in CPU memory and streams them to the accelerator to reduce VRAM pressure.
+- **Notes**:
+  - Requires CUDA or ROCm (not supported on Apple/MPS).
+  - Mutually exclusive with `--enable_group_offload`.
+  - Automatically enables `--set_grads_to_none`.
+
+### `--ramtorch_target_modules`
+
+- **What**: Comma-separated glob patterns limiting which Linear modules are converted to RamTorch.
+- **Default**: All Linear layers are converted when no pattern is provided.
+- **Notes**: Matches fully qualified module names or class names (wildcards allowed).
+
+### `--ramtorch_text_encoder`
+
+- **What**: Applies RamTorch replacements to all text encoder Linear layers.
+- **Default**: `False`
+
+### `--ramtorch_vae`
+
+- **What**: Experimental RamTorch conversion for the VAE mid-block Linear layers only.
+- **Default**: `False`
+- **Notes**: VAE up/down convolutional blocks are left unchanged.
+
+### `--ramtorch_controlnet`
+
+- **What**: Applies RamTorch replacements to ControlNet Linear layers when training a ControlNet.
+- **Default**: `False`
+
 ### `--pretrained_model_name_or_path`
 
 - **What**: Path to the pretrained model or its identifier from <https://huggingface.co/models>.
