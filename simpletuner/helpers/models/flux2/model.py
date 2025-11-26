@@ -572,22 +572,6 @@ class Flux2(ImageModelFoundation):
         }
         return targets.get(lora_target, targets["all"])
 
-    def save_model(self, output_path: str, save_dtype=None):
-        """Save FLUX.2 transformer to safetensors."""
-        if not output_path.endswith(".safetensors"):
-            output_path = output_path + ".safetensors"
-
-        transformer = self.unwrap_model(self.model)
-        state_dict = transformer.state_dict()
-
-        save_dict = {}
-        dtype = save_dtype or self.config.weight_dtype
-        for k, v in state_dict.items():
-            save_dict[k] = v.clone().to("cpu", dtype=dtype)
-
-        save_file(save_dict, output_path)
-        logger.info(f"Saved FLUX.2 model to {output_path}")
-
     @classmethod
     def register_config_requirements(cls):
         """Register configuration rules for FLUX.2 model."""
