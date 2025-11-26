@@ -481,7 +481,8 @@ class Flux2(ImageModelFoundation):
         if sample is None:
             return sample
         if hasattr(sample, "latent_dist"):
-            sample = sample.latent_dist.sample()
+            # Use mode() (mean) not sample() to match upstream training
+            sample = sample.latent_dist.mode()
         elif hasattr(sample, "sample"):
             sample = sample.sample
         if isinstance(sample, Tensor) and sample.dim() == 4:
@@ -512,7 +513,7 @@ class Flux2(ImageModelFoundation):
             logger.info(f"Setting tokenizer_max_length to {MAX_SEQUENCE_LENGTH} for FLUX.2")
             self.config.tokenizer_max_length = MAX_SEQUENCE_LENGTH
 
-        # Validate guidance mode
+        # Guidance is always 1.0 for training (different from inference default of 3.5)
         self.config.flux_guidance_mode = "constant"
         self.config.flux_guidance_value = 1.0
 
