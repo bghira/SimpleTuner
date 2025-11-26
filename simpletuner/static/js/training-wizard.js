@@ -98,6 +98,11 @@ function trainingWizardComponent() {
             deepspeed_offload_path: '',
             deepspeed_zero3_init: false,
             deepspeed_config: null,
+            ramtorch: false,
+            ramtorch_target_modules: '',
+            ramtorch_text_encoder: false,
+            ramtorch_vae: false,
+            ramtorch_controlnet: false,
             enable_group_offload: false,
             group_offload_type: 'block_level',
             group_offload_blocks_per_group: 1,
@@ -1648,10 +1653,49 @@ function trainingWizardComponent() {
                 (typeof rawDeepSpeedConfig === 'object' ||
                     (typeof rawDeepSpeedConfig === 'string' && rawDeepSpeedConfig.trim().length > 0));
 
+            const ramtorchEnabled = this.coerceBoolean(config.ramtorch ?? config['--ramtorch']) === true;
             const groupOffloadEnabled = this.coerceBoolean(
                 config.enable_group_offload ?? config['--enable_group_offload']
             ) === true;
             const fsdpEnabled = this.coerceBoolean(config.fsdp_enable ?? config['--fsdp_enable']) === true;
+
+            this.answers.ramtorch = ramtorchEnabled;
+            if (ramtorchEnabled) {
+                const targetModulesValue =
+                    config.ramtorch_target_modules ?? config['--ramtorch_target_modules'];
+                if (Array.isArray(targetModulesValue)) {
+                    this.answers.ramtorch_target_modules = targetModulesValue.join(',');
+                } else {
+                    const targetModules = this.coerceString(targetModulesValue);
+                    if (targetModules !== null) {
+                        this.answers.ramtorch_target_modules = targetModules;
+                    }
+                }
+
+                const ramtorchTextEncoder = this.coerceBoolean(
+                    config.ramtorch_text_encoder ?? config['--ramtorch_text_encoder']
+                );
+                if (ramtorchTextEncoder !== null) {
+                    this.answers.ramtorch_text_encoder = ramtorchTextEncoder;
+                }
+
+                const ramtorchVae = this.coerceBoolean(config.ramtorch_vae ?? config['--ramtorch_vae']);
+                if (ramtorchVae !== null) {
+                    this.answers.ramtorch_vae = ramtorchVae;
+                }
+
+                const ramtorchControlnet = this.coerceBoolean(
+                    config.ramtorch_controlnet ?? config['--ramtorch_controlnet']
+                );
+                if (ramtorchControlnet !== null) {
+                    this.answers.ramtorch_controlnet = ramtorchControlnet;
+                }
+            } else {
+                this.answers.ramtorch_target_modules = '';
+                this.answers.ramtorch_text_encoder = false;
+                this.answers.ramtorch_vae = false;
+                this.answers.ramtorch_controlnet = false;
+            }
 
             if (this.answers.model_type !== 'full') {
                 this.resetDeepSpeedState();
