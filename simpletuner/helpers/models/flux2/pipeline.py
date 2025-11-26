@@ -959,8 +959,8 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         image_latents = []
         for image in images:
             image = image.to(device=device, dtype=dtype)
-            imagge_latent = self._encode_vae_image(image=image, generator=generator)
-            image_latents.append(imagge_latent)  # (1, 128, 32, 32)
+            image_latent = self._encode_vae_image(image=image, generator=generator)
+            image_latents.append(image_latent)  # (1, 128, 32, 32)
 
         image_latent_ids = self._prepare_image_ids(image_latents)
 
@@ -990,11 +990,8 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         prompt_embeds=None,
         callback_on_step_end_tensor_inputs=None,
     ):
-        if (
-            height is not None
-            and height % (self.vae_scale_factor * 2) != 0
-            or width is not None
-            and width % (self.vae_scale_factor * 2) != 0
+        if (height is not None and height % (self.vae_scale_factor * 2) != 0) or (
+            width is not None and width % (self.vae_scale_factor * 2) != 0
         ):
             logger.warning(
                 f"`height` and `width` have to be divisible by {self.vae_scale_factor * 2} but are {height} and {width}. Dimensions will be resized accordingly"
@@ -1302,7 +1299,6 @@ class Flux2Pipeline(DiffusionPipeline, Flux2LoraLoaderMixin):
         if output_type == "latent":
             image = latents
         else:
-            torch.save({"pred": latents}, "pred_d.pt")
             latents = self._unpack_latents_with_ids(latents, latent_ids)
 
             latents_bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(latents.device, latents.dtype)

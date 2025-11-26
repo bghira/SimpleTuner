@@ -95,7 +95,7 @@ def _get_projections(attn: "Flux2Attention", hidden_states, encoder_hidden_state
 def _get_fused_projections(attn: "Flux2Attention", hidden_states, encoder_hidden_states=None):
     query, key, value = attn.to_qkv(hidden_states).chunk(3, dim=-1)
 
-    encoder_query = encoder_key = encoder_value = (None,)
+    encoder_query = encoder_key = encoder_value = None
     if encoder_hidden_states is not None and hasattr(attn, "to_added_qkv"):
         encoder_query, encoder_key, encoder_value = attn.to_added_qkv(encoder_hidden_states).chunk(3, dim=-1)
 
@@ -1010,7 +1010,6 @@ class Flux2Transformer2DModel(
             hidden_states = self._tread_router.unroute(hidden_states, tread_routing_info, num_img_tokens)
             tread_active = False
             tread_routing_info = None
-            current_pe_img = image_rotary_emb
 
         # Concatenate text and image streams for single-block inference
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)

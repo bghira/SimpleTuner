@@ -8,11 +8,10 @@ import logging
 import os
 import random
 import sys
-from typing import List, Optional
+from typing import List
 
 import torch
 from einops import rearrange
-from safetensors.torch import save_file
 from torch import Tensor
 
 from simpletuner.helpers.configuration.registry import (
@@ -27,7 +26,6 @@ from simpletuner.helpers.models.flux2 import pack_latents, pack_text, unpack_lat
 from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.flux2.pipeline import Flux2Pipeline
 from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
-from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -285,7 +283,6 @@ class Flux2(ImageModelFoundation):
             attention_mask: (B, L)
         """
         device = self.accelerator.device
-        dtype = self._mistral_model.dtype
 
         if not isinstance(prompts, list):
             prompts = [prompts]
