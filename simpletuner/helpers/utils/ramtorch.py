@@ -15,6 +15,10 @@ def _ramtorch_imports():
     Import RamTorch lazily to avoid hard dependencies when the feature is unused.
     """
     import ramtorch  # noqa: F401
+
+    from simpletuner.helpers import ramtorch_workarounds
+
+    ramtorch_workarounds.apply_ramtorch_workarounds()
     from ramtorch.helpers import replace_linear_with_ramtorch
     from ramtorch.modules.linear import Linear as RamTorchLinear
     from ramtorch.zero1 import broadcast_zero_params, create_zero_param_groups
