@@ -9,7 +9,7 @@ This module monkeypatches RamTorch to:
 from __future__ import annotations
 
 import inspect
-from typing import Iterable, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.distributed as dist
