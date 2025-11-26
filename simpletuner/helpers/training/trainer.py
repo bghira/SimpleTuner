@@ -70,6 +70,7 @@ from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.helpers.webhooks.events import (
     attach_timestamp,
@@ -291,6 +292,7 @@ class Trainer:
         self.sidecar_lr = None
         self.sidecar_is_schedulefree = False
         self.sidecar_scheduler_disabled = False
+        self._ramtorch_zero_state: Optional[dict] = None
         self._hub_upload_executor: ThreadPoolExecutor | None = None
         self._hub_upload_futures: deque[tuple[str, Future]] = deque()
         StateTracker.set_job_id(job_id)
@@ -338,6 +340,18 @@ class Trainer:
         if self._manual_checkpoint_consumer is None:
             return False
         return bool(self._manual_checkpoint_consumer())
+
+    def _ramtorch_enabled(self) -> bool:
+        return bool(getattr(self.config, "ramtorch", False))
+
+    def _ramtorch_sync_enabled(self) -> bool:
+        return self._ramtorch_enabled() and torch.cuda.is_available()
+
+    def _ramtorch_distributed(self) -> bool:
+        try:
+            return self._ramtorch_enabled() and getattr(self.accelerator, "num_processes", 1) > 1
+        except Exception:
+            return False
 
     def _resolve_tracker_identifiers(self) -> tuple[str, str]:
         """Return sanitized (project_name, run_name) pairs with sensible defaults."""
@@ -2354,6 +2368,8 @@ class Trainer:
         if not self.config.controlnet:
             return
         self.model.controlnet_init()
+        if getattr(self.config, "ramtorch", False) and getattr(self.config, "ramtorch_controlnet", False):
+            self.model.apply_ramtorch_to_controlnet()
         self.accelerator.wait_for_everyone()
 
     def init_tread_model(self):
@@ -2637,6 +2653,61 @@ class Trainer:
             self.config.train_batch_size * self.accelerator.num_processes * self.config.gradient_accumulation_steps
         )
 
+    def _setup_ramtorch_zero_state(self):
+        if not self._ramtorch_distributed():
+            self._ramtorch_zero_state = None
+            return
+
+        import torch.distributed as dist
+
+        if not (dist.is_available() and dist.is_initialized()):
+            logger.warning(
+                "RamTorch distributed support requested but torch.distributed is not initialised; skipping RamTorch sharding hooks."
+            )
+            self._ramtorch_zero_state = None
+            return
+
+        try:
+            broadcast_zero_params, create_zero_param_groups, setup_grad_sharding_hooks = ramtorch_utils.ramtorch_zero_utils()
+        except ImportError:
+            raise
+
+        param_groups = getattr(self.optimizer, "param_groups", None)
+        if not param_groups:
+            self._ramtorch_zero_state = None
+            return
+
+        world_size = getattr(self.accelerator, "num_processes", dist.get_world_size())
+        try:
+            rank = get_rank()
+        except Exception:
+            rank = None
+        if rank is None or rank < 0:
+            try:
+                rank = dist.get_rank()
+            except Exception:
+                rank = 0
+
+        rank_param_groups = create_zero_param_groups(param_groups, world_size)
+        grad_hook_handles = setup_grad_sharding_hooks(rank_param_groups, rank)
+        self._ramtorch_zero_state = {
+            "rank_param_groups": rank_param_groups,
+            "grad_hook_handles": grad_hook_handles,
+            "broadcast_zero_params": broadcast_zero_params,
+        }
+        logger.info("RamTorch ZeRO hooks enabled for %s ranks (rank %s).", world_size, rank)
+
+    def _broadcast_ramtorch_parameters(self):
+        if not self._ramtorch_zero_state:
+            return
+
+        broadcast_fn = self._ramtorch_zero_state.get("broadcast_zero_params")
+        rank_param_groups = self._ramtorch_zero_state.get("rank_param_groups")
+        if broadcast_fn is None or rank_param_groups is None:
+            return
+
+        broadcast_fn(rank_param_groups)
+
     def init_optimizer(self):
         logger.info(f"Learning rate: {self.config.learning_rate}")
         self.sidecar_optimizer = None
@@ -2847,6 +2918,9 @@ class Trainer:
                 "Configured lyrics embedder optimizer with %s parameters",
                 trainable_parameter_count(embedder_params),
             )
+
+        if self._ramtorch_enabled():
+            self._setup_ramtorch_zero_state()
 
     def init_lr_scheduler(self):
         self.sidecar_lr_scheduler = None
@@ -4254,7 +4328,11 @@ class Trainer:
                     self.grad_norm = None
                     if not self.config.disable_accelerator:
                         training_logger.debug("Backwards pass.")
+                        if self._ramtorch_sync_enabled():
+                            torch.cuda.synchronize()
                         self.accelerator.backward(loss)
+                        if self._ramtorch_sync_enabled():
+                            torch.cuda.synchronize()
 
                         if self.config.optimizer != "adam_bfloat16" and self.config.gradient_precision == "fp32":
                             # After backward, convert gradients to fp32 for stable accumulation
@@ -4336,9 +4414,22 @@ class Trainer:
                             self.optimizer.step()
                             if self.sidecar_optimizer is not None:
                                 self.sidecar_optimizer.step()
-                        self.optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
-                        if self.sidecar_optimizer is not None:
-                            self.sidecar_optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
+                        if self._ramtorch_zero_state and self.accelerator.sync_gradients:
+                            self._broadcast_ramtorch_parameters()
+
+                        if self._ramtorch_enabled():
+                            trained_component = self.model.get_trained_component(unwrap_model=False)
+                            if trained_component is not None:
+                                trained_component.zero_grad(set_to_none=True)
+                            base_component = self.model.get_trained_component(base_model=True, unwrap_model=False)
+                            if base_component is not None and base_component is not trained_component:
+                                base_component.zero_grad(set_to_none=True)
+                            if self.sidecar_optimizer is not None:
+                                self.sidecar_optimizer.zero_grad(set_to_none=True)
+                        else:
+                            self.optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
+                            if self.sidecar_optimizer is not None:
+                                self.sidecar_optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
                         if (
                             getattr(self, "distiller", None) is not None
                             and self.accelerator.sync_gradients  # run once per global step

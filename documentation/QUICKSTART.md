@@ -37,4 +37,4 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 
 > ℹ️ Wan quickstart includes 2.1 + 2.2 stage presets and the time-embedding toggle. Flux Kontext covers editing workflows built atop Flux.1.
 
-> ⚠️ These quickstarts are living documents. Expect frequent updates as new models land or training recipes improve.
+> ⚠️ These quickstarts are living documents. Expect occasional updates as new models land or training recipes improve.

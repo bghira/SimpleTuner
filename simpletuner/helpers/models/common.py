@@ -37,6 +37,7 @@ from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
@@ -883,6 +884,12 @@ class ModelFoundation(ABC):
                 self.vae.enable_slicing()
             else:
                 logger.warning(f"VAE slicing is enabled, but not yet supported by {self.config.model_family}.")
+        if self._ramtorch_vae_requested():
+            mid_block = getattr(self.vae, "mid_block", None)
+            if mid_block is None:
+                logger.debug("RamTorch VAE requested but no VAE mid_block was found; skipping RamTorch conversion.")
+            else:
+                self._apply_ramtorch_layers(mid_block, "vae.mid_block")
         if move_to_device and self.vae.device != self.accelerator.device:
             _vae_dtype = torch.bfloat16
             if hasattr(self.config, "vae_dtype"):
@@ -1025,6 +1032,9 @@ class ModelFoundation(ABC):
                 ]:
                     pass
 
+                if self._ramtorch_text_encoders_requested():
+                    self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
+
                 if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
@@ -1141,6 +1151,8 @@ class ModelFoundation(ABC):
             subfolder=model_subfolder,
             **pretrained_load_args,
         )
+        if self._ramtorch_enabled() and self.model is not None:
+            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
 
@@ -1516,6 +1528,66 @@ class ModelFoundation(ABC):
     def group_offload_requested(self) -> bool:
         return bool(getattr(self.config, "enable_group_offload", False))
 
+    def _ramtorch_enabled(self) -> bool:
+        return bool(getattr(self.config, "ramtorch", False))
+
+    def _ramtorch_targets(self) -> Optional[list[str]]:
+        targets = getattr(self.config, "ramtorch_target_modules", None)
+        if targets is None:
+            return None
+        if isinstance(targets, (list, tuple)):
+            normalized = [str(entry).strip() for entry in targets if str(entry).strip()]
+        else:
+            normalized = [segment.strip() for segment in str(targets).split(",") if segment.strip()]
+        return normalized or None
+
+    def _ramtorch_device(self):
+        return getattr(self.accelerator, "device", torch.device("cuda"))
+
+    def _ramtorch_targets_for_component(self, override: Optional[list[str]] = None) -> Optional[list[str]]:
+        if override is not None:
+            return override
+        return self._ramtorch_targets()
+
+    def _apply_ramtorch_layers(self, module, component_label: str, *, target_patterns: Optional[list[str]] = None) -> int:
+        if module is None or not self._ramtorch_enabled():
+            return 0
+
+        try:
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(
+                module,
+                device=self._ramtorch_device(),
+                target_patterns=self._ramtorch_targets_for_component(target_patterns),
+                name_prefix=component_label,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to apply RamTorch to {component_label}: {exc}") from exc
+
+        if replaced:
+            logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
+        else:
+            logger.debug("RamTorch enabled for %s but no Linear layers matched the configured targets.", component_label)
+
+        return replaced
+
+    def _ramtorch_text_encoders_requested(self) -> bool:
+        return self._ramtorch_enabled() and bool(getattr(self.config, "ramtorch_text_encoder", False))
+
+    def _ramtorch_vae_requested(self) -> bool:
+        return self._ramtorch_enabled() and bool(getattr(self.config, "ramtorch_vae", False))
+
+    def _ramtorch_controlnet_requested(self) -> bool:
+        return self._ramtorch_enabled() and bool(getattr(self.config, "ramtorch_controlnet", False))
+
+    def apply_ramtorch_to_controlnet(self) -> int:
+        if not self._ramtorch_controlnet_requested():
+            return 0
+        controlnet = getattr(self, "controlnet", None)
+        if controlnet is None:
+            logger.debug("RamTorch ControlNet requested but no controlnet module is initialised.")
+            return 0
+        return self._apply_ramtorch_layers(controlnet, "controlnet")
+
     @property
     def group_offload_configured(self) -> bool:
         return getattr(self, "_group_offload_configured", False)
@@ -1563,6 +1635,9 @@ class ModelFoundation(ABC):
     def configure_group_offload(self) -> None:
         if self.group_offload_configured or not self.group_offload_requested():
             return
+
+        if self._ramtorch_enabled():
+            raise ValueError("Group offload cannot be used together with RamTorch (--ramtorch).")
 
         if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
             raise ValueError("Group offload is only supported for transformer-based models.")
