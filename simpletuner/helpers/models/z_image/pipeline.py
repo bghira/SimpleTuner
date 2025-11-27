@@ -14,15 +14,26 @@
 
 import inspect
 import math
+import os
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin
+from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
 from diffusers.models.autoencoders import AutoencoderKL
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.utils import USE_PEFT_BACKEND, logging, replace_example_docstring
+from diffusers.utils import (
+    USE_PEFT_BACKEND,
+    is_peft_available,
+    is_peft_version,
+    is_torch_version,
+    is_transformers_available,
+    is_transformers_version,
+    logging,
+    replace_example_docstring,
+)
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import AutoTokenizer, PreTrainedModel
 
@@ -47,6 +58,16 @@ EXAMPLE_DOC_STRING = """
         ```
 """
 
+_LOW_CPU_MEM_USAGE_DEFAULT_LORA = False
+if is_torch_version(">=", "1.9.0"):
+    if (
+        is_peft_available()
+        and is_peft_version(">=", "0.13.1")
+        and is_transformers_available()
+        and is_transformers_version(">", "4.45.2")
+    ):
+        _LOW_CPU_MEM_USAGE_DEFAULT_LORA = True
+
 
 # Copied from diffusers.pipelines.flux.pipeline_flux.calculate_shift
 def calculate_shift(
@@ -60,6 +81,20 @@ def calculate_shift(
     b = base_shift - m * base_seq_len
     mu = image_seq_len * m + b
     return mu
+
+
+# cfg zero* optimization from sd3
+def optimized_scale(positive_flat, negative_flat):
+    # Calculate dot product
+    dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
+
+    # Squared norm of uncondition
+    squared_norm = torch.sum(negative_flat**2, dim=1, keepdim=True) + 1e-8
+
+    # st_star = v_cond^T * v_uncond / ||v_uncond||^2
+    st_star = dot_product / squared_norm
+
+    return st_star
 
 
 # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.retrieve_timesteps
@@ -122,7 +157,246 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class ZImagePipeline(DiffusionPipeline, FromSingleFileMixin):
+class ZImageLoraLoaderMixin(LoraBaseMixin):
+    _lora_loadable_modules = ["transformer", "controlnet"]
+    transformer_name = "transformer"
+    controlnet_name = "controlnet"
+
+    def lora_state_dict(
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        **kwargs,
+    ):
+        cache_dir = kwargs.pop("cache_dir", None)
+        force_download = kwargs.pop("force_download", False)
+        proxies = kwargs.pop("proxies", None)
+        local_files_only = kwargs.pop("local_files_only", None)
+        token = kwargs.pop("token", None)
+        revision = kwargs.pop("revision", None)
+        subfolder = kwargs.pop("subfolder", None)
+        weight_name = kwargs.pop("weight_name", None)
+        use_safetensors = kwargs.pop("use_safetensors", None)
+
+        allow_pickle = False
+        if use_safetensors is None:
+            use_safetensors = True
+            allow_pickle = True
+
+        user_agent = {
+            "file_type": "attn_procs_weights",
+            "framework": "pytorch",
+        }
+
+        state_dict, _ = _fetch_state_dict(
+            pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
+            weight_name=weight_name,
+            use_safetensors=use_safetensors,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            proxies=proxies,
+            token=token,
+            revision=revision,
+            subfolder=subfolder,
+            user_agent=user_agent,
+            allow_pickle=allow_pickle,
+        )
+
+        is_dora_scale_present = any("dora_scale" in k for k in state_dict)
+        if is_dora_scale_present:
+            warn_msg = "It seems like you are using a DoRA checkpoint that is not compatible in Diffusers at the moment. So, we are going to filter out the keys associated to 'dora_scale` from the state dict. If you think this is a mistake please open an issue https://github.com/huggingface/diffusers/issues/new."
+            logger.warning(warn_msg)
+            state_dict = {k: v for k, v in state_dict.items() if "dora_scale" not in k}
+
+        return state_dict
+
+    def load_lora_weights(
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        adapter_name=None,
+        hotswap: bool = False,
+        **kwargs,
+    ):
+        if not USE_PEFT_BACKEND:
+            raise ValueError("PEFT backend is required for this method.")
+
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", _LOW_CPU_MEM_USAGE_DEFAULT_LORA)
+        if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        if isinstance(pretrained_model_name_or_path_or_dict, dict):
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
+
+        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+
+        is_correct_format = all("lora" in key for key in state_dict.keys())
+        if not is_correct_format:
+            raise ValueError("Invalid LoRA checkpoint.")
+
+        transformer_state_dict = {}
+        controlnet_state_dict = {}
+
+        for k, v in state_dict.items():
+            if k.startswith(f"{self.controlnet_name}."):
+                controlnet_state_dict[k] = v
+            else:
+                transformer_state_dict[k] = v
+
+        if transformer_state_dict:
+            self.load_lora_into_transformer(
+                transformer_state_dict,
+                transformer=(
+                    getattr(self, self.transformer_name) if hasattr(self, self.transformer_name) else self.transformer
+                ),
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+                hotswap=hotswap,
+            )
+
+        if controlnet_state_dict and hasattr(self, self.controlnet_name):
+            self.load_lora_into_controlnet(
+                controlnet_state_dict,
+                controlnet=getattr(self, self.controlnet_name),
+                adapter_name=adapter_name,
+                _pipeline=self,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+                hotswap=hotswap,
+            )
+
+    @classmethod
+    def load_lora_into_transformer(
+        cls,
+        state_dict,
+        transformer,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+        hotswap: bool = False,
+    ):
+        if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        logger.info(f"Loading {cls.transformer_name}.")
+        transformer.load_lora_adapter(
+            state_dict,
+            network_alphas=None,
+            adapter_name=adapter_name,
+            _pipeline=_pipeline,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            hotswap=hotswap,
+        )
+
+    @classmethod
+    def load_lora_into_controlnet(
+        cls,
+        state_dict,
+        controlnet,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+        hotswap: bool = False,
+    ):
+        if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        keys = list(state_dict.keys())
+        controlnet_keys = [k for k in keys if k.startswith(cls.controlnet_name)]
+        state_dict = {k.replace(f"{cls.controlnet_name}.", ""): v for k, v in state_dict.items() if k in controlnet_keys}
+
+        if len(state_dict.keys()) > 0:
+            logger.info(f"Loading {cls.controlnet_name}.")
+
+            if hasattr(controlnet, "load_lora_adapter"):
+                controlnet.load_lora_adapter(
+                    state_dict,
+                    network_alphas=None,
+                    adapter_name=adapter_name,
+                    _pipeline=_pipeline,
+                    low_cpu_mem_usage=low_cpu_mem_usage,
+                    hotswap=hotswap,
+                )
+            elif hasattr(controlnet, "load_attn_procs"):
+                controlnet.load_attn_procs(
+                    state_dict,
+                    network_alphas=None,
+                    adapter_name=adapter_name,
+                    _pipeline=_pipeline,
+                    low_cpu_mem_usage=low_cpu_mem_usage,
+                )
+            else:
+                raise AttributeError(
+                    "ControlNet model does not have a method to load LoRA weights. "
+                    "Please ensure your ControlNet model supports LoRA loading."
+                )
+
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory: Union[str, os.PathLike],
+        transformer_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        controlnet_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        is_main_process: bool = True,
+        weight_name: str = None,
+        save_function: Callable = None,
+        safe_serialization: bool = True,
+        transformer_lora_adapter_metadata: Optional[dict] = None,
+        controlnet_lora_adapter_metadata: Optional[dict] = None,
+    ):
+        state_dict = {}
+        lora_adapter_metadata = {}
+
+        if not (transformer_lora_layers or controlnet_lora_layers):
+            raise ValueError("You must pass at least one of `transformer_lora_layers` or `controlnet_lora_layers`.")
+
+        if transformer_lora_layers:
+            state_dict.update(cls.pack_weights(transformer_lora_layers, cls.transformer_name))
+
+        if controlnet_lora_layers:
+            state_dict.update(cls.pack_weights(controlnet_lora_layers, cls.controlnet_name))
+
+        if transformer_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
+
+        if controlnet_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(controlnet_lora_adapter_metadata, cls.controlnet_name))
+
+        cls.write_lora_layers(
+            state_dict=state_dict,
+            save_directory=save_directory,
+            is_main_process=is_main_process,
+            weight_name=weight_name,
+            save_function=save_function,
+            safe_serialization=safe_serialization,
+            lora_adapter_metadata=lora_adapter_metadata,
+        )
+
+    def fuse_lora(
+        self,
+        components: List[str] = ["transformer", "controlnet"],
+        lora_scale: float = 1.0,
+        safe_fusing: bool = False,
+        adapter_names: Optional[List[str]] = None,
+        **kwargs,
+    ):
+        super().fuse_lora(
+            components=components,
+            lora_scale=lora_scale,
+            safe_fusing=safe_fusing,
+            adapter_names=adapter_names,
+        )
+
+    def unfuse_lora(self, components: List[str] = ["transformer", "controlnet"], **kwargs):
+        super().unfuse_lora(components=components, **kwargs)
+
+
+class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMixin):
     model_cpu_offload_seq = "text_encoder->transformer->vae"
     _optional_components = []
     _callback_tensor_inputs = ["latents", "prompt_embeds"]
@@ -361,6 +635,15 @@ class ZImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
+        skip_guidance_layers: Optional[List[int]] = None,
+        skip_layer_guidance_scale: float = 2.8,
+        skip_layer_guidance_stop: float = 0.2,
+        skip_layer_guidance_start: float = 0.01,
+        use_cfg_zero_star: bool = True,
+        use_zero_init: bool = True,
+        zero_steps: int = 0,
+        no_cfg_until_timestep: int = 0,
+        cfg_end_timestep: Optional[int] = None,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -431,6 +714,21 @@ class ZImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                 `._callback_tensor_inputs` attribute of your pipeline class.
             max_sequence_length (`int`, *optional*, defaults to 512):
                 Maximum sequence length to use with the `prompt`.
+            skip_guidance_layers (`List[int]`, *optional*): Layer indices to skip when computing guidance. Guidance
+                will be applied to the remaining layers only during the configured window.
+            skip_layer_guidance_scale (`float`, *optional*): Scale for the skipped-layer guidance correction when
+                `skip_guidance_layers` is provided.
+            skip_layer_guidance_stop (`float`, *optional*): Fraction of inference after which skipped-layer guidance is
+                disabled.
+            skip_layer_guidance_start (`float`, *optional*): Fraction of inference before which skipped-layer guidance
+                is disabled.
+            use_cfg_zero_star (`bool`, *optional*): Whether to use the CFG Zero* optimization when applying guidance.
+            use_zero_init (`bool`, *optional*): When `use_cfg_zero_star` is enabled, optionally zero the guidance for
+                the first `zero_steps` steps.
+            zero_steps (`int`, *optional*): Number of initial steps to zero out guided predictions when using CFG
+                Zero*.
+            no_cfg_until_timestep (`int`, *optional*): Skip classifier-free guidance until this (zero-indexed) step.
+            cfg_end_timestep (`int`, *optional*): If provided, disable classifier-free guidance after this step.
 
         Examples:
 
@@ -451,6 +749,7 @@ class ZImagePipeline(DiffusionPipeline, FromSingleFileMixin):
         self._interrupt = False
         self._cfg_normalization = cfg_normalization
         self._cfg_truncation = cfg_truncation
+        self._skip_layer_guidance_scale = skip_layer_guidance_scale
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
@@ -535,7 +834,8 @@ class ZImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                     )
 
                 # Run CFG only if configured AND scale is non-zero
-                apply_cfg = self.do_classifier_free_guidance and current_guidance_scale > 0
+                within_cfg_window = i >= no_cfg_until_timestep and (cfg_end_timestep is None or i <= cfg_end_timestep)
+                apply_cfg = self.do_classifier_free_guidance and current_guidance_scale > 0 and within_cfg_window
 
                 if apply_cfg:
                     # Prepare inputs for CFG
@@ -554,36 +854,65 @@ class ZImagePipeline(DiffusionPipeline, FromSingleFileMixin):
                     latent_model_input_list,
                     timestep_model_input,
                     prompt_embeds_model_input,
+                    joint_attention_kwargs=self.joint_attention_kwargs,
                 )[0]
 
                 if apply_cfg:
                     # Perform CFG
-                    pos_out = model_out_list[:batch_size]
-                    neg_out = model_out_list[batch_size:]
+                    pos_out = torch.stack([out.float() for out in model_out_list[:batch_size]], dim=0)
+                    neg_out = torch.stack([out.float() for out in model_out_list[batch_size:]], dim=0)
 
-                    noise_pred = []
-                    for j in range(batch_size):
-                        pos = pos_out[j].float()
-                        neg = neg_out[j].float()
+                    if use_cfg_zero_star:
+                        pos_flat = pos_out.view(batch_size, -1)
+                        neg_flat = neg_out.view(batch_size, -1)
+                        alpha = optimized_scale(pos_flat, neg_flat).view(batch_size, *([1] * (pos_out.dim() - 1)))
+                        if i <= zero_steps and use_zero_init:
+                            guided = pos_out * 0.0
+                        else:
+                            guided = neg_out * alpha + current_guidance_scale * (pos_out - neg_out * alpha)
+                    else:
+                        guided = pos_out + current_guidance_scale * (pos_out - neg_out)
 
-                        pred = pos + current_guidance_scale * (pos - neg)
+                    # Renormalization
+                    if self._cfg_normalization and float(self._cfg_normalization) > 0.0:
+                        ori_pos_norm = torch.linalg.vector_norm(pos_out.view(batch_size, -1), dim=1)
+                        new_pos_norm = torch.linalg.vector_norm(guided.view(batch_size, -1), dim=1)
+                        max_new_norm = ori_pos_norm * float(self._cfg_normalization)
+                        scale_mask = new_pos_norm > max_new_norm
+                        if torch.any(scale_mask):
+                            scale = (max_new_norm / (new_pos_norm + 1e-8)).view(batch_size, *([1] * (guided.dim() - 1)))
+                            guided = torch.where(
+                                scale_mask.view(batch_size, *([1] * (guided.dim() - 1))), guided * scale, guided
+                            )
 
-                        # Renormalization
-                        if self._cfg_normalization and float(self._cfg_normalization) > 0.0:
-                            ori_pos_norm = torch.linalg.vector_norm(pos)
-                            new_pos_norm = torch.linalg.vector_norm(pred)
-                            max_new_norm = ori_pos_norm * float(self._cfg_normalization)
-                            if new_pos_norm > max_new_norm:
-                                pred = pred * (max_new_norm / new_pos_norm)
-
-                        noise_pred.append(pred)
-
-                    noise_pred = torch.stack(noise_pred, dim=0)
+                    noise_pred = guided
                 else:
                     noise_pred = torch.stack([t.float() for t in model_out_list], dim=0)
 
                 noise_pred = noise_pred.squeeze(2)
                 noise_pred = -noise_pred
+
+                # Optional skipped-layer guidance correction
+                should_skip_layers = (
+                    apply_cfg
+                    and skip_guidance_layers is not None
+                    and len(skip_guidance_layers) > 0
+                    and i > num_inference_steps * skip_layer_guidance_start
+                    and i < num_inference_steps * skip_layer_guidance_stop
+                )
+                if should_skip_layers:
+                    skip_latent_input = latents.to(dtype).unsqueeze(2)
+                    skip_latent_list = list(skip_latent_input.unbind(dim=0))
+                    skip_out = self.transformer(
+                        skip_latent_list,
+                        timestep,
+                        prompt_embeds,
+                        skip_layers=skip_guidance_layers,
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                    )[0]
+                    skip_pred = torch.stack([out.float() for out in skip_out], dim=0).squeeze(2)
+                    skip_pred = -skip_pred
+                    noise_pred = noise_pred + (pos_out.squeeze(2) - skip_pred) * self._skip_layer_guidance_scale
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred.to(torch.float32), t, latents, return_dict=False)[0]

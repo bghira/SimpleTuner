@@ -14,7 +14,7 @@
 
 import itertools
 import math
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -33,7 +33,12 @@ from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
+from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
+
+from simpletuner.helpers.training.tread import TREADRouter
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 ADALN_EMBED_DIM = 256
 SEQ_MULTI_OF = 32
@@ -405,6 +410,8 @@ class RopeEmbedder:
 class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["ZImageTransformerBlock"]
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
 
     @register_to_config
     def __init__(
@@ -485,6 +492,11 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.axes_lens = axes_lens
 
         self.rope_embedder = RopeEmbedder(theta=rope_theta, axes_dims=axes_dims, axes_lens=axes_lens)
+
+    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
+        """Attach a TREAD router and routing plan for token dropping during training."""
+        self._tread_router = router
+        self._tread_routes = routes
 
     def unpatchify(self, x: List[torch.Tensor], size: List[Tuple], patch_size, f_patch_size) -> List[torch.Tensor]:
         pH = pW = patch_size
@@ -614,6 +626,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         cap_feats: List[torch.Tensor],
         patch_size=2,
         f_patch_size=1,
+        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        skip_layers: Optional[List[int]] = None,
+        force_keep_mask: Optional[torch.Tensor] = None,
     ):
 
         assert patch_size in self.all_patch_size
@@ -621,6 +636,21 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         bsz = len(x)
         device = x[0].device
+
+        if joint_attention_kwargs is not None:
+            joint_attention_kwargs = joint_attention_kwargs.copy()
+            lora_scale = joint_attention_kwargs.pop("scale", 1.0)
+        else:
+            lora_scale = 1.0
+
+        if USE_PEFT_BACKEND:
+            scale_lora_layers(self, lora_scale)
+        else:
+            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
+                logger.warning(
+                    "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
+                )
+
         t = t * self.t_scale
         t = self.t_embedder(t)
 
@@ -692,9 +722,10 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         def merge_interleave(l1, l2):
             return list(itertools.chain(*zip(l1, l2)))
 
-        unified = torch.cat(
-            merge_interleave(cap_flatten.split(cap_item_seqlens, dim=0), x_flatten.split(x_item_seqlens, dim=0)), dim=0
-        )
+        cap_lists = cap_flatten.split(cap_item_seqlens, dim=0)
+        x_lists = x_flatten.split(x_item_seqlens, dim=0)
+        unified_lists = merge_interleave(cap_lists, x_lists)
+        unified = torch.cat(unified_lists, dim=0)
         unified_item_seqlens = [a + b for a, b in zip(cap_item_seqlens, x_item_seqlens)]
         assert len(unified) == sum(unified_item_seqlens)
         unified_max_item_seqlen = max(unified_item_seqlens)
@@ -703,28 +734,136 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             (1, 0),
         )
         unified_src_ids = torch.cat(merge_interleave(cap_src_ids, x_src_ids))
-        unified_freqs_cis = torch.cat(merge_interleave(cap_freqs_cis, x_freqs_cis))
+        unified_freqs_cis_lists = merge_interleave(cap_freqs_cis, x_freqs_cis)
+        unified_freqs_cis = torch.cat(unified_freqs_cis_lists)
 
         unified_shard = unified
         unified_src_ids_shard = unified_src_ids
         unified_freqs_cis_shard = unified_freqs_cis
-        for layer in self.layers:
-            unified_shard = layer(
-                unified_shard,
-                unified_src_ids_shard,
-                unified_freqs_cis_shard,
-                unified_cu_seqlens,
-                unified_max_item_seqlen,
-                adaln_input,
-            )
+        current_item_seqlens = unified_item_seqlens
+        current_max_item_seqlen = unified_max_item_seqlen
+        current_cu_seqlens = unified_cu_seqlens
+
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        if use_routing and router is None:
+            raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        saved_lengths: Optional[List[int]] = None
+        global_idx = 0
+
+        if routes:
+            total_layers = len(self.layers)
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
+        for index_block, layer in enumerate(self.layers):
+            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                current_token_list = unified_shard.split(current_item_seqlens, dim=0)
+                current_freq_list = unified_freqs_cis_shard.split(current_item_seqlens, dim=0)
+                max_len = max(current_item_seqlens)
+                padded_tokens = pad_sequence(current_token_list, batch_first=True)
+                padded_freqs = pad_sequence(current_freq_list, batch_first=True)
+
+                force_keep = torch.ones((bsz, max_len), dtype=torch.bool, device=device)
+                for sample_idx, seq_len in enumerate(current_item_seqlens):
+                    force_keep[sample_idx, :seq_len] = False
+                    force_keep[sample_idx, : cap_item_seqlens[sample_idx]] = True
+
+                if force_keep_mask is not None:
+                    fk = force_keep_mask.to(device=device, dtype=torch.bool)
+                    if fk.dim() == 2:
+                        if fk.shape[1] < max_len:
+                            fk = F.pad(fk, (0, max_len - fk.shape[1]), value=False)
+                        else:
+                            fk = fk[:, :max_len]
+                        force_keep = force_keep | fk
+
+                tread_mask_info = router.get_mask(
+                    padded_tokens,
+                    mask_ratio=routes[route_ptr]["selection_ratio"],
+                    force_keep=force_keep,
+                )
+                saved_tokens = padded_tokens.clone()
+                saved_lengths = list(current_item_seqlens)
+
+                routed_tokens = router.start_route(padded_tokens, tread_mask_info)
+                routed_freqs = router.start_route(padded_freqs, tread_mask_info)
+
+                keep_len = routed_tokens.shape[1]
+                unified_shard = routed_tokens.reshape(-1, routed_tokens.shape[-1])
+                unified_freqs_cis_shard = routed_freqs.reshape(-1, routed_freqs.shape[-1])
+                current_item_seqlens = [keep_len for _ in range(bsz)]
+                current_max_item_seqlen = keep_len
+                current_cu_seqlens = torch.arange(0, (bsz + 1) * keep_len, keep_len, dtype=torch.int32, device=device)
+                unified_src_ids_shard = torch.arange(bsz, device=device, dtype=torch.int32).repeat_interleave(keep_len)
+                routing_now = True
+
+            skip_block = skip_layers is not None and index_block in skip_layers
+            if not skip_block:
+                unified_shard = layer(
+                    unified_shard,
+                    unified_src_ids_shard,
+                    unified_freqs_cis_shard,
+                    current_cu_seqlens,
+                    current_max_item_seqlen,
+                    adaln_input,
+                )
+
+            if routing_now and route_ptr < len(routes) and global_idx == routes[route_ptr]["end_layer_idx"]:
+                keep_len = current_item_seqlens[0]
+                routed_hidden = unified_shard.view(bsz, keep_len, -1)
+                restored_tokens = router.end_route(routed_hidden, tread_mask_info, original_x=saved_tokens)
+
+                restored_list = []
+                restored_freq_list = []
+                for sample_idx, seq_len in enumerate(saved_lengths):
+                    restored_list.append(restored_tokens[sample_idx, :seq_len])
+                    restored_freq_list.append(unified_freqs_cis_lists[sample_idx][:seq_len])
+
+                unified_shard = torch.cat(restored_list, dim=0)
+                unified_freqs_cis_shard = torch.cat(restored_freq_list, dim=0)
+                current_item_seqlens = list(saved_lengths)
+                current_max_item_seqlen = max(current_item_seqlens)
+                current_cu_seqlens = F.pad(
+                    torch.cumsum(
+                        torch.tensor(current_item_seqlens, dtype=torch.int32, device=device), dim=0, dtype=torch.int32
+                    ),
+                    (1, 0),
+                )
+                unified_src_ids_shard = torch.cat(
+                    [torch.full((l,), idx, dtype=torch.int32, device=device) for idx, l in enumerate(current_item_seqlens)]
+                )
+                routing_now = False
+                route_ptr += 1
+
+            global_idx += 1
+
         unified_shard = self.all_final_layer[f"{patch_size}-{f_patch_size}"](
             unified_shard, unified_src_ids_shard, adaln_input
         )
-        unified = unified_shard.split(unified_item_seqlens, dim=0)
+        unified = unified_shard.split(current_item_seqlens, dim=0)
         x = [unified[i][cap_item_seqlens[i] :] for i in range(bsz)]
         assert all(len(x[i]) == x_item_seqlens[i] for i in range(bsz))
 
         x = self.unpatchify(x, x_size, patch_size, f_patch_size)
+
+        if USE_PEFT_BACKEND:
+            unscale_lora_layers(self, lora_scale)
 
         return x, {}
 

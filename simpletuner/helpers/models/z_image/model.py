@@ -42,6 +42,27 @@ class ZImage(ImageModelFoundation):
         },
     }
 
+    def tread_init(self):
+        """Initialize the TREAD router when training with token routing enabled."""
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        tread_cfg = getattr(self.config, "tread_config", None)
+        if not isinstance(tread_cfg, dict) or tread_cfg == {} or tread_cfg.get("routes") is None:
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            tread_cfg["routes"],
+        )
+
+        logger.info("TREAD training is enabled for Z-Image")
+
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         if self.text_encoders is None or len(self.text_encoders) == 0:
             self.load_text_encoder()
