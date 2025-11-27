@@ -9,7 +9,7 @@ This module monkeypatches RamTorch to:
 from __future__ import annotations
 
 import inspect
-from typing import Iterable, Optional, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -126,7 +126,7 @@ def _monkeypatch_broadcast_zero_params() -> bool:
                 for handle in work_handles:
                     handle.wait()
 
-    broadcast_zero_params.__doc__ = (orig.__doc__ or "") + "\n\nMonkeys patched by SimpleTuner to support include_ramtorch."
+    broadcast_zero_params.__doc__ = (orig.__doc__ or "") + "\n\nMonkey patched by SimpleTuner to support include_ramtorch."
     zero1.broadcast_zero_params = broadcast_zero_params  # type: ignore[attr-defined]
     return True
 

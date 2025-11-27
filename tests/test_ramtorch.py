@@ -3,7 +3,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import torch
 import torch.nn as nn
 
 from simpletuner.helpers.configuration import cmd_args
