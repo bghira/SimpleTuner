@@ -126,6 +126,7 @@ Detailed quickstart guides are available for all supported models:
 - **[Lumina2 Guide](/documentation/quickstart/LUMINA2.md)** - 2B parameter flow-matching model
 - **[Kwai Kolors Guide](/documentation/quickstart/KOLORS.md)** - SDXL-based with ChatGLM encoder
 - **[LTX Video Guide](/documentation/quickstart/LTXVIDEO.md)** - Video diffusion training
+- **[Hunyuan Video 1.5 Guide](/documentation/quickstart/HUNYUANVIDEO.md)** - 8.3B flow-matching T2V/I2V with SR stages
 - **[Wan Video Guide](/documentation/quickstart/WAN.md)** - Video flow-matching with TREAD support
 - **[HiDream Guide](/documentation/quickstart/HIDREAM.md)** - MoE model with advanced features
 - **[Cosmos2 Guide](/documentation/quickstart/COSMOS2IMAGE.md)** - Multi-modal image generation

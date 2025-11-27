@@ -49,7 +49,7 @@ else:
     logger.setLevel("ERROR")
 
 
-flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma"]
+flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma", "hunyuanvideo"]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
@@ -62,6 +62,7 @@ upstream_config_sources = {
     "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "hunyuanvideo": "tencent/HunyuanVideo-1.5",
 }
 
 
@@ -1346,6 +1347,8 @@ class ModelFoundation(ABC):
             pipeline_kwargs["vae"] = self.get_vae()
 
         text_encoder_idx = 0
+        pipeline_init_signature = inspect.signature(pipeline_class.__init__)
+
         for (
             text_encoder_attr,
             text_encoder_config,
@@ -1353,11 +1356,18 @@ class ModelFoundation(ABC):
             tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
             if self.text_encoders is not None and len(self.text_encoders) >= text_encoder_idx:
                 pipeline_kwargs[text_encoder_attr] = self.unwrap_model(self.text_encoders[text_encoder_idx])
-                logger.info(f"Adding {tokenizer_attr}")
-                pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+
+                # Only add tokenizer if the pipeline expects it and we have it
+                if tokenizer_attr in pipeline_init_signature.parameters:
+                    if self.tokenizers is not None and len(self.tokenizers) >= text_encoder_idx:
+                        logger.info(f"Adding {tokenizer_attr}")
+                        pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+                    else:
+                        pipeline_kwargs[tokenizer_attr] = None
             else:
                 pipeline_kwargs[text_encoder_attr] = None
-                pipeline_kwargs[tokenizer_attr] = None
+                if tokenizer_attr in pipeline_init_signature.parameters:
+                    pipeline_kwargs[tokenizer_attr] = None
 
             text_encoder_idx += 1
 

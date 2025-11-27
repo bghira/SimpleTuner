@@ -639,8 +639,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         model_family = str(model_family_raw).lower()
         model_flavour = model_flavour_raw.lower()
         is_i2v_flavour = model_flavour.startswith("i2v")
-        force_i2v = (model_family == "wan" and model_flavour.startswith("i2v-")) or (
-            model_family == "kandinsky5-video" and is_i2v_flavour
+        force_i2v = (
+            (model_family == "wan" and model_flavour.startswith("i2v-"))
+            or (model_family == "kandinsky5-video" and is_i2v_flavour)
+            or (model_family == "hunyuanvideo" and is_i2v_flavour)
         )
 
         if force_i2v:
@@ -1424,7 +1426,7 @@ class FactoryRegistry:
         matching conditioning-image-embed backends when none were supplied explicitly.
         """
         model_family = str(getattr(self.args, "model_family", "") or "")
-        if model_family.lower() not in ["wan", "kandinsky5-video"]:
+        if model_family.lower() not in ["wan", "kandinsky5-video", "hunyuanvideo"]:
             return data_backend_config
 
         auto_embed_configs: List[Dict[str, Any]] = []

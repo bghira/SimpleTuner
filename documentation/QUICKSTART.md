@@ -26,6 +26,7 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 | Lumina2 | 2B | ✓ | ✓ | ✓ | int8 optional | bf16 | ✓ | ✓ | ✗ | [LUMINA2.md](/documentation/quickstart/LUMINA2.md) |
 | Cosmos2 | 2B | ✓ | ✓ | ✓ | not recommended | bf16 | ✓ | ✓ | ✗ | [COSMOS2IMAGE.md](/documentation/quickstart/COSMOS2IMAGE.md) |
 | LTX Video | ~2.5B | ✓ | ✓ | ✓ | int8/fp8 optional | bf16 | ✓ | ✓ | ✗ | [LTXVIDEO.md](/documentation/quickstart/LTXVIDEO.md) |
+| Hunyuan Video 1.5 | 8.3B | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [HUNYUANVIDEO.md](/documentation/quickstart/HUNYUANVIDEO.md) |
 | Wan 2.x | 1.3B–14B | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [WAN.md](/documentation/quickstart/WAN.md) |
 | Qwen Image | 20B | ✓ | ✓ | ✓* | **required** (int8/nf4) | bf16 | ✓ | ✓ | ✗ | [QWEN_IMAGE.md](/documentation/quickstart/QWEN_IMAGE.md) |
 | Qwen Image Edit | 20B | ✓ | ✓ | ✓* | **required** (int8/nf4) | bf16 | ✓ | ✓ | ✗ | [QWEN_EDIT.md](/documentation/quickstart/QWEN_EDIT.md) |
