@@ -232,10 +232,98 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="memory_optimization",
             default_value=False,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="disable")],
             help_text="Offload groups of layers to CPU (or disk) between forward passes to reduce VRAM.",
             tooltip="Useful when training large models on limited VRAM. May slow training slightly depending on hardware.",
             importance=ImportanceLevel.ADVANCED,
             order=3,
+        )
+    )
+
+    # RamTorch Offloading
+    registry._add_field(
+        ConfigField(
+            name="ramtorch",
+            arg_name="--ramtorch",
+            ui_label="Enable RamTorch",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            platform_specific=["cuda", "rocm"],
+            help_text="Replace nn.Linear layers with RamTorch CPU-backed implementations.",
+            tooltip="Uses RamTorch to stream Linear weights from CPU with CUDA/ROCm streams. Not available on Apple/MPS.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="disable")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ramtorch_target_modules",
+            arg_name="--ramtorch_target_modules",
+            ui_label="RamTorch Target Modules",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="memory_optimization",
+            default_value=None,
+            help_text="Comma-separated glob list of module names to offload with RamTorch (Linear only).",
+            tooltip="Match fully-qualified module names or class names (supports * wildcards). Leave empty to offload all Linear layers.",
+            importance=ImportanceLevel.ADVANCED,
+            order=6,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ramtorch_text_encoder",
+            arg_name="--ramtorch_text_encoder",
+            ui_label="RamTorch Text Encoders",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Apply RamTorch to all text encoder Linear layers.",
+            tooltip="Replaces text encoder Linear layers with RamTorch variants. Requires --ramtorch.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=7,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ramtorch_vae",
+            arg_name="--ramtorch_vae",
+            ui_label="RamTorch VAE Mid Block",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Experimental: Apply RamTorch to VAE mid-block Linear layers.",
+            tooltip="Only targets the VAE mid block; convolutions remain untouched. Expected to be low impact.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=8,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ramtorch_controlnet",
+            arg_name="--ramtorch_controlnet",
+            ui_label="RamTorch ControlNet",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Apply RamTorch to ControlNet Linear layers when training ControlNet.",
+            tooltip="Only used when a ControlNet is being trained. Requires --ramtorch.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=9,
+            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
         )
     )
 

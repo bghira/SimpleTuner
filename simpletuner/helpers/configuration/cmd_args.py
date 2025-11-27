@@ -967,6 +967,29 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             f"Invalid gradient_accumulation_steps parameter: {args.gradient_accumulation_steps}, should be >= 1"
         )
 
+    ramtorch_enabled = bool(getattr(args, "ramtorch", False))
+    ramtorch_targets = getattr(args, "ramtorch_target_modules", None)
+    if ramtorch_targets in (None, "", "None"):
+        args.ramtorch_target_modules = None
+    elif isinstance(ramtorch_targets, (list, tuple)):
+        normalized_targets = [str(entry).strip() for entry in ramtorch_targets if str(entry).strip()]
+        args.ramtorch_target_modules = normalized_targets or None
+    else:
+        normalized_targets = [entry.strip() for entry in str(ramtorch_targets).split(",") if entry.strip()]
+        args.ramtorch_target_modules = normalized_targets or None
+
+    if ramtorch_enabled:
+        if torch.backends.mps.is_available() and not torch.cuda.is_available():
+            raise ValueError("--ramtorch is not supported on Apple hardware (MPS).")
+        if not torch.cuda.is_available():
+            raise ValueError("--ramtorch requires a CUDA or ROCm device.")
+        if not getattr(args, "set_grads_to_none", False):
+            info_log("Enabling --set_grads_to_none because RamTorch is active.")
+            args.set_grads_to_none = True
+
+    if ramtorch_enabled and bool(getattr(args, "enable_group_offload", False)):
+        raise ValueError("--ramtorch cannot be used together with --enable_group_offload.")
+
     if args.validation_guidance_skip_layers is not None:
         if args.model_family not in ["sd3", "wan"]:
             raise ValueError("Currently, skip-layer guidance is not supported for {}".format(args.model_family))
