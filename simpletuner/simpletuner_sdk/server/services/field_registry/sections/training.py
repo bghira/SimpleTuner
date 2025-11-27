@@ -232,7 +232,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="memory_optimization",
             default_value=False,
-            dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="disable")],
+            dependencies=[FieldDependency(field="ramtorch", operator="not_equals", value=True)],
             help_text="Offload groups of layers to CPU (or disk) between forward passes to reduce VRAM.",
             tooltip="Useful when training large models on limited VRAM. May slow training slightly depending on hardware.",
             importance=ImportanceLevel.ADVANCED,
@@ -255,6 +255,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Uses RamTorch to stream Linear weights from CPU with CUDA/ROCm streams. Not available on Apple/MPS.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
+            dependencies=[FieldDependency(field="enable_group_offload", operator="not_equals", value=True)],
         )
     )
 
@@ -399,6 +400,40 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Leave empty to keep offloaded weights in RAM. Directory is created if it does not exist.",
             importance=ImportanceLevel.ADVANCED,
             order=7,
+            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="group_offload_text_encoder",
+            arg_name="--group_offload_text_encoder",
+            ui_label="Include Text Encoder in Group Offload",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Include text encoder(s) in group offloading to reduce VRAM during embedding caching.",
+            tooltip="Recommended for large text encoders (e.g., FLUX.2's 24B Mistral). Only useful during text embed generation.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8,
+            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="group_offload_vae",
+            arg_name="--group_offload_vae",
+            ui_label="Include VAE in Group Offload",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Include VAE in group offloading to reduce VRAM during latent caching.",
+            tooltip="Useful for memory-constrained setups during VAE encoding. Only affects latent cache generation.",
+            importance=ImportanceLevel.ADVANCED,
+            order=9,
             dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
         )
     )

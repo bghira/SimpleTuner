@@ -4421,11 +4421,9 @@ class Trainer:
                             trained_component = self.model.get_trained_component(unwrap_model=False)
                             if trained_component is not None:
                                 trained_component.zero_grad(set_to_none=True)
-                            base_component = self.model.get_trained_component(base_model=True, unwrap_model=False)
-                            if base_component is not None and base_component is not trained_component:
-                                base_component.zero_grad(set_to_none=True)
                             if self.sidecar_optimizer is not None:
                                 self.sidecar_optimizer.zero_grad(set_to_none=True)
+                            # RamTorch clears gradients at module level; optimizer zeroing is not required here.
                         else:
                             self.optimizer.zero_grad(set_to_none=self.config.set_grads_to_none)
                             if self.sidecar_optimizer is not None:

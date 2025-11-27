@@ -4,7 +4,6 @@
 
 import inspect
 import os
-import random
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
@@ -13,14 +12,11 @@ import loguru
 import numpy as np
 import torch
 import torchvision.transforms as transforms
-from diffusers.configuration_utils import FrozenDict
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.models import AutoencoderKL
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import KarrasDiffusionSchedulers
-from diffusers.utils import BaseOutput, deprecate, logging
-from einops import rearrange
-from huggingface_hub import snapshot_download
+from diffusers.utils import BaseOutput, logging
 from PIL import Image
 from torch import distributed as dist
 
@@ -31,7 +27,6 @@ from simpletuner.helpers.models.hunyuanvideo.commons import (
     auto_offload_model,
     get_gpu_memory,
     get_rank,
-    is_flash3_available,
     is_sparse_attn_supported,
 )
 
@@ -1078,8 +1073,8 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
                 (
                     prompt_embeds_2,
                     negative_prompt_embeds_2,
-                    prompt_mask_2,
-                    negative_prompt_mask_2,
+                    _,
+                    _,
                 ) = self.encode_prompt(
                     prompt,
                     device,
@@ -1093,8 +1088,6 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         else:
             prompt_embeds_2 = None
             negative_prompt_embeds_2 = None
-            prompt_mask_2 = None
-            negative_prompt_mask_2 = None
 
         extra_kwargs = {}
         if self.config.glyph_byT5_v2:
@@ -1107,8 +1100,6 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
                 prompt_mask = torch.cat([negative_prompt_mask, prompt_mask])
             if prompt_embeds_2 is not None:
                 prompt_embeds_2 = torch.cat([negative_prompt_embeds_2, prompt_embeds_2])
-            if prompt_mask_2 is not None:
-                prompt_mask_2 = torch.cat([negative_prompt_mask_2, prompt_mask_2])
 
         extra_set_timesteps_kwargs = self.prepare_extra_func_kwargs(self.scheduler.set_timesteps, {"n_tokens": n_tokens})
 

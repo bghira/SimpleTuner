@@ -437,7 +437,6 @@ class TextEncoder(nn.Module):
         device = self.model.device if device is None else device
         use_attention_mask = use_default(use_attention_mask, self.use_attention_mask)
         hidden_state_skip_layer = use_default(hidden_state_skip_layer, self.hidden_state_skip_layer)
-        do_sample = use_default(do_sample, not self.reproduce)
 
         attention_mask = batch_encoding["attention_mask"].to(device) if use_attention_mask else None
         outputs = self.model(

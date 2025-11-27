@@ -56,6 +56,7 @@ upstream_config_sources = {
     "sd3": "stabilityai/stable-diffusion-3.5-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
+    "flux2": "black-forest-labs/flux.2-dev",
     "chroma": "lodestones/Chroma1-Base",
     "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sd2x": "stabilityai/stable-diffusion-v2-1",
@@ -1604,10 +1605,30 @@ class ModelFoundation(ABC):
 
     def get_group_offload_modules(self) -> Dict[str, torch.nn.Module]:
         modules: Dict[str, torch.nn.Module] = {}
+        # Transformer (always included for transformer-based models)
         if self.MODEL_TYPE is ModelTypes.TRANSFORMER and getattr(self, "model", None) is not None:
             unwrapped_model = self.unwrap_model(self.model)
             if isinstance(unwrapped_model, torch.nn.Module):
                 modules["transformer"] = unwrapped_model
+
+        # Text encoders (optional, controlled by --group_offload_text_encoder)
+        if getattr(self.config, "group_offload_text_encoder", False):
+            text_encoders = getattr(self, "text_encoders", None)
+            if text_encoders is not None:
+                for i, te in enumerate(text_encoders):
+                    if te is not None:
+                        unwrapped_te = self.unwrap_model(te)
+                        if isinstance(unwrapped_te, torch.nn.Module):
+                            modules[f"text_encoder_{i}"] = unwrapped_te
+
+        # VAE (optional, controlled by --group_offload_vae)
+        if getattr(self.config, "group_offload_vae", False):
+            vae = getattr(self, "vae", None)
+            if vae is not None:
+                unwrapped_vae = self.unwrap_model(vae)
+                if isinstance(unwrapped_vae, torch.nn.Module):
+                    modules["vae"] = unwrapped_vae
+
         return modules
 
     def _resolve_group_offload_device(self) -> torch.device:

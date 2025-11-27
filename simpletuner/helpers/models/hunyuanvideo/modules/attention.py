@@ -82,7 +82,6 @@ def attention(
                 ), f"Integer attention mask must be between 0 and 1 for torch attention."
                 attn_mask = attn_mask.to(torch.bool)
             elif attn_mask.dtype != torch.bool:
-                attn_mask = attn_mask.to(query.dtype)
                 raise NotImplementedError(f"Float attention mask is not implemented for torch attention.")
             attn_mask1 = einops.rearrange(attn_mask, "b l -> b 1 l 1")
             attn_mask2 = einops.rearrange(attn_mask1, "b 1 l 1 -> b 1 1 l")
