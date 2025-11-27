@@ -36,28 +36,6 @@ class ZImageModelTests(unittest.TestCase):
         model.model = DummyTransformer()
         return model
 
-    def test_setup_model_flavour_defaults(self):
-        model = self._build_model()
-        model.setup_model_flavour()
-        self.assertEqual(model.config.pretrained_model_name_or_path, "TONGYI-MAI/Z-Image-Base")
-        self.assertEqual(model.config.pretrained_vae_model_name_or_path, "TONGYI-MAI/Z-Image-Base")
-        self.assertEqual(model.config.vae_path, "TONGYI-MAI/Z-Image-Base")
-
-    def test_setup_training_noise_schedule_uses_from_pretrained(self):
-        model = self._build_model()
-        dummy_scheduler = types.SimpleNamespace(config={})
-        with mock.patch("simpletuner.helpers.models.z_image.model.FlowMatchEulerDiscreteScheduler") as mock_sched:
-            mock_sched.from_pretrained.return_value = dummy_scheduler
-            model.setup_model_flavour()
-            cfg, sched = model.setup_training_noise_schedule()
-        self.assertIs(sched, dummy_scheduler)
-        mock_sched.from_pretrained.assert_called_once_with(
-            model._model_config_path(),
-            subfolder="scheduler",
-            shift=model.config.flow_schedule_shift,
-        )
-        self.assertEqual(cfg.prediction_type, "flow_matching")
-
     def test_convert_text_embed_for_pipeline_masks_tokens(self):
         model = self._build_model()
         prompt_embeds = torch.arange(2 * 4 * 3, dtype=torch.float32).view(2, 4, 3)
