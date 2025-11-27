@@ -255,6 +255,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Uses RamTorch to stream Linear weights from CPU with CUDA/ROCm streams. Not available on Apple/MPS.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
+            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="disable")],
         )
     )
 
