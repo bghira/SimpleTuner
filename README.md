@@ -68,6 +68,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 | **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L/G |
 | **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
 | **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
+| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
 | **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
 | **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
 | **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
@@ -105,7 +106,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **HiDream MoE** - Mixture of Experts gate loss augmentation
 - **T5 masked training** - Enhanced fine details for Flux and compatible models
 - **QKV fusion** - Memory and speed optimizations (Flux, Lumina2)
-- **TREAD integration** - Selective token routing for Wan and Flux models
+- **TREAD integration** - Selective token routing for most models
 - **Wan 2.x I2V** - High/low stage presets plus a 2.1 time-embedding fallback (see Wan quickstart)
 - **Classifier-free guidance** - Optional CFG reintroduction for distilled models
 
@@ -114,6 +115,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 Detailed quickstart guides are available for all supported models:
 
 - **[Flux.1 Guide](/documentation/quickstart/FLUX.md)** - Includes Kontext editing support and QKV fusion
+- **[Flux.2 Guide](/documentation/quickstart/FLUX2.md)** - **NEW!** Latest enormous Flux model with Mistral-3 text encoder
 - **[ACE-Step Guide](/documentation/quickstart/ACE_STEP.md)** - **NEW!** Audio generation model training (text-to-music)
 - **[Chroma Guide](/documentation/quickstart/CHROMA.md)** - Lodestone's flow-matching transformer with Chroma-specific schedules
 - **[Stable Diffusion 3 Guide](/documentation/quickstart/SD3.md)** - Full and LoRA training with ControlNet
