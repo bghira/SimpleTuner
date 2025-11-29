@@ -162,8 +162,9 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
     transformer_name = "transformer"
     controlnet_name = "controlnet"
 
+    @classmethod
     def lora_state_dict(
-        self,
+        cls,
         pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
         **kwargs,
     ):
