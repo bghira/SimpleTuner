@@ -26,22 +26,6 @@ Luckily, these are readily available through providers such as [LambdaLabs](http
 
 **Unlike other models, Apple GPUs do not currently work for training Flux.**
 
-### Memory offloading (optional)
-
-Flux supports grouped module offloading via diffusers v0.33+. This dramatically reduces VRAM pressure when you are bottlenecked by the transformer weights. You can enable it by adding the following flags to `TRAINER_EXTRA_ARGS` (or the WebUI Hardware page):
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- `--group_offload_use_stream` is only effective on CUDA devices; SimpleTuner automatically disables streams on ROCm, MPS and CPU backends.
-- Do **not** combine this with `--enable_model_cpu_offload` — the two strategies are mutually exclusive.
-- When using `--group_offload_to_disk_path`, prefer a fast local SSD/NVMe target.
 
 ## Prerequisites
 
@@ -158,6 +142,23 @@ There, you will possibly need to modify the following variables:
 - `mixed_precision` - Beginners should keep this in `bf16`
 - `gradient_checkpointing` - set this to true in practically every situation on every device
 - `gradient_checkpointing_interval` - this could be set to a value of 2 or higher on larger GPUs to only checkpoint every _n_ blocks. A value of 2 would checkpoint half of the blocks, and 3 would be one-third.
+
+### Memory offloading (optional)
+
+Flux supports grouped module offloading via diffusers v0.33+. This dramatically reduces VRAM pressure when you are bottlenecked by the transformer weights. You can enable it by adding the following flags to `TRAINER_EXTRA_ARGS` (or the WebUI Hardware page):
+
+```bash
+--enable_group_offload \
+--group_offload_type block_level \
+--group_offload_blocks_per_group 1 \
+--group_offload_use_stream \
+# optional: spill offloaded weights to disk instead of RAM
+# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
+```
+
+- `--group_offload_use_stream` is only effective on CUDA devices; SimpleTuner automatically disables streams on ROCm, MPS and CPU backends.
+- Do **not** combine this with `--enable_model_cpu_offload` — the two strategies are mutually exclusive.
+- When using `--group_offload_to_disk_path`, prefer a fast local SSD/NVMe target.
 
 #### Validation prompts
 
