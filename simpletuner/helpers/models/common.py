@@ -175,6 +175,8 @@ class ModelFoundation(ABC):
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    ASSISTANT_LORA_PATH = None
+    ASSISTANT_LORA_FLAVOURS = None
     DEFAULT_CONTROLNET_LORA_TARGET = [
         "to_q",
         "to_k",
@@ -224,6 +226,8 @@ class ModelFoundation(ABC):
         self._validation_preview_decoder_failed = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
+        self.assistant_adapter_name = "assistant"
+        self.assistant_lora_loaded = False
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -238,6 +242,128 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    @classmethod
+    def supports_assistant_lora(cls, config=None) -> bool:
+        """
+        Indicates whether the model family can leverage a fixed assistant LoRA.
+        When a config is provided, optionally gate support by flavour.
+        """
+        if config is not None and getattr(config, "disable_assistant_lora", False):
+            return False
+        has_default = bool(getattr(cls, "ASSISTANT_LORA_PATH", None))
+        flavour_whitelist = getattr(cls, "ASSISTANT_LORA_FLAVOURS", None)
+        if config is None or flavour_whitelist is None:
+            return has_default or bool(flavour_whitelist)
+
+        try:
+            flavour = getattr(config, "model_flavour", None)
+        except Exception:
+            flavour = None
+        if not flavour_whitelist:
+            return has_default
+        return flavour in flavour_whitelist
+
+    def get_assistant_lora(self):
+        """
+        Returns the PEFT-enabled model component when an assistant adapter is present.
+        """
+        if not getattr(self, "assistant_lora_loaded", False):
+            return None
+        try:
+            return self.get_trained_component(unwrap_model=False)
+        except Exception:
+            return None
+
+    def configure_assistant_lora_for_training(self):
+        """
+        Activate the assistant adapter for training (frozen) alongside the trainable adapter.
+        """
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not getattr(self, "assistant_lora_loaded", False):
+            return
+        trained_component = self.get_trained_component(unwrap_model=False)
+        if trained_component is None:
+            return
+
+        from simpletuner.helpers.assistant_lora import set_adapter_stack
+
+        assistant_weight = getattr(self.config, "assistant_lora_strength", 1.0)
+        try:
+            assistant_weight = float(assistant_weight)
+        except Exception:
+            assistant_weight = 1.0
+
+        adapter_names = []
+        adapter_weights = []
+
+        if assistant_weight != 0:
+            adapter_names.append(self.assistant_adapter_name)
+            adapter_weights.append(assistant_weight)
+
+        peft_config = getattr(trained_component, "peft_config", {}) or {}
+        if "default" in peft_config:
+            adapter_names.append("default")
+            adapter_weights.append(1.0)
+
+        if not adapter_names:
+            return
+
+        weight_arg = None
+        if len(adapter_weights) == 1:
+            weight_arg = adapter_weights[0]
+        else:
+            weight_arg = adapter_weights
+
+        set_adapter_stack(
+            trained_component,
+            adapter_names,
+            weights=weight_arg,
+            freeze_names=[self.assistant_adapter_name],
+        )
+
+    def configure_assistant_lora_for_inference(self):
+        """
+        Configure the assistant adapter for validation/inference (typically disabled).
+        """
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not getattr(self, "assistant_lora_loaded", False):
+            return
+        trained_component = self.get_trained_component(unwrap_model=False)
+        if trained_component is None:
+            return
+
+        from simpletuner.helpers.assistant_lora import set_adapter_stack
+
+        inference_weight = getattr(self.config, "assistant_lora_inference_strength", 0.0)
+        try:
+            inference_weight = float(inference_weight)
+        except Exception:
+            inference_weight = 0.0
+
+        adapter_names = []
+        adapter_weights = []
+        if inference_weight != 0:
+            adapter_names.append(self.assistant_adapter_name)
+            adapter_weights.append(inference_weight)
+
+        peft_config = getattr(trained_component, "peft_config", {}) or {}
+        if "default" in peft_config:
+            adapter_names.append("default")
+            adapter_weights.append(1.0)
+
+        if not adapter_names:
+            return
+
+        weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
+        set_adapter_stack(
+            trained_component,
+            adapter_names,
+            weights=weight_arg,
+            freeze_names=[self.assistant_adapter_name],
+        )
 
     @classmethod
     def supports_lora(cls) -> bool:

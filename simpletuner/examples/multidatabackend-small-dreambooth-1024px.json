@@ -2,7 +2,7 @@
   {
     "id": "dreambooth-1024",
     "type": "huggingface",
-    "dataset_name": "keras-dreambooth/minercraft",
+    "dataset_name": "RareConcepts/Domokun",
     "crop": true, "crop_style": "random", "crop_aspect": "square",
     "minimum_image_size": 256,
     "maximum_image_size": 1024,
@@ -11,7 +11,7 @@
     "resolution_type": "pixel_area",
     "metadata_backend": "huggingface",
     "caption_strategy": "instanceprompt",
-    "instance_prompt": "minecraft",
+    "instance_prompt": "🟫",
     "cache_dir_vae": "cache/vae/{model_family}/dreambooth-1024"
   },
   {
