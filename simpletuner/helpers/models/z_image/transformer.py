@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -27,6 +27,8 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from torch.nn.utils.rnn import pad_sequence
+
+from simpletuner.helpers.training.tread import TREADRouter
 
 ADALN_EMBED_DIM = 256
 SEQ_MULTI_OF = 32
@@ -333,6 +335,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
     _no_split_modules = ["ZImageTransformerBlock"]
     _repeated_blocks = ["ZImageTransformerBlock"]
     _skip_layerwise_casting_patterns = ["t_embedder", "cap_embedder"]  # precision sensitive layers
+    _tread_router: Optional[TREADRouter] = None
+    _tread_routes: Optional[List[Dict[str, Any]]] = None
 
     @register_to_config
     def __init__(
@@ -424,6 +428,10 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.axes_lens = axes_lens
 
         self.rope_embedder = RopeEmbedder(theta=rope_theta, axes_dims=axes_dims, axes_lens=axes_lens)
+
+    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
+        self._tread_router = router
+        self._tread_routes = routes
 
     def unpatchify(self, x: List[torch.Tensor], size: List[Tuple], patch_size, f_patch_size) -> List[torch.Tensor]:
         pH = pW = patch_size
@@ -557,6 +565,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         cap_feats: List[torch.Tensor],
         patch_size=2,
         f_patch_size=1,
+        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        skip_layers: Optional[List[int]] = None,
+        force_keep_mask: Optional[torch.Tensor] = None,
     ):
         assert patch_size in self.all_patch_size
         assert f_patch_size in self.all_f_patch_size
@@ -645,14 +656,71 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for i, seq_len in enumerate(unified_item_seqlens):
             unified_attn_mask[i, :seq_len] = 1
 
-        if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for layer in self.layers:
-                unified = self._gradient_checkpointing_func(
-                    layer, unified, unified_attn_mask, unified_freqs_cis, adaln_input
-                )
-        else:
-            for layer in self.layers:
-                unified = layer(unified, unified_attn_mask, unified_freqs_cis, adaln_input)
+        # TREAD routing (padded, similar to Flux)
+        routes = self._tread_routes or []
+        router = self._tread_router
+        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+        if use_routing and router is None:
+            raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
+
+        if routes:
+            total_layers = len(self.layers)
+
+            def _to_pos(idx):
+                return idx if idx >= 0 else total_layers + idx
+
+            routes = [
+                {
+                    **r,
+                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
+                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
+                }
+                for r in routes
+            ]
+
+        route_ptr = 0
+        routing_now = False
+        tread_mask_info = None
+        saved_tokens = None
+        saved_freqs = None
+        saved_attn = None
+
+        def apply_layer(layer_module, h, attn_mask, freqs):
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                return self._gradient_checkpointing_func(layer_module, h, attn_mask, freqs, adaln_input)
+            return layer_module(h, attn_mask, freqs, adaln_input)
+
+        skip_set = set(skip_layers) if skip_layers is not None else set()
+
+        for idx, layer in enumerate(self.layers):
+            if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
+                mask_ratio = routes[route_ptr]["selection_ratio"]
+                force_keep = torch.zeros_like(unified_attn_mask)
+                for b in range(bsz):
+                    cap_len = cap_item_seqlens[b]
+                    force_keep[b, :cap_len] = True  # keep captions
+                    force_keep[b, unified_item_seqlens[b] :] = True  # keep padding tail
+                tread_mask_info = router.get_mask(unified, mask_ratio=mask_ratio, force_keep=force_keep)
+                saved_tokens = unified.clone()
+                saved_freqs = unified_freqs_cis.clone()
+                saved_attn = unified_attn_mask.clone()
+                unified = router.start_route(unified, tread_mask_info)
+                unified_freqs_cis = router.start_route(unified_freqs_cis, tread_mask_info)
+                unified_attn_mask = torch.ones((bsz, unified.shape[1]), dtype=torch.bool, device=unified.device)
+                routing_now = True
+
+            if idx in skip_set:
+                layer_out = unified
+            else:
+                layer_out = apply_layer(layer, unified, unified_attn_mask, unified_freqs_cis)
+            unified = layer_out
+
+            if routing_now and route_ptr < len(routes) and idx == routes[route_ptr]["end_layer_idx"]:
+                unified = router.end_route(unified, tread_mask_info, original_x=saved_tokens)
+                unified_freqs_cis = router.end_route(unified_freqs_cis, tread_mask_info, original_x=saved_freqs)
+                unified_attn_mask = saved_attn
+                routing_now = False
+                route_ptr += 1
 
         unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](unified, adaln_input)
         unified = list(unified.unbind(dim=0))
