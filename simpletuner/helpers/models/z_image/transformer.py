@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -25,21 +25,15 @@ from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
-from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
-from einops import rearrange
 from torch.nn.utils.rnn import pad_sequence
 
-from simpletuner.helpers.training.tread import TREADRouter
-
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+ADALN_EMBED_DIM = 256
+SEQ_MULTI_OF = 32
 
 # Ensure diffusers knows how to scale adapters for this transformer type.
 if "ZImageTransformer2DModel" not in diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING:
     diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING["ZImageTransformer2DModel"] = lambda model_cls, weights: weights
-
-ADALN_EMBED_DIM = 256
-SEQ_MULTI_OF = 32
 
 
 class TimestepEmbedder(nn.Module):
@@ -60,10 +54,6 @@ class TimestepEmbedder(nn.Module):
                 bias=True,
             ),
         )
-        nn.init.normal_(self.mlp[0].weight, std=0.02)
-        nn.init.zeros_(self.mlp[0].bias)
-        nn.init.normal_(self.mlp[2].weight, std=0.02)
-        nn.init.zeros_(self.mlp[2].bias)
 
         self.frequency_embedding_size = frequency_embedding_size
 
@@ -82,7 +72,10 @@ class TimestepEmbedder(nn.Module):
 
     def forward(self, t):
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
-        t_emb = self.mlp(t_freq.to(self.mlp[0].weight.dtype))
+        weight_dtype = self.mlp[0].weight.dtype
+        if weight_dtype.is_floating_point:
+            t_freq = t_freq.to(weight_dtype)
+        t_emb = self.mlp(t_freq)
         return t_emb
 
 
@@ -116,6 +109,7 @@ class ZSingleStreamAttnProcessor:
         query = query.unflatten(-1, (attn.heads, -1))
         key = key.unflatten(-1, (attn.heads, -1))
         value = value.unflatten(-1, (attn.heads, -1))
+
         # Apply Norms
         if attn.norm_q is not None:
             query = attn.norm_q(query)
@@ -182,7 +176,14 @@ class FeedForward(nn.Module):
 @maybe_allow_in_graph
 class ZImageTransformerBlock(nn.Module):
     def __init__(
-        self, layer_id: int, dim: int, n_heads: int, n_kv_heads: int, norm_eps: float, qk_norm: bool, modulation=True
+        self,
+        layer_id: int,
+        dim: int,
+        n_heads: int,
+        n_kv_heads: int,
+        norm_eps: float,
+        qk_norm: bool,
+        modulation=True,
     ):
         super().__init__()
         self.dim = dim
@@ -196,8 +197,9 @@ class ZImageTransformerBlock(nn.Module):
             dim_head=dim // n_heads,
             heads=n_heads,
             qk_norm="rms_norm" if qk_norm else None,
-            eps=1e-6,
+            eps=1e-5,
             bias=False,
+            out_bias=False,
             processor=ZSingleStreamAttnProcessor(),
         )
 
@@ -215,8 +217,6 @@ class ZImageTransformerBlock(nn.Module):
             self.adaLN_modulation = nn.Sequential(
                 nn.Linear(min(dim, ADALN_EMBED_DIM), 4 * dim, bias=True),
             )
-            nn.init.zeros_(self.adaLN_modulation[0].weight)
-            nn.init.zeros_(self.adaLN_modulation[0].bias)
 
     def forward(
         self,
@@ -226,16 +226,14 @@ class ZImageTransformerBlock(nn.Module):
         adaln_input: Optional[torch.Tensor] = None,
     ):
         if self.modulation:
-            assert adaln_input is not None, "adaln_input (time conditioning) must be provided for modulation."
+            assert adaln_input is not None
             scale_msa, gate_msa, scale_mlp, gate_mlp = self.adaLN_modulation(adaln_input).unsqueeze(1).chunk(4, dim=2)
             gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
             scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
-            scale_gate_msa = scale_msa
-            scale_gate_mlp = scale_mlp
 
             # Attention block
             attn_out = self.attention(
-                self.attention_norm1(x) * scale_gate_msa,
+                self.attention_norm1(x) * scale_msa,
                 attention_mask=attn_mask,
                 freqs_cis=freqs_cis,
             )
@@ -244,11 +242,11 @@ class ZImageTransformerBlock(nn.Module):
             # FFN block
             x = x + gate_mlp * self.ffn_norm2(
                 self.feed_forward(
-                    self.ffn_norm1(x) * scale_gate_mlp,
+                    self.ffn_norm1(x) * scale_mlp,
                 )
             )
-
         else:
+            # Attention block
             attn_out = self.attention(
                 self.attention_norm1(x),
                 attention_mask=attn_mask,
@@ -256,11 +254,13 @@ class ZImageTransformerBlock(nn.Module):
             )
             x = x + self.attention_norm2(attn_out)
 
+            # FFN block
             x = x + self.ffn_norm2(
                 self.feed_forward(
                     self.ffn_norm1(x),
                 )
             )
+
         return x
 
 
@@ -269,25 +269,26 @@ class FinalLayer(nn.Module):
         super().__init__()
         self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.linear = nn.Linear(hidden_size, out_channels, bias=True)
-        nn.init.zeros_(self.linear.weight)
-        nn.init.zeros_(self.linear.bias)
 
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
             nn.Linear(min(hidden_size, ADALN_EMBED_DIM), hidden_size, bias=True),
         )
-        nn.init.zeros_(self.adaLN_modulation[1].weight)
-        nn.init.zeros_(self.adaLN_modulation[1].bias)
 
-    def forward(self, x_shard, c):
+    def forward(self, x, c):
         scale = 1.0 + self.adaLN_modulation(c)
-        x_shard = self.norm_final(x_shard) * scale.unsqueeze(1)
-        x_shard = self.linear(x_shard)
-        return x_shard
+        x = self.norm_final(x) * scale.unsqueeze(1)
+        x = self.linear(x)
+        return x
 
 
 class RopeEmbedder:
-    def __init__(self, theta: float = 256.0, axes_dims: List[int] = (16, 56, 56), axes_lens: List[int] = (64, 128, 128)):
+    def __init__(
+        self,
+        theta: float = 256.0,
+        axes_dims: List[int] = (16, 56, 56),
+        axes_lens: List[int] = (64, 128, 128),
+    ):
         self.theta = theta
         self.axes_dims = axes_dims
         self.axes_lens = axes_lens
@@ -310,10 +311,15 @@ class RopeEmbedder:
     def __call__(self, ids: torch.Tensor):
         assert ids.ndim == 2
         assert ids.shape[-1] == len(self.axes_dims)
+        device = ids.device
 
         if self.freqs_cis is None:
             self.freqs_cis = self.precompute_freqs_cis(self.axes_dims, self.axes_lens, theta=self.theta)
-            self.freqs_cis = [freqs_cis.to(device=ids.device) for freqs_cis in self.freqs_cis]
+            self.freqs_cis = [freqs_cis.to(device) for freqs_cis in self.freqs_cis]
+        else:
+            # Ensure freqs_cis are on the same device as ids
+            if self.freqs_cis[0].device != device:
+                self.freqs_cis = [freqs_cis.to(device) for freqs_cis in self.freqs_cis]
 
         result = []
         for i in range(len(self.axes_dims)):
@@ -325,8 +331,8 @@ class RopeEmbedder:
 class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     _supports_gradient_checkpointing = True
     _no_split_modules = ["ZImageTransformerBlock"]
-    _tread_router: Optional[TREADRouter] = None
-    _tread_routes: Optional[List[Dict[str, Any]]] = None
+    _repeated_blocks = ["ZImageTransformerBlock"]
+    _skip_layerwise_casting_patterns = ["t_embedder", "cap_embedder"]  # precision sensitive layers
 
     @register_to_config
     def __init__(
@@ -357,6 +363,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         self.rope_theta = rope_theta
         self.t_scale = t_scale
+        self.gradient_checkpointing = False
 
         assert len(all_patch_size) == len(all_f_patch_size)
 
@@ -364,8 +371,6 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         all_final_layer = {}
         for patch_idx, (patch_size, f_patch_size) in enumerate(zip(all_patch_size, all_f_patch_size)):
             x_embedder = nn.Linear(f_patch_size * patch_size * patch_size * in_channels, dim, bias=True)
-            nn.init.xavier_uniform_(x_embedder.weight)
-            nn.init.constant_(x_embedder.bias, 0.0)
             all_x_embedder[f"{patch_size}-{f_patch_size}"] = x_embedder
 
             final_layer = FinalLayer(dim, patch_size * patch_size * f_patch_size * self.out_channels)
@@ -375,13 +380,29 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.all_final_layer = nn.ModuleDict(all_final_layer)
         self.noise_refiner = nn.ModuleList(
             [
-                ZImageTransformerBlock(1000 + layer_id, dim, n_heads, n_kv_heads, norm_eps, qk_norm, modulation=True)
+                ZImageTransformerBlock(
+                    1000 + layer_id,
+                    dim,
+                    n_heads,
+                    n_kv_heads,
+                    norm_eps,
+                    qk_norm,
+                    modulation=True,
+                )
                 for layer_id in range(n_refiner_layers)
             ]
         )
         self.context_refiner = nn.ModuleList(
             [
-                ZImageTransformerBlock(layer_id, dim, n_heads, n_kv_heads, norm_eps, qk_norm, modulation=False)
+                ZImageTransformerBlock(
+                    layer_id,
+                    dim,
+                    n_heads,
+                    n_kv_heads,
+                    norm_eps,
+                    qk_norm,
+                    modulation=False,
+                )
                 for layer_id in range(n_refiner_layers)
             ]
         )
@@ -390,13 +411,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             RMSNorm(cap_feat_dim, eps=norm_eps),
             nn.Linear(cap_feat_dim, dim, bias=True),
         )
-        nn.init.trunc_normal_(self.cap_embedder[1].weight, std=0.02)
-        nn.init.zeros_(self.cap_embedder[1].bias)
 
         self.x_pad_token = nn.Parameter(torch.empty((1, dim)))
-        nn.init.normal_(self.x_pad_token, std=0.02)
         self.cap_pad_token = nn.Parameter(torch.empty((1, dim)))
-        nn.init.normal_(self.cap_pad_token, std=0.02)
 
         self.layers = nn.ModuleList(
             [ZImageTransformerBlock(layer_id, dim, n_heads, n_kv_heads, norm_eps, qk_norm) for layer_id in range(n_layers)]
@@ -408,36 +425,6 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         self.rope_embedder = RopeEmbedder(theta=rope_theta, axes_dims=axes_dims, axes_lens=axes_lens)
 
-        self.gradient_checkpointing = False
-        self.gradient_checkpointing_interval: Optional[int] = None
-        self._gradient_checkpointing_func = None
-
-    def _checkpoint(self, module: nn.Module, *args):
-        """
-        Run a checkpointed forward pass using the configured checkpointing function.
-        Falls back to torch.utils.checkpoint.checkpoint with non-reentrant mode if none is set.
-        """
-        if self._gradient_checkpointing_func is not None:
-            return self._gradient_checkpointing_func(module, *args)
-
-        return torch.utils.checkpoint.checkpoint(module, *args, use_reentrant=False)
-
-    def set_gradient_checkpointing_interval(self, value: int):
-        self.gradient_checkpointing_interval = value
-
-    def set_attention_backend(self, backend, parallel_config=None):
-        """
-        Configure the attention backend for all Z-Image attention processors.
-        """
-        for module in self.modules():
-            if isinstance(module, Attention) and isinstance(getattr(module, "processor", None), ZSingleStreamAttnProcessor):
-                module.processor._attention_backend = backend
-                module.processor._parallel_config = parallel_config
-
-    def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
-        """TREAD routing is not supported in the padded Z-Image path."""
-        raise NotImplementedError("TREAD routing is not supported for the padded Z-Image transformer.")
-
     def unpatchify(self, x: List[torch.Tensor], size: List[Tuple], patch_size, f_patch_size) -> List[torch.Tensor]:
         pH = pW = patch_size
         pF = f_patch_size
@@ -446,9 +433,12 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for i in range(bsz):
             F, H, W = size[i]
             ori_len = (F // pF) * (H // pH) * (W // pW)
-            x[i] = rearrange(
-                x[i][:ori_len].view(F // pF, H // pH, W // pW, pF, pH, pW, self.out_channels),
-                "f h w pf ph pw c -> c (f pf) (h ph) (w pw)",
+            # "f h w pf ph pw c -> c (f pf) (h ph) (w pw)"
+            x[i] = (
+                x[i][:ori_len]
+                .view(F // pF, H // pH, W // pW, pF, pH, pW, self.out_channels)
+                .permute(6, 0, 3, 1, 4, 2, 5)
+                .reshape(self.out_channels, F, H, W)
             )
         return x
 
@@ -468,8 +458,6 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         patch_size: int,
         f_patch_size: int,
     ):
-
-        bsz = len(all_image)
         pH = pW = patch_size
         pF = f_patch_size
         device = all_image[0].device
@@ -482,9 +470,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         all_cap_pad_mask = []
         all_cap_feats_out = []
 
-        for i, image in enumerate(all_image):
-            ### LLM Text Encoder
-            cap_ori_len = len(all_cap_feats[i])
+        for i, (image, cap_feat) in enumerate(zip(all_image, all_cap_feats)):
+            ### Process Caption
+            cap_ori_len = len(cap_feat)
             cap_padding_len = (-cap_ori_len) % SEQ_MULTI_OF
             # padded position ids
             cap_padded_pos_ids = self.create_coordinate_grid(
@@ -504,7 +492,10 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 )
             )
             # padded feature
-            cap_padded_feat = torch.cat([all_cap_feats[i], all_cap_feats[i][-1:].repeat(cap_padding_len, 1)], dim=0)
+            cap_padded_feat = torch.cat(
+                [cap_feat, cap_feat[-1:].repeat(cap_padding_len, 1)],
+                dim=0,
+            )
             all_cap_feats_out.append(cap_padded_feat)
 
             ### Process Image
@@ -513,42 +504,40 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             F_tokens, H_tokens, W_tokens = F // pF, H // pH, W // pW
 
             image = image.view(C, F_tokens, pF, H_tokens, pH, W_tokens, pW)
-            image = rearrange(image, "c f pf h ph w pw -> (f h w) (pf ph pw c)")
+            # "c f pf h ph w pw -> (f h w) (pf ph pw c)"
+            image = image.permute(1, 3, 5, 2, 4, 6, 0).reshape(F_tokens * H_tokens * W_tokens, pF * pH * pW * C)
 
             image_ori_len = len(image)
             image_padding_len = (-image_ori_len) % SEQ_MULTI_OF
-            # padded_pos_ids
+
             image_ori_pos_ids = self.create_coordinate_grid(
                 size=(F_tokens, H_tokens, W_tokens),
                 start=(cap_ori_len + cap_padding_len + 1, 0, 0),
                 device=device,
             ).flatten(0, 2)
-            if image_padding_len > 0:
-                image_padding_pos_ids = (
-                    self.create_coordinate_grid(
-                        size=(1, 1, 1),
-                        start=(0, 0, 0),
-                        device=device,
-                    )
-                    .flatten(0, 2)
-                    .repeat(image_padding_len, 1)
+            image_padding_pos_ids = (
+                self.create_coordinate_grid(
+                    size=(1, 1, 1),
+                    start=(0, 0, 0),
+                    device=device,
                 )
-                image_padded_pos_ids = torch.cat([image_ori_pos_ids, image_padding_pos_ids], dim=0)
-                image_pad_mask = torch.cat(
+                .flatten(0, 2)
+                .repeat(image_padding_len, 1)
+            )
+            image_padded_pos_ids = torch.cat([image_ori_pos_ids, image_padding_pos_ids], dim=0)
+            all_image_pos_ids.append(image_padded_pos_ids)
+            # pad mask
+            all_image_pad_mask.append(
+                torch.cat(
                     [
                         torch.zeros((image_ori_len,), dtype=torch.bool, device=device),
                         torch.ones((image_padding_len,), dtype=torch.bool, device=device),
                     ],
                     dim=0,
                 )
-                image_padded_feat = torch.cat([image, image[-1:].repeat(image_padding_len, 1)], dim=0)
-            else:
-                image_padded_pos_ids = image_ori_pos_ids
-                image_pad_mask = torch.zeros((image_ori_len,), dtype=torch.bool, device=device)
-                image_padded_feat = image
-
-            all_image_pos_ids.append(image_padded_pos_ids)
-            all_image_pad_mask.append(image_pad_mask)
+            )
+            # padded feature
+            image_padded_feat = torch.cat([image, image[-1:].repeat(image_padding_len, 1)], dim=0)
             all_image_out.append(image_padded_feat)
 
         return (
@@ -568,16 +557,12 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         cap_feats: List[torch.Tensor],
         patch_size=2,
         f_patch_size=1,
-        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
-        skip_layers: Optional[List[int]] = None,
     ):
-
         assert patch_size in self.all_patch_size
         assert f_patch_size in self.all_f_patch_size
 
         bsz = len(x)
         device = x[0].device
-
         t = t * self.t_scale
         t = self.t_embedder(t)
 
@@ -587,23 +572,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             x_size,
             x_pos_ids,
             cap_pos_ids,
-            x_pad_mask,
-            cap_pad_mask,
+            x_inner_pad_mask,
+            cap_inner_pad_mask,
         ) = self.patchify_and_embed(x, cap_feats, patch_size, f_patch_size)
-
-        if joint_attention_kwargs is not None:
-            joint_attention_kwargs = joint_attention_kwargs.copy()
-            lora_scale = joint_attention_kwargs.pop("scale", 1.0)
-        else:
-            lora_scale = 1.0
-
-        if USE_PEFT_BACKEND:
-            scale_lora_layers(self, lora_scale)
-        else:
-            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
-                logger.warning(
-                    "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
-                )
 
         # x embed & refine
         x_item_seqlens = [len(_) for _ in x]
@@ -615,7 +586,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         # Match t_embedder output dtype to x for layerwise casting compatibility
         adaln_input = t.type_as(x)
-        x[torch.cat(x_pad_mask)] = self.x_pad_token
+        x[torch.cat(x_inner_pad_mask)] = self.x_pad_token
         x = list(x.split(x_item_seqlens, dim=0))
         x_freqs_cis = list(self.rope_embedder(torch.cat(x_pos_ids, dim=0)).split(x_item_seqlens, dim=0))
 
@@ -627,7 +598,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
             for layer in self.noise_refiner:
-                x = self._checkpoint(layer, x, x_attn_mask, x_freqs_cis, adaln_input)
+                x = self._gradient_checkpointing_func(layer, x, x_attn_mask, x_freqs_cis, adaln_input)
         else:
             for layer in self.noise_refiner:
                 x = layer(x, x_attn_mask, x_freqs_cis, adaln_input)
@@ -639,7 +610,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         cap_feats = torch.cat(cap_feats, dim=0)
         cap_feats = self.cap_embedder(cap_feats)
-        cap_feats[torch.cat(cap_pad_mask)] = self.cap_pad_token
+        cap_feats[torch.cat(cap_inner_pad_mask)] = self.cap_pad_token
         cap_feats = list(cap_feats.split(cap_item_seqlens, dim=0))
         cap_freqs_cis = list(self.rope_embedder(torch.cat(cap_pos_ids, dim=0)).split(cap_item_seqlens, dim=0))
 
@@ -651,10 +622,10 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
             for layer in self.context_refiner:
-                cap_feats = self._checkpoint(layer, cap_feats, cap_attn_mask, cap_freqs_cis, adaln_input)
+                cap_feats = self._gradient_checkpointing_func(layer, cap_feats, cap_attn_mask, cap_freqs_cis)
         else:
             for layer in self.context_refiner:
-                cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis, adaln_input)
+                cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis)
 
         # unified
         unified = []
@@ -675,34 +646,16 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             unified_attn_mask[i, :seq_len] = 1
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for idx, layer in enumerate(self.layers):
-                if skip_layers is not None and idx in skip_layers:
-                    continue
-                unified = self._checkpoint(layer, unified, unified_attn_mask, unified_freqs_cis, adaln_input)
+            for layer in self.layers:
+                unified = self._gradient_checkpointing_func(
+                    layer, unified, unified_attn_mask, unified_freqs_cis, adaln_input
+                )
         else:
-            for idx, layer in enumerate(self.layers):
-                if skip_layers is not None and idx in skip_layers:
-                    continue
+            for layer in self.layers:
                 unified = layer(unified, unified_attn_mask, unified_freqs_cis, adaln_input)
 
         unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](unified, adaln_input)
         unified = list(unified.unbind(dim=0))
         x = self.unpatchify(unified, x_size, patch_size, f_patch_size)
 
-        if USE_PEFT_BACKEND:
-            unscale_lora_layers(self, lora_scale)
-
         return x, {}
-
-    def parameter_count(self) -> int:
-        total_params = 0
-
-        def _recursive_count_params(module):
-            nonlocal total_params
-            for param in module.parameters(recurse=False):
-                total_params += param.numel()
-            for submodule in module.children():
-                _recursive_count_params(submodule)
-
-        _recursive_count_params(self)
-        return total_params

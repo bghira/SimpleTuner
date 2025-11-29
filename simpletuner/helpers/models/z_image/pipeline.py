@@ -255,6 +255,7 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
                 _pipeline=self,
                 low_cpu_mem_usage=low_cpu_mem_usage,
                 hotswap=hotswap,
+                prefix=kwargs.get("prefix", None),
             )
 
         if controlnet_state_dict and hasattr(self, self.controlnet_name):
@@ -276,11 +277,22 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
         _pipeline=None,
         low_cpu_mem_usage=False,
         hotswap: bool = False,
+        prefix: Optional[str] = None,
     ):
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
             )
+
+        # Normalize common prefixes from training scripts (e.g., diffusers uses "unet", some trainers use "diffusion_model")
+        if any(k.startswith("diffusion_model.") for k in state_dict):
+            state_dict = {k.replace("diffusion_model.", "", 1): v for k, v in state_dict.items()}
+            prefix = None
+            logger.info("Stripped 'diffusion_model.' prefix from LoRA keys for transformer loading.")
+        elif any(k.startswith("transformer.") for k in state_dict):
+            state_dict = {k.replace("transformer.", "", 1): v for k, v in state_dict.items()}
+            prefix = None
+            logger.info("Stripped 'transformer.' prefix from LoRA keys for transformer loading.")
 
         logger.info(f"Loading {cls.transformer_name}.")
         transformer.load_lora_adapter(
@@ -290,6 +302,7 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
             _pipeline=_pipeline,
             low_cpu_mem_usage=low_cpu_mem_usage,
             hotswap=hotswap,
+            prefix=prefix,
         )
 
     @classmethod
