@@ -151,7 +151,8 @@ class ZImage(ImageModelFoundation):
 
         prompt_list: List[torch.Tensor] = []
         for embeds, mask in zip(prompt_embeds, attention_mask):
-            prompt_list.append(embeds[mask])
+            flat_mask = mask.view(-1).bool()
+            prompt_list.append(embeds[flat_mask])
 
         return {
             "prompt_embeds": prompt_list,
@@ -163,7 +164,8 @@ class ZImage(ImageModelFoundation):
 
         prompt_list: List[torch.Tensor] = []
         for embeds, mask in zip(prompt_embeds, attention_mask):
-            prompt_list.append(embeds[mask])
+            flat_mask = mask.view(-1).bool()
+            prompt_list.append(embeds[flat_mask])
 
         return {
             "negative_prompt_embeds": prompt_list,
@@ -201,7 +203,7 @@ class ZImage(ImageModelFoundation):
 
         prompt_list: List[torch.Tensor] = []
         for idx in range(batch_size):
-            mask = attention_mask[idx].bool()
+            mask = attention_mask[idx].view(-1).bool()
             prompt_list.append(prompt_embeds[idx][mask].to(device=self.accelerator.device, dtype=self.config.weight_dtype))
 
         latent_list = [sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype) for sample in latents]

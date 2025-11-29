@@ -506,6 +506,15 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
     def set_gradient_checkpointing_interval(self, value: int):
         self.gradient_checkpointing_interval = value
 
+    def set_attention_backend(self, backend, parallel_config=None):
+        """
+        Configure the attention backend for all Z-Image attention processors.
+        """
+        for module in self.modules():
+            if isinstance(module, Attention) and isinstance(getattr(module, "processor", None), ZSingleStreamAttnProcessor):
+                module.processor._attention_backend = backend
+                module.processor._parallel_config = parallel_config
+
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Attach a TREAD router and routing plan for token dropping during training."""
         self._tread_router = router

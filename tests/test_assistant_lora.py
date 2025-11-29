@@ -242,5 +242,16 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         model.check_user_config()
 
 
+class ZImageAdapterMappingTests(unittest.TestCase):
+    def test_set_adapters_mapping_registered(self):
+        from diffusers.loaders import peft as diffusers_peft
+
+        import simpletuner.helpers.models.z_image.transformer  # noqa: F401
+
+        self.assertIn("ZImageTransformer2DModel", diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING)
+        fn = diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING["ZImageTransformer2DModel"]
+        self.assertEqual([1.0, 0.5], fn(None, [1.0, 0.5]))
+
+
 if __name__ == "__main__":
     unittest.main()

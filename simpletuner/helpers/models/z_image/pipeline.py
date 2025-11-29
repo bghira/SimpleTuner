@@ -740,9 +740,11 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
         """
         height = height or 1024
         width = width or 1024
+        vae_scale = self.vae_scale_factor * 2
+        if height % vae_scale != 0 or width % vae_scale != 0:
+            raise ValueError(f"Z-Image requires height and width to be divisible by {vae_scale} (got {height}x{width}).")
 
-        assert self.dtype == torch.bfloat16
-        dtype = self.dtype
+        dtype = getattr(self.transformer, "dtype", torch.float32)
         device = self._execution_device
 
         self._guidance_scale = guidance_scale
@@ -752,29 +754,63 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
         self._cfg_truncation = cfg_truncation
         self._skip_layer_guidance_scale = skip_layer_guidance_scale
         # 2. Define call parameters
-        if prompt is not None and isinstance(prompt, str):
-            batch_size = 1
-        elif prompt is not None and isinstance(prompt, list):
-            batch_size = len(prompt)
-        else:
-            batch_size = prompt_embeds.shape[0]
+        # Determine batch size and handle precomputed embeddings.
+        if prompt_embeds is not None:
+            if isinstance(prompt_embeds, list):
+                batch_size = len(prompt_embeds)
+            else:
+                batch_size = prompt_embeds.shape[0]
+                prompt_embeds = list(prompt_embeds)
+            prompt_embeds = [pe.to(device=device, dtype=dtype) for pe in prompt_embeds]
 
-        lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
-        (
-            prompt_embeds,
-            negative_prompt_embeds,
-        ) = self.encode_prompt(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            do_classifier_free_guidance=self.do_classifier_free_guidance,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
-            dtype=dtype,
-            device=device,
-            num_images_per_prompt=num_images_per_prompt,
-            max_sequence_length=max_sequence_length,
-            lora_scale=lora_scale,
-        )
+            if self.do_classifier_free_guidance and negative_prompt_embeds is None:
+                # Synthesize unconditional embeddings for CFG when only positive embeds are supplied.
+                negative_prompt_embeds = self._encode_prompt(
+                    prompt=[""] * batch_size,
+                    device=device,
+                    dtype=dtype,
+                    num_images_per_prompt=num_images_per_prompt,
+                    prompt_embeds=None,
+                    max_sequence_length=max_sequence_length,
+                )
+            elif negative_prompt_embeds is not None:
+                if isinstance(negative_prompt_embeds, list):
+                    pass
+                else:
+                    negative_prompt_embeds = list(negative_prompt_embeds)
+                negative_prompt_embeds = [ne.to(device=device, dtype=dtype) for ne in negative_prompt_embeds]
+        else:
+            if prompt is not None and isinstance(prompt, str):
+                batch_size = 1
+            elif prompt is not None and isinstance(prompt, list):
+                batch_size = len(prompt)
+            else:
+                raise ValueError("Either `prompt` or `prompt_embeds` must be provided.")
+
+            lora_scale = self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
+            (
+                prompt_embeds,
+                negative_prompt_embeds,
+            ) = self.encode_prompt(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                do_classifier_free_guidance=self.do_classifier_free_guidance,
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                dtype=dtype,
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
+                lora_scale=lora_scale,
+            )
+
+        # Repeat embeddings for num_images_per_prompt, if needed.
+        if num_images_per_prompt and num_images_per_prompt > 1:
+            prompt_embeds = [pe for pe in prompt_embeds for _ in range(num_images_per_prompt)]
+            if self.do_classifier_free_guidance and negative_prompt_embeds:
+                negative_prompt_embeds = [ne for ne in negative_prompt_embeds for _ in range(num_images_per_prompt)]
+
+        actual_batch_size = len(prompt_embeds)
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.in_channels
@@ -837,6 +873,16 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
                 # Run CFG only if configured AND scale is non-zero
                 within_cfg_window = i >= no_cfg_until_timestep and (cfg_end_timestep is None or i <= cfg_end_timestep)
                 apply_cfg = self.do_classifier_free_guidance and current_guidance_scale > 0 and within_cfg_window
+                if apply_cfg and not negative_prompt_embeds:
+                    raise ValueError(
+                        "Classifier-free guidance is enabled but negative_prompt_embeds are missing. "
+                        "Provide `negative_prompt` or `negative_prompt_embeds` when supplying precomputed embeddings."
+                    )
+                if apply_cfg and len(negative_prompt_embeds) != actual_batch_size:
+                    raise ValueError(
+                        f"Expected {actual_batch_size} negative_prompt_embeds for CFG but received "
+                        f"{len(negative_prompt_embeds)}."
+                    )
 
                 if apply_cfg:
                     # Prepare inputs for CFG
@@ -860,13 +906,13 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
 
                 if apply_cfg:
                     # Perform CFG
-                    pos_out = torch.stack([out.float() for out in model_out_list[:batch_size]], dim=0)
-                    neg_out = torch.stack([out.float() for out in model_out_list[batch_size:]], dim=0)
+                    pos_out = torch.stack([out.float() for out in model_out_list[:actual_batch_size]], dim=0)
+                    neg_out = torch.stack([out.float() for out in model_out_list[actual_batch_size:]], dim=0)
 
                     if use_cfg_zero_star:
-                        pos_flat = pos_out.view(batch_size, -1)
-                        neg_flat = neg_out.view(batch_size, -1)
-                        alpha = optimized_scale(pos_flat, neg_flat).view(batch_size, *([1] * (pos_out.dim() - 1)))
+                        pos_flat = pos_out.view(actual_batch_size, -1)
+                        neg_flat = neg_out.view(actual_batch_size, -1)
+                        alpha = optimized_scale(pos_flat, neg_flat).view(actual_batch_size, *([1] * (pos_out.dim() - 1)))
                         if i <= zero_steps and use_zero_init:
                             guided = pos_out * 0.0
                         else:
@@ -876,14 +922,16 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
 
                     # Renormalization
                     if self._cfg_normalization and float(self._cfg_normalization) > 0.0:
-                        ori_pos_norm = torch.linalg.vector_norm(pos_out.view(batch_size, -1), dim=1)
-                        new_pos_norm = torch.linalg.vector_norm(guided.view(batch_size, -1), dim=1)
+                        ori_pos_norm = torch.linalg.vector_norm(pos_out.view(actual_batch_size, -1), dim=1)
+                        new_pos_norm = torch.linalg.vector_norm(guided.view(actual_batch_size, -1), dim=1)
                         max_new_norm = ori_pos_norm * float(self._cfg_normalization)
                         scale_mask = new_pos_norm > max_new_norm
                         if torch.any(scale_mask):
-                            scale = (max_new_norm / (new_pos_norm + 1e-8)).view(batch_size, *([1] * (guided.dim() - 1)))
+                            scale = (max_new_norm / (new_pos_norm + 1e-8)).view(
+                                actual_batch_size, *([1] * (guided.dim() - 1))
+                            )
                             guided = torch.where(
-                                scale_mask.view(batch_size, *([1] * (guided.dim() - 1))), guided * scale, guided
+                                scale_mask.view(actual_batch_size, *([1] * (guided.dim() - 1))), guided * scale, guided
                             )
 
                     noise_pred = guided
@@ -938,6 +986,7 @@ class ZImagePipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFileMix
             image = latents
 
         else:
+            latents = latents.to(dtype=self.vae.dtype)
             latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
 
             image = self.vae.decode(latents, return_dict=False)[0]
