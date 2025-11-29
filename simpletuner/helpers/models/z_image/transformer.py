@@ -715,13 +715,14 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for layer in self.noise_refiner:
             if use_checkpoint:
                 x_shard = ckpt_fn(
-                    lambda *args: layer(*args),
+                    layer,
                     x_shard,
                     x_src_ids_shard,
                     x_freqs_cis_shard,
                     x_cu_seqlens,
                     x_max_item_seqlen,
                     adaln_input,
+                    use_reentrant=False,
                 )
             else:
                 x_shard = layer(x_shard, x_src_ids_shard, x_freqs_cis_shard, x_cu_seqlens, x_max_item_seqlen, adaln_input)
@@ -749,13 +750,13 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for layer in self.context_refiner:
             if use_checkpoint:
                 cap_shard = ckpt_fn(
-                    lambda *args: layer(*args),
                     cap_shard,
                     cap_src_ids_shard,
                     cap_freqs_cis_shard,
                     cap_cu_seqlens,
                     cap_max_item_seqlen,
                     adaln_input,
+                    use_reentrant=False,
                 )
             else:
                 cap_shard = layer(
@@ -870,13 +871,13 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 )
                 if use_layer_checkpoint:
                     unified_shard = ckpt_fn(
-                        lambda *args: layer(*args),
                         unified_shard,
                         unified_src_ids_shard,
                         unified_freqs_cis_shard,
                         current_cu_seqlens,
                         current_max_item_seqlen,
                         adaln_input,
+                        use_reentrant=False,
                     )
                 else:
                     unified_shard = layer(
