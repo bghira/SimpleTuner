@@ -282,6 +282,28 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="lora_format",
+            arg_name="--lora_format",
+            ui_label="LoRA Format",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value="diffusers",
+            choices=[
+                {"value": "diffusers", "label": "Diffusers / PEFT"},
+                {"value": "comfyui", "label": "ComfyUI (diffusion_model.*)"},
+            ],
+            dependencies=[FieldDependency(field="model_type", value="lora")],
+            help_text="Select the LoRA checkpoint key format for load/save.",
+            tooltip="Choose 'comfyui' to read/write diffusion_model.* keys with lora_A/lora_B weights and .alpha tensors.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8.9,
+        )
+    )
+
     # LyCORIS Config
     registry._add_field(
         ConfigField(

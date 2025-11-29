@@ -66,6 +66,12 @@ from transformers import (
     T5TokenizerFast,
 )
 
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    convert_comfyui_to_diffusers,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
 from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 if is_torch_xla_available():
@@ -250,6 +256,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
     _lora_loadable_modules = ["transformer", "text_encoder"]
     transformer_name = "transformer"
     text_encoder_name = "text_encoder"
+    controlnet_name = "controlnet"
 
     @classmethod
     @validate_hf_hub_args
@@ -402,6 +409,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
             pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
+        lora_format = normalize_lora_format(kwargs.pop("lora_format", None))
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
         state_dict, network_alphas = self.lora_state_dict(
             pretrained_model_name_or_path_or_dict, return_alphas=True, **kwargs
@@ -410,6 +418,23 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
             raise ValueError("Invalid LoRA checkpoint.")
+
+        detected_format = detect_state_dict_format(state_dict)
+        if lora_format == PEFTLoRAFormat.DIFFUSERS and detected_format == PEFTLoRAFormat.COMFYUI:
+            lora_format = PEFTLoRAFormat.COMFYUI
+        if lora_format == PEFTLoRAFormat.COMFYUI:
+            state_dict, comfy_alphas = convert_comfyui_to_diffusers(state_dict, target_prefix=self.transformer_name)
+            network_alphas = (network_alphas or {}) | comfy_alphas
+
+            controlnet_prefix = f"{self.transformer_name}.controlnet."
+            if any(k.startswith(controlnet_prefix) for k in state_dict):
+                adjusted_state_dict = {}
+                for k, v in state_dict.items():
+                    if k.startswith(controlnet_prefix):
+                        adjusted_state_dict[k.replace(f"{self.transformer_name}.", "", 1)] = v
+                    else:
+                        adjusted_state_dict[k] = v
+                state_dict = adjusted_state_dict
 
         # Separate transformer, text encoder, and controlnet weights
         transformer_state_dict = {}

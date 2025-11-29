@@ -61,6 +61,7 @@ class Flux2(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    AUTO_LORA_FORMAT_DETECTION = True
     AUTOENCODER_CLASS = AutoencoderKLFlux2
     LATENT_CHANNEL_COUNT = 128  # 32 VAE channels × 4 (2×2 pixel shuffle) = 128 transformer channels
     VAE_SCALE_FACTOR = 16  # 8x spatial + 2x pixel shuffle
