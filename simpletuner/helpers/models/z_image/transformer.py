@@ -29,6 +29,7 @@ except ImportError:
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.loaders import peft as diffusers_peft
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
 from diffusers.models.modeling_utils import ModelMixin
@@ -39,6 +40,10 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+# Ensure diffusers knows how to scale adapters for this transformer type.
+if "ZImageTransformer2DModel" not in diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING:
+    diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING["ZImageTransformer2DModel"] = lambda model_cls, weights: weights
 
 ADALN_EMBED_DIM = 256
 SEQ_MULTI_OF = 32
