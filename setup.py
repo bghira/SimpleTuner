@@ -73,7 +73,23 @@ def build_rocm_wheel_url(package: str, version: str, rocm_version: str) -> str:
     return f"{package} @ {base_url}/{filename}"
 
 
+def _resolve_ramtorch_dependency() -> str:
+    """
+    Prefer a local RamTorch checkout (default: ~/src/ramtorch) when present, otherwise fall back to the package name.
+    """
+
+    candidate_path = Path(os.environ.get("SIMPLETUNER_RAMTORCH_PATH", "~/src/ramtorch")).expanduser()
+    try:
+        if candidate_path.exists():
+            return f"ramtorch @ {candidate_path.resolve().as_uri()}"
+    except Exception:
+        # Any failure falls back to the plain package spec.
+        pass
+    return "ramtorch"
+
+
 def get_cuda_dependencies():
+    ramtorch_dep = _resolve_ramtorch_dependency()
     return [
         "torch>=2.9.0",
         "torchvision>=0.24.0",
@@ -86,10 +102,12 @@ def get_cuda_dependencies():
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
+        ramtorch_dep,
     ]
 
 
 def get_rocm_dependencies():
+    ramtorch_dep = _resolve_ramtorch_dependency()
     rocm_version = os.environ.get("SIMPLETUNER_ROCM_VERSION", "6.4")
     torch_version = os.environ.get("SIMPLETUNER_ROCM_TORCH_VERSION", "2.9.0")
     torchvision_version = os.environ.get("SIMPLETUNER_ROCM_TORCHVISION_VERSION", "0.24.0")
@@ -102,6 +120,7 @@ def get_rocm_dependencies():
             build_rocm_wheel_url("torchvision", torchvision_version, rocm_version),
             "pytorch_triton_rocm @ https://download.pytorch.org/whl/pytorch_triton_rocm-3.5.0-cp312-cp312-linux_x86_64.whl#sha256=b3a209621d0433367c489e8dce90ebc4c7c9e3bfe1c2b7adc928344f8290d5f5",
             "torchao>=0.14.1",
+            ramtorch_dep,
         ]
     except Exception as exc:
         print(f"Warning: falling back to CPU PyTorch packages because ROCm wheel configuration failed: {exc}")
@@ -109,6 +128,7 @@ def get_rocm_dependencies():
             "torch>=2.9.0",
             "torchvision>=0.24.0",
             "torchao>=0.14.1",
+            ramtorch_dep,
         ]
 
 

@@ -12,6 +12,7 @@ from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, 
 from simpletuner.helpers.models.kandinsky5_image.pipeline_kandinsky5_t2i import Kandinsky5T2IPipeline
 from simpletuner.helpers.models.kandinsky5_image.transformer_kandinsky5 import Kandinsky5Transformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class Kandinsky5Image(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     AUTOENCODER_SCALING_FACTOR = 0.3611
     LATENT_CHANNEL_COUNT = 16
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
     MODEL_CLASS = Kandinsky5Transformer3DModel
     MODEL_SUBFOLDER = "transformer"

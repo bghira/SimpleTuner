@@ -1855,11 +1855,16 @@ class Validation:
             self.model.pipeline.to(self.accelerator.device)
 
         self.model.pipeline.set_progress_bar_config(disable=True)
+        if hasattr(self.model, "configure_assistant_lora_for_inference"):
+            self.model.configure_assistant_lora_for_inference()
 
     def clean_pipeline(self):
         """Remove the pipeline."""
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
             self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+        if hasattr(self.model, "configure_assistant_lora_for_training"):
+            # Restore training-time adapter stack after validation.
+            self.model.configure_assistant_lora_for_training()
         if self.model.pipeline is not None:
             del self.model.pipeline
             self.model.pipeline = None

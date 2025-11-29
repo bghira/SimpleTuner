@@ -37,6 +37,7 @@ from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
@@ -48,18 +49,20 @@ else:
     logger.setLevel("ERROR")
 
 
-flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma"]
+flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma", "hunyuanvideo"]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
     "sd3": "stabilityai/stable-diffusion-3.5-large",
     "sana": "terminusresearch/sana-1.6b-1024px",
     "flux": "black-forest-labs/flux.1-dev",
+    "flux2": "black-forest-labs/flux.2-dev",
     "chroma": "lodestones/Chroma1-Base",
     "sd1x": "stable-diffusion-v1-5/stable-diffusion-v1-5",
     "sd2x": "stabilityai/stable-diffusion-v2-1",
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "hunyuanvideo": "tencent/HunyuanVideo-1.5",
 }
 
 
@@ -172,6 +175,8 @@ class ModelFoundation(ABC):
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    ASSISTANT_LORA_PATH = None
+    ASSISTANT_LORA_FLAVOURS = None
     DEFAULT_CONTROLNET_LORA_TARGET = [
         "to_q",
         "to_k",
@@ -221,6 +226,8 @@ class ModelFoundation(ABC):
         self._validation_preview_decoder_failed = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
+        self.assistant_adapter_name = "assistant"
+        self.assistant_lora_loaded = False
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -235,6 +242,128 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    @classmethod
+    def supports_assistant_lora(cls, config=None) -> bool:
+        """
+        Indicates whether the model family can leverage a fixed assistant LoRA.
+        When a config is provided, optionally gate support by flavour.
+        """
+        if config is not None and getattr(config, "disable_assistant_lora", False):
+            return False
+        has_default = bool(getattr(cls, "ASSISTANT_LORA_PATH", None))
+        flavour_whitelist = getattr(cls, "ASSISTANT_LORA_FLAVOURS", None)
+        if config is None or flavour_whitelist is None:
+            return has_default or bool(flavour_whitelist)
+
+        try:
+            flavour = getattr(config, "model_flavour", None)
+        except Exception:
+            flavour = None
+        if not flavour_whitelist:
+            return has_default
+        return flavour in flavour_whitelist
+
+    def get_assistant_lora(self):
+        """
+        Returns the PEFT-enabled model component when an assistant adapter is present.
+        """
+        if not getattr(self, "assistant_lora_loaded", False):
+            return None
+        try:
+            return self.get_trained_component(unwrap_model=False)
+        except Exception:
+            return None
+
+    def configure_assistant_lora_for_training(self):
+        """
+        Activate the assistant adapter for training (frozen) alongside the trainable adapter.
+        """
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not getattr(self, "assistant_lora_loaded", False):
+            return
+        trained_component = self.get_trained_component(unwrap_model=False)
+        if trained_component is None:
+            return
+
+        from simpletuner.helpers.assistant_lora import set_adapter_stack
+
+        assistant_weight = getattr(self.config, "assistant_lora_strength", 1.0)
+        try:
+            assistant_weight = float(assistant_weight)
+        except Exception:
+            assistant_weight = 1.0
+
+        adapter_names = []
+        adapter_weights = []
+
+        if assistant_weight != 0:
+            adapter_names.append(self.assistant_adapter_name)
+            adapter_weights.append(assistant_weight)
+
+        peft_config = getattr(trained_component, "peft_config", {}) or {}
+        if "default" in peft_config:
+            adapter_names.append("default")
+            adapter_weights.append(1.0)
+
+        if not adapter_names:
+            return
+
+        weight_arg = None
+        if len(adapter_weights) == 1:
+            weight_arg = adapter_weights[0]
+        else:
+            weight_arg = adapter_weights
+
+        set_adapter_stack(
+            trained_component,
+            adapter_names,
+            weights=weight_arg,
+            freeze_names=[self.assistant_adapter_name],
+        )
+
+    def configure_assistant_lora_for_inference(self):
+        """
+        Configure the assistant adapter for validation/inference (typically disabled).
+        """
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not getattr(self, "assistant_lora_loaded", False):
+            return
+        trained_component = self.get_trained_component(unwrap_model=False)
+        if trained_component is None:
+            return
+
+        from simpletuner.helpers.assistant_lora import set_adapter_stack
+
+        inference_weight = getattr(self.config, "assistant_lora_inference_strength", 0.0)
+        try:
+            inference_weight = float(inference_weight)
+        except Exception:
+            inference_weight = 0.0
+
+        adapter_names = []
+        adapter_weights = []
+        if inference_weight != 0:
+            adapter_names.append(self.assistant_adapter_name)
+            adapter_weights.append(inference_weight)
+
+        peft_config = getattr(trained_component, "peft_config", {}) or {}
+        if "default" in peft_config:
+            adapter_names.append("default")
+            adapter_weights.append(1.0)
+
+        if not adapter_names:
+            return
+
+        weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
+        set_adapter_stack(
+            trained_component,
+            adapter_names,
+            weights=weight_arg,
+            freeze_names=[self.assistant_adapter_name],
+        )
 
     @classmethod
     def supports_lora(cls) -> bool:
@@ -883,6 +1012,12 @@ class ModelFoundation(ABC):
                 self.vae.enable_slicing()
             else:
                 logger.warning(f"VAE slicing is enabled, but not yet supported by {self.config.model_family}.")
+        if self._ramtorch_vae_requested():
+            mid_block = getattr(self.vae, "mid_block", None)
+            if mid_block is None:
+                logger.debug("RamTorch VAE requested but no VAE mid_block was found; skipping RamTorch conversion.")
+            else:
+                self._apply_ramtorch_layers(mid_block, "vae.mid_block")
         if move_to_device and self.vae.device != self.accelerator.device:
             _vae_dtype = torch.bfloat16
             if hasattr(self.config, "vae_dtype"):
@@ -1025,6 +1160,9 @@ class ModelFoundation(ABC):
                 ]:
                     pass
 
+                if self._ramtorch_text_encoders_requested():
+                    self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
+
                 if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
@@ -1141,6 +1279,8 @@ class ModelFoundation(ABC):
             subfolder=model_subfolder,
             **pretrained_load_args,
         )
+        if self._ramtorch_enabled() and self.model is not None:
+            self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
 
@@ -1333,6 +1473,8 @@ class ModelFoundation(ABC):
             pipeline_kwargs["vae"] = self.get_vae()
 
         text_encoder_idx = 0
+        pipeline_init_signature = inspect.signature(pipeline_class.__init__)
+
         for (
             text_encoder_attr,
             text_encoder_config,
@@ -1340,11 +1482,18 @@ class ModelFoundation(ABC):
             tokenizer_attr = text_encoder_attr.replace("text_encoder", "tokenizer")
             if self.text_encoders is not None and len(self.text_encoders) >= text_encoder_idx:
                 pipeline_kwargs[text_encoder_attr] = self.unwrap_model(self.text_encoders[text_encoder_idx])
-                logger.info(f"Adding {tokenizer_attr}")
-                pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+
+                # Only add tokenizer if the pipeline expects it and we have it
+                if tokenizer_attr in pipeline_init_signature.parameters:
+                    if self.tokenizers is not None and len(self.tokenizers) >= text_encoder_idx:
+                        logger.info(f"Adding {tokenizer_attr}")
+                        pipeline_kwargs[tokenizer_attr] = self.tokenizers[text_encoder_idx]
+                    else:
+                        pipeline_kwargs[tokenizer_attr] = None
             else:
                 pipeline_kwargs[text_encoder_attr] = None
-                pipeline_kwargs[tokenizer_attr] = None
+                if tokenizer_attr in pipeline_init_signature.parameters:
+                    pipeline_kwargs[tokenizer_attr] = None
 
             text_encoder_idx += 1
 
@@ -1516,16 +1665,96 @@ class ModelFoundation(ABC):
     def group_offload_requested(self) -> bool:
         return bool(getattr(self.config, "enable_group_offload", False))
 
+    def _ramtorch_enabled(self) -> bool:
+        return bool(getattr(self.config, "ramtorch", False))
+
+    def _ramtorch_targets(self) -> Optional[list[str]]:
+        targets = getattr(self.config, "ramtorch_target_modules", None)
+        if targets is None:
+            return None
+        if isinstance(targets, (list, tuple)):
+            normalized = [str(entry).strip() for entry in targets if str(entry).strip()]
+        else:
+            normalized = [segment.strip() for segment in str(targets).split(",") if segment.strip()]
+        return normalized or None
+
+    def _ramtorch_device(self):
+        return getattr(self.accelerator, "device", torch.device("cuda"))
+
+    def _ramtorch_targets_for_component(self, override: Optional[list[str]] = None) -> Optional[list[str]]:
+        if override is not None:
+            return override
+        return self._ramtorch_targets()
+
+    def _apply_ramtorch_layers(self, module, component_label: str, *, target_patterns: Optional[list[str]] = None) -> int:
+        if module is None or not self._ramtorch_enabled():
+            return 0
+
+        try:
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(
+                module,
+                device=self._ramtorch_device(),
+                target_patterns=self._ramtorch_targets_for_component(target_patterns),
+                name_prefix=component_label,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to apply RamTorch to {component_label}: {exc}") from exc
+
+        if replaced:
+            logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
+        else:
+            logger.debug("RamTorch enabled for %s but no Linear layers matched the configured targets.", component_label)
+
+        return replaced
+
+    def _ramtorch_text_encoders_requested(self) -> bool:
+        return self._ramtorch_enabled() and bool(getattr(self.config, "ramtorch_text_encoder", False))
+
+    def _ramtorch_vae_requested(self) -> bool:
+        return self._ramtorch_enabled() and bool(getattr(self.config, "ramtorch_vae", False))
+
+    def _ramtorch_controlnet_requested(self) -> bool:
+        return self._ramtorch_enabled() and bool(getattr(self.config, "ramtorch_controlnet", False))
+
+    def apply_ramtorch_to_controlnet(self) -> int:
+        if not self._ramtorch_controlnet_requested():
+            return 0
+        controlnet = getattr(self, "controlnet", None)
+        if controlnet is None:
+            logger.debug("RamTorch ControlNet requested but no controlnet module is initialised.")
+            return 0
+        return self._apply_ramtorch_layers(controlnet, "controlnet")
+
     @property
     def group_offload_configured(self) -> bool:
         return getattr(self, "_group_offload_configured", False)
 
     def get_group_offload_modules(self) -> Dict[str, torch.nn.Module]:
         modules: Dict[str, torch.nn.Module] = {}
+        # Transformer (always included for transformer-based models)
         if self.MODEL_TYPE is ModelTypes.TRANSFORMER and getattr(self, "model", None) is not None:
             unwrapped_model = self.unwrap_model(self.model)
             if isinstance(unwrapped_model, torch.nn.Module):
                 modules["transformer"] = unwrapped_model
+
+        # Text encoders (optional, controlled by --group_offload_text_encoder)
+        if getattr(self.config, "group_offload_text_encoder", False):
+            text_encoders = getattr(self, "text_encoders", None)
+            if text_encoders is not None:
+                for i, te in enumerate(text_encoders):
+                    if te is not None:
+                        unwrapped_te = self.unwrap_model(te)
+                        if isinstance(unwrapped_te, torch.nn.Module):
+                            modules[f"text_encoder_{i}"] = unwrapped_te
+
+        # VAE (optional, controlled by --group_offload_vae)
+        if getattr(self.config, "group_offload_vae", False):
+            vae = getattr(self, "vae", None)
+            if vae is not None:
+                unwrapped_vae = self.unwrap_model(vae)
+                if isinstance(unwrapped_vae, torch.nn.Module):
+                    modules["vae"] = unwrapped_vae
+
         return modules
 
     def _resolve_group_offload_device(self) -> torch.device:
@@ -1543,6 +1772,9 @@ class ModelFoundation(ABC):
     def configure_group_offload(self) -> None:
         if self.group_offload_configured or not self.group_offload_requested():
             return
+
+        if self._ramtorch_enabled():
+            raise ValueError("Group offload cannot be used together with RamTorch (--ramtorch).")
 
         if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
             raise ValueError("Group offload is only supported for transformer-based models.")

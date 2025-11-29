@@ -485,7 +485,7 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() in ["ltxvideo", "wan", "sanavideo", "kandinsky5-video"]:
+        if StateTracker.get_model_family() in ["ltxvideo", "wan", "sanavideo", "kandinsky5-video", "hunyuanvideo"]:
             if samples.ndim == 4:
                 original_shape = samples.shape
                 samples = samples.unsqueeze(2)
@@ -545,7 +545,7 @@ class VAECache(WebhookMixin):
                         target_width,
                     )
                     samples = samples[..., :target_height, :target_width]
-        elif StateTracker.get_model_family() in ["hunyuan-video", "mochi"]:
+        elif StateTracker.get_model_family() in ["mochi"]:
             raise Exception(f"{StateTracker.get_model_family()} not supported for VAE Caching yet.")
         logger.debug(f"Final samples shape: {samples.shape}")
         return samples

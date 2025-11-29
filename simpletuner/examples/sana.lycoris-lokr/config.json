@@ -54,7 +54,7 @@
     "validation_lycoris_strength": 1.0,
     "validation_negative_prompt": "ugly, cropped, blurry, low-quality, mediocre average",
     "validation_num_inference_steps": 20,
-    "validation_prompt": "A photo-realistic image of a cat holding a sign that reads 'HELLO WORLD'.",
+    "validation_prompt": "🟫 is holding a sign that says hello world from sana",
     "validation_prompt_library": false,
     "validation_resolution": "1024x1024",
     "validation_seed": 42,

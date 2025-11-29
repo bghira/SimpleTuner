@@ -37,7 +37,7 @@
     "validation_negative_prompt": "blurry, cropped, ugly",
     "validation_num_inference_steps": 40,
     "validation_num_video_frames": 81,
-    "validation_prompt": "A black and white animated scene unfolds featuring a distressed upright cow with prominent horns and expressive eyes, suspended by its legs from a hook on a static background wall. A smaller Mickey Mouse-like character enters, standing near a wooden bench, initiating interaction between the two. The cow's posture changes as it leans, stretches, and falls, while the mouse watches with a concerned expression, its face a mixture of curiosity and worry, in a world devoid of color.",
+    "validation_prompt": "🟫 is holding a sign that says hello world from kandinsky5-video",
     "validation_prompt_library": false,
     "validation_resolution": "768x512",
     "validation_seed": 42,

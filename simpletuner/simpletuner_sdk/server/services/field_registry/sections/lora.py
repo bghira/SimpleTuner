@@ -204,6 +204,84 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    assistant_dependencies = [
+        FieldDependency(field="model_type", value="lora"),
+        FieldDependency(field="model_family", operator="in", values=["flux", "z-image"]),
+        FieldDependency(field="model_flavour", operator="in", values=["schnell", "turbo"]),
+    ]
+
+    registry._add_field(
+        ConfigField(
+            name="assistant_lora_path",
+            arg_name="--assistant_lora_path",
+            ui_label="Assistant LoRA Path",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value=None,
+            dependencies=assistant_dependencies,
+            help_text="Optional frozen assistant LoRA applied during training (Flux schnell / Z-Image turbo).",
+            tooltip="Provide a safetensors path or Hub repo for the assistant adapter. Disabled when empty.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8.5,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="assistant_lora_strength",
+            arg_name="--assistant_lora_strength",
+            ui_label="Assistant LoRA Strength",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value=1.0,
+            dependencies=assistant_dependencies,
+            help_text="Scale applied to the assistant adapter during training.",
+            tooltip="Set to 0 to ignore the assistant adapter during training.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8.6,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="assistant_lora_inference_strength",
+            arg_name="--assistant_lora_inference_strength",
+            ui_label="Assistant LoRA Inference Strength",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value=0.0,
+            dependencies=assistant_dependencies,
+            help_text="Scale for the assistant adapter during validation/inference (default disables it).",
+            tooltip="Keep at 0.0 to strip assistant influence from validation outputs.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8.7,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="disable_assistant_lora",
+            arg_name="--disable_assistant_lora",
+            ui_label="Disable Assistant LoRA",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value=False,
+            dependencies=assistant_dependencies,
+            help_text="Completely disable assistant LoRA auto-configuration.",
+            tooltip="When enabled, assistant LoRA will not be loaded or applied even for supported flavours.",
+            importance=ImportanceLevel.ADVANCED,
+            order=8.8,
+        )
+    )
+
     # LyCORIS Config
     registry._add_field(
         ConfigField(
