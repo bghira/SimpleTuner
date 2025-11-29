@@ -280,7 +280,7 @@ class ZImageTransformerBlock(nn.Module):
         adaln_input: Optional[torch.Tensor] = None,
     ):
         if self.modulation:
-            assert adaln_input is not None
+            assert adaln_input is not None, "adaln_input (time conditioning) must be provided for modulation."
             scale_msa, gate_msa, scale_mlp, gate_mlp = self.adaLN_modulation(adaln_input).chunk(4, dim=1)
             gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
             scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
@@ -755,6 +755,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                     cap_freqs_cis_shard,
                     cap_cu_seqlens,
                     cap_max_item_seqlen,
+                    adaln_input,
                 )
             else:
                 cap_shard = layer(
@@ -763,6 +764,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                     cap_freqs_cis_shard,
                     cap_cu_seqlens,
                     cap_max_item_seqlen,
+                    adaln_input,
                 )
         cap_flatten = cap_shard
 
