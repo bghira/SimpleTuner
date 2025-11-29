@@ -118,7 +118,7 @@ There, you will possibly need to modify the following variables:
 - `model_flavour` - this is `krea` by default, but may be set to `dev` to train the original FLUX.1-Dev release.
   - `krea` - The default FLUX.1-Krea [dev] model, an open-weights variant of Krea 1, a proprietary model collaboration between BFL and Krea.ai
   - `dev` - Dev model flavour, the previous default
-  - `schnell` - Schnell model flavour, and set any appropriate options incl. fast training schedule
+  - `schnell` - Schnell model flavour; the quickstart sets the fast noise schedule and assistant LoRA stack automatically
   - `kontext` - Kontext training (see [this guide](/documentation/quickstart/FLUX_KONTEXT.md) for specific guidance)
   - `fluxbooru` - A de-distilled (requires CFG) model based on FLUX.1-Dev called [FluxBooru](https://hf.co/terminusresearch/fluxbooru-v0.3), created by terminus research group
   - `libreflux` - A de-distilled model based on FLUX.1-Schnell that requires attention masking on the T5 text encoder inputs
@@ -134,7 +134,7 @@ There, you will possibly need to modify the following variables:
 - `validation_guidance_real` - Use >1.0 to use CFG for flux inference. Slows validations down, but produces better results. Does best with an empty `VALIDATION_NEGATIVE_PROMPT`.
 - `validation_num_inference_steps` - Use somewhere around 20 to save time while still seeing decent quality. Flux isn't very diverse, and more steps might just waste time.
 - `--lora_rank=4` if you wish to substantially reduce the size of the LoRA being trained. This can help with VRAM use.
-- If training a Schnell LoRA, you'll have to supply `--flux_fast_schedule=true` manually here as well.
+- Schnell LoRA runs use the fast schedule automatically via the quickstart defaults; no extra flags needed.
 
 - `gradient_accumulation_steps` - Previous guidance was to avoid these with bf16 training since they would degrade the model. Further testing showed this is not necessarily the case for Flux.
   - This option causes update steps to be accumulated over several steps. This will increase the training runtime linearly, such that a value of 2 will make your training run half as quickly, and take twice as long.
