@@ -151,7 +151,7 @@ class ZSingleStreamAttnProcessor:
             dropout_p=0.0,
             is_causal=False,
             backend=self._attention_backend,
-            parallel_config=self._parallel_config,
+            # parallel_config=self._parallel_config,
         )
 
         # Reshape back
