@@ -37,7 +37,7 @@
     "validation_guidance_rescale": 0.0,
     "validation_negative_prompt": "ugly, cropped, blurry, low-quality, mediocre average",
     "validation_num_inference_steps": 16,
-    "validation_prompt": "A photo-realistic image of a cat",
+    "validation_prompt": "🟫 is holding a sign that says hello world from flux",
     "validation_prompt_library": false,
     "validation_resolution": "1024x1024",
     "validation_seed": 42,

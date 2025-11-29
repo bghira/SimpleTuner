@@ -60,7 +60,7 @@
     "validation_lycoris_strength": 1.0,
     "validation_negative_prompt": null,
     "validation_num_inference_steps": 30,
-    "validation_prompt": "a kitty cat",
+    "validation_prompt": "🟫 is holding a sign that says hello world from hidream",
     "validation_disable_unconditional": true,
     "validation_prompt_library": false,
     "validation_resolution": "512x512",

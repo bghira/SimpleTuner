@@ -29,7 +29,7 @@
   "validation_disable_unconditional": true,
   "validation_guidance": 3,
   "validation_lyrics": "I'm a little tea-pot, short and stout. Here is my handle, here is my spout. warming up for a little fun, when I get all steamed up, hear me shout. don't you stress out, just let it all out.",
-  "validation_prompt": "folk, acoustic guitar, singer-songwriter, warm lighting, intimate setting, detailed background, 4k resolution",
+  "validation_prompt": "🟫 is holding a sign that says hello world from ace_step",
   "validation_steps": 50,
   "validation_num_inference_steps": 80,
   "validation_seed": 42

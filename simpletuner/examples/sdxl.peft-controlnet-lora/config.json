@@ -34,7 +34,7 @@
     "validation_guidance": 4.2,
     "validation_guidance_rescale": 0.0,
     "validation_num_inference_steps": 20,
-    "validation_prompt": "A photo-realistic image of a cat",
+    "validation_prompt": "🟫 is holding a sign that says hello world from sdxl",
     "validation_resolution": "1024x1024",
     "validation_seed": 42,
     "validation_steps": 50,
