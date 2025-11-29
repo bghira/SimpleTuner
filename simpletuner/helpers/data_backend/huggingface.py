@@ -104,7 +104,11 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         logger.info(f"Inspecting dataset {self.dataset_name}")
         builder = load_dataset_builder(self.dataset_name, cache_dir=self.cache_dir)
         logger.info(f"Dataset info: {builder.info}")
-        logger.info(f"Available splits: {list(builder.info.splits.keys())}")
+        try:
+            available_splits = list(builder.info.splits.keys()) if builder.info.splits else []
+        except Exception:
+            available_splits = []
+        logger.info(f"Available splits: {available_splits}")
 
         logger.info(f"Loading dataset {self.dataset_name} (split: {self.split})")
 
