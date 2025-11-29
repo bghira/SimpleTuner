@@ -12,22 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.checkpoint import checkpoint
-
-try:
-    from flash_attn import flash_attn_varlen_func
-except ImportError:
-    flash_attn_varlen_func = None
-
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.loaders import peft as diffusers_peft
@@ -37,6 +27,8 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
+from einops import rearrange
+from torch.nn.utils.rnn import pad_sequence
 
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -96,12 +88,18 @@ class TimestepEmbedder(nn.Module):
 
 class ZSingleStreamAttnProcessor:
     """
-    Processor for Z-Image single stream attention that adapts the existing Attention class
-    to match the behavior of the original Z-ImageAttention module.
+    Processor for Z-Image single stream attention that adapts the existing Attention class to match the behavior of the
+    original Z-ImageAttention module.
     """
 
     _attention_backend = None
     _parallel_config = None
+
+    def __init__(self):
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError(
+                "ZSingleStreamAttnProcessor requires PyTorch 2.0. To use it, please upgrade PyTorch to version 2.0 or higher."
+            )
 
     def __call__(
         self,
@@ -109,24 +107,15 @@ class ZSingleStreamAttnProcessor:
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        image_rotary_emb: Optional[torch.Tensor] = None,
-        x_cu_seqlens: Optional[torch.Tensor] = None,
-        x_max_item_seqlen: Optional[int] = None,
+        freqs_cis: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        x_shard = hidden_states
-        x_freqs_cis_shard = image_rotary_emb
+        query = attn.to_q(hidden_states)
+        key = attn.to_k(hidden_states)
+        value = attn.to_v(hidden_states)
 
-        query = attn.to_q(x_shard)
-        key = attn.to_k(x_shard)
-        value = attn.to_v(x_shard)
-
-        seqlen_shard = x_shard.shape[0]
-
-        # Reshape to [seq_len, heads, head_dim]
-        head_dim = query.shape[-1] // attn.heads
-        query = query.view(seqlen_shard, attn.heads, head_dim)
-        key = key.view(seqlen_shard, attn.heads, head_dim)
-        value = value.view(seqlen_shard, attn.heads, head_dim)
+        query = query.unflatten(-1, (attn.heads, -1))
+        key = key.unflatten(-1, (attn.heads, -1))
+        value = value.unflatten(-1, (attn.heads, -1))
         # Apply Norms
         if attn.norm_q is not None:
             query = attn.norm_q(query)
@@ -137,77 +126,39 @@ class ZSingleStreamAttnProcessor:
         def apply_rotary_emb(x_in: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
             with torch.amp.autocast("cuda", enabled=False):
                 x = torch.view_as_complex(x_in.float().reshape(*x_in.shape[:-1], -1, 2))
-                freqs_cis = freqs_cis.unsqueeze(1)
-                x_out = torch.view_as_real(x * freqs_cis).flatten(2)
-                return x_out.type_as(x_in)
+                freqs_cis = freqs_cis.unsqueeze(2)
+                x_out = torch.view_as_real(x * freqs_cis).flatten(3)
+                return x_out.type_as(x_in)  # todo
 
-        if x_freqs_cis_shard is not None:
-            query = apply_rotary_emb(query, x_freqs_cis_shard)
-            key = apply_rotary_emb(key, x_freqs_cis_shard)
+        if freqs_cis is not None:
+            query = apply_rotary_emb(query, freqs_cis)
+            key = apply_rotary_emb(key, freqs_cis)
 
         # Cast to correct dtype
         dtype = query.dtype
         query, key = query.to(dtype), key.to(dtype)
 
-        # Flash Attention
-        softmax_scale = math.sqrt(1 / head_dim)
-        assert dtype in [torch.float16, torch.bfloat16]
+        # From [batch, seq_len] to [batch, 1, 1, seq_len] -> broadcast to [batch, heads, seq_len, seq_len]
+        if attention_mask is not None and attention_mask.ndim == 2:
+            attention_mask = attention_mask[:, None, None, :]
 
-        if x_cu_seqlens is None or x_max_item_seqlen is None:
-            raise ValueError("x_cu_seqlens and x_max_item_seqlen are required for ZSingleStreamAttnProcessor")
+        # Compute joint attention
+        hidden_states = dispatch_attention_fn(
+            query,
+            key,
+            value,
+            attn_mask=attention_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            backend=self._attention_backend,
+            parallel_config=self._parallel_config,
+        )
 
-        if flash_attn_varlen_func is not None:
-            output = flash_attn_varlen_func(
-                query,
-                key,
-                value,
-                cu_seqlens_q=x_cu_seqlens,
-                cu_seqlens_k=x_cu_seqlens,
-                max_seqlen_q=x_max_item_seqlen,
-                max_seqlen_k=x_max_item_seqlen,
-                dropout_p=0.0,
-                causal=False,
-                softmax_scale=softmax_scale,
-            )
-            output = output.flatten(-2)
-        else:
-            seqlens = (x_cu_seqlens[1:] - x_cu_seqlens[:-1]).cpu().tolist()
+        # Reshape back
+        hidden_states = hidden_states.flatten(2, 3)
+        hidden_states = hidden_states.to(dtype)
 
-            q_split = torch.split(query, seqlens, dim=0)
-            k_split = torch.split(key, seqlens, dim=0)
-            v_split = torch.split(value, seqlens, dim=0)
-
-            q_padded = torch.nn.utils.rnn.pad_sequence(q_split, batch_first=True)
-            k_padded = torch.nn.utils.rnn.pad_sequence(k_split, batch_first=True)
-            v_padded = torch.nn.utils.rnn.pad_sequence(v_split, batch_first=True)
-
-            batch_size, max_seqlen, _, _ = q_padded.shape
-
-            mask = torch.zeros((batch_size, max_seqlen), dtype=torch.bool, device=query.device)
-            for i, l in enumerate(seqlens):
-                mask[i, :l] = True
-
-            attn_mask = torch.zeros((batch_size, 1, 1, max_seqlen), dtype=query.dtype, device=query.device)
-            attn_mask.masked_fill_(~mask[:, None, None, :], torch.finfo(query.dtype).min)
-
-            q_padded = q_padded.transpose(1, 2)
-            k_padded = k_padded.transpose(1, 2)
-            v_padded = v_padded.transpose(1, 2)
-
-            output = F.scaled_dot_product_attention(
-                q_padded, k_padded, v_padded, attn_mask=attn_mask, dropout_p=0.0, scale=softmax_scale
-            )
-
-            output = output.transpose(1, 2)
-
-            out_list = []
-            for i, l in enumerate(seqlens):
-                out_list.append(output[i, :l])
-
-            output = torch.cat(out_list, dim=0)
-            output = output.flatten(-2)
-
-        output = attn.to_out[0](output)
+        output = attn.to_out[0](hidden_states)
         if len(attn.to_out) > 1:  # dropout
             output = attn.to_out[1](output)
 
@@ -218,11 +169,8 @@ class FeedForward(nn.Module):
     def __init__(self, dim: int, hidden_dim: int):
         super().__init__()
         self.w1 = nn.Linear(dim, hidden_dim, bias=False)
-        nn.init.xavier_uniform_(self.w1.weight)
         self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-        nn.init.xavier_uniform_(self.w2.weight)
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
-        nn.init.xavier_uniform_(self.w3.weight)
 
     def _forward_silu_gating(self, x1, x3):
         return F.silu(x1) * x3
@@ -272,87 +220,48 @@ class ZImageTransformerBlock(nn.Module):
 
     def forward(
         self,
-        x_shard: torch.Tensor,
-        x_src_ids_shard: torch.Tensor,
-        x_freqs_cis_shard: torch.Tensor,
-        x_cu_seqlens: torch.Tensor,
-        x_max_item_seqlen: int,
+        x: torch.Tensor,
+        attn_mask: torch.Tensor,
+        freqs_cis: torch.Tensor,
         adaln_input: Optional[torch.Tensor] = None,
     ):
         if self.modulation:
             assert adaln_input is not None, "adaln_input (time conditioning) must be provided for modulation."
-            scale_msa, gate_msa, scale_mlp, gate_mlp = self.adaLN_modulation(adaln_input).chunk(4, dim=1)
+            scale_msa, gate_msa, scale_mlp, gate_mlp = self.adaLN_modulation(adaln_input).unsqueeze(1).chunk(4, dim=2)
             gate_msa, gate_mlp = gate_msa.tanh(), gate_mlp.tanh()
             scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
-            scale_gate_msa = (scale_msa, gate_msa)
-            scale_gate_mlp = (scale_mlp, gate_mlp)
-        else:
-            scale_gate_msa = None
-            scale_gate_mlp = None
-            x_src_ids_shard = None
+            scale_gate_msa = scale_msa
+            scale_gate_mlp = scale_mlp
 
-        x_shard = self.attn_forward(
-            x_shard, x_freqs_cis_shard, x_cu_seqlens, x_max_item_seqlen, scale_gate_msa, x_src_ids_shard
-        )
-
-        x_shard = self.ffn_forward(x_shard, scale_gate_mlp, x_src_ids_shard)
-
-        return x_shard
-
-    def attn_forward(
-        self,
-        x_shard,
-        x_freqs_cis_shard,
-        x_cu_seqlens,
-        x_max_item_seqlen,
-        scale_gate: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        x_src_ids_shard: Optional[torch.Tensor] = None,
-    ):
-        if self.modulation:
-            assert scale_gate is not None and x_src_ids_shard is not None
-            scale_msa, gate_msa = scale_gate
-
-            # Pass extra args needed for ZSingleStreamAttnProcessor
+            # Attention block
             attn_out = self.attention(
-                self.attention_norm1(x_shard) * scale_msa[x_src_ids_shard],
-                image_rotary_emb=x_freqs_cis_shard,
-                x_cu_seqlens=x_cu_seqlens,
-                x_max_item_seqlen=x_max_item_seqlen,
+                self.attention_norm1(x) * scale_gate_msa,
+                attention_mask=attn_mask,
+                freqs_cis=freqs_cis,
             )
+            x = x + gate_msa * self.attention_norm2(attn_out)
 
-            x_shard = x_shard + gate_msa[x_src_ids_shard] * self.attention_norm2(attn_out)
-        else:
-            attn_out = self.attention(
-                self.attention_norm1(x_shard),
-                image_rotary_emb=x_freqs_cis_shard,
-                x_cu_seqlens=x_cu_seqlens,
-                x_max_item_seqlen=x_max_item_seqlen,
-            )
-            x_shard = x_shard + self.attention_norm2(attn_out)
-        return x_shard
-
-    def ffn_forward(
-        self,
-        x_shard,
-        scale_gate: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        x_src_ids_shard: Optional[torch.Tensor] = None,
-    ):
-        if self.modulation:
-            assert scale_gate is not None and x_src_ids_shard is not None
-            scale_mlp, gate_mlp = scale_gate
-            x_shard = x_shard + gate_mlp[x_src_ids_shard] * self.ffn_norm2(
+            # FFN block
+            x = x + gate_mlp * self.ffn_norm2(
                 self.feed_forward(
-                    self.ffn_norm1(x_shard) * scale_mlp[x_src_ids_shard],
+                    self.ffn_norm1(x) * scale_gate_mlp,
                 )
             )
 
         else:
-            x_shard = x_shard + self.ffn_norm2(
+            attn_out = self.attention(
+                self.attention_norm1(x),
+                attention_mask=attn_mask,
+                freqs_cis=freqs_cis,
+            )
+            x = x + self.attention_norm2(attn_out)
+
+            x = x + self.ffn_norm2(
                 self.feed_forward(
-                    self.ffn_norm1(x_shard),
+                    self.ffn_norm1(x),
                 )
             )
-        return x_shard
+        return x
 
 
 class FinalLayer(nn.Module):
@@ -370,9 +279,9 @@ class FinalLayer(nn.Module):
         nn.init.zeros_(self.adaLN_modulation[1].weight)
         nn.init.zeros_(self.adaLN_modulation[1].bias)
 
-    def forward(self, x_shard, x_src_ids_shard, c):
+    def forward(self, x_shard, c):
         scale = 1.0 + self.adaLN_modulation(c)
-        x_shard = self.norm_final(x_shard) * scale[x_src_ids_shard]
+        x_shard = self.norm_final(x_shard) * scale.unsqueeze(1)
         x_shard = self.linear(x_shard)
         return x_shard
 
@@ -404,7 +313,7 @@ class RopeEmbedder:
 
         if self.freqs_cis is None:
             self.freqs_cis = self.precompute_freqs_cis(self.axes_dims, self.axes_lens, theta=self.theta)
-            self.freqs_cis = [freqs_cis.cuda() for freqs_cis in self.freqs_cis]
+            self.freqs_cis = [freqs_cis.to(device=ids.device) for freqs_cis in self.freqs_cis]
 
         result = []
         for i in range(len(self.axes_dims)):
@@ -501,7 +410,17 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval: Optional[int] = None
-        self._gradient_checkpointing_func = checkpoint
+        self._gradient_checkpointing_func = None
+
+    def _checkpoint(self, module: nn.Module, *args):
+        """
+        Run a checkpointed forward pass using the configured checkpointing function.
+        Falls back to torch.utils.checkpoint.checkpoint with non-reentrant mode if none is set.
+        """
+        if self._gradient_checkpointing_func is not None:
+            return self._gradient_checkpointing_func(module, *args)
+
+        return torch.utils.checkpoint.checkpoint(module, *args, use_reentrant=False)
 
     def set_gradient_checkpointing_interval(self, value: int):
         self.gradient_checkpointing_interval = value
@@ -516,9 +435,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 module.processor._parallel_config = parallel_config
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
-        """Attach a TREAD router and routing plan for token dropping during training."""
-        self._tread_router = router
-        self._tread_routes = routes
+        """TREAD routing is not supported in the padded Z-Image path."""
+        raise NotImplementedError("TREAD routing is not supported for the padded Z-Image transformer.")
 
     def unpatchify(self, x: List[torch.Tensor], size: List[Tuple], patch_size, f_patch_size) -> List[torch.Tensor]:
         pH = pW = patch_size
@@ -652,7 +570,6 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         f_patch_size=1,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         skip_layers: Optional[List[int]] = None,
-        force_keep_mask: Optional[torch.Tensor] = None,
     ):
 
         assert patch_size in self.all_patch_size
@@ -661,26 +578,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         bsz = len(x)
         device = x[0].device
 
-        if joint_attention_kwargs is not None:
-            joint_attention_kwargs = joint_attention_kwargs.copy()
-            lora_scale = joint_attention_kwargs.pop("scale", 1.0)
-        else:
-            lora_scale = 1.0
-
-        use_checkpoint = self.gradient_checkpointing and torch.is_grad_enabled()
-
-        if USE_PEFT_BACKEND:
-            scale_lora_layers(self, lora_scale)
-        else:
-            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
-                logger.warning(
-                    "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
-                )
-
         t = t * self.t_scale
         t = self.t_embedder(t)
-
-        adaln_input = t
 
         (
             x,
@@ -692,241 +591,103 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             cap_pad_mask,
         ) = self.patchify_and_embed(x, cap_feats, patch_size, f_patch_size)
 
+        if joint_attention_kwargs is not None:
+            joint_attention_kwargs = joint_attention_kwargs.copy()
+            lora_scale = joint_attention_kwargs.pop("scale", 1.0)
+        else:
+            lora_scale = 1.0
+
+        if USE_PEFT_BACKEND:
+            scale_lora_layers(self, lora_scale)
+        else:
+            if joint_attention_kwargs is not None and joint_attention_kwargs.get("scale", None) is not None:
+                logger.warning(
+                    "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
+                )
+
         # x embed & refine
         x_item_seqlens = [len(_) for _ in x]
         assert all(_ % SEQ_MULTI_OF == 0 for _ in x_item_seqlens)
         x_max_item_seqlen = max(x_item_seqlens)
-        x_cu_seqlens = F.pad(
-            torch.cumsum(torch.tensor(x_item_seqlens, dtype=torch.int32, device=device), dim=0, dtype=torch.int32),
-            (1, 0),
-        )
-        x_src_ids = [torch.full((count,), i, dtype=torch.int32, device=device) for i, count in enumerate(x_item_seqlens)]
-        x_freqs_cis = self.rope_embedder(torch.cat(x_pos_ids, dim=0)).split(x_item_seqlens, dim=0)
 
-        x_shard = torch.cat(x, dim=0)
-        x_src_ids_shard = torch.cat(x_src_ids, dim=0)
-        x_freqs_cis_shard = torch.cat(x_freqs_cis, dim=0)
-        x_pad_mask_shard = torch.cat(x_pad_mask, dim=0)
-        del x
+        x = torch.cat(x, dim=0)
+        x = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](x)
 
-        x_shard = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](x_shard)
-        x_shard[x_pad_mask_shard] = self.x_pad_token
-        for layer in self.noise_refiner:
-            if use_checkpoint:
-                x_shard = torch.utils.checkpoint.checkpoint(
-                    layer,
-                    x_shard,
-                    x_src_ids_shard,
-                    x_freqs_cis_shard,
-                    x_cu_seqlens,
-                    x_max_item_seqlen,
-                    adaln_input,
-                    use_reentrant=False,
-                )
-            else:
-                x_shard = layer(x_shard, x_src_ids_shard, x_freqs_cis_shard, x_cu_seqlens, x_max_item_seqlen, adaln_input)
-        x_flatten = x_shard
+        # Match t_embedder output dtype to x for layerwise casting compatibility
+        adaln_input = t.type_as(x)
+        x[torch.cat(x_pad_mask)] = self.x_pad_token
+        x = list(x.split(x_item_seqlens, dim=0))
+        x_freqs_cis = list(self.rope_embedder(torch.cat(x_pos_ids, dim=0)).split(x_item_seqlens, dim=0))
+
+        x = pad_sequence(x, batch_first=True, padding_value=0.0)
+        x_freqs_cis = pad_sequence(x_freqs_cis, batch_first=True, padding_value=0.0)
+        x_attn_mask = torch.zeros((bsz, x_max_item_seqlen), dtype=torch.bool, device=device)
+        for i, seq_len in enumerate(x_item_seqlens):
+            x_attn_mask[i, :seq_len] = 1
+
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
+            for layer in self.noise_refiner:
+                x = self._checkpoint(layer, x, x_attn_mask, x_freqs_cis, adaln_input)
+        else:
+            for layer in self.noise_refiner:
+                x = layer(x, x_attn_mask, x_freqs_cis, adaln_input)
 
         # cap embed & refine
         cap_item_seqlens = [len(_) for _ in cap_feats]
         assert all(_ % SEQ_MULTI_OF == 0 for _ in cap_item_seqlens)
         cap_max_item_seqlen = max(cap_item_seqlens)
-        cap_cu_seqlens = F.pad(
-            torch.cumsum(torch.tensor(cap_item_seqlens, dtype=torch.int32, device=device), dim=0, dtype=torch.int32),
-            (1, 0),
-        )
-        cap_src_ids = [torch.full((count,), i, dtype=torch.int32, device=device) for i, count in enumerate(cap_item_seqlens)]
-        cap_freqs_cis = self.rope_embedder(torch.cat(cap_pos_ids, dim=0)).split(cap_item_seqlens, dim=0)
 
-        cap_shard = torch.cat(cap_feats, dim=0)
-        cap_src_ids_shard = torch.cat(cap_src_ids, dim=0)
-        cap_freqs_cis_shard = torch.cat(cap_freqs_cis, dim=0)
-        cap_pad_mask_shard = torch.cat(cap_pad_mask, dim=0)
-        del cap_feats
+        cap_feats = torch.cat(cap_feats, dim=0)
+        cap_feats = self.cap_embedder(cap_feats)
+        cap_feats[torch.cat(cap_pad_mask)] = self.cap_pad_token
+        cap_feats = list(cap_feats.split(cap_item_seqlens, dim=0))
+        cap_freqs_cis = list(self.rope_embedder(torch.cat(cap_pos_ids, dim=0)).split(cap_item_seqlens, dim=0))
 
-        cap_shard = self.cap_embedder(cap_shard)
-        cap_shard[cap_pad_mask_shard] = self.cap_pad_token
-        for layer in self.context_refiner:
-            if use_checkpoint:
-                cap_shard = torch.utils.checkpoint.checkpoint(
-                    layer,
-                    cap_shard,
-                    cap_src_ids_shard,
-                    cap_freqs_cis_shard,
-                    cap_cu_seqlens,
-                    cap_max_item_seqlen,
-                    adaln_input,
-                    use_reentrant=False,
-                )
-            else:
-                cap_shard = layer(
-                    cap_shard,
-                    cap_src_ids_shard,
-                    cap_freqs_cis_shard,
-                    cap_cu_seqlens,
-                    cap_max_item_seqlen,
-                    adaln_input,
-                )
-        cap_flatten = cap_shard
+        cap_feats = pad_sequence(cap_feats, batch_first=True, padding_value=0.0)
+        cap_freqs_cis = pad_sequence(cap_freqs_cis, batch_first=True, padding_value=0.0)
+        cap_attn_mask = torch.zeros((bsz, cap_max_item_seqlen), dtype=torch.bool, device=device)
+        for i, seq_len in enumerate(cap_item_seqlens):
+            cap_attn_mask[i, :seq_len] = 1
+
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
+            for layer in self.context_refiner:
+                cap_feats = self._checkpoint(layer, cap_feats, cap_attn_mask, cap_freqs_cis, adaln_input)
+        else:
+            for layer in self.context_refiner:
+                cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis, adaln_input)
 
         # unified
-        def merge_interleave(l1, l2):
-            return list(itertools.chain(*zip(l1, l2)))
-
-        cap_lists = cap_flatten.split(cap_item_seqlens, dim=0)
-        x_lists = x_flatten.split(x_item_seqlens, dim=0)
-        unified_lists = merge_interleave(cap_lists, x_lists)
-        unified = torch.cat(unified_lists, dim=0)
+        unified = []
+        unified_freqs_cis = []
+        for i in range(bsz):
+            x_len = x_item_seqlens[i]
+            cap_len = cap_item_seqlens[i]
+            unified.append(torch.cat([x[i][:x_len], cap_feats[i][:cap_len]]))
+            unified_freqs_cis.append(torch.cat([x_freqs_cis[i][:x_len], cap_freqs_cis[i][:cap_len]]))
         unified_item_seqlens = [a + b for a, b in zip(cap_item_seqlens, x_item_seqlens)]
-        assert len(unified) == sum(unified_item_seqlens)
+        assert unified_item_seqlens == [len(_) for _ in unified]
         unified_max_item_seqlen = max(unified_item_seqlens)
-        unified_cu_seqlens = F.pad(
-            torch.cumsum(torch.tensor(unified_item_seqlens, dtype=torch.int32, device=device), dim=0, dtype=torch.int32),
-            (1, 0),
-        )
-        unified_src_ids = torch.cat(merge_interleave(cap_src_ids, x_src_ids))
-        unified_freqs_cis_lists = merge_interleave(cap_freqs_cis, x_freqs_cis)
-        unified_freqs_cis = torch.cat(unified_freqs_cis_lists)
 
-        unified_shard = unified
-        unified_src_ids_shard = unified_src_ids
-        unified_freqs_cis_shard = unified_freqs_cis
-        current_item_seqlens = unified_item_seqlens
-        current_max_item_seqlen = unified_max_item_seqlen
-        current_cu_seqlens = unified_cu_seqlens
+        unified = pad_sequence(unified, batch_first=True, padding_value=0.0)
+        unified_freqs_cis = pad_sequence(unified_freqs_cis, batch_first=True, padding_value=0.0)
+        unified_attn_mask = torch.zeros((bsz, unified_max_item_seqlen), dtype=torch.bool, device=device)
+        for i, seq_len in enumerate(unified_item_seqlens):
+            unified_attn_mask[i, :seq_len] = 1
 
-        routes = self._tread_routes or []
-        router = self._tread_router
-        use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
-        if use_routing and router is None:
-            raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
-        route_ptr = 0
-        routing_now = False
-        tread_mask_info = None
-        saved_tokens = None
-        saved_lengths: Optional[List[int]] = None
-        global_idx = 0
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
+            for idx, layer in enumerate(self.layers):
+                if skip_layers is not None and idx in skip_layers:
+                    continue
+                unified = self._checkpoint(layer, unified, unified_attn_mask, unified_freqs_cis, adaln_input)
+        else:
+            for idx, layer in enumerate(self.layers):
+                if skip_layers is not None and idx in skip_layers:
+                    continue
+                unified = layer(unified, unified_attn_mask, unified_freqs_cis, adaln_input)
 
-        if routes:
-            total_layers = len(self.layers)
-
-            def _to_pos(idx):
-                return idx if idx >= 0 else total_layers + idx
-
-            routes = [
-                {
-                    **r,
-                    "start_layer_idx": _to_pos(r["start_layer_idx"]),
-                    "end_layer_idx": _to_pos(r["end_layer_idx"]),
-                }
-                for r in routes
-            ]
-
-        for index_block, layer in enumerate(self.layers):
-            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
-                current_token_list = unified_shard.split(current_item_seqlens, dim=0)
-                current_freq_list = unified_freqs_cis_shard.split(current_item_seqlens, dim=0)
-                max_len = max(current_item_seqlens)
-                padded_tokens = pad_sequence(current_token_list, batch_first=True)
-                padded_freqs = pad_sequence(current_freq_list, batch_first=True)
-
-                force_keep = torch.ones((bsz, max_len), dtype=torch.bool, device=device)
-                for sample_idx, seq_len in enumerate(current_item_seqlens):
-                    force_keep[sample_idx, :seq_len] = False
-                    force_keep[sample_idx, : cap_item_seqlens[sample_idx]] = True
-
-                if force_keep_mask is not None:
-                    fk = force_keep_mask.to(device=device, dtype=torch.bool)
-                    if fk.dim() == 2:
-                        if fk.shape[1] < max_len:
-                            fk = F.pad(fk, (0, max_len - fk.shape[1]), value=False)
-                        else:
-                            fk = fk[:, :max_len]
-                        force_keep = force_keep | fk
-
-                tread_mask_info = router.get_mask(
-                    padded_tokens,
-                    mask_ratio=routes[route_ptr]["selection_ratio"],
-                    force_keep=force_keep,
-                )
-                saved_tokens = padded_tokens.clone()
-                saved_lengths = list(current_item_seqlens)
-
-                routed_tokens = router.start_route(padded_tokens, tread_mask_info)
-                routed_freqs = router.start_route(padded_freqs, tread_mask_info)
-
-                keep_len = routed_tokens.shape[1]
-                unified_shard = routed_tokens.reshape(-1, routed_tokens.shape[-1])
-                unified_freqs_cis_shard = routed_freqs.reshape(-1, routed_freqs.shape[-1])
-                current_item_seqlens = [keep_len for _ in range(bsz)]
-                current_max_item_seqlen = keep_len
-                current_cu_seqlens = torch.arange(0, (bsz + 1) * keep_len, keep_len, dtype=torch.int32, device=device)
-                unified_src_ids_shard = torch.arange(bsz, device=device, dtype=torch.int32).repeat_interleave(keep_len)
-                routing_now = True
-
-            skip_block = skip_layers is not None and index_block in skip_layers
-            if not skip_block:
-                use_layer_checkpoint = use_checkpoint and (
-                    self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0
-                )
-                if use_layer_checkpoint:
-                    unified_shard = torch.utils.checkpoint.checkpoint(
-                        layer,
-                        unified_shard,
-                        unified_src_ids_shard,
-                        unified_freqs_cis_shard,
-                        current_cu_seqlens,
-                        current_max_item_seqlen,
-                        adaln_input,
-                        use_reentrant=False,
-                    )
-                else:
-                    unified_shard = layer(
-                        unified_shard,
-                        unified_src_ids_shard,
-                        unified_freqs_cis_shard,
-                        current_cu_seqlens,
-                        current_max_item_seqlen,
-                        adaln_input,
-                    )
-
-            if routing_now and route_ptr < len(routes) and global_idx == routes[route_ptr]["end_layer_idx"]:
-                keep_len = current_item_seqlens[0]
-                routed_hidden = unified_shard.view(bsz, keep_len, -1)
-                restored_tokens = router.end_route(routed_hidden, tread_mask_info, original_x=saved_tokens)
-
-                restored_list = []
-                restored_freq_list = []
-                for sample_idx, seq_len in enumerate(saved_lengths):
-                    restored_list.append(restored_tokens[sample_idx, :seq_len])
-                    restored_freq_list.append(unified_freqs_cis_lists[sample_idx][:seq_len])
-
-                unified_shard = torch.cat(restored_list, dim=0)
-                unified_freqs_cis_shard = torch.cat(restored_freq_list, dim=0)
-                current_item_seqlens = list(saved_lengths)
-                current_max_item_seqlen = max(current_item_seqlens)
-                current_cu_seqlens = F.pad(
-                    torch.cumsum(
-                        torch.tensor(current_item_seqlens, dtype=torch.int32, device=device), dim=0, dtype=torch.int32
-                    ),
-                    (1, 0),
-                )
-                unified_src_ids_shard = torch.cat(
-                    [torch.full((l,), idx, dtype=torch.int32, device=device) for idx, l in enumerate(current_item_seqlens)]
-                )
-                routing_now = False
-                route_ptr += 1
-
-            global_idx += 1
-
-        unified_shard = self.all_final_layer[f"{patch_size}-{f_patch_size}"](
-            unified_shard, unified_src_ids_shard, adaln_input
-        )
-        unified = unified_shard.split(current_item_seqlens, dim=0)
-        x = [unified[i][cap_item_seqlens[i] :] for i in range(bsz)]
-        assert all(len(x[i]) == x_item_seqlens[i] for i in range(bsz))
-
-        x = self.unpatchify(x, x_size, patch_size, f_patch_size)
+        unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](unified, adaln_input)
+        unified = list(unified.unbind(dim=0))
+        x = self.unpatchify(unified, x_size, patch_size, f_patch_size)
 
         if USE_PEFT_BACKEND:
             unscale_lora_layers(self, lora_scale)
