@@ -51,6 +51,7 @@ class Flux(ImageModelFoundation):
     DEFAULT_LYCORIS_TARGET = ["Attention"]
     ASSISTANT_LORA_FLAVOURS = ["schnell"]
     ASSISTANT_LORA_PATH = "ostris/FLUX.1-schnell-training-adapter"
+    ASSISTANT_LORA_WEIGHT_NAME = None
 
     MODEL_CLASS = FluxTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
@@ -192,6 +193,7 @@ class Flux(ImageModelFoundation):
             lora_path=assistant_path,
             adapter_name=self.assistant_adapter_name,
             low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+            weight_name=getattr(self.config, "assistant_lora_weight_name", None),
         )
         self.assistant_lora_loaded = loaded
 
@@ -740,6 +742,8 @@ class Flux(ImageModelFoundation):
                 self.config, "assistant_lora_path", None
             ) in (None, "", "None"):
                 self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
+                if getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None"):
+                    self.config.assistant_lora_weight_name = getattr(self, "ASSISTANT_LORA_WEIGHT_NAME", None)
             if not self.config.flux_fast_schedule and not self.config.i_know_what_i_am_doing:
                 logger.error("Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing).")
                 import sys

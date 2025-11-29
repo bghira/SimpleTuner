@@ -28,6 +28,8 @@ class ZImage(ImageModelFoundation):
         PipelineTypes.TEXT2IMG: ZImagePipeline,
     }
     ASSISTANT_LORA_FLAVOURS = ["turbo"]
+    ASSISTANT_LORA_PATH = "ostris/zimage_turbo_training_adapter"
+    ASSISTANT_LORA_WEIGHT_NAME = "zimage_turbo_training_adapter_v1.safetensors"
 
     # We do not bundle a default HF path; users must point at a released checkpoint.
     HUGGINGFACE_PATHS: dict = {"base": "TONGYI-MAI/Z-Image-Base", "turbo": "TONGYI-MAI/Z-Image-Turbo"}
@@ -42,7 +44,6 @@ class ZImage(ImageModelFoundation):
             "subfolder": "text_encoder",
         },
     }
-    ASSISTANT_LORA_PATH = None
 
     def tread_init(self):
         """Initialize the TREAD router when training with token routing enabled."""
@@ -89,6 +90,7 @@ class ZImage(ImageModelFoundation):
             lora_path=assistant_path,
             adapter_name=self.assistant_adapter_name,
             low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+            weight_name=getattr(self.config, "assistant_lora_weight_name", None) or self.ASSISTANT_LORA_WEIGHT_NAME,
         )
         self.assistant_lora_loaded = loaded
 
@@ -168,6 +170,8 @@ class ZImage(ImageModelFoundation):
             if getattr(self.config, "assistant_lora_path", None) in (None, "", "None"):
                 if self.ASSISTANT_LORA_PATH:
                     self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
+                    if getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None"):
+                        self.config.assistant_lora_weight_name = self.ASSISTANT_LORA_WEIGHT_NAME
                 else:
                     raise ValueError(
                         "Z-Image turbo training expects an assistant LoRA. Provide --assistant_lora_path pointing to the turbo assistant adapter."

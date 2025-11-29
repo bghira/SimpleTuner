@@ -29,6 +29,7 @@ def load_assistant_adapter(
     lora_path: str,
     adapter_name: str = "assistant",
     low_cpu_mem_usage: bool = False,
+    weight_name: Optional[str] = None,
 ) -> bool:
     """
     Load a LoRA adapter into a transformer using the pipeline's loader utilities.
@@ -46,6 +47,9 @@ def load_assistant_adapter(
     state_kwargs = {}
     if "return_alphas" in inspect.signature(lora_state_fn).parameters:
         state_kwargs["return_alphas"] = True
+
+    if weight_name is not None:
+        state_kwargs["weight_name"] = weight_name
 
     lora_state = lora_state_fn(lora_path, **state_kwargs)
     network_alphas = None
