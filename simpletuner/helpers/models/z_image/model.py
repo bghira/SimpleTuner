@@ -27,6 +27,7 @@ class ZImage(ImageModelFoundation):
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: ZImagePipeline,
     }
+    ASSISTANT_LORA_FLAVOURS = ["turbo"]
 
     # We do not bundle a default HF path; users must point at a released checkpoint.
     HUGGINGFACE_PATHS: dict = {"base": "TONGYI-MAI/Z-Image-Base", "turbo": "TONGYI-MAI/Z-Image-Turbo"}
@@ -41,6 +42,7 @@ class ZImage(ImageModelFoundation):
             "subfolder": "text_encoder",
         },
     }
+    ASSISTANT_LORA_PATH = None
 
     def tread_init(self):
         """Initialize the TREAD router when training with token routing enabled."""
@@ -62,6 +64,33 @@ class ZImage(ImageModelFoundation):
         )
 
         logger.info("TREAD training is enabled for Z-Image")
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        self._maybe_load_assistant_lora()
+
+    def _maybe_load_assistant_lora(self):
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not self.supports_assistant_lora(self.config):
+            return
+        if getattr(self.config, "model_type", "").lower() != "lora":
+            return
+
+        assistant_path = getattr(self.config, "assistant_lora_path", None) or self.ASSISTANT_LORA_PATH
+        if not assistant_path:
+            return
+
+        from simpletuner.helpers.assistant_lora import load_assistant_adapter
+
+        loaded = load_assistant_adapter(
+            transformer=self.unwrap_model(model=self.model),
+            pipeline_cls=ZImagePipeline,
+            lora_path=assistant_path,
+            adapter_name=self.assistant_adapter_name,
+            low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+        )
+        self.assistant_lora_loaded = loaded
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         if self.text_encoders is None or len(self.text_encoders) == 0:
@@ -128,6 +157,21 @@ class ZImage(ImageModelFoundation):
         return {
             "negative_prompt_embeds": prompt_list,
         }
+
+    def check_user_config(self):
+        super().check_user_config()
+        if (
+            self.config.model_flavour == "turbo"
+            and getattr(self.config, "model_type", "").lower() == "lora"
+            and not getattr(self.config, "disable_assistant_lora", False)
+        ):
+            if getattr(self.config, "assistant_lora_path", None) in (None, "", "None"):
+                if self.ASSISTANT_LORA_PATH:
+                    self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
+                else:
+                    raise ValueError(
+                        "Z-Image turbo training expects an assistant LoRA. Provide --assistant_lora_path pointing to the turbo assistant adapter."
+                    )
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
         latents = prepared_batch["noisy_latents"]

@@ -2400,6 +2400,8 @@ class Trainer:
             logger.info(
                 f"LoRA network has been initialized with {trainable_parameter_count(self._get_trainable_parameters())} parameters"
             )
+            if hasattr(self.model, "configure_assistant_lora_for_training"):
+                self.model.configure_assistant_lora_for_training()
         elif "lycoris" == self.config.lora_type.lower():
             from lycoris import create_lycoris
 

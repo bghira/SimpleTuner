@@ -49,6 +49,8 @@ class Flux(ImageModelFoundation):
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
+    ASSISTANT_LORA_FLAVOURS = ["schnell"]
+    ASSISTANT_LORA_PATH = "ostris/FLUX.1-schnell-training-adapter"
 
     MODEL_CLASS = FluxTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
@@ -165,6 +167,33 @@ class Flux(ImageModelFoundation):
         )
 
         logger.info("TREAD training is enabled")
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        self._maybe_load_assistant_lora()
+
+    def _maybe_load_assistant_lora(self):
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not self.supports_assistant_lora(self.config):
+            return
+        if getattr(self.config, "model_type", "").lower() != "lora":
+            return
+
+        assistant_path = getattr(self.config, "assistant_lora_path", None) or self.ASSISTANT_LORA_PATH
+        if not assistant_path:
+            return
+
+        from simpletuner.helpers.assistant_lora import load_assistant_adapter
+
+        loaded = load_assistant_adapter(
+            transformer=self.unwrap_model(model=self.model),
+            pipeline_cls=FluxPipeline,
+            lora_path=assistant_path,
+            adapter_name=self.assistant_adapter_name,
+            low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+        )
+        self.assistant_lora_loaded = loaded
 
     def fuse_qkv_projections(self):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
@@ -707,6 +736,10 @@ class Flux(ImageModelFoundation):
             logger.warning(f"-!- {self.NAME} supports a max length of 512 tokens, --tokenizer_max_length is ignored -!-")
         self.config.tokenizer_max_length = 512
         if self.config.model_flavour == "schnell":
+            if not getattr(self.config, "disable_assistant_lora", False) and getattr(
+                self.config, "assistant_lora_path", None
+            ) in (None, "", "None"):
+                self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
             if not self.config.flux_fast_schedule and not self.config.i_know_what_i_am_doing:
                 logger.error("Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing).")
                 import sys
