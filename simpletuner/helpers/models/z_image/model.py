@@ -7,6 +7,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.models.z_image.pipeline import ZImagePipeline
 from simpletuner.helpers.models.z_image.transformer import ZImageTransformer2DModel
 
@@ -21,6 +22,7 @@ class ZImage(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
+    VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
 
     MODEL_CLASS = ZImageTransformer2DModel
     MODEL_SUBFOLDER = "transformer"
