@@ -29,7 +29,7 @@ class ZImage(ImageModelFoundation):
     }
 
     # We do not bundle a default HF path; users must point at a released checkpoint.
-    HUGGINGFACE_PATHS: dict = {"base": "TONGYI-MAI/Z-Image-Base"}
+    HUGGINGFACE_PATHS: dict = {"base": "TONGYI-MAI/Z-Image-Base", "turbo": "TONGYI-MAI/Z-Image-Turbo"}
     DEFAULT_MODEL_FLAVOUR = "base"
 
     TEXT_ENCODER_CONFIGURATION = {
