@@ -583,35 +583,37 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             image_ori_len = len(image)
             image_padding_len = (-image_ori_len) % SEQ_MULTI_OF
             # padded_pos_ids
-
             image_ori_pos_ids = self.create_coordinate_grid(
                 size=(F_tokens, H_tokens, W_tokens),
                 start=(cap_ori_len + cap_padding_len + 1, 0, 0),
                 device=device,
             ).flatten(0, 2)
-            image_padding_pos_ids = (
-                self.create_coordinate_grid(
-                    size=(1, 1, 1),
-                    start=(0, 0, 0),
-                    device=device,
+            if image_padding_len > 0:
+                image_padding_pos_ids = (
+                    self.create_coordinate_grid(
+                        size=(1, 1, 1),
+                        start=(0, 0, 0),
+                        device=device,
+                    )
+                    .flatten(0, 2)
+                    .repeat(image_padding_len, 1)
                 )
-                .flatten(0, 2)
-                .repeat(image_padding_len, 1)
-            )
-            image_padded_pos_ids = torch.cat([image_ori_pos_ids, image_padding_pos_ids], dim=0)
-            all_image_pos_ids.append(image_padded_pos_ids)
-            # pad mask
-            all_image_pad_mask.append(
-                torch.cat(
+                image_padded_pos_ids = torch.cat([image_ori_pos_ids, image_padding_pos_ids], dim=0)
+                image_pad_mask = torch.cat(
                     [
                         torch.zeros((image_ori_len,), dtype=torch.bool, device=device),
                         torch.ones((image_padding_len,), dtype=torch.bool, device=device),
                     ],
                     dim=0,
                 )
-            )
-            # padded feature
-            image_padded_feat = torch.cat([image, image[-1:].repeat(image_padding_len, 1)], dim=0)
+                image_padded_feat = torch.cat([image, image[-1:].repeat(image_padding_len, 1)], dim=0)
+            else:
+                image_padded_pos_ids = image_ori_pos_ids
+                image_pad_mask = torch.zeros((image_ori_len,), dtype=torch.bool, device=device)
+                image_padded_feat = image
+
+            all_image_pos_ids.append(image_padded_pos_ids)
+            all_image_pad_mask.append(image_pad_mask)
             all_image_out.append(image_padded_feat)
 
         return (
