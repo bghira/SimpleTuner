@@ -21,6 +21,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from torch.nn.utils.rnn import pad_sequence
+from torch.utils.checkpoint import checkpoint
 
 try:
     from flash_attn import flash_attn_varlen_func
@@ -498,6 +499,13 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         self.rope_embedder = RopeEmbedder(theta=rope_theta, axes_dims=axes_dims, axes_lens=axes_lens)
 
+        self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval: Optional[int] = None
+        self._gradient_checkpointing_func = checkpoint
+
+    def set_gradient_checkpointing_interval(self, value: int):
+        self.gradient_checkpointing_interval = value
+
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Attach a TREAD router and routing plan for token dropping during training."""
         self._tread_router = router
@@ -650,6 +658,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         else:
             lora_scale = 1.0
 
+        use_checkpoint = self.gradient_checkpointing and torch.is_grad_enabled()
+        ckpt_fn = getattr(self, "_gradient_checkpointing_func", None) or checkpoint
+
         if USE_PEFT_BACKEND:
             scale_lora_layers(self, lora_scale)
         else:
@@ -693,7 +704,18 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         x_shard = self.all_x_embedder[f"{patch_size}-{f_patch_size}"](x_shard)
         x_shard[x_pad_mask_shard] = self.x_pad_token
         for layer in self.noise_refiner:
-            x_shard = layer(x_shard, x_src_ids_shard, x_freqs_cis_shard, x_cu_seqlens, x_max_item_seqlen, adaln_input)
+            if use_checkpoint:
+                x_shard = ckpt_fn(
+                    lambda *args: layer(*args),
+                    x_shard,
+                    x_src_ids_shard,
+                    x_freqs_cis_shard,
+                    x_cu_seqlens,
+                    x_max_item_seqlen,
+                    adaln_input,
+                )
+            else:
+                x_shard = layer(x_shard, x_src_ids_shard, x_freqs_cis_shard, x_cu_seqlens, x_max_item_seqlen, adaln_input)
         x_flatten = x_shard
 
         # cap embed & refine
@@ -716,13 +738,23 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         cap_shard = self.cap_embedder(cap_shard)
         cap_shard[cap_pad_mask_shard] = self.cap_pad_token
         for layer in self.context_refiner:
-            cap_shard = layer(
-                cap_shard,
-                cap_src_ids_shard,
-                cap_freqs_cis_shard,
-                cap_cu_seqlens,
-                cap_max_item_seqlen,
-            )
+            if use_checkpoint:
+                cap_shard = ckpt_fn(
+                    lambda *args: layer(*args),
+                    cap_shard,
+                    cap_src_ids_shard,
+                    cap_freqs_cis_shard,
+                    cap_cu_seqlens,
+                    cap_max_item_seqlen,
+                )
+            else:
+                cap_shard = layer(
+                    cap_shard,
+                    cap_src_ids_shard,
+                    cap_freqs_cis_shard,
+                    cap_cu_seqlens,
+                    cap_max_item_seqlen,
+                )
         cap_flatten = cap_shard
 
         # unified
@@ -822,14 +854,28 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
             skip_block = skip_layers is not None and index_block in skip_layers
             if not skip_block:
-                unified_shard = layer(
-                    unified_shard,
-                    unified_src_ids_shard,
-                    unified_freqs_cis_shard,
-                    current_cu_seqlens,
-                    current_max_item_seqlen,
-                    adaln_input,
+                use_layer_checkpoint = use_checkpoint and (
+                    self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0
                 )
+                if use_layer_checkpoint:
+                    unified_shard = ckpt_fn(
+                        lambda *args: layer(*args),
+                        unified_shard,
+                        unified_src_ids_shard,
+                        unified_freqs_cis_shard,
+                        current_cu_seqlens,
+                        current_max_item_seqlen,
+                        adaln_input,
+                    )
+                else:
+                    unified_shard = layer(
+                        unified_shard,
+                        unified_src_ids_shard,
+                        unified_freqs_cis_shard,
+                        current_cu_seqlens,
+                        current_max_item_seqlen,
+                        adaln_input,
+                    )
 
             if routing_now and route_ptr < len(routes) and global_idx == routes[route_ptr]["end_layer_idx"]:
                 keep_len = current_item_seqlens[0]
