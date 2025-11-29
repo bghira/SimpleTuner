@@ -668,7 +668,6 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             lora_scale = 1.0
 
         use_checkpoint = self.gradient_checkpointing and torch.is_grad_enabled()
-        ckpt_fn = getattr(self, "_gradient_checkpointing_func", None) or checkpoint
 
         if USE_PEFT_BACKEND:
             scale_lora_layers(self, lora_scale)
@@ -714,8 +713,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         x_shard[x_pad_mask_shard] = self.x_pad_token
         for layer in self.noise_refiner:
             if use_checkpoint:
-                x_shard = ckpt_fn(
-                    layer,
+                x_shard = torch.utils.checkpoint.checkpoint(
+                    lambda *args: layer(*args),
                     x_shard,
                     x_src_ids_shard,
                     x_freqs_cis_shard,
@@ -749,7 +748,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         cap_shard[cap_pad_mask_shard] = self.cap_pad_token
         for layer in self.context_refiner:
             if use_checkpoint:
-                cap_shard = ckpt_fn(
+                cap_shard = torch.utils.checkpoint.checkpoint(
+                    lambda *args: layer(*args),
                     cap_shard,
                     cap_src_ids_shard,
                     cap_freqs_cis_shard,
@@ -870,7 +870,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                     self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0
                 )
                 if use_layer_checkpoint:
-                    unified_shard = ckpt_fn(
+                    unified_shard = torch.utils.checkpoint.checkpoint(
+                        lambda *args: layer(*args),
                         unified_shard,
                         unified_src_ids_shard,
                         unified_freqs_cis_shard,
