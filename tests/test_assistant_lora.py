@@ -118,6 +118,7 @@ class AssistantLoraTests(unittest.TestCase):
         self.assertTrue(called["load_kwargs"]["network_alphas"])
         adapter_params = dict(transformer.named_parameters())
         self.assertFalse(adapter_params["layer.lora_A.assistant"].requires_grad)
+        self.assertIsNone(called["state_kwargs"].get("weight_name"))
 
 
 class SupportsAssistantLoraTests(unittest.TestCase):
@@ -172,6 +173,7 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         config.tokenizer_max_length = None
         config.assistant_lora_path = None
         config.disable_assistant_lora = False
+        config.assistant_lora_weight_name = None
         config.weight_dtype = torch.float32
         config.pretrained_model_name_or_path = "black-forest-labs/flux.1-schnell"
 
@@ -190,6 +192,7 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         config.model_type = "lora"
         config.assistant_lora_path = None
         config.disable_assistant_lora = False
+        config.assistant_lora_weight_name = None
         config.weight_dtype = torch.float32
         config.pretrained_model_name_or_path = "TONGYI-MAI/Z-Image-Turbo"
         config.revision = None
@@ -217,6 +220,7 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         config.model_type = "lora"
         config.assistant_lora_path = None
         config.disable_assistant_lora = True
+        config.assistant_lora_weight_name = None
         config.weight_dtype = torch.float32
         config.pretrained_model_name_or_path = "TONGYI-MAI/Z-Image-Turbo"
         config.revision = None
