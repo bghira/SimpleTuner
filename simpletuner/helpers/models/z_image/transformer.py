@@ -714,7 +714,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for layer in self.noise_refiner:
             if use_checkpoint:
                 x_shard = torch.utils.checkpoint.checkpoint(
-                    lambda *args: layer(*args),
+                    layer,
                     x_shard,
                     x_src_ids_shard,
                     x_freqs_cis_shard,
@@ -749,7 +749,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for layer in self.context_refiner:
             if use_checkpoint:
                 cap_shard = torch.utils.checkpoint.checkpoint(
-                    lambda *args: layer(*args),
+                    layer,
                     cap_shard,
                     cap_src_ids_shard,
                     cap_freqs_cis_shard,
@@ -871,7 +871,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 )
                 if use_layer_checkpoint:
                     unified_shard = torch.utils.checkpoint.checkpoint(
-                        lambda *args: layer(*args),
+                        layer,
                         unified_shard,
                         unified_src_ids_shard,
                         unified_freqs_cis_shard,
