@@ -18,6 +18,8 @@ def freeze_adapter_parameters(module, adapter_name: str) -> None:
 
 def _maybe_call_with_kwargs(fn, *args, **kwargs):
     sig = inspect.signature(fn)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return fn(*args, **kwargs)
     filtered_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
     return fn(*args, **filtered_kwargs)
 
@@ -94,9 +96,10 @@ def set_adapter_stack(
     if isinstance(names, list) and len(names) == 0:
         return
 
-    if hasattr(module, "set_adapters"):
+    has_stack = hasattr(module, "set_adapters") and callable(getattr(module, "set_adapters"))
+    if has_stack:
         module.set_adapters(names, weights)
-    elif hasattr(module, "set_adapter"):
+    elif hasattr(module, "set_adapter") and callable(getattr(module, "set_adapter")):
         # Fallback to single adapter activation.
         if isinstance(names, list) and len(names) > 0:
             module.set_adapter(names[0])

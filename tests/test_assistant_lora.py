@@ -21,12 +21,12 @@ class _Param:
 
 class _DummyModule:
     def __init__(self, names):
-        self._names = names
+        self._params = {name: _Param() for name in names}
         self.set_adapters_called = None
         self.set_adapter_called = None
 
     def named_parameters(self):
-        return [(name, _Param()) for name in self._names]
+        return list(self._params.items())
 
     def set_adapters(self, names, weights=None):
         self.set_adapters_called = (names, weights)
@@ -70,8 +70,7 @@ class AssistantLoraTests(unittest.TestCase):
 
     def test_set_adapter_stack_falls_back_to_set_adapter(self):
         module = _DummyModule(["block.lora_B.assistant"])
-        # remove set_adapters to force fallback
-        delattr(module, "set_adapters")
+        module.set_adapters = None
 
         assistant_lora.set_adapter_stack(
             module,
@@ -87,8 +86,9 @@ class AssistantLoraTests(unittest.TestCase):
 
         class _Pipeline:
             @classmethod
-            def lora_state_dict(cls, path, **kwargs):
+            def lora_state_dict(cls, path, return_alphas=False, **kwargs):
                 called["state_kwargs"] = kwargs
+                called["return_alphas"] = return_alphas
                 return {"transformer.lora_A": 1}, {"transformer.alpha": 2}
 
             @classmethod
@@ -113,7 +113,7 @@ class AssistantLoraTests(unittest.TestCase):
         )
 
         self.assertTrue(loaded)
-        self.assertEqual(called["state_kwargs"].get("return_alphas"), True)
+        self.assertEqual(called["return_alphas"], True)
         self.assertEqual(called["load_kwargs"]["adapter_name"], "assistant")
         self.assertTrue(called["load_kwargs"]["network_alphas"])
         adapter_params = dict(transformer.named_parameters())
@@ -210,8 +210,9 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
             patch.object(ZImage, "setup_training_noise_schedule", lambda self: None),
         ):
             model = ZImage(config, self.mock_accelerator)
-        with self.assertRaises(ValueError):
-            model.check_user_config()
+        model.check_user_config()
+        self.assertEqual(config.assistant_lora_path, ZImage.ASSISTANT_LORA_PATH)
+        self.assertEqual(config.assistant_lora_weight_name, ZImage.ASSISTANT_LORA_WEIGHT_NAME)
 
     def test_disable_flag_skips_requirements(self):
         config = MagicMock()
