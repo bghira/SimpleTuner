@@ -44,6 +44,14 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Determines which model architecture is being trained.
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--lora_format`
+
+- **What**: Select the LoRA checkpoint key format for load/save.
+- **Choices**: `diffusers` (default), `comfyui`
+- **Notes**:
+  - `diffusers` is the standard PEFT/Diffusers layout.
+  - `comfyui` converts to/from ComfyUI-style keys (`diffusion_model.*` with `lora_A/lora_B` and `.alpha` tensors). Flux, Flux2, Lumina2, and Z-Image will auto-detect ComfyUI inputs even if this is left at `diffusers`, but set it to `comfyui` to force ComfyUI output when saving.
+
 ### `--fuse_qkv_projections`
 
 - **What**: Fuses the QKV projections in the model's attention blocks to make more efficient use of hardware.
