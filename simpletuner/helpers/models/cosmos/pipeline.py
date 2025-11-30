@@ -576,7 +576,9 @@ class Cosmos2TextToImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 c_in = 1 - current_t
                 c_skip = 1 - current_t
                 c_out = -current_t
-                timestep = current_t.expand(latents.shape[0]).to(transformer_dtype)  # [B, 1, T, 1, 1]
+                timestep = current_t.expand(latents.shape[0]).to(
+                    device=latents.device, dtype=torch.float32
+                )  # [B, 1, T, 1, 1]
 
                 latent_model_input = latents * c_in
                 latent_model_input = latent_model_input.to(transformer_dtype)

@@ -1179,7 +1179,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
                 # aura timesteps: t=1 noise, t=0 image
                 timestep = torch.tensor([t / 1000]).expand(latent_model_input.shape[0])
-                timestep = timestep.to(latents.device, dtype=latents.dtype)
+                timestep = timestep.to(latents.device, dtype=torch.float32)
 
                 noise_pred = self.transformer(
                     latent_model_input,
@@ -1219,7 +1219,7 @@ class AuraFlowPipeline(DiffusionPipeline, AuraFlowLoraLoaderMixin):
 
                     if should_skip_layers:
                         timestep_single = torch.tensor([t / 1000]).expand(latents.shape[0])
-                        timestep_single = timestep_single.to(latents.device, dtype=latents.dtype)
+                        timestep_single = timestep_single.to(latents.device, dtype=torch.float32)
 
                         latent_model_input_single = latents
 

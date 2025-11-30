@@ -142,7 +142,7 @@ class Auraflow(ImageModelFoundation):
                 f" Got height={height}, width={width}."
             )
         timesteps = (
-            prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype) / 1000.0
+            prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=torch.float32) / 1000.0
         )  # normalize to [0, 1]
 
         model_output = self.model(
@@ -297,7 +297,7 @@ class Auraflow(ImageModelFoundation):
         conditioning_scale = getattr(self.config, "controlnet_conditioning_scale", 1.0)
 
         timesteps = (
-            prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype) / 1000.0
+            prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=torch.float32) / 1000.0
         )  # normalize to [0, 1]
 
         timesteps = timesteps.expand(prepared_batch["noisy_latents"].shape[0])
