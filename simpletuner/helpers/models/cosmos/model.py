@@ -220,7 +220,7 @@ class Cosmos2Image(VideoModelFoundation):
         cout = -sigmas * inv
 
         latent_in = xt * inv
-        timestep = (sigmas / (sigmas + 1)).view(B).to(dtype=dtype)  # == current_t
+        timestep = (sigmas / (sigmas + 1)).view(B).to(device=device, dtype=torch.float32)  # == current_t
 
         pad_mask = torch.zeros(B, 1, H, W, device=device, dtype=latent_in.dtype)
         r_pred = self.model(

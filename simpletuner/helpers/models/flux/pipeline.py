@@ -1550,7 +1550,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     continue
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = t.expand(latents.shape[0]).to(latents.dtype)
+                timestep = t.expand(latents.shape[0]).to(device=latents.device, dtype=torch.float32)
 
                 # handle guidance
                 if self.transformer.config.guidance_embeds:
@@ -2338,7 +2338,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     continue
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = t.expand(latents.shape[0]).to(latents.dtype)
+                timestep = t.expand(latents.shape[0]).to(device=latents.device, dtype=torch.float32)
 
                 # decide whether to include the Kontext conditioning this step
                 use_cond = cond_seq is not None and (i >= cond_start_step) and (i < cond_end_step)
