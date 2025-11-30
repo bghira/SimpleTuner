@@ -450,7 +450,7 @@ class Flux(ImageModelFoundation):
             3,
         ).to(
             device=self.accelerator.device,
-            dtype=self.config.base_weight_dtype,
+            dtype=torch.float32,
         )
         logger.debug(
             "DTypes:"
@@ -627,7 +627,7 @@ class Flux(ImageModelFoundation):
             3,
         ).to(
             device=self.accelerator.device,
-            dtype=self.config.base_weight_dtype,
+            dtype=torch.float32,
         )
 
         # ControlNet forward pass
