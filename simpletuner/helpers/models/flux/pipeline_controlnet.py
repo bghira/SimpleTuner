@@ -372,8 +372,7 @@ class FluxControlNetPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleF
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        dtype = self.text_encoder.dtype if self.text_encoder is not None else self.transformer.dtype
-        text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=dtype)
+        text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=torch.float32)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids
 
@@ -512,7 +511,7 @@ class FluxControlNetPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleF
 
         latent_image_ids = latent_image_ids.reshape(latent_image_id_height * latent_image_id_width, latent_image_id_channels)
 
-        return latent_image_ids.to(device=device, dtype=dtype)
+        return latent_image_ids.to(device=device, dtype=torch.float32)
 
     @staticmethod
     # Copied from diffusers.pipelines.flux.pipeline_flux.FluxPipeline._pack_latents
@@ -1367,8 +1366,7 @@ class FluxControlPipeline(
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        dtype = self.text_encoder.dtype if self.text_encoder is not None else self.transformer.dtype
-        text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=dtype)
+        text_ids = torch.zeros(prompt_embeds.shape[1], 3).to(device=device, dtype=torch.float32)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids
 
@@ -1433,7 +1431,7 @@ class FluxControlPipeline(
 
         latent_image_ids = latent_image_ids.reshape(latent_image_id_height * latent_image_id_width, latent_image_id_channels)
 
-        return latent_image_ids.to(device=device, dtype=dtype)
+        return latent_image_ids.to(device=device, dtype=torch.float32)
 
     @staticmethod
     # Copied from diffusers.pipelines.flux.pipeline_flux.FluxPipeline._pack_latents
