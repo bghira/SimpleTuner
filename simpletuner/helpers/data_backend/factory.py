@@ -2283,7 +2283,7 @@ class FactoryRegistry:
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
             not in [
-                # masks are just pulled inline in the training loop without encoding, and then applied pixel-wise to loss.
+                # masks must align to source metadata; skip independent discovery.
                 "mask",
                 # controlnet uses pixel values for older Unets but encoded latents for newer models.
                 # when we require encoded latents, we also must scan for aspect ratio buckets here.
@@ -2341,8 +2341,8 @@ class FactoryRegistry:
                 source_backend=StateTracker.get_data_backend(backend.get("source_dataset_id", "unknown_source_dataset_id")),
                 target_backend=init_backend,
             )
-        elif backend.get("conditioning_type", None) == "reference_strict":
-            # special case where strict conditioning alignment allows us to duplicate metadata from the source dataset.
+        elif backend.get("conditioning_type", None) in ["reference_strict", "mask"]:
+            # special case where strict/mask conditioning alignment allows us to duplicate metadata from the source dataset.
             # we'll search for the source dataset by id and copy metadata from it:
             source_dataset_id = backend.get("source_dataset_id", None)
             target_dataset_id = backend.get("id")
@@ -2367,7 +2367,7 @@ class FactoryRegistry:
                 raise ValueError(
                     "Could not find source dataset for strict conditioning alignment. Please set 'source_dataset_id' in the backend config."
                 )
-            info_log(f"Duplicating metadata for strict conditioning dataset from {source_dataset_id}")
+            info_log(f"Duplicating metadata for {conditioning_type} conditioning dataset from {source_dataset_id}")
             DatasetDuplicator.copy_metadata(
                 source_backend=StateTracker.get_data_backend(source_dataset_id),
                 target_backend=init_backend,
