@@ -367,6 +367,7 @@ class ModelFoundation(ABC):
             return
 
         weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
+        logger.info(f"Configuring assistant LoRA for inference with weights: {self.assistant_adapter_name}={weight_arg}")
         set_adapter_stack(
             trained_component,
             adapter_names,
