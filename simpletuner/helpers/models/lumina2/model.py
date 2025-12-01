@@ -24,6 +24,7 @@ class Lumina2(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    AUTO_LORA_FORMAT_DETECTION = True
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     # The safe diffusers default value for LoRA training targets.
