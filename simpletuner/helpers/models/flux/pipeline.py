@@ -1192,7 +1192,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(device=device, dtype=prompt_embeds.dtype)
+        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(device=device, dtype=torch.float32)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids, prompt_attention_mask
 
@@ -1259,7 +1259,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             latent_image_id_channels,
         )
 
-        return latent_image_ids.to(device=device, dtype=dtype)
+        return latent_image_ids.to(device=device, dtype=torch.float32)
 
     @staticmethod
     def _pack_latents(latents, batch_size, num_channels_latents, height, width):
@@ -1550,7 +1550,7 @@ class FluxPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     continue
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = t.expand(latents.shape[0]).to(latents.dtype)
+                timestep = t.expand(latents.shape[0]).to(device=latents.device, dtype=torch.float32)
 
                 # handle guidance
                 if self.transformer.config.guidance_embeds:
@@ -1906,7 +1906,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 # Retrieve the original scale by scaling back the LoRA layers
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
-        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(device=device, dtype=prompt_embeds.dtype)
+        text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(device=device, dtype=torch.float32)
 
         return prompt_embeds, pooled_prompt_embeds, text_ids, prompt_attention_mask
 
@@ -1973,7 +1973,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             latent_image_id_channels,
         )
 
-        return latent_image_ids.to(device=device, dtype=dtype)
+        return latent_image_ids.to(device=device, dtype=torch.float32)
 
     def _encode_conditioning_image(self, pil_images: list[Image.Image], device, dtype):  # -> (seq_latents, seq_ids)
         packed_latents = []
@@ -2007,7 +2007,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             offset_x = max(offset_x, x + W)
             offset_y = max(offset_y, y + H)
 
-            ids = torch.zeros(H // 2, W // 2, 3, dtype=dtype, device=device)
+            ids = torch.zeros(H // 2, W // 2, 3, dtype=torch.float32, device=device)
             ids[..., 0] = 1
             ids[..., 1] = torch.arange(H // 2, device=device)[:, None] + x // 2
             ids[..., 2] = torch.arange(W // 2, device=device)[None, :] + y // 2
@@ -2338,7 +2338,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     continue
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                timestep = t.expand(latents.shape[0]).to(latents.dtype)
+                timestep = t.expand(latents.shape[0]).to(device=latents.device, dtype=torch.float32)
 
                 # decide whether to include the Kontext conditioning this step
                 use_cond = cond_seq is not None and (i >= cond_start_step) and (i < cond_end_step)
