@@ -280,6 +280,13 @@ body {
     border-color: rgba(255, 255, 255, 0.15) !important;
 }
 
+/* Fix white-on-white dropdown issue: browsers insert white backgrounds on
+   <option> elements when <select> has transparent background */
+.form-select option {
+    background: #12151e;
+    color: var(--text-primary);
+}
+
 .form-label {
     color: var(--text-secondary);
     font-weight: 500;

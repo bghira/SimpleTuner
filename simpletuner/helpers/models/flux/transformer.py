@@ -623,9 +623,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 )
         hidden_states = self.x_embedder(hidden_states)
 
-        timestep = timestep.to(hidden_states.dtype) * 1000
+        timestep = timestep.to(device=hidden_states.device, dtype=torch.float32) * 1000
         if guidance is not None:
-            guidance = guidance.to(hidden_states.dtype) * 1000
+            guidance = guidance.to(device=hidden_states.device, dtype=torch.float32) * 1000
         else:
             guidance = None
         temb = (

@@ -1886,6 +1886,24 @@ class Trainer:
             self._hub_upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf_push_")
         return self._hub_upload_executor
 
+    def _run_post_checkpoint_script(self, *, local_path: str | None = None) -> None:
+        script_template = getattr(self.config, "post_checkpoint_script", None)
+        if script_template in (None, "", "None"):
+            return
+        if hasattr(self, "accelerator") and hasattr(self.accelerator, "is_main_process"):
+            if not self.accelerator.is_main_process:
+                return
+        current_step = None
+        if isinstance(getattr(self, "state", None), dict):
+            current_step = self.state.get("global_step")
+        run_hook_script(
+            script_template,
+            config=self.config,
+            local_path=local_path,
+            remote_path=None,
+            global_step=current_step,
+        )
+
     def _run_post_upload_script(self, *, local_path: str | None = None, remote_path: str | None = None) -> None:
         script_template = getattr(self.config, "post_upload_script", None)
         if script_template in (None, "", "None"):
@@ -2400,6 +2418,8 @@ class Trainer:
             logger.info(
                 f"LoRA network has been initialized with {trainable_parameter_count(self._get_trainable_parameters())} parameters"
             )
+            if hasattr(self.model, "configure_assistant_lora_for_training"):
+                self.model.configure_assistant_lora_for_training()
         elif "lycoris" == self.config.lora_type.lower():
             from lycoris import create_lycoris
 
@@ -3780,10 +3800,15 @@ class Trainer:
         self._emit_event(status_event)
 
     def _epoch_rollover(self, epoch):
+        # Always update epoch tracking state first, before any early return.
+        # This ensures checkpoints always save the correct epoch value.
+        self.state["current_epoch"] = epoch
+        StateTracker.set_epoch(epoch)
+
         if self.state["first_epoch"] == epoch:
             return
         logger.debug(
-            f"Just completed epoch {self.state['current_epoch']}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
+            f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )
         for backend_id, backend in StateTracker.get_data_backends().items():
             backend_config = StateTracker.get_data_backend_config(backend_id)
@@ -3816,8 +3841,6 @@ class Trainer:
                     logger.info("Rebuilding VAE cache..")
                     backend["vaecache"].rebuild_cache()
                 # no need to manually call metadata_backend.save_cache() here.
-        self.state["current_epoch"] = epoch
-        StateTracker.set_epoch(epoch)
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
@@ -4117,6 +4140,7 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
+        self._run_post_checkpoint_script(local_path=save_path)
         return save_path
 
     def checkpoint_state_latest(self, output_dir):

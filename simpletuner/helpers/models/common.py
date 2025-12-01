@@ -1,4 +1,5 @@
 import inspect
+import json
 import logging
 import math
 import os
@@ -34,6 +35,13 @@ from simpletuner.helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    convert_comfyui_to_diffusers,
+    convert_diffusers_to_comfyui,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.wrappers import unwrap_model
@@ -175,6 +183,8 @@ class ModelFoundation(ABC):
     STRICT_I2V_FLAVOURS = tuple()
     STRICT_I2V_FOR_ALL_FLAVOURS = False
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    ASSISTANT_LORA_PATH = None
+    ASSISTANT_LORA_FLAVOURS = None
     DEFAULT_CONTROLNET_LORA_TARGET = [
         "to_q",
         "to_k",
@@ -213,6 +223,7 @@ class ModelFoundation(ABC):
     ]
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
+    AUTO_LORA_FORMAT_DETECTION = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -224,6 +235,8 @@ class ModelFoundation(ABC):
         self._validation_preview_decoder_failed = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
+        self.assistant_adapter_name = "assistant"
+        self.assistant_lora_loaded = False
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -238,6 +251,129 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    @classmethod
+    def supports_assistant_lora(cls, config=None) -> bool:
+        """
+        Indicates whether the model family can leverage a fixed assistant LoRA.
+        When a config is provided, optionally gate support by flavour.
+        """
+        if config is not None and getattr(config, "disable_assistant_lora", False):
+            return False
+        has_default = bool(getattr(cls, "ASSISTANT_LORA_PATH", None))
+        flavour_whitelist = getattr(cls, "ASSISTANT_LORA_FLAVOURS", None)
+        if config is None or flavour_whitelist is None:
+            return has_default or bool(flavour_whitelist)
+
+        try:
+            flavour = getattr(config, "model_flavour", None)
+        except Exception:
+            flavour = None
+        if not flavour_whitelist:
+            return has_default
+        return flavour in flavour_whitelist
+
+    def get_assistant_lora(self):
+        """
+        Returns the PEFT-enabled model component when an assistant adapter is present.
+        """
+        if not getattr(self, "assistant_lora_loaded", False):
+            return None
+        try:
+            return self.get_trained_component(unwrap_model=False)
+        except Exception:
+            return None
+
+    def configure_assistant_lora_for_training(self):
+        """
+        Activate the assistant adapter for training (frozen) alongside the trainable adapter.
+        """
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not getattr(self, "assistant_lora_loaded", False):
+            return
+        trained_component = self.get_trained_component(unwrap_model=False)
+        if trained_component is None:
+            return
+
+        from simpletuner.helpers.assistant_lora import set_adapter_stack
+
+        assistant_weight = getattr(self.config, "assistant_lora_strength", 1.0)
+        try:
+            assistant_weight = float(assistant_weight)
+        except Exception:
+            assistant_weight = 1.0
+
+        adapter_names = []
+        adapter_weights = []
+
+        if assistant_weight != 0:
+            adapter_names.append(self.assistant_adapter_name)
+            adapter_weights.append(assistant_weight)
+
+        peft_config = getattr(trained_component, "peft_config", {}) or {}
+        if "default" in peft_config:
+            adapter_names.append("default")
+            adapter_weights.append(1.0)
+
+        if not adapter_names:
+            return
+
+        weight_arg = None
+        if len(adapter_weights) == 1:
+            weight_arg = adapter_weights[0]
+        else:
+            weight_arg = adapter_weights
+
+        set_adapter_stack(
+            trained_component,
+            adapter_names,
+            weights=weight_arg,
+            freeze_names=[self.assistant_adapter_name],
+        )
+
+    def configure_assistant_lora_for_inference(self):
+        """
+        Configure the assistant adapter for validation/inference (typically disabled).
+        """
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
+        if not getattr(self, "assistant_lora_loaded", False):
+            return
+        trained_component = self.get_trained_component(unwrap_model=False)
+        if trained_component is None:
+            return
+
+        from simpletuner.helpers.assistant_lora import set_adapter_stack
+
+        inference_weight = getattr(self.config, "assistant_lora_inference_strength", 0.0)
+        try:
+            inference_weight = float(inference_weight)
+        except Exception:
+            inference_weight = 0.0
+
+        adapter_names = []
+        adapter_weights = []
+        if inference_weight != 0:
+            adapter_names.append(self.assistant_adapter_name)
+            adapter_weights.append(inference_weight)
+
+        peft_config = getattr(trained_component, "peft_config", {}) or {}
+        if "default" in peft_config:
+            adapter_names.append("default")
+            adapter_weights.append(1.0)
+
+        if not adapter_names:
+            return
+
+        weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
+        logger.info(f"Configuring assistant LoRA for inference with weights: {self.assistant_adapter_name}={weight_arg}")
+        set_adapter_stack(
+            trained_component,
+            adapter_names,
+            weights=weight_arg,
+            freeze_names=[self.assistant_adapter_name],
+        )
 
     @classmethod
     def supports_lora(cls) -> bool:
@@ -583,6 +719,46 @@ class ModelFoundation(ABC):
             ]
         )
 
+    def _apply_alpha_scaling(self, module, alpha_map: dict, adapter_name: str = "default"):
+        """
+        Apply per-layer alpha values to loaded PEFT adapters when supplied by the checkpoint.
+        """
+        if module is None or not alpha_map:
+            return
+
+        try:
+            from peft.tuners.tuners_utils import BaseTunerLayer
+        except Exception:
+            return
+
+        for name, layer in module.named_modules():
+            if not isinstance(layer, BaseTunerLayer):
+                continue
+            if adapter_name not in getattr(layer, "lora_alpha", {}):
+                continue
+            if name not in alpha_map:
+                continue
+
+            try:
+                alpha_value = alpha_map[name]
+                if torch.is_tensor(alpha_value):
+                    alpha_value = alpha_value.detach().float().cpu().item()
+                alpha_value = float(alpha_value)
+            except Exception:
+                continue
+
+            layer.lora_alpha[adapter_name] = alpha_value
+            if adapter_name in getattr(layer, "r", {}) and layer.r[adapter_name]:
+                try:
+                    scaling = (
+                        alpha_value / math.sqrt(layer.r[adapter_name])
+                        if getattr(layer, "use_rslora", False)
+                        else alpha_value / layer.r[adapter_name]
+                    )
+                    layer.scaling[adapter_name] = scaling
+                except Exception:
+                    continue
+
     def load_lora_weights(self, models, input_dir):
         """
         Generalized LoRA loading method.
@@ -624,13 +800,62 @@ class ModelFoundation(ABC):
                 )
 
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
-        lora_state_dict = pipeline_cls.lora_state_dict(input_dir)
-        if type(lora_state_dict) is tuple and len(lora_state_dict) == 2 and lora_state_dict[1] is None:
+        lora_state = pipeline_cls.lora_state_dict(input_dir)
+        network_alphas = None
+
+        if isinstance(lora_state, tuple):
+            if len(lora_state) >= 2:
+                lora_state_dict, maybe_network_alphas = lora_state[:2]
+                if isinstance(maybe_network_alphas, dict) or maybe_network_alphas is None:
+                    network_alphas = maybe_network_alphas
+                else:
+                    lora_state_dict = lora_state[0]
+            else:
+                lora_state_dict = lora_state[0]
+        else:
+            lora_state_dict = lora_state
+
+        if isinstance(lora_state_dict, tuple) and len(lora_state_dict) == 2 and lora_state_dict[1] is None:
             logger.debug("Overriding ControlNet LoRA state dict with correct structure")
             lora_state_dict = lora_state_dict[0]
 
         key_to_replace = self.CONTROLNET_LORA_STATE_DICT_PREFIX if self.config.controlnet else self.MODEL_TYPE.value
         prefix = f"{key_to_replace}."
+
+        if not isinstance(lora_state_dict, dict):
+            raise ValueError("LoRA checkpoint did not return a state dictionary.")
+
+        def _normalise_alpha_map(alpha_dict: dict) -> dict:
+            if not alpha_dict:
+                return {}
+            results = {}
+            prefixes = [prefix, "text_encoder.", "text_encoder_2."]
+            for alpha_key, alpha_val in alpha_dict.items():
+                key_name = alpha_key[:-6] if alpha_key.endswith(".alpha") else alpha_key
+                try:
+                    alpha_float = alpha_val.detach().float().cpu().item() if torch.is_tensor(alpha_val) else float(alpha_val)
+                except Exception:
+                    continue
+                results[key_name] = alpha_float
+                for pfx in prefixes:
+                    if key_name.startswith(pfx):
+                        results[key_name.replace(pfx, "", 1)] = alpha_float
+            return results
+
+        config_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        active_format = config_format
+        if getattr(self, "AUTO_LORA_FORMAT_DETECTION", False) and config_format == PEFTLoRAFormat.DIFFUSERS:
+            detected_format = detect_state_dict_format(lora_state_dict)
+            if detected_format == PEFTLoRAFormat.COMFYUI:
+                logger.info("Detected ComfyUI-formatted LoRA checkpoint, converting to Diffusers/PEFT format.")
+                active_format = PEFTLoRAFormat.COMFYUI
+        alpha_map = {}
+        if active_format == PEFTLoRAFormat.COMFYUI:
+            lora_state_dict, comfy_alphas = convert_comfyui_to_diffusers(lora_state_dict, target_prefix=key_to_replace)
+            alpha_map.update(_normalise_alpha_map(comfy_alphas))
+        if network_alphas:
+            alpha_map.update(_normalise_alpha_map(network_alphas))
+
         denoiser_sd = {}
         for k, v in lora_state_dict.items():
             if k.startswith(prefix):
@@ -644,6 +869,12 @@ class ModelFoundation(ABC):
         from peft.utils import set_peft_model_state_dict
 
         incompatible_keys = set_peft_model_state_dict(denoiser, denoiser_sd, adapter_name="default")
+        if alpha_map:
+            self._apply_alpha_scaling(self.unwrap_model(denoiser), alpha_map)
+            if text_encoder_one_ is not None:
+                self._apply_alpha_scaling(self.unwrap_model(text_encoder_one_), alpha_map)
+            if text_encoder_two_ is not None:
+                self._apply_alpha_scaling(self.unwrap_model(text_encoder_two_), alpha_map)
 
         if incompatible_keys is not None:
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
@@ -677,6 +908,7 @@ class ModelFoundation(ABC):
         """
         Proxy to the pipeline save_lora_weights, ensuring save_directory is passed explicitly.
         """
+        user_save_function = kwargs.pop("save_function", None)
         if args:
             save_directory, *remaining = args
         else:
@@ -684,6 +916,31 @@ class ModelFoundation(ABC):
             remaining = []
         if save_directory is None:
             raise ValueError("save_directory is required to save LoRA weights.")
+
+        adapter_metadata = {}
+        for key, value in kwargs.items():
+            if key.endswith("lora_adapter_metadata") and isinstance(value, dict):
+                adapter_metadata.update(value)
+
+        lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        if lora_format == PEFTLoRAFormat.COMFYUI:
+            import safetensors.torch
+            from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
+
+            def comfyui_save_function(weights, filename):
+                metadata = {"format": "pt"}
+                if adapter_metadata:
+                    try:
+                        metadata[LORA_ADAPTER_METADATA_KEY] = json.dumps(adapter_metadata, indent=2, sort_keys=True)
+                    except Exception:
+                        pass
+                converted = convert_diffusers_to_comfyui(weights, adapter_metadata=adapter_metadata)
+                safetensors.torch.save_file(converted, filename, metadata=metadata)
+
+            kwargs["save_function"] = comfyui_save_function
+            kwargs["safe_serialization"] = True
+        elif user_save_function is not None:
+            kwargs["save_function"] = user_save_function
 
         self.PIPELINE_CLASSES[
             (PipelineTypes.TEXT2IMG if not self.config.controlnet else PipelineTypes.CONTROLNET)

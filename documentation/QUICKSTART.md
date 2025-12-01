@@ -17,6 +17,7 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 | Flux.1 | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✓ | [FLUX.md](/documentation/quickstart/FLUX.md) |
 | Flux.2 | 32B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✗ | [FLUX2.md](/documentation/quickstart/FLUX2.md) |
 | Flux Kontext | 8B–12B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✓ | [FLUX_KONTEXT.md](/documentation/quickstart/FLUX_KONTEXT.md) |
+| Z-Image Turbo | 6B | ✓ | ✗ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [ZIMAGE.md](/documentation/quickstart/ZIMAGE.md) |
 | ACE-Step | 3.5B | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | [ACE_STEP.md](/documentation/quickstart/ACE_STEP.md) |
 | Chroma 1 | 8.9B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ | ✗ | [CHROMA.md](/documentation/quickstart/CHROMA.md) |
 | Auraflow | 6B | ✓ | ✓ | ✓* | int8/fp8/nf4 optional | bf16 | ✓+ | ✓ (SLG) | ✓ | [AURAFLOW.md](/documentation/quickstart/AURAFLOW.md) |
@@ -39,3 +40,8 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 > ℹ️ Wan quickstart includes 2.1 + 2.2 stage presets and the time-embedding toggle. Flux Kontext covers editing workflows built atop Flux.1.
 
 > ⚠️ These quickstarts are living documents. Expect occasional updates as new models land or training recipes improve.
+
+### Fast paths: Z-Image Turbo & Flux Schnell
+
+- **Z-Image Turbo**: Fully supported LoRA with TREAD; runs fast on NVIDIA and macOS even without quant (int8 works too). Often the bottleneck is just trainer setup.
+- **Flux Schnell**: The quickstart config handles the fast noise schedule and assistant LoRA stack automatically; no extra flags needed to train Schnell LoRAs.

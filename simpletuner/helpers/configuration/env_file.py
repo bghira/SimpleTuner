@@ -48,6 +48,7 @@ env_to_args_map = {
     "VALIDATION_METHOD": "--validation_method",
     "VALIDATION_EXTERNAL_SCRIPT": "--validation_external_script",
     "VALIDATION_EXTERNAL_BACKGROUND": "--validation_external_background",
+    "POST_CHECKPOINT_SCRIPT": "--post_checkpoint_script",
     "POST_UPLOAD_SCRIPT": "--post_upload_script",
     "VALIDATION_GUIDANCE_RESCALE": "--validation_guidance_rescale",
     "VALIDATION_NUM_INFERENCE_STEPS": "--validation_num_inference_steps",

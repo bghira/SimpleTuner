@@ -39,7 +39,7 @@
   "validation_negative_prompt": "blurry, cropped, low quality",
   "validation_num_inference_steps": 30,
   "validation_num_video_frames": 49,
-  "validation_prompt": "A serene panorama of rolling green hills under a bright morning sky, captured in a gentle cinematic sweep.",
+  "validation_prompt": "🟫 is holding a sign that says hello world from hunyuanvideo",
   "validation_prompt_library": false,
   "validation_resolution": "1280x720",
   "validation_seed": 42,

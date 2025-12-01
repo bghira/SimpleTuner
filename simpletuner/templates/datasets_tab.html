@@ -241,8 +241,79 @@
                 }
             }
 
+            // Function to sync the dropdown value from the trainer store's configValues
+            function syncDropdownFromStore() {
+                const trainerStore = Alpine.store('trainer');
+                if (!trainerStore) {
+                    console.log('[DATASETS DROPDOWN] Trainer store not ready');
+                    return;
+                }
+
+                const configValues = trainerStore.configValues || {};
+                const activeEnvConfig = trainerStore.activeEnvironmentConfig || {};
+
+                // Try multiple sources for the data_backend_config value
+                const configPath =
+                    configValues['data_backend_config'] ||
+                    configValues['--data_backend_config'] ||
+                    activeEnvConfig['data_backend_config'] ||
+                    activeEnvConfig['--data_backend_config'] ||
+                    '';
+
+                if (!configPath) {
+                    console.log('[DATASETS DROPDOWN] No data_backend_config found in store');
+                    return;
+                }
+
+                console.log('[DATASETS DROPDOWN] Syncing dropdown to:', configPath);
+
+                // Find the matching option in the dropdown
+                const options = dropdown.querySelectorAll('.dataset-option');
+                let matchFound = false;
+                let matchEnv = '';
+                let matchPath = '';
+
+                options.forEach(option => {
+                    const optionValue = option.dataset.value || '';
+                    const optionPath = option.dataset.path || '';
+                    if (optionValue === configPath || optionPath === configPath) {
+                        matchFound = true;
+                        matchEnv = option.dataset.environment || '';
+                        matchPath = optionPath;
+                    }
+                });
+
+                if (matchFound || configPath) {
+                    // Use the global function if available
+                    if (window.__setDatasetSelection) {
+                        const displayEnv = matchEnv || (configPath.includes('/') ? configPath.split('/')[0] : configPath);
+                        const displayPath = matchPath || configPath;
+                        window.__setDatasetSelection(dropdown, displayEnv, displayPath, configPath);
+                        console.log('[DATASETS DROPDOWN] Updated dropdown via __setDatasetSelection');
+                    } else {
+                        // Fallback: directly update the dropdown
+                        const hiddenInput = dropdown.querySelector('input[type="hidden"]');
+                        if (hiddenInput) {
+                            hiddenInput.value = configPath;
+                        }
+                        const toggleLabel = dropdown.querySelector('.dataset-toggle-label');
+                        if (toggleLabel && configPath) {
+                            const displayEnv = matchEnv || (configPath.includes('/') ? configPath.split('/')[0] : configPath);
+                            const displayPath = matchPath || configPath;
+                            toggleLabel.innerHTML = `
+                                <span class="dataset-env">${displayEnv}</span>
+                                <span class="dataset-path">${displayPath}</span>
+                            `;
+                        }
+                        console.log('[DATASETS DROPDOWN] Updated dropdown via fallback');
+                    }
+                }
+            }
+
             // Initial sync
             syncEnvironmentBadge();
+            // Delay the dropdown sync to ensure store is populated
+            setTimeout(syncDropdownFromStore, 100);
 
             // Watch for trainer store changes
             if (window.Alpine) {
@@ -250,6 +321,10 @@
                     const trainerStore = Alpine.store('trainer');
                     if (trainerStore) {
                         syncEnvironmentBadge();
+                        // Also sync dropdown when configValues or activeEnvironmentConfig changes
+                        const _ = trainerStore.configValues;
+                        const __ = trainerStore.activeEnvironmentConfig;
+                        syncDropdownFromStore();
                     }
                 });
             }
@@ -258,6 +333,13 @@
             if (window.__refreshDatasetDropdowns) {
                 window.__refreshDatasetDropdowns();
             }
+
+            // Listen for tab switches to re-sync when navigating to datasets tab
+            window.addEventListener('hashchange', () => {
+                if (window.location.hash === '#datasets') {
+                    setTimeout(syncDropdownFromStore, 50);
+                }
+            });
 
             // Add environment filter checkbox handler
             const filterCheckbox = document.getElementById('filterByEnvironment');
