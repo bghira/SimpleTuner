@@ -61,8 +61,9 @@ def load_assistant_adapter(
         state_dict = lora_state
         network_alphas = None
 
-    if network_alphas is None:
-        network_alphas = {}
+    # Diffusers treats a non-None alpha map specially; only forward it when present.
+    if not network_alphas:
+        network_alphas = None
     load_kwargs = {
         "transformer": transformer,
         "adapter_name": adapter_name,

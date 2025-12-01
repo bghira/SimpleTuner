@@ -325,6 +325,9 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
             prefix = None
             logger.info("Stripped 'transformer.' prefix from LoRA keys for transformer loading.")
 
+        if not network_alphas:
+            network_alphas = None
+
         logger.info(f"Loading {cls.transformer_name}.")
         transformer.load_lora_adapter(
             state_dict,
