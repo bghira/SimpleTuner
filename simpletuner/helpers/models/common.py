@@ -791,12 +791,12 @@ class ModelFoundation(ABC):
                 and isinstance(unwrapped_model, type(self.unwrap_model(self.text_encoders[1])))
             ):
                 text_encoder_two_ = model
-        else:
-            raise ValueError(
-                f"Unexpected model type in load_lora_weights: {model.__class__}\n"
-                f"Unwrapped: {unwrapped_model.__class__}\n"
-                f"Expected main model type {type(self.unwrap_model(self.model))}"
-            )
+            else:
+                raise ValueError(
+                    f"Unexpected model type in load_lora_weights: {model.__class__}\n"
+                    f"Unwrapped: {unwrapped_model.__class__}\n"
+                    f"Expected main model type {type(self.unwrap_model(self.model))}"
+                )
 
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
         lora_state = pipeline_cls.lora_state_dict(input_dir)
