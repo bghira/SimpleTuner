@@ -3782,10 +3782,15 @@ class Trainer:
         self._emit_event(status_event)
 
     def _epoch_rollover(self, epoch):
+        # Always update epoch tracking state first, before any early return.
+        # This ensures checkpoints always save the correct epoch value.
+        self.state["current_epoch"] = epoch
+        StateTracker.set_epoch(epoch)
+
         if self.state["first_epoch"] == epoch:
             return
         logger.debug(
-            f"Just completed epoch {self.state['current_epoch']}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
+            f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )
         for backend_id, backend in StateTracker.get_data_backends().items():
             backend_config = StateTracker.get_data_backend_config(backend_id)
@@ -3818,8 +3823,6 @@ class Trainer:
                     logger.info("Rebuilding VAE cache..")
                     backend["vaecache"].rebuild_cache()
                 # no need to manually call metadata_backend.save_cache() here.
-        self.state["current_epoch"] = epoch
-        StateTracker.set_epoch(epoch)
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
