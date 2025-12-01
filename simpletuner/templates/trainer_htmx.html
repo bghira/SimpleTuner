@@ -5343,6 +5343,21 @@ function trainerComponent() {
 
             <div class="topbar-right">
                 <div class="header-actions">
+                    <!-- Save Dataset button - visible only on datasets tab -->
+                    <button type="button"
+                            class="trainer-action-btn btn"
+                            :class="$store.trainer.hasUnsavedChanges ? 'btn-warning' : 'btn-outline-secondary'"
+                            x-show="activeTab === 'datasets'"
+                            x-transition
+                            @click="$store.trainer.saveDatasets && $store.trainer.saveDatasets({ showToast: true, skipConfirmation: true })"
+                            title="Save dataset configuration">
+                        <i class="fas fa-database"></i>
+                        <span class="btn-text">Save Dataset</span>
+                        <span x-show="$store.trainer.hasUnsavedChanges" class="badge bg-danger ms-1" style="font-size: 0.65rem;">
+                            <i class="fas fa-exclamation-circle"></i>
+                        </span>
+                    </button>
+
                     <button type="button"
                             class="trainer-action-btn btn btn-outline-secondary"
                             :class="formDirty ? 'is-active' : ''"
