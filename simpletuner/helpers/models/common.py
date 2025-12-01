@@ -325,6 +325,7 @@ class ModelFoundation(ABC):
         else:
             weight_arg = adapter_weights
 
+        logger.info(f"Configuring assistant LoRA for training with weights: {self.assistant_adapter_name}={weight_arg}")
         set_adapter_stack(
             trained_component,
             adapter_names,
