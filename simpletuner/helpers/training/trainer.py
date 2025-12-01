@@ -1886,6 +1886,24 @@ class Trainer:
             self._hub_upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf_push_")
         return self._hub_upload_executor
 
+    def _run_post_checkpoint_script(self, *, local_path: str | None = None) -> None:
+        script_template = getattr(self.config, "post_checkpoint_script", None)
+        if script_template in (None, "", "None"):
+            return
+        if hasattr(self, "accelerator") and hasattr(self.accelerator, "is_main_process"):
+            if not self.accelerator.is_main_process:
+                return
+        current_step = None
+        if isinstance(getattr(self, "state", None), dict):
+            current_step = self.state.get("global_step")
+        run_hook_script(
+            script_template,
+            config=self.config,
+            local_path=local_path,
+            remote_path=None,
+            global_step=current_step,
+        )
+
     def _run_post_upload_script(self, *, local_path: str | None = None, remote_path: str | None = None) -> None:
         script_template = getattr(self.config, "post_upload_script", None)
         if script_template in (None, "", "None"):
@@ -4122,6 +4140,7 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
+        self._run_post_checkpoint_script(local_path=save_path)
         return save_path
 
     def checkpoint_state_latest(self, output_dir):

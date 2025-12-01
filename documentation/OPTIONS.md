@@ -412,6 +412,18 @@ A lot of settings are instead set through the [dataloader config](/documentation
   - `simpletuner/examples/external-validation/fal_post_upload.py` shows a fal.ai Flux LoRA hook (requires `FAL_KEY`).
   - `simpletuner/examples/external-validation/use_second_gpu.py` runs Flux LoRA inference on a secondary GPU and works even without remote uploads.
 
+### `--post_checkpoint_script`
+
+- **What**: Executable to run immediately after each checkpoint directory is written to disk (before any uploads kick off). Runs asynchronously on the main process.
+- **Placeholders**: Same replacements as `--validation_external_script`, including `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, `{model_family}`, `{model_type}`, `{lora_type}`, `{huggingface_path}`, and any `validation_*` config value. `{remote_checkpoint_path}` resolves to empty for this hook.
+- **Notes**:
+  - Fires for scheduled, manual, and rolling checkpoints as soon as they finish saving locally.
+  - Useful for triggering local automation (copying to another volume, running eval jobs) without waiting for uploads to finish.
+- **Example**:
+  ```bash
+  --post_checkpoint_script='/opt/hooks/run_eval.sh {local_checkpoint_path} {global_step}'
+  ```
+
 
 ### `--validation_adapter_path`
 
