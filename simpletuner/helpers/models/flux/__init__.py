@@ -58,7 +58,7 @@ def prepare_latent_image_ids(batch_size, height, width, device, dtype):
         latent_image_id_channels,
     )
 
-    return latent_image_ids.to(device=device, dtype=dtype)[0]
+    return latent_image_ids.to(device=device, dtype=torch.float32)[0]
 
 
 def build_kontext_inputs(

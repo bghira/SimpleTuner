@@ -283,7 +283,7 @@ class Kandinsky5Image(ImageModelFoundation):
             prepared_batch["encoder_hidden_states"].shape[1],
             device=latents.device,
         )
-        timesteps = prepared_batch["timesteps"].to(device=latents.device, dtype=dtype)
+        timesteps = prepared_batch["timesteps"].to(device=latents.device, dtype=torch.float32)
 
         if "added_cond_kwargs" not in prepared_batch:
             raise ValueError("Kandinsky5Image expects added_cond_kwargs containing pooled text embeddings.")

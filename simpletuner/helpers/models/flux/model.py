@@ -442,7 +442,7 @@ class Flux(ImageModelFoundation):
         prepared_batch["timesteps"] = (
             torch.tensor(prepared_batch["timesteps"])
             .expand(prepared_batch["noisy_latents"].shape[0])
-            .to(device=self.accelerator.device)
+            .to(device=self.accelerator.device, dtype=torch.float32)
             / self.noise_schedule.config.num_train_timesteps
         )
 
@@ -451,7 +451,7 @@ class Flux(ImageModelFoundation):
             3,
         ).to(
             device=self.accelerator.device,
-            dtype=self.config.base_weight_dtype,
+            dtype=torch.float32,
         )
         logger.debug(
             "DTypes:"
@@ -618,7 +618,7 @@ class Flux(ImageModelFoundation):
         prepared_batch["timesteps"] = (
             torch.tensor(prepared_batch["timesteps"])
             .expand(prepared_batch["noisy_latents"].shape[0])
-            .to(device=self.accelerator.device)
+            .to(device=self.accelerator.device, dtype=torch.float32)
             / self.noise_schedule.config.num_train_timesteps
         )
 
@@ -628,7 +628,7 @@ class Flux(ImageModelFoundation):
             3,
         ).to(
             device=self.accelerator.device,
-            dtype=self.config.base_weight_dtype,
+            dtype=torch.float32,
         )
 
         # ControlNet forward pass
