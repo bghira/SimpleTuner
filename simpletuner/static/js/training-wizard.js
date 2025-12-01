@@ -2559,21 +2559,46 @@ function trainingWizardComponent() {
         async openDatasetWizard(createStandalone = false) {
             console.log('[TRAINING WIZARD] openDatasetWizard called, createStandalone:', createStandalone);
 
+            // Save current step index and answers BEFORE closing the wizard
+            const savedStepIndex = this.currentStepIndex;
+            const savedAnswers = { ...this.answers };
+
             // Close training wizard
             this.wizardOpen = false;
 
-            // First, navigate to the datasets tab to ensure it's loaded
+            // First, navigate to the datasets tab and wait for HTMX to load the content
             const trainerStore = Alpine.store('trainer');
             console.log('[TRAINING WIZARD] trainerStore found:', !!trainerStore);
 
             if (trainerStore && typeof trainerStore.activateTab === 'function') {
                 console.log('[TRAINING WIZARD] Activating datasets tab...');
-                await trainerStore.activateTab('datasets');
+
+                // Wait for HTMX to swap in the tab content
+                const htmxSwapPromise = new Promise((resolve) => {
+                    const handleSwap = (evt) => {
+                        if (evt.detail && evt.detail.target && evt.detail.target.id === 'tab-content') {
+                            document.body.removeEventListener('htmx:afterSwap', handleSwap);
+                            console.log('[TRAINING WIZARD] HTMX swap completed for tab-content');
+                            resolve();
+                        }
+                    };
+                    document.body.addEventListener('htmx:afterSwap', handleSwap);
+
+                    // Also set a timeout in case HTMX swap doesn't happen (tab already loaded)
+                    setTimeout(() => {
+                        document.body.removeEventListener('htmx:afterSwap', handleSwap);
+                        console.log('[TRAINING WIZARD] HTMX swap timeout - tab may already be loaded');
+                        resolve();
+                    }, 500);
+                });
+
+                trainerStore.activateTab('datasets');
+                await htmxSwapPromise;
                 console.log('[TRAINING WIZARD] Datasets tab activated');
             }
 
             // Wait for the dataset wizard component to be initialized by Alpine
-            const maxAttempts = 20; // 2 seconds max
+            const maxAttempts = 30; // 3 seconds max (increased from 2)
             let attempts = 0;
             let datasetWizardEl = null;
 
@@ -2619,11 +2644,24 @@ function trainingWizardComponent() {
                 datasetWizard.deferCommit = true;
                 console.log('[TRAINING WIZARD] Enabled defer commit mode in dataset wizard');
 
-                // Save current step index before opening dataset wizard
-                const savedStepIndex = this.currentStepIndex;
-                const savedAnswers = { ...this.answers };
+                // Open dataset wizard FIRST
+                console.log('[TRAINING WIZARD] Opening dataset wizard');
+                datasetWizard.openWizard();
 
-                // Set up a watcher to detect when the dataset wizard closes
+                // Wait a tick to ensure wizardOpen is set to true
+                await new Promise(resolve => setTimeout(resolve, 50));
+
+                // Verify the wizard actually opened
+                if (!datasetWizard.wizardOpen) {
+                    console.warn('[TRAINING WIZARD] Dataset wizard failed to open, restoring training wizard');
+                    this.currentStepIndex = savedStepIndex;
+                    Object.assign(this.answers, savedAnswers);
+                    this.wizardOpen = true;
+                    window.showToast && window.showToast('Failed to open dataset wizard', 'warning');
+                    return;
+                }
+
+                // Now set up the watcher - wizard is confirmed open
                 const checkWizardClosed = setInterval(() => {
                     if (!datasetWizard.wizardOpen) {
                         clearInterval(checkWizardClosed);
@@ -2651,14 +2689,15 @@ function trainingWizardComponent() {
                         }, 300);
                     }
                 }, 200);
-
-                // Open dataset wizard
-                console.log('[TRAINING WIZARD] Opening dataset wizard');
-                datasetWizard.openWizard();
             } else {
                 console.warn('[TRAINING WIZARD] Dataset wizard component not found after', attempts, 'attempts');
                 console.warn('[TRAINING WIZARD] datasetWizardEl:', datasetWizardEl);
                 console.warn('[TRAINING WIZARD] datasetWizard:', datasetWizard);
+
+                // Restore training wizard since dataset wizard failed to load
+                this.currentStepIndex = savedStepIndex;
+                Object.assign(this.answers, savedAnswers);
+                this.wizardOpen = true;
                 window.showToast && window.showToast('Dataset wizard not available', 'warning');
             }
         }
