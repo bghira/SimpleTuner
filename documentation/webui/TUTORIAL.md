@@ -182,6 +182,8 @@ If you want the trainer to generate images periodically, you can configure a sin
 
 Want to outsource validation to your own script or service? Switch the **Validation Method** to `external-script` in the validation tab after the wizard and provide `--validation_external_script`. You can pass training context into the script with placeholders like `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, `{model_family}`, `{huggingface_path}`, and any `validation_*` config value (e.g., `validation_num_inference_steps`, `validation_guidance`, `validation_noise_scheduler`). Enable `--validation_external_background` to fire-and-forget without blocking training.
 
+Need a hook the moment a checkpoint hits disk? Use `--post_checkpoint_script` to fire a script right after each save (before uploads begin). It accepts the same placeholders, with `{remote_checkpoint_path}` left empty.
+
 If you want to keep SimpleTuner's built-in publishing providers (or Hugging Face Hub uploads) but still trigger your own automation with the remote URL, use `--post_upload_script` instead. It runs once per upload with placeholders `{remote_checkpoint_path}`, `{local_checkpoint_path}`, `{global_step}`, `{tracker_run_name}`, `{tracker_project_name}`, `{model_family}`, `{huggingface_path}`. SimpleTuner doesn't capture the script's output—emit any tracker updates directly from your script.
 
 Example hook:
