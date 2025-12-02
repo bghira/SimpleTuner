@@ -253,10 +253,6 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
         if not isinstance(state_dict, dict):
             raise ValueError("LoRA checkpoint did not return a state dict.")
 
-        is_correct_format = all("lora" in key for key in state_dict.keys())
-        if not is_correct_format:
-            raise ValueError("Invalid LoRA checkpoint.")
-
         detected_format = detect_state_dict_format(state_dict)
         if lora_format == PEFTLoRAFormat.DIFFUSERS and detected_format == PEFTLoRAFormat.COMFYUI:
             lora_format = PEFTLoRAFormat.COMFYUI
