@@ -2305,13 +2305,27 @@ class ModelFoundation(ABC):
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
         if getattr(self.config, "scheduled_sampling_max_step_offset", 0) > 0:
+            effective_prob = float(getattr(self.config, "scheduled_sampling_probability", 0.0) or 0.0)
+            prob_start = float(getattr(self.config, "scheduled_sampling_prob_start", effective_prob) or effective_prob)
+            prob_end = float(getattr(self.config, "scheduled_sampling_prob_end", effective_prob) or effective_prob)
+            ramp_steps = int(getattr(self.config, "scheduled_sampling_ramp_steps", 0) or 0)
+            ramp_shape = getattr(self.config, "scheduled_sampling_ramp_shape", "linear") or "linear"
+            ramp_start = int(getattr(self.config, "scheduled_sampling_start_step", 0) or 0)
+            global_step = int(state.get("global_step", 0) or 0)
+            if ramp_steps > 0 and global_step >= ramp_start:
+                progress = min(1.0, max(0.0, (global_step - ramp_start) / max(ramp_steps, 1)))
+                if ramp_shape == "cosine":
+                    progress = 0.5 - 0.5 * math.cos(math.pi * progress)
+                effective_prob = prob_start + (prob_end - prob_start) * progress
+            else:
+                effective_prob = prob_start if ramp_steps > 0 else effective_prob
             batch["scheduled_sampling_plan"] = build_rollout_schedule(
                 num_train_timesteps=self.noise_schedule.config.num_train_timesteps,
                 batch_size=bsz,
                 max_step_offset=getattr(self.config, "scheduled_sampling_max_step_offset", 0),
                 device=self.accelerator.device,
                 strategy=getattr(self.config, "scheduled_sampling_strategy", "uniform"),
-                apply_probability=getattr(self.config, "scheduled_sampling_probability", 0.0),
+                apply_probability=effective_prob,
             )
 
         batch = self.prepare_batch_conditions(batch=batch, state=state)

@@ -22,6 +22,9 @@ def build_rollout_schedule(
 ) -> ScheduledSamplingPlan:
     """
     Sample target timesteps and optional upstream rollout timesteps for scheduled sampling.
+
+    apply_probability controls how often a non-zero offset is used; when None, every
+    sample is eligible, when 0.0 no samples are rolled out.
     """
     if max_step_offset <= 0:
         base = torch.randint(0, num_train_timesteps, (batch_size,), device=device)

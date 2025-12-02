@@ -44,6 +44,7 @@ from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, Distill
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
+from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
 from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
@@ -3893,6 +3894,12 @@ class Trainer:
     ):
         if custom_timesteps is not None:
             timesteps = custom_timesteps
+        prepared_batch = apply_scheduled_sampling_rollout(
+            self.model,
+            prepared_batch,
+            self.noise_scheduler,
+            self.config,
+        )
         if not self.config.disable_accelerator:
             if self.config.controlnet:
                 model_pred = self.model.controlnet_predict(
