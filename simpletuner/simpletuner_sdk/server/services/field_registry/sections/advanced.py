@@ -30,6 +30,110 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Diff2Flow bridging (EPS/V -> flow targets)
+    registry._add_field(
+        ConfigField(
+            name="diff2flow_enabled",
+            arg_name="--diff2flow_enabled",
+            ui_label="Enable Diff2Flow Bridge",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Allow epsilon/v models to compute flow-style targets via Diffusion-to-Flow bridge.",
+            tooltip="Keeps the underlying UNet the same but exposes flow targets for optional loss computation.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=27,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="diff2flow_loss",
+            arg_name="--diff2flow_loss",
+            ui_label="Train With Flow Loss",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Compute loss on flow-converted predictions instead of raw eps/v targets.",
+            tooltip="Requires Diff2Flow bridge to be enabled; only applies to epsilon or v-prediction models.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=28,
+            dependencies=[FieldDependency(field="diff2flow_enabled", operator="equals", value=True, action="enable")],
+        )
+    )
+
+    # Scheduled sampling (training-time rollout)
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_max_step_offset",
+            arg_name="--scheduled_sampling_max_step_offset",
+            ui_label="Scheduled Sampling Max Offset",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Offset must be non-negative")],
+            help_text="Maximum additional reverse steps to roll out from a noisier source timestep during training.",
+            tooltip="Set >0 to enable scheduled sampling rollout for DDPM-style models. Higher values increase compute.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=29,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_strategy",
+            arg_name="--scheduled_sampling_strategy",
+            ui_label="Scheduled Sampling Strategy",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value="uniform",
+            choices=[
+                {"value": "uniform", "label": "Uniform"},
+                {"value": "biased_early", "label": "Biased Early"},
+                {"value": "biased_late", "label": "Biased Late"},
+            ],
+            help_text="Distribution for choosing rollout offsets.",
+            tooltip="Uniform samples offsets evenly; Biased Early favors small offsets; Biased Late favors larger ones.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=30,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_probability",
+            arg_name="--scheduled_sampling_probability",
+            ui_label="Scheduled Sampling Probability",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Probability must be >= 0"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Probability must be <= 1"),
+            ],
+            help_text="Chance to apply a non-zero rollout offset for each sample when scheduled sampling is enabled.",
+            tooltip="Use <1.0 to limit how often rollout is used; 0.0 disables rollout even if max offset > 0.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=31,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
     # Flow Matching Configuration
     registry._add_field(
         ConfigField(

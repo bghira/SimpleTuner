@@ -26,8 +26,10 @@ try:
 except ImportError:
     FSDP_AVAILABLE = False
 
+from simpletuner.diff2flow import DiffusionToFlowBridge
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
+from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
@@ -235,6 +237,8 @@ class ModelFoundation(ABC):
         self._validation_preview_decoder_failed = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
+        self.diff2flow_bridge = None
+        self.setup_diff2flow_bridge()
         self.assistant_adapter_name = "assistant"
         self.assistant_lora_loaded = False
 
@@ -2084,6 +2088,24 @@ class ModelFoundation(ABC):
 
         return self.config, self.noise_schedule
 
+    def setup_diff2flow_bridge(self):
+        """
+        Optionally attach a diffusion-to-flow adapter for epsilon/v-prediction models.
+        """
+        self.config.diff2flow_enabled = getattr(self.config, "diff2flow_enabled", False)
+        self.config.diff2flow_loss = getattr(self.config, "diff2flow_loss", False)
+        if self.PREDICTION_TYPE not in [PredictionTypes.EPSILON, PredictionTypes.V_PREDICTION]:
+            return
+        if not self.config.diff2flow_enabled:
+            return
+        alphas_cumprod = getattr(self.noise_schedule, "alphas_cumprod", None)
+        if alphas_cumprod is None:
+            logger.warning("Diff2Flow requested but scheduler lacks alphas_cumprod; disabling.")
+            self.config.diff2flow_enabled = False
+            return
+        self.diff2flow_bridge = DiffusionToFlowBridge(alphas_cumprod=alphas_cumprod)
+        self.diff2flow_bridge.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+
     def get_prediction_target(self, prepared_batch: dict):
         """
         Returns the target used in the loss function.
@@ -2108,6 +2130,14 @@ class ModelFoundation(ABC):
         else:
             raise ValueError(f"Unknown prediction type {self.PREDICTION_TYPE}.")
         return target
+
+    def get_flow_target(self, prepared_batch: dict):
+        flow_target = prepared_batch.get("flow_target")
+        if flow_target is not None:
+            return flow_target
+        if self.diff2flow_bridge is None:
+            return None
+        return self.diff2flow_bridge.flow_target(prepared_batch["latents"], prepared_batch["noise"])
 
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         # it's a list, but most models will expect it to be a length-1 list containing a tensor, which is what they actually want
@@ -2235,6 +2265,9 @@ class ModelFoundation(ABC):
                 )
         batch["noise"] = noise
 
+        if getattr(self.config, "diff2flow_enabled", False):
+            batch["flow_target"] = (batch["noise"] - batch["latents"]).to(**target_device_kwargs)
+
         # Possibly add input perturbation to input noise only
         if self.config.input_perturbation != 0 and (
             not getattr(self.config, "input_perturbation_steps", None)
@@ -2270,6 +2303,16 @@ class ModelFoundation(ABC):
                 batch["input_noise"].float(),
                 batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+
+        if getattr(self.config, "scheduled_sampling_max_step_offset", 0) > 0:
+            batch["scheduled_sampling_plan"] = build_rollout_schedule(
+                num_train_timesteps=self.noise_schedule.config.num_train_timesteps,
+                batch_size=bsz,
+                max_step_offset=getattr(self.config, "scheduled_sampling_max_step_offset", 0),
+                device=self.accelerator.device,
+                strategy=getattr(self.config, "scheduled_sampling_strategy", "uniform"),
+                apply_probability=getattr(self.config, "scheduled_sampling_probability", 0.0),
+            )
 
         batch = self.prepare_batch_conditions(batch=batch, state=state)
 
@@ -2442,7 +2485,25 @@ class ModelFoundation(ABC):
         # Get loss type from config (default to l2 for backward compatibility)
         loss_type = getattr(self.config, "loss_type", "l2")
 
-        if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+        use_diff2flow_loss = (
+            getattr(self.config, "diff2flow_loss", False)
+            and getattr(self.config, "diff2flow_enabled", False)
+            and self.diff2flow_bridge is not None
+            and self.PREDICTION_TYPE in [PredictionTypes.EPSILON, PredictionTypes.V_PREDICTION]
+        )
+
+        if use_diff2flow_loss:
+            flow_pred = self.diff2flow_bridge.prediction_to_flow(
+                model_pred.float(),
+                prepared_batch["noisy_latents"].float(),
+                prepared_batch["timesteps"],
+                prediction_type=self.PREDICTION_TYPE.value,
+            )
+            flow_target = self.get_flow_target(prepared_batch)
+            if flow_target is None:
+                raise ValueError("Flow target is None while diff2flow_loss is enabled.")
+            loss = F.mse_loss(flow_pred.float(), flow_target.float(), reduction="none")
+        elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
             # Flow matching always uses L2 loss
             loss = (model_pred.float() - target.float()) ** 2
         elif self.PREDICTION_TYPE in [
