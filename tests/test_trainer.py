@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import torch
 
+from simpletuner.helpers.training.state_tracker import StateTracker
+
 _OPTIONAL_MODULES = {
     "wandb",
     "torchao",
@@ -882,6 +884,57 @@ class TestTrainer(unittest.TestCase):
         self.assertFalse(trainer.config.validation_disable)
         mock_validation.assert_called_once()
 
+    @patch("simpletuner.helpers.training.trainer.Validation")
+    def test_init_validations_creates_eval_for_epoch_interval(self, mock_validation):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(deepspeed_plugin=SimpleNamespace(deepspeed_config={"zero_optimization": {"stage": 2}})),
+            wait_for_everyone=lambda *_, **__: None,
+            is_main_process=True,
+        )
+        trainer.validation_prompt_metadata = None
+        trainer.validation = None
+        trainer.evaluation = None
+        trainer.model = MagicMock()
+        trainer.distiller = None
+        trainer._get_trainable_parameters = None
+        trainer.ema_model = None
+        config = SimpleNamespace(
+            use_fsdp=False,
+            fsdp_reshard_after_forward=False,
+            validation_disable=False,
+            eval_steps_interval=None,
+            eval_epoch_interval=1.0,
+            weight_dtype=torch.float32,
+            use_deepspeed_optimizer=False,
+            vae_path=None,
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            model_family="sdxl",
+            model_flavour="base",
+            output_dir="/tmp",
+            use_ema=False,
+            ema_validation="none",
+            num_eval_images=1,
+            eval_dataset_id=None,
+            validation_prompt_library=None,
+            user_prompt_library=None,
+            validation_prompt=None,
+            train_text_encoder=False,
+            disable_benchmark=True,
+        )
+        prev_args = StateTracker.get_args()
+        StateTracker.set_args(config)
+        trainer.config = config
+        trainer._emit_event = lambda *_, **__: None
+
+        try:
+            trainer.init_validations()
+            self.assertIsNotNone(trainer.evaluation)
+        finally:
+            StateTracker.set_args(prev_args)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
@@ -1522,6 +1575,36 @@ class TestTrainer(unittest.TestCase):
             "accumulate() must not receive a list - would cause AttributeError in FSDP2",
         )
         mock_trained_model.set_requires_gradient_sync.assert_any_call(False)
+
+    def test_build_init_tracker_kwargs_filters_to_active_trackers(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(log_with=["tensorboard", "wandb"])
+
+        init_kwargs = trainer._build_init_tracker_kwargs("run-name", "abc123")
+
+        self.assertIn("wandb", init_kwargs)
+        self.assertEqual(init_kwargs["wandb"]["name"], "run-name")
+        self.assertEqual(init_kwargs["wandb"]["id"], "abc123")
+        self.assertEqual(init_kwargs["wandb"]["resume"], "allow")
+        self.assertTrue(init_kwargs["wandb"]["allow_val_change"])
+        self.assertNotIn("tensorboard", init_kwargs)
+
+    def test_build_init_tracker_kwargs_supports_swanlab(self):
+        tracker_enum_like = SimpleNamespace(value="swanlab")
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(log_with=[tracker_enum_like])
+
+        init_kwargs = trainer._build_init_tracker_kwargs("swan-run", "hash456")
+
+        self.assertIn("swanlab", init_kwargs)
+        self.assertEqual(
+            init_kwargs["swanlab"],
+            {
+                "experiment_name": "swan-run",
+                "id": "hash456",
+                "resume": "allow",
+            },
+        )
 
     @patch("simpletuner.helpers.training.trainer.TorchDynamoPlugin")
     @patch("simpletuner.helpers.training.trainer.Accelerator")

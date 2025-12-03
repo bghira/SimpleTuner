@@ -37,6 +37,13 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import AutoTokenizer, PreTrainedModel
 
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    convert_comfyui_to_diffusers,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
+
 from .pipeline_output import ZImagePipelineOutput
 from .transformer import ZImageTransformer2DModel
 
@@ -230,11 +237,29 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
             pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
-        state_dict = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+        lora_format = normalize_lora_format(kwargs.pop("lora_format", None))
+        state = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+        network_alphas = None
+        if isinstance(state, tuple):
+            if len(state) >= 2:
+                state_dict, possible_alphas = state[:2]
+                if isinstance(possible_alphas, dict):
+                    network_alphas = possible_alphas
+            else:
+                state_dict = state[0]
+        else:
+            state_dict = state
 
-        is_correct_format = all("lora" in key for key in state_dict.keys())
-        if not is_correct_format:
-            raise ValueError("Invalid LoRA checkpoint.")
+        if not isinstance(state_dict, dict):
+            raise ValueError("LoRA checkpoint did not return a state dict.")
+
+        detected_format = detect_state_dict_format(state_dict)
+        if lora_format == PEFTLoRAFormat.DIFFUSERS and detected_format == PEFTLoRAFormat.COMFYUI:
+            lora_format = PEFTLoRAFormat.COMFYUI
+
+        if lora_format == PEFTLoRAFormat.COMFYUI:
+            state_dict, comfy_alphas = convert_comfyui_to_diffusers(state_dict, target_prefix=self.transformer_name)
+            network_alphas = (network_alphas or {}) | comfy_alphas
 
         transformer_state_dict = {}
         controlnet_state_dict = {}
@@ -256,6 +281,7 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
                 low_cpu_mem_usage=low_cpu_mem_usage,
                 hotswap=hotswap,
                 prefix=kwargs.get("prefix", None),
+                network_alphas=network_alphas,
             )
 
         if controlnet_state_dict and hasattr(self, self.controlnet_name):
@@ -278,6 +304,7 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
         low_cpu_mem_usage=False,
         hotswap: bool = False,
         prefix: Optional[str] = None,
+        network_alphas: Optional[Dict[str, float]] = None,
     ):
         if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
             raise ValueError(
@@ -294,15 +321,18 @@ class ZImageLoraLoaderMixin(LoraBaseMixin):
             prefix = None
             logger.info("Stripped 'transformer.' prefix from LoRA keys for transformer loading.")
 
+        if not network_alphas:
+            network_alphas = None
+
         logger.info(f"Loading {cls.transformer_name}.")
         transformer.load_lora_adapter(
             state_dict,
-            network_alphas=None,
             adapter_name=adapter_name,
             _pipeline=_pipeline,
             low_cpu_mem_usage=low_cpu_mem_usage,
             hotswap=hotswap,
             prefix=prefix,
+            network_alphas=network_alphas,
         )
 
     @classmethod

@@ -23,6 +23,8 @@ from unittest.mock import MagicMock, patch
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+
 
 class TestFactoryEdgeCases(unittest.TestCase):
     """Test edge cases and error conditions for factory.py."""
@@ -903,6 +905,47 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 except ValueError as e:
                     if "Dataset configuration will produce zero usable batches" in str(e):
                         self.fail(f"Should not raise ValueError with sufficient repeats: {e}")
+
+    def test_eval_dataset_ignores_gradient_accumulation(self):
+        """Eval datasets should not fail bucket validation due to gradient accumulation."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "test_eval_ga"
+        mock_backend.batch_size = 1
+        mock_backend.repeats = 0
+        mock_backend.bucket_report = None
+        mock_backend.dataset_type = DatasetType.EVAL
+        mock_backend.aspect_ratio_bucket_indices = {"1.0": ["img1.jpg", "img2.jpg"]}
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.num_processes = 1
+
+        def split_side_effect(images, apply_padding=False):
+            mock_context = MagicMock()
+            mock_context.__enter__ = MagicMock(return_value=images)
+            mock_context.__exit__ = MagicMock(return_value=False)
+            return mock_context
+
+        mock_accelerator.split_between_processes = MagicMock(side_effect=split_side_effect)
+        mock_backend.accelerator = mock_accelerator
+
+        with (
+            patch.object(StateTracker, "get_args") as mock_get_args,
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+        ):
+            mock_args = MagicMock()
+            mock_args.allow_dataset_oversubscription = False
+            mock_get_args.return_value = mock_args
+
+            try:
+                MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=4)
+            except ValueError as e:
+                if "Dataset configuration will produce zero usable batches" in str(e):
+                    self.fail(f"Eval dataset should not consider grad accumulation: {e}")
+
+        mock_accelerator.split_between_processes.assert_called_once()
 
     @patch("simpletuner.helpers.data_backend.local.torch.save")
     def test_oversubscription_auto_adjustment(self, mock_torch_save):

@@ -1886,6 +1886,24 @@ class Trainer:
             self._hub_upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hf_push_")
         return self._hub_upload_executor
 
+    def _run_post_checkpoint_script(self, *, local_path: str | None = None) -> None:
+        script_template = getattr(self.config, "post_checkpoint_script", None)
+        if script_template in (None, "", "None"):
+            return
+        if hasattr(self, "accelerator") and hasattr(self.accelerator, "is_main_process"):
+            if not self.accelerator.is_main_process:
+                return
+        current_step = None
+        if isinstance(getattr(self, "state", None), dict):
+            current_step = self.state.get("global_step")
+        run_hook_script(
+            script_template,
+            config=self.config,
+            local_path=local_path,
+            remote_path=None,
+            global_step=current_step,
+        )
+
     def _run_post_upload_script(self, *, local_path: str | None = None, remote_path: str | None = None) -> None:
         script_template = getattr(self.config, "post_upload_script", None)
         if script_template in (None, "", "None"):
@@ -3231,7 +3249,22 @@ class Trainer:
         self.evaluation = None
         if self.config.validation_disable:
             return
-        if self.config.eval_steps_interval is not None and self.config.eval_steps_interval > 0:
+        eval_step_interval = getattr(self.config, "eval_steps_interval", None)
+        eval_epoch_interval = getattr(self.config, "eval_epoch_interval", None)
+
+        def _normalize_interval(raw_value, cast):
+            if raw_value in (None, "", "None"):
+                return None
+            try:
+                value = cast(raw_value)
+            except (TypeError, ValueError):
+                return None
+            return value if value > 0 else None
+
+        has_eval_schedule = bool(
+            _normalize_interval(eval_step_interval, int) or _normalize_interval(eval_epoch_interval, float)
+        )
+        if has_eval_schedule:
             from simpletuner.helpers.training.validation import Evaluation
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
@@ -3437,6 +3470,47 @@ class Trainer:
 
         return lr_scheduler
 
+    def _build_init_tracker_kwargs(self, tracker_run_name: str, public_args_hash: str) -> Dict[str, Dict[str, object]]:
+        """Prepare tracker-specific init kwargs for the active logging backends."""
+        loggers = getattr(self.accelerator, "log_with", None)
+        if not loggers:
+            return {}
+
+        tracker_names = set()
+        if not isinstance(loggers, (list, tuple, set)):
+            loggers = [loggers]
+
+        for tracker in loggers:
+            if isinstance(tracker, GeneralTracker):
+                continue
+            candidate = None
+            if isinstance(tracker, str):
+                candidate = tracker
+            elif hasattr(tracker, "value") and isinstance(tracker.value, str):
+                candidate = tracker.value
+            elif hasattr(tracker, "name") and isinstance(tracker.name, str):
+                candidate = tracker.name
+            if candidate:
+                normalized = candidate.strip().lower()
+                if normalized:
+                    tracker_names.add(normalized)
+
+        init_kwargs: Dict[str, Dict[str, object]] = {}
+        if "wandb" in tracker_names:
+            init_kwargs["wandb"] = {
+                "name": tracker_run_name,
+                "id": f"{public_args_hash}",
+                "resume": "allow",
+                "allow_val_change": True,
+            }
+        if "swanlab" in tracker_names:
+            init_kwargs["swanlab"] = {
+                "experiment_name": tracker_run_name,
+                "id": f"{public_args_hash}",
+                "resume": "allow",
+            }
+        return init_kwargs
+
     def init_trackers(self):
         # We need to initialize the trackers we use, and also store our configuration.
         # The trackers initializes automatically on the main process.
@@ -3460,17 +3534,11 @@ class Trainer:
             public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
             project_name, tracker_run_name = self._resolve_tracker_identifiers()
             try:
+                init_kwargs = self._build_init_tracker_kwargs(tracker_run_name, public_args_hash)
                 self.accelerator.init_trackers(
                     project_name,
                     config=vars(public_args),
-                    init_kwargs={
-                        "wandb": {
-                            "name": tracker_run_name,
-                            "id": f"{public_args_hash}",
-                            "resume": "allow",
-                            "allow_val_change": True,
-                        }
-                    },
+                    init_kwargs=init_kwargs,
                 )
             except Exception as e:
                 if "Object has no attribute 'disabled'" in repr(e):
@@ -3782,10 +3850,15 @@ class Trainer:
         self._emit_event(status_event)
 
     def _epoch_rollover(self, epoch):
+        # Always update epoch tracking state first, before any early return.
+        # This ensures checkpoints always save the correct epoch value.
+        self.state["current_epoch"] = epoch
+        StateTracker.set_epoch(epoch)
+
         if self.state["first_epoch"] == epoch:
             return
         logger.debug(
-            f"Just completed epoch {self.state['current_epoch']}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
+            f"Just completed epoch {self.state['current_epoch'] - 1}. Beginning epoch {epoch}. Starting epoch was {self.state['first_epoch']}. Final epoch will be {self.config.num_train_epochs}"
         )
         for backend_id, backend in StateTracker.get_data_backends().items():
             backend_config = StateTracker.get_data_backend_config(backend_id)
@@ -3818,8 +3891,6 @@ class Trainer:
                     logger.info("Rebuilding VAE cache..")
                     backend["vaecache"].rebuild_cache()
                 # no need to manually call metadata_backend.save_cache() here.
-        self.state["current_epoch"] = epoch
-        StateTracker.set_epoch(epoch)
         if self.config.lr_scheduler == "cosine_with_restarts":
             self.extra_lr_scheduler_kwargs["epoch"] = epoch
 
@@ -4119,6 +4190,7 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
+        self._run_post_checkpoint_script(local_path=save_path)
         return save_path
 
     def checkpoint_state_latest(self, output_dir):
@@ -4358,14 +4430,34 @@ class Trainer:
                                     is_fsdp2 = bool(getattr(self.accelerator, "is_fsdp2", False))
                                     # Ensure gradients are unscaled before clipping when using AMP.
                                     self.accelerator.unscale_gradients()
+                                    # When training LyCORIS adapters under FSDP, make sure we clip the
+                                    # trainable adapter parameters instead of the frozen base model weights.
+                                    is_lycoris = self.config.model_type == "lora" and self.config.lora_type == "lycoris"
+                                    lycoris_params = None
+                                    if is_lycoris:
+                                        lycoris_params = getattr(self, "lycoris_wrapped_network", None)
+                                        if lycoris_params is None:
+                                            logger.warning(
+                                                "LyCORIS training configured but lycoris_wrapped_network is None; "
+                                                "falling back to base model parameters for gradient clipping."
+                                            )
+                                        else:
+                                            lycoris_params = lycoris_params.parameters()
                                     try:
                                         if is_fsdp2:
+                                            params_to_clip = lycoris_params or fsdp_model.parameters()
                                             self.grad_norm = torch.nn.utils.clip_grad_norm_(
-                                                fsdp_model.parameters(),
+                                                params_to_clip,
                                                 self.config.max_grad_norm,
                                             )
                                         else:
-                                            self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
+                                            if lycoris_params is not None:
+                                                self.grad_norm = torch.nn.utils.clip_grad_norm_(
+                                                    lycoris_params,
+                                                    self.config.max_grad_norm,
+                                                )
+                                            else:
+                                                self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
                                     except Exception as exc:
                                         if is_fsdp2:
                                             logger.warning(

@@ -2532,8 +2532,29 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline, PixArtSigmaControlNetLora
         """
         Function invoked when calling the pipeline for generation.
         """
+        # Ensure the transformer can consume ControlNet conditioning
+        control_transformer = self.transformer
+        if not hasattr(control_transformer, "controlnet"):
+            if isinstance(self.controlnet, PixArtSigmaControlNetTransformerModel):
+                control_transformer = self.controlnet
+            elif isinstance(self.controlnet, PixArtSigmaControlNetAdapterModel):
+                control_transformer = PixArtSigmaControlNetTransformerModel(
+                    transformer=control_transformer,
+                    controlnet=self.controlnet,
+                    blocks_num=self.controlnet.num_layers,
+                )
+            self.transformer = control_transformer
+
+        if "controlnet_cond" not in inspect.signature(control_transformer.forward).parameters:
+            raise ValueError(
+                "ControlNet pipeline requires a transformer that accepts `controlnet_cond`. "
+                "Ensure the ControlNet wrapper is attached."
+            )
+
         # 1. Check inputs
-        _transformer = self.transformer if not hasattr(self.transformer, "transformer") else self.transformer.transformer
+        _transformer = (
+            control_transformer if not hasattr(control_transformer, "transformer") else control_transformer.transformer
+        )
         height = height or _transformer.config.sample_size * self.vae_scale_factor
         width = width or _transformer.config.sample_size * self.vae_scale_factor
 
@@ -2675,7 +2696,7 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline, PixArtSigmaControlNetLora
                     scaled_control_latents = control_image_latents * controlnet_conditioning_scale
 
                     # The wrapper model handles everything internally
-                    noise_pred = self.transformer(
+                    noise_pred = control_transformer(
                         latent_model_input,
                         encoder_hidden_states=prompt_embeds,
                         encoder_attention_mask=prompt_attention_mask,
@@ -2686,7 +2707,7 @@ class PixArtSigmaControlNetPipeline(DiffusionPipeline, PixArtSigmaControlNetLora
                     )[0]
                 else:
                     # Regular forward pass without controlnet
-                    noise_pred = self.transformer(
+                    noise_pred = control_transformer(
                         latent_model_input,
                         encoder_hidden_states=prompt_embeds,
                         encoder_attention_mask=prompt_attention_mask,

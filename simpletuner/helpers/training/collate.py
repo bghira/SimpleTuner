@@ -582,7 +582,7 @@ def collate_fn(batch):
     assert isinstance(data_backend_id, str)
     debug_log("Collect luminance values")
     if "luminance" in examples[0]:
-        batch_luminance = [example["luminance"] for example in examples]
+        batch_luminance = [example.get("luminance", 0) for example in examples]
     else:
         batch_luminance = [0] * len(examples)
     # average it

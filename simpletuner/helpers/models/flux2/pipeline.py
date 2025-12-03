@@ -30,6 +30,12 @@ from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 
 from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    convert_comfyui_to_diffusers,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -495,19 +501,29 @@ class Flux2LoraLoaderMixin(LoraBaseMixin):
         if isinstance(pretrained_model_name_or_path_or_dict, dict):
             pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
 
+        lora_format = normalize_lora_format(kwargs.pop("lora_format", None))
         # First, ensure that the checkpoint is a compatible one and can be successfully loaded.
         kwargs["return_lora_metadata"] = True
         state_dict, metadata = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+        network_alphas = None
 
         is_correct_format = all("lora" in key for key in state_dict.keys())
         if not is_correct_format:
             raise ValueError("Invalid LoRA checkpoint.")
+
+        detected_format = detect_state_dict_format(state_dict)
+        if lora_format == PEFTLoRAFormat.DIFFUSERS and detected_format == PEFTLoRAFormat.COMFYUI:
+            lora_format = PEFTLoRAFormat.COMFYUI
+        if lora_format == PEFTLoRAFormat.COMFYUI:
+            state_dict, comfy_alphas = convert_comfyui_to_diffusers(state_dict, target_prefix=self.transformer_name)
+            network_alphas = comfy_alphas
 
         self.load_lora_into_transformer(
             state_dict,
             transformer=getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer,
             adapter_name=adapter_name,
             metadata=metadata,
+            network_alphas=network_alphas,
             _pipeline=self,
             low_cpu_mem_usage=low_cpu_mem_usage,
             hotswap=hotswap,
@@ -524,6 +540,7 @@ class Flux2LoraLoaderMixin(LoraBaseMixin):
         low_cpu_mem_usage=False,
         hotswap: bool = False,
         metadata=None,
+        network_alphas=None,
     ):
         """
         See [`~loaders.StableDiffusionLoraLoaderMixin.load_lora_into_unet`] for more details.
@@ -537,7 +554,7 @@ class Flux2LoraLoaderMixin(LoraBaseMixin):
         logger.info(f"Loading {cls.transformer_name}.")
         transformer.load_lora_adapter(
             state_dict,
-            network_alphas=None,
+            network_alphas=network_alphas,
             adapter_name=adapter_name,
             metadata=metadata,
             _pipeline=_pipeline,

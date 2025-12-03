@@ -577,6 +577,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             logger.error(str(exc))
             raise
 
+    if isinstance(getattr(args, "post_checkpoint_script", None), str):
+        candidate = args.post_checkpoint_script.strip()
+        args.post_checkpoint_script = candidate or None
+
     if isinstance(getattr(args, "post_upload_script", None), str):
         candidate = args.post_upload_script.strip()
         args.post_upload_script = candidate or None

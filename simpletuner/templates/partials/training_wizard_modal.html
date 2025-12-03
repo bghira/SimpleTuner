@@ -178,7 +178,7 @@
                             </div>
                         </template>
 
-                        <div class="mb-0" x-show="quantizationFields.quantizeVia">
+                        <div class="mb-0" x-show="quantizationFields.quantizeVia && hasAnyPrecisionChanged()">
                             <label class="form-label" x-text="quantizationFields.quantizeVia ? quantizationFields.quantizeVia.label : 'Quantization Device'"></label>
                             <select class="form-select"
                                     x-model="answers.quantize_via">

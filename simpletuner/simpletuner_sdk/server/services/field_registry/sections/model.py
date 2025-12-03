@@ -507,7 +507,6 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             ],
             dependencies=[
                 FieldDependency(field="model_type", operator="equals", value="lora", action="enable"),
-                FieldDependency(field="base_model_precision", operator="not_equals", value="no_change", action="enable"),
             ],
             help_text="Where to perform model quantization",
             tooltip="CPU is safer for 24GB cards with large models. GPU is faster but may OOM.",

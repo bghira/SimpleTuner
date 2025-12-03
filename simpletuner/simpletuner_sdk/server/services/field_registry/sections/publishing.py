@@ -51,6 +51,23 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="post_checkpoint_script",
+            arg_name="--post_checkpoint_script",
+            ui_label="Post-checkpoint Script",
+            field_type=FieldType.TEXT,
+            tab="publishing",
+            section="publishing_controls",
+            default_value=None,
+            placeholder="/path/to/hook.sh {local_checkpoint_path}",
+            help_text="Executable to run right after each checkpoint is written to disk.",
+            tooltip="Supports the same placeholders as validation hooks, such as {local_checkpoint_path}, {global_step}, {tracker_run_name}, {tracker_project_name}, {model_family}, {huggingface_path}. Runs asynchronously on the main process.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="post_upload_script",
             arg_name="--post_upload_script",
             ui_label="Post-upload Script",
@@ -62,7 +79,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             help_text="Optional executable to run after each publishing provider and Hugging Face Hub upload finishes.",
             tooltip="Supports placeholders like {remote_checkpoint_path}, {local_checkpoint_path}, {global_step}, {tracker_run_name}, {tracker_project_name}, {model_family}, {huggingface_path}. Runs asynchronously.",
             importance=ImportanceLevel.ADVANCED,
-            order=5,
+            order=6,
         )
     )
 

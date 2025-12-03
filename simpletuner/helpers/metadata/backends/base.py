@@ -326,6 +326,17 @@ class MetadataBackend:
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
         """compute aspect ratio buckets - main processing function"""
         logger.info("Discovering new files...")
+        if not self.image_metadata_loaded:
+            try:
+                self.load_image_metadata()
+            except Exception as e:
+                if ignore_existing_cache:
+                    logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
+                    self.image_metadata = {}
+                else:
+                    raise Exception(
+                        f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                    )
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
 
         # Audio datasets use duration-based bucketing, not spatial aspect ratios.
@@ -384,6 +395,7 @@ class MetadataBackend:
             if self.bucket_report:
                 self.bucket_report.update_statistics(aggregated_statistics)
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
+            self._ensure_metadata_for_cached_buckets()
             return
         num_cpus = StateTracker.get_args().aspect_bucket_worker_count
         files_split = np.array_split(new_files, num_cpus)
@@ -392,16 +404,17 @@ class MetadataBackend:
         written_files_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
-        try:
-            self.load_image_metadata()
-        except Exception as e:
-            if ignore_existing_cache:
-                logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
-                self.image_metadata = {}
-            else:
-                raise Exception(
-                    f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
-                )
+        if not self.image_metadata_loaded:
+            try:
+                self.load_image_metadata()
+            except Exception as e:
+                if ignore_existing_cache:
+                    logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
+                    self.image_metadata = {}
+                else:
+                    raise Exception(
+                        f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                    )
         worker_cls = Process if StateTracker.get_args().enable_multiprocessing else Thread
         workers = [
             worker_cls(
@@ -480,6 +493,27 @@ class MetadataBackend:
         if self.bucket_report:
             self.bucket_report.update_statistics(aggregated_statistics)
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
+        self._ensure_metadata_for_cached_buckets()
+
+    def _ensure_metadata_for_cached_buckets(self):
+        """
+        Ensure that metadata entries exist for all cached aspect bucket samples.
+        """
+        if not self.aspect_ratio_bucket_indices:
+            return
+
+        bucket_files = set().union(*self.aspect_ratio_bucket_indices.values())
+        if not bucket_files:
+            return
+
+        missing_metadata = [path for path in bucket_files if self.get_metadata_by_filepath(path) is None]
+        if not missing_metadata:
+            return
+
+        logger.info(
+            f"(id={self.id}) Found {len(missing_metadata)} cached samples missing metadata; rebuilding metadata cache."
+        )
+        self.scan_for_metadata()
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
         """split bucket contents across processes for distributed training"""
@@ -488,7 +522,20 @@ class MetadataBackend:
         logger.debug(f"Count of items before split: {total_samples}")
 
         num_processes = self.accelerator.num_processes
-        effective_batch_size = self.batch_size * num_processes * gradient_accumulation_steps
+        # Evaluation datasets are not trained, so gradient accumulation does not apply.
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type) if dataset_type is not None else DatasetType.IMAGE
+        except Exception:
+            dataset_type_enum = DatasetType.IMAGE
+
+        grad_accumulation_for_bucketing = 1 if dataset_type_enum is DatasetType.EVAL else gradient_accumulation_steps
+        if dataset_type_enum is DatasetType.EVAL and gradient_accumulation_steps != 1:
+            logger.debug(
+                f"(id={self.id}) Ignoring gradient accumulation for eval dataset; using 1 instead of {gradient_accumulation_steps}."
+            )
+
+        effective_batch_size = self.batch_size * num_processes * grad_accumulation_for_bucketing
         if self.bucket_report:
             self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
@@ -544,7 +591,7 @@ class MetadataBackend:
                     f"  - Repeats: {self.repeats}\n"
                     f"  - Batch size: {self.batch_size}\n"
                     f"  - Number of GPUs: {num_processes}\n"
-                    f"  - Gradient accumulation steps: {gradient_accumulation_steps}\n"
+                    f"  - Gradient accumulation steps: {grad_accumulation_for_bucketing}\n"
                     f"  - Effective batch size: {effective_batch_size}\n"
                     f"\nProblem: {len(buckets_that_will_fail)} bucket(s) have insufficient samples:\n"
                 )
@@ -563,7 +610,7 @@ class MetadataBackend:
                 error_msg += (
                     f"\nSolutions:\n"
                     f"  1. Reduce batch_size (current: {self.batch_size})\n"
-                    f"  2. Reduce gradient_accumulation_steps (current: {gradient_accumulation_steps})\n"
+                    f"  2. Reduce gradient_accumulation_steps (current: {grad_accumulation_for_bucketing})\n"
                     f"  3. Use fewer GPUs (current: {num_processes})\n"
                     f"  4. Increase repeats to at least {max_needed_repeats} (current: {self.repeats})\n"
                     f"  5. Add more samples to the dataset\n"

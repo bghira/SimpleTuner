@@ -1,4 +1,5 @@
 import inspect
+import json
 import logging
 import math
 import os
@@ -34,6 +35,13 @@ from simpletuner.helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    convert_comfyui_to_diffusers,
+    convert_diffusers_to_comfyui,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.wrappers import unwrap_model
@@ -215,6 +223,7 @@ class ModelFoundation(ABC):
     ]
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
+    AUTO_LORA_FORMAT_DETECTION = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -316,6 +325,7 @@ class ModelFoundation(ABC):
         else:
             weight_arg = adapter_weights
 
+        logger.info(f"Configuring assistant LoRA for training with weights: {self.assistant_adapter_name}={weight_arg}")
         set_adapter_stack(
             trained_component,
             adapter_names,
@@ -358,6 +368,7 @@ class ModelFoundation(ABC):
             return
 
         weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
+        logger.info(f"Configuring assistant LoRA for inference with weights: {self.assistant_adapter_name}={weight_arg}")
         set_adapter_stack(
             trained_component,
             adapter_names,
@@ -709,6 +720,46 @@ class ModelFoundation(ABC):
             ]
         )
 
+    def _apply_alpha_scaling(self, module, alpha_map: dict, adapter_name: str = "default"):
+        """
+        Apply per-layer alpha values to loaded PEFT adapters when supplied by the checkpoint.
+        """
+        if module is None or not alpha_map:
+            return
+
+        try:
+            from peft.tuners.tuners_utils import BaseTunerLayer
+        except Exception:
+            return
+
+        for name, layer in module.named_modules():
+            if not isinstance(layer, BaseTunerLayer):
+                continue
+            if adapter_name not in getattr(layer, "lora_alpha", {}):
+                continue
+            if name not in alpha_map:
+                continue
+
+            try:
+                alpha_value = alpha_map[name]
+                if torch.is_tensor(alpha_value):
+                    alpha_value = alpha_value.detach().float().cpu().item()
+                alpha_value = float(alpha_value)
+            except Exception:
+                continue
+
+            layer.lora_alpha[adapter_name] = alpha_value
+            if adapter_name in getattr(layer, "r", {}) and layer.r[adapter_name]:
+                try:
+                    scaling = (
+                        alpha_value / math.sqrt(layer.r[adapter_name])
+                        if getattr(layer, "use_rslora", False)
+                        else alpha_value / layer.r[adapter_name]
+                    )
+                    layer.scaling[adapter_name] = scaling
+                except Exception:
+                    continue
+
     def load_lora_weights(self, models, input_dir):
         """
         Generalized LoRA loading method.
@@ -750,13 +801,62 @@ class ModelFoundation(ABC):
                 )
 
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
-        lora_state_dict = pipeline_cls.lora_state_dict(input_dir)
-        if type(lora_state_dict) is tuple and len(lora_state_dict) == 2 and lora_state_dict[1] is None:
+        lora_state = pipeline_cls.lora_state_dict(input_dir)
+        network_alphas = None
+
+        if isinstance(lora_state, tuple):
+            if len(lora_state) >= 2:
+                lora_state_dict, maybe_network_alphas = lora_state[:2]
+                if isinstance(maybe_network_alphas, dict) or maybe_network_alphas is None:
+                    network_alphas = maybe_network_alphas
+                else:
+                    lora_state_dict = lora_state[0]
+            else:
+                lora_state_dict = lora_state[0]
+        else:
+            lora_state_dict = lora_state
+
+        if isinstance(lora_state_dict, tuple) and len(lora_state_dict) == 2 and lora_state_dict[1] is None:
             logger.debug("Overriding ControlNet LoRA state dict with correct structure")
             lora_state_dict = lora_state_dict[0]
 
         key_to_replace = self.CONTROLNET_LORA_STATE_DICT_PREFIX if self.config.controlnet else self.MODEL_TYPE.value
         prefix = f"{key_to_replace}."
+
+        if not isinstance(lora_state_dict, dict):
+            raise ValueError("LoRA checkpoint did not return a state dictionary.")
+
+        def _normalise_alpha_map(alpha_dict: dict) -> dict:
+            if not alpha_dict:
+                return {}
+            results = {}
+            prefixes = [prefix, "text_encoder.", "text_encoder_2."]
+            for alpha_key, alpha_val in alpha_dict.items():
+                key_name = alpha_key[:-6] if alpha_key.endswith(".alpha") else alpha_key
+                try:
+                    alpha_float = alpha_val.detach().float().cpu().item() if torch.is_tensor(alpha_val) else float(alpha_val)
+                except Exception:
+                    continue
+                results[key_name] = alpha_float
+                for pfx in prefixes:
+                    if key_name.startswith(pfx):
+                        results[key_name.replace(pfx, "", 1)] = alpha_float
+            return results
+
+        config_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        active_format = config_format
+        if getattr(self, "AUTO_LORA_FORMAT_DETECTION", False) and config_format == PEFTLoRAFormat.DIFFUSERS:
+            detected_format = detect_state_dict_format(lora_state_dict)
+            if detected_format == PEFTLoRAFormat.COMFYUI:
+                logger.info("Detected ComfyUI-formatted LoRA checkpoint, converting to Diffusers/PEFT format.")
+                active_format = PEFTLoRAFormat.COMFYUI
+        alpha_map = {}
+        if active_format == PEFTLoRAFormat.COMFYUI:
+            lora_state_dict, comfy_alphas = convert_comfyui_to_diffusers(lora_state_dict, target_prefix=key_to_replace)
+            alpha_map.update(_normalise_alpha_map(comfy_alphas))
+        if network_alphas:
+            alpha_map.update(_normalise_alpha_map(network_alphas))
+
         denoiser_sd = {}
         for k, v in lora_state_dict.items():
             if k.startswith(prefix):
@@ -770,6 +870,12 @@ class ModelFoundation(ABC):
         from peft.utils import set_peft_model_state_dict
 
         incompatible_keys = set_peft_model_state_dict(denoiser, denoiser_sd, adapter_name="default")
+        if alpha_map:
+            self._apply_alpha_scaling(self.unwrap_model(denoiser), alpha_map)
+            if text_encoder_one_ is not None:
+                self._apply_alpha_scaling(self.unwrap_model(text_encoder_one_), alpha_map)
+            if text_encoder_two_ is not None:
+                self._apply_alpha_scaling(self.unwrap_model(text_encoder_two_), alpha_map)
 
         if incompatible_keys is not None:
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
@@ -803,6 +909,7 @@ class ModelFoundation(ABC):
         """
         Proxy to the pipeline save_lora_weights, ensuring save_directory is passed explicitly.
         """
+        user_save_function = kwargs.pop("save_function", None)
         if args:
             save_directory, *remaining = args
         else:
@@ -810,6 +917,31 @@ class ModelFoundation(ABC):
             remaining = []
         if save_directory is None:
             raise ValueError("save_directory is required to save LoRA weights.")
+
+        adapter_metadata = {}
+        for key, value in kwargs.items():
+            if key.endswith("lora_adapter_metadata") and isinstance(value, dict):
+                adapter_metadata.update(value)
+
+        lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        if lora_format == PEFTLoRAFormat.COMFYUI:
+            import safetensors.torch
+            from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
+
+            def comfyui_save_function(weights, filename):
+                metadata = {"format": "pt"}
+                if adapter_metadata:
+                    try:
+                        metadata[LORA_ADAPTER_METADATA_KEY] = json.dumps(adapter_metadata, indent=2, sort_keys=True)
+                    except Exception:
+                        pass
+                converted = convert_diffusers_to_comfyui(weights, adapter_metadata=adapter_metadata)
+                safetensors.torch.save_file(converted, filename, metadata=metadata)
+
+            kwargs["save_function"] = comfyui_save_function
+            kwargs["safe_serialization"] = True
+        elif user_save_function is not None:
+            kwargs["save_function"] = user_save_function
 
         self.PIPELINE_CLASSES[
             (PipelineTypes.TEXT2IMG if not self.config.controlnet else PipelineTypes.CONTROLNET)
@@ -1127,6 +1259,11 @@ class ModelFoundation(ABC):
                 text_encoder_config,
             ) in self.TEXT_ENCODER_CONFIGURATION.items():
                 text_encoder_idx += 1
+                # Prefer indexed precision flags (text_encoder_1_precision, etc) to match config schema.
+                precision_attr = f"text_encoder_{text_encoder_idx}_precision"
+                text_encoder_precision = getattr(
+                    self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
+                )
                 # load_tes returns a variant and three text encoders
                 signature = inspect.signature(text_encoder_config["model"])
                 extra_kwargs = {}
@@ -1163,7 +1300,7 @@ class ModelFoundation(ABC):
                 if self._ramtorch_text_encoders_requested():
                     self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
 
-                if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
+                if move_to_device and text_encoder_precision in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
@@ -1177,9 +1314,17 @@ class ModelFoundation(ABC):
 
     def unload_text_encoder(self):
         if self.text_encoders is not None:
-            for text_encoder in self.text_encoders:
+            for idx, text_encoder in enumerate(self.text_encoders):
+                if text_encoder is None:
+                    continue
                 if hasattr(text_encoder, "to"):
-                    text_encoder.to("meta")
+                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
+                    try:
+                        text_encoder.to("meta")
+                    except Exception as exc:
+                        logger.debug("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
+                        text_encoder.to("cpu")
+                setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
         if self.tokenizers is not None:
             self.tokenizers = None
@@ -1988,6 +2133,65 @@ class ModelFoundation(ABC):
             if not isinstance(conditioning_embeds[0], dict):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
         return batch
+
+    def _get_patch_size_for_dynamic_shift(self, noise_scheduler):
+        component = None
+        try:
+            component = self.get_trained_component()
+        except Exception:
+            component = None
+
+        if component is not None:
+            patch_size = getattr(getattr(component, "config", None), "patch_size", None)
+            if patch_size is not None:
+                return patch_size
+
+        scheduler_config = getattr(noise_scheduler, "config", None)
+        if scheduler_config is not None:
+            patch_size = getattr(scheduler_config, "patch_size", None)
+            if patch_size is not None:
+                return patch_size
+
+        return getattr(self.config, "patch_size", None)
+
+    def calculate_dynamic_shift_mu(self, noise_scheduler, latents: torch.Tensor | None):
+        """
+        Compute resolution-dependent shift value for schedulers that support dynamic shifting.
+        """
+        if latents is None:
+            return None
+
+        scheduler_config = getattr(noise_scheduler, "config", None)
+        if scheduler_config is None:
+            return None
+
+        required_fields = [
+            "base_image_seq_len",
+            "max_image_seq_len",
+            "base_shift",
+            "max_shift",
+        ]
+        missing_fields = [field for field in required_fields if getattr(scheduler_config, field, None) is None]
+        if missing_fields:
+            raise ValueError(
+                f"Cannot compute dynamic timestep shift; scheduler is missing config values: {', '.join(missing_fields)}"
+            )
+
+        patch_size = self._get_patch_size_for_dynamic_shift(noise_scheduler)
+        if patch_size is None or patch_size <= 0:
+            raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
+
+        height, width = latents.shape[-2:]
+        image_seq_len = (int(height) // int(patch_size)) * (int(width) // int(patch_size))
+        from simpletuner.helpers.models.sd3.pipeline import calculate_shift
+
+        return calculate_shift(
+            image_seq_len,
+            scheduler_config.base_image_seq_len,
+            scheduler_config.max_image_seq_len,
+            scheduler_config.base_shift,
+            scheduler_config.max_shift,
+        )
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
