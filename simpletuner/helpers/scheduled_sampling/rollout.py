@@ -1,9 +1,7 @@
-import copy
 from typing import Any
 
 import torch
 from skrample import common as sk_common
-from skrample.sampling import models as sk_models
 
 from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.scheduled_sampling.skrample_adapter import make_sampler, make_sigma_schedule_from_ddpm
@@ -29,6 +27,27 @@ def _slice_batch_for_index(batch: dict[str, Any], idx: int, device: torch.device
         else:
             sliced[key] = value
     return sliced
+
+
+def _prediction_to_x(
+    noisy_latents: torch.Tensor,
+    model_pred: torch.Tensor,
+    sigma: float,
+    sigma_transform,
+    prediction_type: PredictionTypes,
+) -> torch.Tensor:
+    """
+    Convert model prediction (eps or v) to a denoised sample x0 compatible with Skrample samplers.
+    """
+    sigma_u, sigma_v = sigma_transform(float(sigma))
+    sigma_u = torch.as_tensor(sigma_u, device=noisy_latents.device, dtype=noisy_latents.dtype)
+    sigma_v = torch.as_tensor(sigma_v, device=noisy_latents.device, dtype=noisy_latents.dtype)
+
+    if prediction_type is PredictionTypes.EPSILON:
+        return (noisy_latents - sigma_u * model_pred) / sigma_v
+    if prediction_type is PredictionTypes.V_PREDICTION:
+        return sigma_v * noisy_latents - sigma_u * model_pred
+    return model_pred
 
 
 @torch.no_grad()
@@ -59,12 +78,10 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
     sampler_order = getattr(config, "scheduled_sampling_order", 2)
     sampler = make_sampler(sampler_name, sampler_order)
 
-    if model.PREDICTION_TYPE is PredictionTypes.EPSILON:
-        model_transform = sk_models.NoiseModel()
-    elif model.PREDICTION_TYPE is PredictionTypes.V_PREDICTION:
-        model_transform = sk_models.VelocityModel()
-    else:
-        return prepared_batch
+    expects_pair_schedule = getattr(sampler, "_expects_pair_schedule", True)
+    sigma_schedule = schedule
+    if not expects_pair_schedule and hasattr(schedule, "ndim") and getattr(schedule, "ndim", 1) > 1:
+        sigma_schedule = schedule[:, 1]
 
     device = prepared_batch["noisy_latents"].device
     dtype = prepared_batch["noisy_latents"].dtype
@@ -79,7 +96,7 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
     new_timesteps = prepared_batch["timesteps"].clone()
 
     bsz = latents.shape[0]
-    schedule_len = len(schedule)
+    schedule_len = len(sigma_schedule)
     # Track previous samples per batch for multistep samplers
     prev_cache: list[list] = [[] for _ in range(bsz)]
     for i in range(bsz):
@@ -104,7 +121,7 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
         for t in range(source_t, target_t, -1):
             if t <= 0:
                 break
-            sigma = schedule[t][1]
+            sigma = sigma_schedule[t][1] if expects_pair_schedule else sigma_schedule[t]
             # Build a sliced batch for this sample/timestep
             mini_batch = _slice_batch_for_index(prepared_batch, i, device)
             mini_batch["noisy_latents"] = current
@@ -124,7 +141,7 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
             else:
                 model_pred = model_out
 
-            x_pred = model_transform.to_x(current, model_pred, sigma, sigma_transform)
+            x_pred = _prediction_to_x(current, model_pred, sigma, sigma_transform, model.PREDICTION_TYPE)
             sk_result = sampler.sample(
                 current,
                 x_pred,
@@ -146,7 +163,6 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
         new_noisy[i : i + 1] = current
         new_timesteps[i] = target_t
 
-    prepared_batch = copy.copy(prepared_batch)
     prepared_batch["noisy_latents"] = new_noisy
     prepared_batch["timesteps"] = new_timesteps
     return prepared_batch

@@ -66,13 +66,7 @@ class ScheduledSamplingRolloutTests(unittest.TestCase):
         self.assertTrue(torch.equal(plan.rollout_steps, plan.source_timesteps - base_ts))
 
     @patch("simpletuner.helpers.scheduled_sampling.rollout.make_sampler", return_value=_DummySampler())
-    @patch(
-        "simpletuner.helpers.scheduled_sampling.rollout.sk_models.NoiseModel",
-        return_value=types.SimpleNamespace(
-            to_x=lambda current, model_pred, sigma, sigma_transform: current - model_pred,
-        ),
-    )
-    def test_apply_scheduled_sampling_rollout_updates_noisy_latents(self, _noise_model_ctor, _sampler_ctor):
+    def test_apply_scheduled_sampling_rollout_updates_noisy_latents(self, _sampler_ctor):
         scheduler = DDPMScheduler(num_train_timesteps=6)
         latents = torch.zeros((2, 1, 1, 1), dtype=torch.float32)
         noise = torch.full_like(latents, 0.5)
@@ -101,13 +95,53 @@ class ScheduledSamplingRolloutTests(unittest.TestCase):
 
         # Item 0 should be advanced from source(2)->target(1) with our dummy sampler/transform.
         source_noisy = scheduler.add_noise(latents[0:1], noise[0:1], torch.tensor([2], dtype=torch.long))
-        expected_noisy_0 = source_noisy - 0.2
+        alpha_bar = scheduler.alphas_cumprod[2]
+        sigma_u = torch.sqrt(1.0 - alpha_bar)
+        sigma_v = torch.sqrt(alpha_bar)
+        expected_noisy_0 = (source_noisy - sigma_u * 0.2) / sigma_v
         assert_close(updated["noisy_latents"][0], expected_noisy_0.squeeze(0), atol=1e-5, rtol=1e-5)
         self.assertEqual(updated["timesteps"][0].item(), 1)
 
         # Item 1 had no rollout; it should be unchanged.
         assert_close(updated["noisy_latents"][1], initial_noisy[1], atol=1e-5, rtol=1e-5)
         self.assertEqual(updated["timesteps"][1].item(), target_timesteps[1].item())
+
+    @patch("simpletuner.helpers.scheduled_sampling.rollout.make_sampler", return_value=_DummySampler())
+    def test_apply_scheduled_sampling_rollout_mutates_batch_in_place(self, _sampler_ctor):
+        scheduler = DDPMScheduler(num_train_timesteps=6)
+        latents = torch.zeros((2, 1, 1, 1), dtype=torch.float32)
+        noise = torch.full_like(latents, 0.5)
+        target_timesteps = torch.tensor([1, 1], dtype=torch.long)
+        source_timesteps = torch.tensor([2, 1], dtype=torch.long)
+        rollout_steps = torch.tensor([1, 0], dtype=torch.long)
+
+        initial_noisy = scheduler.add_noise(latents, noise, target_timesteps)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise,
+            "noisy_latents": initial_noisy.clone(),
+            "timesteps": target_timesteps.clone(),
+            "scheduled_sampling_plan": ScheduledSamplingPlan(
+                target_timesteps=target_timesteps,
+                source_timesteps=source_timesteps,
+                rollout_steps=rollout_steps,
+            ),
+        }
+
+        original_noisy = prepared_batch["noisy_latents"].clone()
+
+        model = _DummyModel()
+        config = SimpleNamespace(controlnet=False)
+
+        updated = apply_scheduled_sampling_rollout(model, prepared_batch, scheduler, config)
+
+        self.assertIs(updated, prepared_batch)
+        # First item should change due to rollout
+        self.assertFalse(torch.equal(prepared_batch["noisy_latents"][0], original_noisy[0]))
+        # Second item should remain the same
+        assert_close(prepared_batch["noisy_latents"][1], original_noisy[1], atol=1e-5, rtol=1e-5)
+        self.assertEqual(prepared_batch["timesteps"][1].item(), target_timesteps[1].item())
 
 
 if __name__ == "__main__":
