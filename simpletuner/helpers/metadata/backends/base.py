@@ -326,6 +326,17 @@ class MetadataBackend:
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False):
         """compute aspect ratio buckets - main processing function"""
         logger.info("Discovering new files...")
+        if not self.image_metadata_loaded:
+            try:
+                self.load_image_metadata()
+            except Exception as e:
+                if ignore_existing_cache:
+                    logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
+                    self.image_metadata = {}
+                else:
+                    raise Exception(
+                        f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                    )
         new_files = self._discover_new_files(ignore_existing_cache=ignore_existing_cache)
 
         # Audio datasets use duration-based bucketing, not spatial aspect ratios.
@@ -384,6 +395,7 @@ class MetadataBackend:
             if self.bucket_report:
                 self.bucket_report.update_statistics(aggregated_statistics)
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
+            self._ensure_metadata_for_cached_buckets()
             return
         num_cpus = StateTracker.get_args().aspect_bucket_worker_count
         files_split = np.array_split(new_files, num_cpus)
@@ -392,16 +404,17 @@ class MetadataBackend:
         written_files_queue = Queue()
         tqdm_queue = Queue()
         aspect_ratio_bucket_indices_queue = Queue()
-        try:
-            self.load_image_metadata()
-        except Exception as e:
-            if ignore_existing_cache:
-                logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
-                self.image_metadata = {}
-            else:
-                raise Exception(
-                    f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
-                )
+        if not self.image_metadata_loaded:
+            try:
+                self.load_image_metadata()
+            except Exception as e:
+                if ignore_existing_cache:
+                    logger.warning(f"Error loading image metadata, creating new metadata cache: {e}")
+                    self.image_metadata = {}
+                else:
+                    raise Exception(
+                        f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
+                    )
         worker_cls = Process if StateTracker.get_args().enable_multiprocessing else Thread
         workers = [
             worker_cls(
@@ -480,6 +493,27 @@ class MetadataBackend:
         if self.bucket_report:
             self.bucket_report.update_statistics(aggregated_statistics)
             self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
+        self._ensure_metadata_for_cached_buckets()
+
+    def _ensure_metadata_for_cached_buckets(self):
+        """
+        Ensure that metadata entries exist for all cached aspect bucket samples.
+        """
+        if not self.aspect_ratio_bucket_indices:
+            return
+
+        bucket_files = set().union(*self.aspect_ratio_bucket_indices.values())
+        if not bucket_files:
+            return
+
+        missing_metadata = [path for path in bucket_files if self.get_metadata_by_filepath(path) is None]
+        if not missing_metadata:
+            return
+
+        logger.info(
+            f"(id={self.id}) Found {len(missing_metadata)} cached samples missing metadata; rebuilding metadata cache."
+        )
+        self.scan_for_metadata()
 
     def split_buckets_between_processes(self, gradient_accumulation_steps=1, apply_padding=False):
         """split bucket contents across processes for distributed training"""
