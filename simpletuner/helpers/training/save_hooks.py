@@ -31,8 +31,12 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
+MODEL_SPEC_VERSION = "1.0.1"
+LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"
+EMA_SAFETENSORS_FILENAME = "ema_model.safetensors"
 
-def merge_safetensors_files(directory):
+
+def merge_safetensors_files(directory, metadata=None):
     json_file_name = "diffusion_pytorch_model.safetensors.index.json"
     json_file_path = os.path.join(directory, json_file_name)
     if not os.path.exists(json_file_path):
@@ -48,6 +52,7 @@ def merge_safetensors_files(directory):
     # Collect all unique safetensors files from weight_map
     files_to_load = set(weight_map.values())
     all_tensors = {}
+    collected_metadata = {}
 
     # Load tensors from each unique file
     for file_name in files_to_load:
@@ -56,13 +61,18 @@ def merge_safetensors_files(directory):
             raise FileNotFoundError(f"Part file {file_name} not found.")
 
         with safe_open(part_file_path, framework="pt", device="cpu") as f:
+            collected_metadata = collected_metadata or f.metadata() or {}
             for tensor_key in f.keys():
                 if tensor_key in weight_map:
                     all_tensors[tensor_key] = f.get_tensor(tensor_key)
 
     # Step 4: Save all loaded tensors into a single new safetensors file
     output_file_path = os.path.join(directory, "diffusion_pytorch_model.safetensors")
-    save_file(all_tensors, output_file_path)
+    merged_metadata = dict(collected_metadata)
+    if metadata:
+        merged_metadata.update({str(k): str(v) for k, v in metadata.items()})
+    normalized_metadata = {str(k): str(v) for k, v in merged_metadata.items()} if merged_metadata else None
+    save_file(all_tensors, output_file_path, metadata=normalized_metadata)
     # Step 5: If the file now exists, remove the index and part files
     if os.path.exists(output_file_path):
         os.remove(json_file_path)
@@ -103,6 +113,137 @@ class SaveHookManager:
             rank = get_rank()
             if rank > 0:
                 self.training_state_path = f"training_state-rank{rank}.json"
+
+    def _derive_modelspec_architecture(self) -> str | None:
+        """
+        Build a best-effort architecture identifier for ModelSpec metadata.
+        """
+        family = str(getattr(self.args, "model_family", "") or "").strip()
+        flavour = str(getattr(self.args, "model_flavour", getattr(self.args, "model_flavor", "")) or "").strip()
+        base_model = str(getattr(self.args, "pretrained_model_name_or_path", "") or "").strip().rstrip("/")
+
+        arch_parts = [part for part in (family, flavour) if part]
+        if arch_parts:
+            architecture = "-".join(arch_parts)
+        elif base_model:
+            architecture = os.path.basename(base_model) or base_model
+        else:
+            architecture = getattr(self.model, "NAME", None) or self.model.__class__.__name__
+
+        if architecture:
+            architecture = architecture.replace(" ", "-").lower()
+
+        model_type = str(getattr(self.args, "model_type", "") or "").lower()
+        if "lora" in model_type or "lycoris" in model_type:
+            architecture = f"{architecture}/lora" if architecture else "lora"
+        elif getattr(self.args, "controlnet", False):
+            architecture = f"{architecture}/controlnet" if architecture else "controlnet"
+        return architecture
+
+    def _derive_modelspec_title(self, checkpoint_dir: str | None = None) -> str | None:
+        title = getattr(self.args, "tracker_run_name", None)
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+
+        for candidate in (checkpoint_dir, getattr(self.args, "output_dir", None)):
+            if candidate:
+                base = os.path.basename(os.path.normpath(str(candidate)))
+                if base:
+                    return base
+
+        model_name = getattr(self.model, "NAME", None)
+        if model_name:
+            return str(model_name)
+        return None
+
+    def _derive_modelspec_resolution(self) -> str | None:
+        res_value = getattr(self.args, "resolution", None)
+        if res_value is None:
+            return None
+
+        if isinstance(res_value, (list, tuple)) and len(res_value) == 2:
+            try:
+                width = int(res_value[0])
+                height = int(res_value[1])
+                if width > 0 and height > 0:
+                    return f"{width}x{height}"
+            except Exception:
+                pass
+
+        try:
+            size = float(res_value)
+            if size > 0:
+                return f"{int(size)}x{int(size)}"
+        except Exception:
+            pass
+
+        if isinstance(res_value, str):
+            cleaned = res_value.strip().lower().replace(" ", "")
+            if "x" in cleaned:
+                return cleaned
+        return None
+
+    def _build_modelspec_metadata(self, checkpoint_dir: str | None = None) -> dict[str, str]:
+        metadata = {"modelspec.sai_model_spec": MODEL_SPEC_VERSION}
+
+        architecture = self._derive_modelspec_architecture()
+        if architecture:
+            metadata["modelspec.architecture"] = architecture
+
+        metadata["modelspec.implementation"] = "diffusers"
+
+        title = self._derive_modelspec_title(checkpoint_dir)
+        if title:
+            metadata["modelspec.title"] = title
+
+        resolution = self._derive_modelspec_resolution()
+        if resolution:
+            metadata["modelspec.resolution"] = resolution
+
+        description = getattr(self.model, "MODEL_DESCRIPTION", None)
+        if description:
+            metadata["modelspec.description"] = str(description)
+
+        return {k: str(v) for k, v in metadata.items() if v is not None}
+
+    def _append_metadata_to_safetensors(self, target_path: str, metadata: dict[str, str]) -> bool:
+        if not metadata or not os.path.exists(target_path):
+            return False
+        try:
+            with safe_open(target_path, framework="pt", device="cpu") as handle:
+                tensors = {key: handle.get_tensor(key) for key in handle.keys()}
+                existing_metadata = handle.metadata() or {}
+            combined_metadata = dict(existing_metadata)
+            combined_metadata.update(metadata)
+            normalized_metadata = {str(k): str(v) for k, v in combined_metadata.items() if v is not None}
+            save_file(tensors, target_path, metadata=normalized_metadata)
+            return True
+        except Exception as exc:
+            logger.warning("Failed to apply modelspec metadata to %s: %s", target_path, exc)
+            return False
+
+    def _apply_modelspec_metadata_to_lora(self, output_dir: str):
+        metadata = self._build_modelspec_metadata(checkpoint_dir=output_dir)
+        if not metadata:
+            return
+
+        candidates = [
+            os.path.join(output_dir, LORA_SAFETENSORS_FILENAME),
+            os.path.join(output_dir, "ema", LORA_SAFETENSORS_FILENAME),
+            os.path.join(output_dir, "ema", EMA_SAFETENSORS_FILENAME),
+        ]
+
+        for root in (output_dir, os.path.join(output_dir, "ema")):
+            if os.path.isdir(root):
+                for name in os.listdir(root):
+                    if name.endswith(".safetensors"):
+                        candidates.append(os.path.join(root, name))
+
+        seen = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                self._append_metadata_to_safetensors(candidate, metadata)
 
     @contextmanager
     def _offload_models_during_save(self, is_main_process: bool):
@@ -226,14 +367,13 @@ class SaveHookManager:
 
         metadata = _collate_lora_metadata(modules_to_save)
         self.model.save_lora_weights(output_dir, **lora_save_parameters, **metadata)
+        self._apply_modelspec_metadata_to_lora(output_dir)
 
     def _save_lycoris(self, models, weights, output_dir):
         """
         save wrappers for lycoris. For now, text encoders are not trainable
         via lycoris.
         """
-        from simpletuner.helpers.publishing.huggingface import EMA_SAFETENSORS_FILENAME, LORA_SAFETENSORS_FILENAME
-
         for _ in models:
             if weights:
                 weights.pop()
@@ -242,10 +382,13 @@ class SaveHookManager:
         with open(self.args.lycoris_config, "r") as f:
             lycoris_config = json.load(f)
 
+        base_metadata = {"lycoris_config": json.dumps(lycoris_config)}
+        base_metadata.update(self._build_modelspec_metadata(checkpoint_dir=output_dir))
+
         self.accelerator._lycoris_wrapped_network.save_weights(
             os.path.join(output_dir, LORA_SAFETENSORS_FILENAME),
             list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-            {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+            base_metadata,  # metadata
         )
         if self.args.use_ema:
             # we'll store lycoris weights.
@@ -254,10 +397,11 @@ class SaveHookManager:
             self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
             # now we can write the lycoris weights using the EMA_SAFETENSORS_FILENAME instead.
             os.makedirs(os.path.join(output_dir, "ema"), exist_ok=True)
+            ema_metadata = dict(base_metadata)
             self.accelerator._lycoris_wrapped_network.save_weights(
                 os.path.join(output_dir, "ema", EMA_SAFETENSORS_FILENAME),
                 list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-                {"lycoris_config": json.dumps(lycoris_config)},  # metadata
+                ema_metadata,  # metadata
             )
             self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
 
@@ -331,6 +475,7 @@ class SaveHookManager:
     ):
         temporary_dir = None
         save_dir = None
+        modelspec_metadata = self._build_modelspec_metadata(checkpoint_dir=output_dir)
 
         if is_main_process:
             temporary_dir = output_dir.replace("checkpoint", "temporary")
@@ -369,7 +514,7 @@ class SaveHookManager:
                     max_shard_size="10GB",
                     state_dict=state_dict,
                 )
-                merge_safetensors_files(save_dir)
+                merge_safetensors_files(save_dir, metadata=modelspec_metadata)
             finally:
                 del state_dict
 
@@ -456,8 +601,6 @@ class SaveHookManager:
         logger.info("Completed loading LoRA weights.")
 
     def _load_lycoris(self, models, input_dir):
-        from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
-
         while len(models) > 0:
             model = models.pop()
 
