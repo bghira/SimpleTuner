@@ -3213,13 +3213,19 @@ class Evaluation:
             return len(ds["sampler"]) if ds else 0
         return sum(len(x["sampler"]) for _, x in eval_datasets.items())
 
-    def get_timestep_schedule(self, noise_scheduler):
+    def get_timestep_schedule(self, noise_scheduler, latents: torch.Tensor | None = None):
         accept_mu = "mu" in set(inspect.signature(noise_scheduler.set_timesteps).parameters.keys())
         scheduler_kwargs = {}
-        if accept_mu and self.config.flow_schedule_auto_shift:
-            from simpletuner.helpers.models.sd3.pipeline import calculate_shift
-
-            scheduler_kwargs["mu"] = calculate_shift(StateTracker.get_model().get_trained_component().config.max_seq)
+        dynamic_shift = getattr(noise_scheduler.config, "use_dynamic_shifting", False)
+        if accept_mu and (self.config.flow_schedule_auto_shift or dynamic_shift):
+            model = StateTracker.get_model()
+            mu = None
+            if model is not None and hasattr(model, "calculate_dynamic_shift_mu"):
+                mu = model.calculate_dynamic_shift_mu(noise_scheduler, latents)
+            if mu is not None:
+                scheduler_kwargs["mu"] = mu
+            elif dynamic_shift:
+                raise ValueError("Flow scheduler requires `mu` for dynamic shifting but none could be derived.")
 
         noise_scheduler.set_timesteps(self.config.eval_timesteps, **scheduler_kwargs)
         timesteps = noise_scheduler.timesteps
@@ -3266,8 +3272,9 @@ class Evaluation:
         if torch.cuda.is_available():
             cuda_rng_state = torch.cuda.get_rng_state()
 
-        eval_timestep_list = self.get_timestep_schedule(noise_scheduler)
-        logger.debug(f"Evaluation timesteps: {eval_timestep_list}")
+        eval_timestep_list = None
+        last_latent_hw = None
+        logger.debug("Evaluation timesteps will be initialized after the first batch to account for dynamic shifts.")
 
         while eval_batch is not False and evaluated_sample_count < total_batches:
             try:
@@ -3291,6 +3298,12 @@ class Evaluation:
 
                 bsz = prepared_eval_batch["latents"].shape[0]
                 sample_text_str = "samples" if bsz > 1 else "sample"
+
+                current_hw = tuple(prepared_eval_batch["latents"].shape[-2:])
+                if eval_timestep_list is None or current_hw != last_latent_hw:
+                    eval_timestep_list = self.get_timestep_schedule(noise_scheduler, latents=prepared_eval_batch["latents"])
+                    last_latent_hw = current_hw
+                    logger.debug(f"Evaluation timesteps: {eval_timestep_list}")
 
                 with torch.no_grad():
                     for eval_timestep in tqdm(
