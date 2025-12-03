@@ -32,6 +32,8 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_npu_available, logging, s
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
+
 
 @dataclass(frozen=True)
 class ContextParallelInput:
@@ -193,6 +195,14 @@ class Flux2AttnProcessor:
             query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
             key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
 
+        publish_attention_max_logits(
+            query,
+            key,
+            attention_mask,
+            getattr(attn, "to_q", None) and attn.to_q.weight,
+            getattr(attn, "to_k", None) and getattr(attn, "to_k", None).weight,
+        )
+
         hidden_states = dispatch_attention_fn(
             query,
             key,
@@ -328,6 +338,14 @@ class Flux2ParallelSelfAttnProcessor:
         if image_rotary_emb is not None:
             query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
             key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
+
+        publish_attention_max_logits(
+            query,
+            key,
+            attention_mask,
+            getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
+            getattr(attn, "to_qkv_mlp_proj", None) and attn.to_qkv_mlp_proj.weight,
+        )
 
         hidden_states = dispatch_attention_fn(
             query,

@@ -292,6 +292,7 @@ class Trainer:
         self.sidecar_lr = None
         self.sidecar_is_schedulefree = False
         self.sidecar_scheduler_disabled = False
+        self._attention_max_logits: Optional[Dict[str, torch.Tensor]] = None
         self._ramtorch_zero_state: Optional[dict] = None
         self._hub_upload_executor: ThreadPoolExecutor | None = None
         self._hub_upload_futures: deque[tuple[str, Future]] = deque()
@@ -310,6 +311,14 @@ class Trainer:
             self.model = ModelRegistry.model_families()[self.config.model_family](self.config, self.accelerator)
             self.model.check_user_config()
             StateTracker.set_model(self.model)
+            if getattr(self.config, "optimizer", None) == "muon":
+                if not getattr(self.model, "SUPPORTS_MUON_CLIP", False):
+                    raise ValueError(
+                        f"Optimizer 'muon' is not supported by model family {self.config.model_family}. "
+                        "Choose a supported optimizer or enable MuonClip explicitly on the model."
+                    )
+                if hasattr(self.model, "enable_muon_clip_logging"):
+                    self.model.enable_muon_clip_logging()
         if self.webhook_handler and isinstance(self.model, VideoModelFoundation) and not self.webhook_handler.send_video:
             self.configure_webhook(send_startup_message=False)
         self._misc_init()
@@ -317,6 +326,7 @@ class Trainer:
         self.distiller_requirement_profile: DistillerRequirementProfile = EMPTY_PROFILE
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
+        AttentionBackendController.register_attention_logit_consumer(self.record_attention_max_logits)
 
     def _config_to_obj(self, config):
         if not config:
@@ -352,6 +362,32 @@ class Trainer:
             return self._ramtorch_enabled() and getattr(self.accelerator, "num_processes", 1) > 1
         except Exception:
             return False
+
+    def _register_optimizer_attention_params(self, optimizer) -> None:
+        try:
+            from simpletuner.helpers.training.optimizers.muon import MuonClip
+        except Exception:
+            return
+
+        if not isinstance(optimizer, MuonClip):
+            return
+
+        trained_component = None
+        if hasattr(self.model, "get_trained_component"):
+            trained_component = self.model.get_trained_component(unwrap_model=False)
+
+        optimizer.register_attention_params_from_model(trained_component, name_filter=self._muon_attention_param_filter)
+
+    @staticmethod
+    def _muon_attention_param_filter(name: str) -> bool:
+        lowered = name.lower()
+        if "attn" not in lowered and "attention" not in lowered:
+            return False
+        return any(token in lowered for token in ("to_q", "to_k", "q_proj", "k_proj", "wq", "wk"))
+
+    def record_attention_max_logits(self, attention_max_logits: Dict[str, torch.Tensor]) -> None:
+        """Allow attention backends to supply per-head max logits for QK-Clip."""
+        self._attention_max_logits = attention_max_logits
 
     def _resolve_tracker_identifiers(self) -> tuple[str, str]:
         """Return sanitized (project_name, run_name) pairs with sensible defaults."""
@@ -2900,6 +2936,7 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
 
+        self._register_optimizer_attention_params(self.optimizer)
         AttentionBackendController.bind_optimizer(self.optimizer)
         if is_optimi_available and self.config.optimizer_release_gradients and "optimi" in self.config.optimizer:
             logger.warning(
@@ -4450,7 +4487,15 @@ class Trainer:
                             if self.sidecar_optimizer is not None:
                                 self.sidecar_optimizer.optimizer_accumulation = should_not_release_gradients
                         else:
-                            self.optimizer.step()
+                            attention_kwargs = {}
+                            try:
+                                from simpletuner.helpers.training.optimizers.muon import MuonClip
+                            except Exception:
+                                MuonClip = None
+                            if MuonClip is not None and isinstance(self.optimizer, MuonClip):
+                                attention_kwargs["attention_max_logits"] = self._attention_max_logits
+                                self._attention_max_logits = None
+                            self.optimizer.step(**attention_kwargs)
                             if self.sidecar_optimizer is not None:
                                 self.sidecar_optimizer.step()
                         if self._ramtorch_zero_state and self.accelerator.sync_gradients:

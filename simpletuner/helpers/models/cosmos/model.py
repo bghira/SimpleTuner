@@ -22,6 +22,7 @@ else:
 
 
 class Cosmos2Image(VideoModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Cosmos (T2I)"
     MODEL_DESCRIPTION = "NVIDIA's text-to-image transformer model"
     ENABLED_IN_WIZARD = True

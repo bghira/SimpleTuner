@@ -21,6 +21,7 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
 
@@ -254,11 +255,39 @@ class ChromaSingleTransformerBlock(nn.Module):
         if attention_mask is not None:
             attention_mask = attention_mask[:, None, None, :] * attention_mask[:, None, :, None]
 
+        # Roughly mirror FluxAttention internals to expose per-head max logits for QK-Clip.
+        try:
+            q_proj = self.attn.to_q(norm_hidden_states)
+            k_proj = self.attn.to_k(norm_hidden_states)
+            if getattr(self.attn, "norm_q", None) is not None:
+                q_proj = self.attn.norm_q(q_proj)
+            if getattr(self.attn, "norm_k", None) is not None:
+                k_proj = self.attn.norm_k(k_proj)
+            head_dim = q_proj.shape[-1] // self.attn.heads
+            q_proj = q_proj.view(q_proj.shape[0], q_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+            k_proj = k_proj.view(k_proj.shape[0], k_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+            publish_attention_max_logits(
+                q_proj,
+                k_proj,
+                attention_mask,
+                getattr(self.attn, "to_q", None) and self.attn.to_q.weight,
+                getattr(self.attn, "to_k", None) and self.attn.to_k.weight,
+            )
+        except Exception:
+            logger.debug("ChromaFluxSingleTransformerBlock failed to publish QK-Clip logits.", exc_info=True)
+
         attn_output = self.attn(
             hidden_states=norm_hidden_states,
             image_rotary_emb=image_rotary_emb,
             attention_mask=attention_mask,
             **joint_attention_kwargs,
+        )
+        publish_attention_max_logits(
+            getattr(self.attn, "last_query", None) if hasattr(self.attn, "last_query") else None,
+            getattr(self.attn, "last_key", None) if hasattr(self.attn, "last_key") else None,
+            attention_mask,
+            getattr(self.attn, "to_q", None) and self.attn.to_q.weight,
+            getattr(self.attn, "to_k", None) and self.attn.to_k.weight,
         )
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
@@ -321,6 +350,26 @@ class ChromaTransformerBlock(nn.Module):
         joint_attention_kwargs = joint_attention_kwargs or {}
         if attention_mask is not None:
             attention_mask = attention_mask[:, None, None, :] * attention_mask[:, None, :, None]
+
+        try:
+            q_proj = self.attn.to_q(norm_hidden_states)
+            k_proj = self.attn.to_k(norm_encoder_hidden_states)
+            if getattr(self.attn, "norm_q", None) is not None:
+                q_proj = self.attn.norm_q(q_proj)
+            if getattr(self.attn, "norm_k", None) is not None:
+                k_proj = self.attn.norm_k(k_proj)
+            head_dim = q_proj.shape[-1] // self.attn.heads
+            q_proj = q_proj.view(q_proj.shape[0], q_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+            k_proj = k_proj.view(k_proj.shape[0], k_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+            publish_attention_max_logits(
+                q_proj,
+                k_proj,
+                attention_mask,
+                getattr(self.attn, "to_q", None) and self.attn.to_q.weight,
+                getattr(self.attn, "to_k", None) and self.attn.to_k.weight,
+            )
+        except Exception:
+            logger.debug("ChromaTransformerBlock failed to publish QK-Clip logits.", exc_info=True)
 
         attention_outputs = self.attn(
             hidden_states=norm_hidden_states,

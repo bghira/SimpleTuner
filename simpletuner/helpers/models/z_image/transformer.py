@@ -28,6 +28,7 @@ from diffusers.models.normalization import RMSNorm
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from torch.nn.utils.rnn import pad_sequence
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
 ADALN_EMBED_DIM = 256
@@ -147,6 +148,13 @@ class ZSingleStreamAttnProcessor:
             attention_mask = attention_mask[:, None, None, :]
 
         # Compute joint attention
+        publish_attention_max_logits(
+            query,
+            key,
+            attention_mask,
+            getattr(attn, "to_q", None) and attn.to_q.weight,
+            getattr(attn, "to_k", None) and attn.to_k.weight,
+        )
         hidden_states = dispatch_attention_fn(
             query,
             key,

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class ZImage(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Z-Image"
     MODEL_DESCRIPTION = "Z-Image flow-matching transformer"
     ENABLED_IN_WIZARD = True

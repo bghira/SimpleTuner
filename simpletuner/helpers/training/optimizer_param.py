@@ -18,6 +18,7 @@ else:
 is_optimi_available = False
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
+from simpletuner.helpers.training.optimizers.muon import MuonClip
 from simpletuner.helpers.training.optimizers.soap import SOAP
 
 try:
@@ -406,6 +407,23 @@ optimizer_choices = {
             "correct_bias": True,
         },
         "class": SOAP,
+    },
+    "muon": {
+        "precision": "any",
+        "default_settings": {
+            "momentum": 0.95,
+            "weight_decay": 0.1,
+            "eps": 1e-7,
+            "rms_scale_factor": 0.2,
+            "use_smmf": False,
+            "vector_reshape": False,
+            "stochastic_rounding": True,
+            "use_cans": False,
+            "cans_a_bound": 1e-4,
+            "qk_clip_threshold": 100.0,
+            "qk_clip_alpha": 0.5,
+        },
+        "class": MuonClip,
     },
 }
 

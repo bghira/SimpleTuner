@@ -23,6 +23,7 @@ else:
 
 
 class Kandinsky5Video(VideoModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     """
     Kandinsky 5.0 Video (Lite/Pro) text-to-video transformer with HunyuanVideo VAE and
     Qwen2.5-VL + CLIP dual text encoders.

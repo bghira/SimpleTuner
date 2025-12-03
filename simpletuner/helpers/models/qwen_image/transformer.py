@@ -33,6 +33,7 @@ from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
@@ -347,6 +348,13 @@ class QwenDoubleStreamAttnProcessor2_0:
         joint_value = torch.cat([txt_value, img_value], dim=1)
 
         # Compute joint attention
+        publish_attention_max_logits(
+            joint_query.transpose(1, 2),
+            joint_key.transpose(1, 2),
+            attention_mask,
+            getattr(attn, "to_q", None) and attn.to_q.weight,
+            getattr(attn, "to_k", None) and attn.to_k.weight,
+        )
         joint_hidden_states = dispatch_attention_fn(
             joint_query,
             joint_key,
