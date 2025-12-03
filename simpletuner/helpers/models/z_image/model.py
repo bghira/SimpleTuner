@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class ZImage(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Z-Image"
     MODEL_DESCRIPTION = "Z-Image flow-matching transformer"
     ENABLED_IN_WIZARD = True
@@ -29,12 +30,20 @@ class ZImage(ImageModelFoundation):
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: ZImagePipeline,
     }
-    ASSISTANT_LORA_FLAVOURS = ["turbo"]
+    ASSISTANT_LORA_FLAVOURS = ["turbo", "turbo-ostris-v2"]
     ASSISTANT_LORA_PATH = "ostris/zimage_turbo_training_adapter"
     ASSISTANT_LORA_WEIGHT_NAME = "zimage_turbo_training_adapter_v1.safetensors"
+    ASSISTANT_LORA_WEIGHT_NAMES = {
+        "turbo": "zimage_turbo_training_adapter_v1.safetensors",
+        "turbo-ostris-v2": "zimage_turbo_training_adapter_v2.safetensors",
+    }
 
     # We do not bundle a default HF path; users must point at a released checkpoint.
-    HUGGINGFACE_PATHS: dict = {"base": "TONGYI-MAI/Z-Image-Base", "turbo": "TONGYI-MAI/Z-Image-Turbo"}
+    HUGGINGFACE_PATHS: dict = {
+        "base": "TONGYI-MAI/Z-Image-Base",
+        "turbo": "TONGYI-MAI/Z-Image-Turbo",
+        "turbo-ostris-v2": "TONGYI-MAI/Z-Image-Turbo",
+    }
     DEFAULT_MODEL_FLAVOUR = "base"
 
     TEXT_ENCODER_CONFIGURATION = {
@@ -79,6 +88,13 @@ class ZImage(ImageModelFoundation):
         super().post_model_load_setup()
         self._maybe_load_assistant_lora()
 
+    def _assistant_lora_weight_for_flavour(self):
+        weight_map = getattr(self, "ASSISTANT_LORA_WEIGHT_NAMES", None) or {}
+        flavour = getattr(self.config, "model_flavour", None)
+        if isinstance(weight_map, dict) and flavour in weight_map:
+            return weight_map.get(flavour)
+        return getattr(self, "ASSISTANT_LORA_WEIGHT_NAME", None)
+
     def _maybe_load_assistant_lora(self):
         if getattr(self.config, "disable_assistant_lora", False):
             return
@@ -93,13 +109,14 @@ class ZImage(ImageModelFoundation):
 
         from simpletuner.helpers.assistant_lora import load_assistant_adapter
 
+        weight_name = getattr(self.config, "assistant_lora_weight_name", None) or self._assistant_lora_weight_for_flavour()
         loaded = load_assistant_adapter(
             transformer=self.unwrap_model(model=self.model),
             pipeline_cls=ZImagePipeline,
             lora_path=assistant_path,
             adapter_name=self.assistant_adapter_name,
             low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
-            weight_name=getattr(self.config, "assistant_lora_weight_name", None) or self.ASSISTANT_LORA_WEIGHT_NAME,
+            weight_name=weight_name,
         )
         self.assistant_lora_loaded = loaded
 
@@ -174,19 +191,21 @@ class ZImage(ImageModelFoundation):
     def check_user_config(self):
         super().check_user_config()
         if (
-            self.config.model_flavour == "turbo"
-            and getattr(self.config, "model_type", "").lower() == "lora"
+            getattr(self.config, "model_type", "").lower() == "lora"
             and not getattr(self.config, "disable_assistant_lora", False)
+            and self.supports_assistant_lora(self.config)
         ):
             if getattr(self.config, "assistant_lora_path", None) in (None, "", "None"):
                 if self.ASSISTANT_LORA_PATH:
                     self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
-                    if getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None"):
-                        self.config.assistant_lora_weight_name = self.ASSISTANT_LORA_WEIGHT_NAME
                 else:
                     raise ValueError(
-                        "Z-Image turbo training expects an assistant LoRA. Provide --assistant_lora_path pointing to the turbo assistant adapter."
+                        "Z-Image turbo flavours require an assistant LoRA. Provide --assistant_lora_path pointing to the turbo assistant adapter."
                     )
+            if getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None"):
+                default_weight_name = self._assistant_lora_weight_for_flavour()
+                if default_weight_name is not None:
+                    self.config.assistant_lora_weight_name = default_weight_name
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
         latents = prepared_batch["noisy_latents"]

@@ -29,6 +29,8 @@ from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from torch import nn
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
@@ -315,6 +317,13 @@ class SanaAttnProcessor2_0:
         value = value.view(batch_size, -1, attn.heads, head_dim)
 
         # the output of sdp = (batch, num_heads, seq_len, head_dim)
+        publish_attention_max_logits(
+            query.transpose(1, 2),
+            key.transpose(1, 2),
+            attention_mask,
+            getattr(attn, "to_q", None) and attn.to_q.weight,
+            getattr(attn, "to_k", None) and attn.to_k.weight,
+        )
         hidden_states = dispatch_attention_fn(
             query,
             key,

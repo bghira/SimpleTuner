@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 import torch
 
@@ -105,6 +105,7 @@ class AttentionBackendController:
     _parameter_sink: Optional[list] = None
     _sink_param_ids: set[int] = set()
     _optimizer_param_ids: set[int] = set()
+    _attention_logit_consumer: Optional[Callable[[Dict[str, torch.Tensor]], None]] = None
     _sla_state_store: Dict[Tuple[int, str], Dict[str, torch.Tensor]] = {}
     _sla_state_filename: str = "sla_attention.pt"
     _diffusers_backend_context = None
@@ -505,6 +506,28 @@ class AttentionBackendController:
                         type(cls._optimizer).__name__,
                     )
         cls._update_state_store_from_cache()
+
+    @classmethod
+    def register_attention_logit_consumer(cls, consumer: Callable[[Dict[str, torch.Tensor]], None]) -> None:
+        cls._attention_logit_consumer = consumer
+
+    @classmethod
+    def publish_attention_max_logits(cls, logits: Dict[str, torch.Tensor]) -> None:
+        if cls._attention_logit_consumer is None:
+            return
+        try:
+            cls._attention_logit_consumer(logits)
+        except Exception:
+            logger.exception("Failed to forward attention max logits to consumer.")
+
+    @classmethod
+    def lookup_param_name(cls, param: Optional[torch.nn.Parameter]) -> str:
+        if param is None or cls._optimizer is None:
+            return ""
+        mapping = getattr(cls._optimizer, "_param_to_name", None)
+        if not isinstance(mapping, dict):
+            return ""
+        return mapping.get(id(param), "")
 
     @classmethod
     def _store_key(cls, head_dim: int, dtype: torch.dtype) -> Tuple[int, str]:

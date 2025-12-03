@@ -37,6 +37,7 @@ else:
 
 
 class Flux(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Flux.1"
     MODEL_DESCRIPTION = "High-quality image generation, 12B parameters"
     ENABLED_IN_WIZARD = True

@@ -226,6 +226,7 @@ class ModelFoundation(ABC):
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
+    SUPPORTS_MUON_CLIP = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -248,6 +249,10 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    def enable_muon_clip_logging(self) -> None:
+        """Override in subclasses to wire attention logit publishers when MuonClip is in use."""
+        return
 
     def unpack_text_embeddings_from_cache(self, embeddings):
         """
@@ -1263,6 +1268,11 @@ class ModelFoundation(ABC):
                 text_encoder_config,
             ) in self.TEXT_ENCODER_CONFIGURATION.items():
                 text_encoder_idx += 1
+                # Prefer indexed precision flags (text_encoder_1_precision, etc) to match config schema.
+                precision_attr = f"text_encoder_{text_encoder_idx}_precision"
+                text_encoder_precision = getattr(
+                    self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
+                )
                 # load_tes returns a variant and three text encoders
                 signature = inspect.signature(text_encoder_config["model"])
                 extra_kwargs = {}
@@ -1299,7 +1309,7 @@ class ModelFoundation(ABC):
                 if self._ramtorch_text_encoders_requested():
                     self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
 
-                if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
+                if move_to_device and text_encoder_precision in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
@@ -1313,9 +1323,17 @@ class ModelFoundation(ABC):
 
     def unload_text_encoder(self):
         if self.text_encoders is not None:
-            for text_encoder in self.text_encoders:
+            for idx, text_encoder in enumerate(self.text_encoders):
+                if text_encoder is None:
+                    continue
                 if hasattr(text_encoder, "to"):
-                    text_encoder.to("meta")
+                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
+                    try:
+                        text_encoder.to("meta")
+                    except Exception as exc:
+                        logger.debug("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
+                        text_encoder.to("cpu")
+                setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
         if self.tokenizers is not None:
             self.tokenizers = None
@@ -2150,6 +2168,65 @@ class ModelFoundation(ABC):
             if not isinstance(conditioning_embeds[0], dict):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
         return batch
+
+    def _get_patch_size_for_dynamic_shift(self, noise_scheduler):
+        component = None
+        try:
+            component = self.get_trained_component()
+        except Exception:
+            component = None
+
+        if component is not None:
+            patch_size = getattr(getattr(component, "config", None), "patch_size", None)
+            if patch_size is not None:
+                return patch_size
+
+        scheduler_config = getattr(noise_scheduler, "config", None)
+        if scheduler_config is not None:
+            patch_size = getattr(scheduler_config, "patch_size", None)
+            if patch_size is not None:
+                return patch_size
+
+        return getattr(self.config, "patch_size", None)
+
+    def calculate_dynamic_shift_mu(self, noise_scheduler, latents: torch.Tensor | None):
+        """
+        Compute resolution-dependent shift value for schedulers that support dynamic shifting.
+        """
+        if latents is None:
+            return None
+
+        scheduler_config = getattr(noise_scheduler, "config", None)
+        if scheduler_config is None:
+            return None
+
+        required_fields = [
+            "base_image_seq_len",
+            "max_image_seq_len",
+            "base_shift",
+            "max_shift",
+        ]
+        missing_fields = [field for field in required_fields if getattr(scheduler_config, field, None) is None]
+        if missing_fields:
+            raise ValueError(
+                f"Cannot compute dynamic timestep shift; scheduler is missing config values: {', '.join(missing_fields)}"
+            )
+
+        patch_size = self._get_patch_size_for_dynamic_shift(noise_scheduler)
+        if patch_size is None or patch_size <= 0:
+            raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
+
+        height, width = latents.shape[-2:]
+        image_seq_len = (int(height) // int(patch_size)) * (int(width) // int(patch_size))
+        from simpletuner.helpers.models.sd3.pipeline import calculate_shift
+
+        return calculate_shift(
+            image_seq_len,
+            scheduler_config.base_image_seq_len,
+            scheduler_config.max_image_seq_len,
+            scheduler_config.base_shift,
+            scheduler_config.max_shift,
+        )
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """

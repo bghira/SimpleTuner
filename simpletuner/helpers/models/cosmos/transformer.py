@@ -31,6 +31,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, is_torchvision_available, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
@@ -232,6 +233,13 @@ class CosmosAttnProcessor2_0:
         value = value.repeat_interleave(query_idx // value_idx, dim=3)
 
         # 5. Attention
+        publish_attention_max_logits(
+            query,
+            key,
+            attention_mask,
+            getattr(attn, "to_q", None) and attn.to_q.weight,
+            getattr(attn, "to_k", None) and attn.to_k.weight,
+        )
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
         )

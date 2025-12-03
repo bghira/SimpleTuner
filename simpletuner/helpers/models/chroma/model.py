@@ -33,6 +33,7 @@ else:
 
 
 class Chroma(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Chroma 1"
     MODEL_DESCRIPTION = "Flow-matching image transformer from Lodestone Labs"
     ENABLED_IN_WIZARD = True

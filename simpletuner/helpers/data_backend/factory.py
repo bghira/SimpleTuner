@@ -2864,13 +2864,23 @@ class FactoryRegistry:
             return
         """Configure VAE cache for the backend."""
         dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
-        allowed_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.AUDIO}
+        allowed_types = {
+            DatasetType.IMAGE,
+            DatasetType.VIDEO,
+            DatasetType.CONDITIONING,
+            DatasetType.AUDIO,
+            DatasetType.EVAL,
+        }
         if dataset_type_enum not in allowed_types:
             info_log(
                 f"(id={init_backend['id']}) Skipping VAE cache configuration for dataset_type={dataset_type_enum.value}."
             )
             return
         vae_cache_dir = backend.get("cache_dir_vae", None)
+        if not vae_cache_dir:
+            vae_cache_dir = self._default_vae_cache_dir(init_backend["id"], dataset_type_enum)
+            backend["cache_dir_vae"] = vae_cache_dir
+            init_backend.setdefault("config", {})["cache_dir_vae"] = vae_cache_dir
         if vae_cache_dir in vae_cache_dir_paths:
             raise ValueError(
                 f"VAE image embed cache directory {vae_cache_dir} is the same as another VAE image embed cache directory. This is not allowed, the trainer will get confused and sleepy and wake up in a distant place with no memory and no money for a taxi ride back home, forever looking in the mirror and wondering who they are. This should be avoided."

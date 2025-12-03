@@ -23,6 +23,7 @@ else:
 
 
 class Kandinsky5Image(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Kandinsky5-Image"
     MODEL_DESCRIPTION = "Text-to-image diffusion transformer (flow matching)"
     ENABLED_IN_WIZARD = True

@@ -12,6 +12,7 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_l
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from einops import repeat
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
 
@@ -213,13 +214,22 @@ def apply_rope(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> t
     return xq_out.reshape(*xq.shape).type_as(xq), xk_out.reshape(*xk.shape).type_as(xk)
 
 
-def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor):
+def attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    *,
+    q_param: Optional[torch.nn.Parameter] = None,
+    k_param: Optional[torch.nn.Parameter] = None,
+    attn_mask: Optional[torch.Tensor] = None,
+):
+    publish_attention_max_logits(query.transpose(1, 2), key.transpose(1, 2), attn_mask, q_param, k_param)
     if USE_FLASH_ATTN3:
         hidden_states = flash_attn_func(query, key, value, causal=False, deterministic=False)[0]
     elif USE_FLASH_ATTN2:
         hidden_states = flash_attn_func(query, key, value, dropout_p=0.0, causal=False)
     elif USE_TORCH_SDPA:
-        hidden_states = flash_attn_func(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False)
+        hidden_states = flash_attn_func(query, key, value, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
     hidden_states = hidden_states.flatten(-2)
     hidden_states = hidden_states.to(query.dtype)
     return hidden_states
@@ -357,7 +367,13 @@ class HiDreamAttnProcessor_flashattn:
             query = torch.cat([query_1, query_2], dim=-1)
             key = torch.cat([key_1, key_2], dim=-1)
 
-        hidden_states = attention(query, key, value)
+        hidden_states = attention(
+            query,
+            key,
+            value,
+            q_param=getattr(attn, "to_q", None) and attn.to_q.weight,
+            k_param=getattr(attn, "to_k", None) and attn.to_k.weight,
+        )
 
         if not attn.single:
             hidden_states_i, hidden_states_t = torch.split(hidden_states, [num_image_tokens, num_text_tokens], dim=1)

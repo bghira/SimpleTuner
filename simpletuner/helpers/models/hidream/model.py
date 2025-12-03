@@ -32,6 +32,7 @@ else:
 
 
 class HiDream(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "HiDream"
     MODEL_DESCRIPTION = "High-quality image generation with MoE architecture"
     ENABLED_IN_WIZARD = True

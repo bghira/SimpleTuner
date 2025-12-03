@@ -197,6 +197,7 @@ def add_first_frame_conditioning_v22(
 
 
 class Wan(VideoModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Wan"
     MODEL_DESCRIPTION = "Video generation model (text-to-video)"
     ENABLED_IN_WIZARD = True

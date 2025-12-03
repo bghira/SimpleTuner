@@ -293,6 +293,7 @@ class Trainer:
         self.sidecar_lr = None
         self.sidecar_is_schedulefree = False
         self.sidecar_scheduler_disabled = False
+        self._attention_max_logits: Optional[Dict[str, torch.Tensor]] = None
         self._ramtorch_zero_state: Optional[dict] = None
         self._hub_upload_executor: ThreadPoolExecutor | None = None
         self._hub_upload_futures: deque[tuple[str, Future]] = deque()
@@ -311,6 +312,14 @@ class Trainer:
             self.model = ModelRegistry.model_families()[self.config.model_family](self.config, self.accelerator)
             self.model.check_user_config()
             StateTracker.set_model(self.model)
+            if getattr(self.config, "optimizer", None) == "muon":
+                if not getattr(self.model, "SUPPORTS_MUON_CLIP", False):
+                    raise ValueError(
+                        f"Optimizer 'muon' is not supported by model family {self.config.model_family}. "
+                        "Choose a supported optimizer or enable MuonClip explicitly on the model."
+                    )
+                if hasattr(self.model, "enable_muon_clip_logging"):
+                    self.model.enable_muon_clip_logging()
         if self.webhook_handler and isinstance(self.model, VideoModelFoundation) and not self.webhook_handler.send_video:
             self.configure_webhook(send_startup_message=False)
         self._misc_init()
@@ -318,6 +327,7 @@ class Trainer:
         self.distiller_requirement_profile: DistillerRequirementProfile = EMPTY_PROFILE
         # this updates self.config further, so we will run it here.
         self.init_noise_schedule()
+        AttentionBackendController.register_attention_logit_consumer(self.record_attention_max_logits)
 
     def _config_to_obj(self, config):
         if not config:
@@ -353,6 +363,48 @@ class Trainer:
             return self._ramtorch_enabled() and getattr(self.accelerator, "num_processes", 1) > 1
         except Exception:
             return False
+
+    def _register_optimizer_attention_params(self, optimizer) -> None:
+        try:
+            from simpletuner.helpers.training.optimizers.muon import MuonClip
+        except Exception:
+            return
+
+        if not isinstance(optimizer, MuonClip):
+            return
+
+        trained_component = None
+        if hasattr(self.model, "get_trained_component"):
+            trained_component = self.model.get_trained_component(unwrap_model=False)
+
+        optimizer.register_attention_params_from_model(trained_component, name_filter=self._muon_attention_param_filter)
+
+    @staticmethod
+    def _muon_attention_param_filter(name: str) -> bool:
+        lowered = name.lower()
+        if "attn" not in lowered and "attention" not in lowered:
+            return False
+        return any(token in lowered for token in ("to_q", "to_k", "q_proj", "k_proj", "wq", "wk"))
+
+    def record_attention_max_logits(self, attention_max_logits: Dict[str, torch.Tensor]) -> None:
+        """Allow attention backends to supply per-head max logits for QK-Clip."""
+        if not attention_max_logits:
+            return
+        if self._attention_max_logits is None:
+            self._attention_max_logits = {}
+        for name, logits in attention_max_logits.items():
+            if logits is None:
+                continue
+            cached = self._attention_max_logits.get(name)
+            if cached is None:
+                self._attention_max_logits[name] = logits.detach().clone()
+                continue
+            if cached.shape != logits.shape:
+                self._attention_max_logits[name] = logits.detach().clone()
+                continue
+            if cached.device != logits.device or cached.dtype != logits.dtype:
+                logits = logits.to(device=cached.device, dtype=cached.dtype)
+            self._attention_max_logits[name] = torch.maximum(cached, logits)
 
     def _resolve_tracker_identifiers(self) -> tuple[str, str]:
         """Return sanitized (project_name, run_name) pairs with sensible defaults."""
@@ -2901,6 +2953,7 @@ class Trainer:
                 offload_mechanism=self.config.optimizer_cpu_offload_method,
             )
 
+        self._register_optimizer_attention_params(self.optimizer)
         AttentionBackendController.bind_optimizer(self.optimizer)
         if is_optimi_available and self.config.optimizer_release_gradients and "optimi" in self.config.optimizer:
             logger.warning(
@@ -3250,7 +3303,22 @@ class Trainer:
         self.evaluation = None
         if self.config.validation_disable:
             return
-        if self.config.eval_steps_interval is not None and self.config.eval_steps_interval > 0:
+        eval_step_interval = getattr(self.config, "eval_steps_interval", None)
+        eval_epoch_interval = getattr(self.config, "eval_epoch_interval", None)
+
+        def _normalize_interval(raw_value, cast):
+            if raw_value in (None, "", "None"):
+                return None
+            try:
+                value = cast(raw_value)
+            except (TypeError, ValueError):
+                return None
+            return value if value > 0 else None
+
+        has_eval_schedule = bool(
+            _normalize_interval(eval_step_interval, int) or _normalize_interval(eval_epoch_interval, float)
+        )
+        if has_eval_schedule:
             from simpletuner.helpers.training.validation import Evaluation
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
@@ -3456,6 +3524,47 @@ class Trainer:
 
         return lr_scheduler
 
+    def _build_init_tracker_kwargs(self, tracker_run_name: str, public_args_hash: str) -> Dict[str, Dict[str, object]]:
+        """Prepare tracker-specific init kwargs for the active logging backends."""
+        loggers = getattr(self.accelerator, "log_with", None)
+        if not loggers:
+            return {}
+
+        tracker_names = set()
+        if not isinstance(loggers, (list, tuple, set)):
+            loggers = [loggers]
+
+        for tracker in loggers:
+            if isinstance(tracker, GeneralTracker):
+                continue
+            candidate = None
+            if isinstance(tracker, str):
+                candidate = tracker
+            elif hasattr(tracker, "value") and isinstance(tracker.value, str):
+                candidate = tracker.value
+            elif hasattr(tracker, "name") and isinstance(tracker.name, str):
+                candidate = tracker.name
+            if candidate:
+                normalized = candidate.strip().lower()
+                if normalized:
+                    tracker_names.add(normalized)
+
+        init_kwargs: Dict[str, Dict[str, object]] = {}
+        if "wandb" in tracker_names:
+            init_kwargs["wandb"] = {
+                "name": tracker_run_name,
+                "id": f"{public_args_hash}",
+                "resume": "allow",
+                "allow_val_change": True,
+            }
+        if "swanlab" in tracker_names:
+            init_kwargs["swanlab"] = {
+                "experiment_name": tracker_run_name,
+                "id": f"{public_args_hash}",
+                "resume": "allow",
+            }
+        return init_kwargs
+
     def init_trackers(self):
         # We need to initialize the trackers we use, and also store our configuration.
         # The trackers initializes automatically on the main process.
@@ -3479,17 +3588,11 @@ class Trainer:
             public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
             project_name, tracker_run_name = self._resolve_tracker_identifiers()
             try:
+                init_kwargs = self._build_init_tracker_kwargs(tracker_run_name, public_args_hash)
                 self.accelerator.init_trackers(
                     project_name,
                     config=vars(public_args),
-                    init_kwargs={
-                        "wandb": {
-                            "name": tracker_run_name,
-                            "id": f"{public_args_hash}",
-                            "resume": "allow",
-                            "allow_val_change": True,
-                        }
-                    },
+                    init_kwargs=init_kwargs,
                 )
             except Exception as e:
                 if "Object has no attribute 'disabled'" in repr(e):
@@ -4387,14 +4490,34 @@ class Trainer:
                                     is_fsdp2 = bool(getattr(self.accelerator, "is_fsdp2", False))
                                     # Ensure gradients are unscaled before clipping when using AMP.
                                     self.accelerator.unscale_gradients()
+                                    # When training LyCORIS adapters under FSDP, make sure we clip the
+                                    # trainable adapter parameters instead of the frozen base model weights.
+                                    is_lycoris = self.config.model_type == "lora" and self.config.lora_type == "lycoris"
+                                    lycoris_params = None
+                                    if is_lycoris:
+                                        lycoris_params = getattr(self, "lycoris_wrapped_network", None)
+                                        if lycoris_params is None:
+                                            logger.warning(
+                                                "LyCORIS training configured but lycoris_wrapped_network is None; "
+                                                "falling back to base model parameters for gradient clipping."
+                                            )
+                                        else:
+                                            lycoris_params = lycoris_params.parameters()
                                     try:
                                         if is_fsdp2:
+                                            params_to_clip = lycoris_params or fsdp_model.parameters()
                                             self.grad_norm = torch.nn.utils.clip_grad_norm_(
-                                                fsdp_model.parameters(),
+                                                params_to_clip,
                                                 self.config.max_grad_norm,
                                             )
                                         else:
-                                            self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
+                                            if lycoris_params is not None:
+                                                self.grad_norm = torch.nn.utils.clip_grad_norm_(
+                                                    lycoris_params,
+                                                    self.config.max_grad_norm,
+                                                )
+                                            else:
+                                                self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
                                     except Exception as exc:
                                         if is_fsdp2:
                                             logger.warning(
@@ -4442,7 +4565,15 @@ class Trainer:
                             if self.sidecar_optimizer is not None:
                                 self.sidecar_optimizer.optimizer_accumulation = should_not_release_gradients
                         else:
-                            self.optimizer.step()
+                            attention_kwargs = {}
+                            try:
+                                from simpletuner.helpers.training.optimizers.muon import MuonClip
+                            except Exception:
+                                MuonClip = None
+                            if MuonClip is not None and isinstance(self.optimizer, MuonClip):
+                                attention_kwargs["attention_max_logits"] = self._attention_max_logits
+                                self._attention_max_logits = None
+                            self.optimizer.step(**attention_kwargs)
                             if self.sidecar_optimizer is not None:
                                 self.sidecar_optimizer.step()
                         if self._ramtorch_zero_state and self.accelerator.sync_gradients:
