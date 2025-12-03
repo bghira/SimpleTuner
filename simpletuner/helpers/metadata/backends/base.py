@@ -489,8 +489,14 @@ class MetadataBackend:
 
         num_processes = self.accelerator.num_processes
         # Evaluation datasets are not trained, so gradient accumulation does not apply.
-        grad_accumulation_for_bucketing = 1 if self.dataset_type is DatasetType.EVAL else gradient_accumulation_steps
-        if self.dataset_type is DatasetType.EVAL and gradient_accumulation_steps != 1:
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type) if dataset_type is not None else DatasetType.IMAGE
+        except Exception:
+            dataset_type_enum = DatasetType.IMAGE
+
+        grad_accumulation_for_bucketing = 1 if dataset_type_enum is DatasetType.EVAL else gradient_accumulation_steps
+        if dataset_type_enum is DatasetType.EVAL and gradient_accumulation_steps != 1:
             logger.debug(
                 f"(id={self.id}) Ignoring gradient accumulation for eval dataset; using 1 instead of {gradient_accumulation_steps}."
             )
