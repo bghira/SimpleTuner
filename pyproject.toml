@@ -19,8 +19,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Multimedia :: Graphics",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -37,14 +37,14 @@ keywords = [
     "ai",
     "image-generation"
 ]
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 
 # Dynamic fields are handled by setup.py above
 
 [project.optional-dependencies]
 # Platform-specific extras (for manual override)
 cuda = [
-    "torch>=2.9.0",
+    "torch>=2.9.1",
     "torchvision>=0.24.0",
     "torchaudio>=2.4.1",
     "triton>=3.3.0",
@@ -62,13 +62,13 @@ rocm = [
     "torchao>=0.11.0",
 ]
 apple = [
-    "torch>=2.9.0",
+    "torch>=2.9.1",
     "torchvision>=0.24.0",
     "torchaudio>=2.4.1",
     "torchao>=0.11.0",
 ]
 cpu = [
-    "torch>=2.9.0",
+    "torch>=2.9.1",
     "torchvision>=0.24.0",
     "torchaudio>=2.4.1",
     "torchao>=0.11.0",
@@ -168,7 +168,7 @@ line_length = 125
 known_first_party = ["simpletuner"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false  # Set to true when ready for strict typing

@@ -1,7 +1,7 @@
 # SimpleTuner needs CU141
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
 
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 
 # Prevent commands from blocking for input during build
 ENV DEBIAN_FRONTEND=noninteractive

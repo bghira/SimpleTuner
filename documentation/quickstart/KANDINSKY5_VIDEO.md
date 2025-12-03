@@ -34,7 +34,7 @@ Add this to your `config.json`:
 
 ## Prerequisites
 
-Ensure Python 3.10, 3.11, or 3.12 is installed.
+Ensure Python 3.12 is installed.
 
 ```bash
 python --version
