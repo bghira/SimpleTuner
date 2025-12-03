@@ -387,7 +387,23 @@ class Trainer:
 
     def record_attention_max_logits(self, attention_max_logits: Dict[str, torch.Tensor]) -> None:
         """Allow attention backends to supply per-head max logits for QK-Clip."""
-        self._attention_max_logits = attention_max_logits
+        if not attention_max_logits:
+            return
+        if self._attention_max_logits is None:
+            self._attention_max_logits = {}
+        for name, logits in attention_max_logits.items():
+            if logits is None:
+                continue
+            cached = self._attention_max_logits.get(name)
+            if cached is None:
+                self._attention_max_logits[name] = logits.detach().clone()
+                continue
+            if cached.shape != logits.shape:
+                self._attention_max_logits[name] = logits.detach().clone()
+                continue
+            if cached.device != logits.device or cached.dtype != logits.dtype:
+                logits = logits.to(device=cached.device, dtype=cached.dtype)
+            self._attention_max_logits[name] = torch.maximum(cached, logits)
 
     def _resolve_tracker_identifiers(self) -> tuple[str, str]:
         """Return sanitized (project_name, run_name) pairs with sensible defaults."""
