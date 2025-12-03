@@ -21,6 +21,7 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+from simpletuner.helpers.training.attention_backend import AttentionBackendController
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -257,22 +258,29 @@ class ChromaSingleTransformerBlock(nn.Module):
 
         # Roughly mirror FluxAttention internals to expose per-head max logits for QK-Clip.
         try:
-            q_proj = self.attn.to_q(norm_hidden_states)
-            k_proj = self.attn.to_k(norm_hidden_states)
-            if getattr(self.attn, "norm_q", None) is not None:
-                q_proj = self.attn.norm_q(q_proj)
-            if getattr(self.attn, "norm_k", None) is not None:
-                k_proj = self.attn.norm_k(k_proj)
-            head_dim = q_proj.shape[-1] // self.attn.heads
-            q_proj = q_proj.view(q_proj.shape[0], q_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
-            k_proj = k_proj.view(k_proj.shape[0], k_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
-            publish_attention_max_logits(
-                q_proj,
-                k_proj,
-                attention_mask,
-                getattr(self.attn, "to_q", None) and self.attn.to_q.weight,
-                getattr(self.attn, "to_k", None) and self.attn.to_k.weight,
-            )
+            q_module = getattr(self.attn, "to_q", None)
+            k_module = getattr(self.attn, "to_k", None)
+            q_param = q_module.weight if q_module is not None else None
+            k_param = k_module.weight if k_module is not None else None
+            if AttentionBackendController.lookup_param_name(q_param) or AttentionBackendController.lookup_param_name(
+                k_param
+            ):
+                q_proj = self.attn.to_q(norm_hidden_states)
+                k_proj = self.attn.to_k(norm_hidden_states)
+                if getattr(self.attn, "norm_q", None) is not None:
+                    q_proj = self.attn.norm_q(q_proj)
+                if getattr(self.attn, "norm_k", None) is not None:
+                    k_proj = self.attn.norm_k(k_proj)
+                head_dim = q_proj.shape[-1] // self.attn.heads
+                q_proj = q_proj.view(q_proj.shape[0], q_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+                k_proj = k_proj.view(k_proj.shape[0], k_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+                publish_attention_max_logits(
+                    q_proj,
+                    k_proj,
+                    attention_mask,
+                    q_param,
+                    k_param,
+                )
         except Exception:
             logger.debug("ChromaFluxSingleTransformerBlock failed to publish QK-Clip logits.", exc_info=True)
 
@@ -352,22 +360,29 @@ class ChromaTransformerBlock(nn.Module):
             attention_mask = attention_mask[:, None, None, :] * attention_mask[:, None, :, None]
 
         try:
-            q_proj = self.attn.to_q(norm_hidden_states)
-            k_proj = self.attn.to_k(norm_encoder_hidden_states)
-            if getattr(self.attn, "norm_q", None) is not None:
-                q_proj = self.attn.norm_q(q_proj)
-            if getattr(self.attn, "norm_k", None) is not None:
-                k_proj = self.attn.norm_k(k_proj)
-            head_dim = q_proj.shape[-1] // self.attn.heads
-            q_proj = q_proj.view(q_proj.shape[0], q_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
-            k_proj = k_proj.view(k_proj.shape[0], k_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
-            publish_attention_max_logits(
-                q_proj,
-                k_proj,
-                attention_mask,
-                getattr(self.attn, "to_q", None) and self.attn.to_q.weight,
-                getattr(self.attn, "to_k", None) and self.attn.to_k.weight,
-            )
+            q_module = getattr(self.attn, "to_q", None)
+            k_module = getattr(self.attn, "to_k", None)
+            q_param = q_module.weight if q_module is not None else None
+            k_param = k_module.weight if k_module is not None else None
+            if AttentionBackendController.lookup_param_name(q_param) or AttentionBackendController.lookup_param_name(
+                k_param
+            ):
+                q_proj = self.attn.to_q(norm_hidden_states)
+                k_proj = self.attn.to_k(norm_encoder_hidden_states)
+                if getattr(self.attn, "norm_q", None) is not None:
+                    q_proj = self.attn.norm_q(q_proj)
+                if getattr(self.attn, "norm_k", None) is not None:
+                    k_proj = self.attn.norm_k(k_proj)
+                head_dim = q_proj.shape[-1] // self.attn.heads
+                q_proj = q_proj.view(q_proj.shape[0], q_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+                k_proj = k_proj.view(k_proj.shape[0], k_proj.shape[1], self.attn.heads, head_dim).transpose(1, 2)
+                publish_attention_max_logits(
+                    q_proj,
+                    k_proj,
+                    attention_mask,
+                    q_param,
+                    k_param,
+                )
         except Exception:
             logger.debug("ChromaTransformerBlock failed to publish QK-Clip logits.", exc_info=True)
 
