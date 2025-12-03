@@ -33,6 +33,14 @@ from simpletuner.helpers.training.tread import TREADRouter
 ADALN_EMBED_DIM = 256
 SEQ_MULTI_OF = 32
 
+
+# Clamp NaN/Inf that can appear when running in float16. Ported from ComfyUI commit daaceac769a1355ab975758ede064317ea7514b4.
+def clamp_fp16(x: torch.Tensor) -> torch.Tensor:
+    if x.dtype == torch.float16:
+        return torch.nan_to_num(x, nan=0.0, posinf=65504, neginf=-65504)
+    return x
+
+
 # Ensure diffusers knows how to scale adapters for this transformer type.
 if "ZImageTransformer2DModel" not in diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING:
     diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING["ZImageTransformer2DModel"] = lambda model_cls, weights: weights
@@ -169,7 +177,7 @@ class FeedForward(nn.Module):
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
 
     def _forward_silu_gating(self, x1, x3):
-        return F.silu(x1) * x3
+        return clamp_fp16(F.silu(x1) * x3)
 
     def forward(self, x):
         return self.w2(self._forward_silu_gating(self.w1(x), self.w3(x)))
@@ -234,32 +242,40 @@ class ZImageTransformerBlock(nn.Module):
             scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
 
             # Attention block
-            attn_out = self.attention(
-                self.attention_norm1(x) * scale_msa,
-                attention_mask=attn_mask,
-                freqs_cis=freqs_cis,
+            attn_out = clamp_fp16(
+                self.attention(
+                    self.attention_norm1(x) * scale_msa,
+                    attention_mask=attn_mask,
+                    freqs_cis=freqs_cis,
+                )
             )
             x = x + gate_msa * self.attention_norm2(attn_out)
 
             # FFN block
             x = x + gate_mlp * self.ffn_norm2(
-                self.feed_forward(
-                    self.ffn_norm1(x) * scale_mlp,
+                clamp_fp16(
+                    self.feed_forward(
+                        self.ffn_norm1(x) * scale_mlp,
+                    )
                 )
             )
         else:
             # Attention block
-            attn_out = self.attention(
-                self.attention_norm1(x),
-                attention_mask=attn_mask,
-                freqs_cis=freqs_cis,
+            attn_out = clamp_fp16(
+                self.attention(
+                    self.attention_norm1(x),
+                    attention_mask=attn_mask,
+                    freqs_cis=freqs_cis,
+                )
             )
             x = x + self.attention_norm2(attn_out)
 
             # FFN block
             x = x + self.ffn_norm2(
-                self.feed_forward(
-                    self.ffn_norm1(x),
+                clamp_fp16(
+                    self.feed_forward(
+                        self.ffn_norm1(x),
+                    )
                 )
             )
 
