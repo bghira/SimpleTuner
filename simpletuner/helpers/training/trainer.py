@@ -4395,14 +4395,34 @@ class Trainer:
                                     is_fsdp2 = bool(getattr(self.accelerator, "is_fsdp2", False))
                                     # Ensure gradients are unscaled before clipping when using AMP.
                                     self.accelerator.unscale_gradients()
+                                    # When training LyCORIS adapters under FSDP, make sure we clip the
+                                    # trainable adapter parameters instead of the frozen base model weights.
+                                    is_lycoris = self.config.model_type == "lora" and self.config.lora_type == "lycoris"
+                                    lycoris_params = None
+                                    if is_lycoris:
+                                        lycoris_params = getattr(self, "lycoris_wrapped_network", None)
+                                        if lycoris_params is None:
+                                            logger.warning(
+                                                "LyCORIS training configured but lycoris_wrapped_network is None; "
+                                                "falling back to base model parameters for gradient clipping."
+                                            )
+                                        else:
+                                            lycoris_params = lycoris_params.parameters()
                                     try:
                                         if is_fsdp2:
+                                            params_to_clip = lycoris_params or fsdp_model.parameters()
                                             self.grad_norm = torch.nn.utils.clip_grad_norm_(
-                                                fsdp_model.parameters(),
+                                                params_to_clip,
                                                 self.config.max_grad_norm,
                                             )
                                         else:
-                                            self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
+                                            if lycoris_params is not None:
+                                                self.grad_norm = torch.nn.utils.clip_grad_norm_(
+                                                    lycoris_params,
+                                                    self.config.max_grad_norm,
+                                                )
+                                            else:
+                                                self.grad_norm = fsdp_model.clip_grad_norm_(self.config.max_grad_norm)
                                     except Exception as exc:
                                         if is_fsdp2:
                                             logger.warning(

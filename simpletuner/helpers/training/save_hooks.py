@@ -416,6 +416,18 @@ class SaveHookManager:
                 and getattr(self.accelerator.state.fsdp_plugin, "fsdp_version", 1) == 2
             ):
                 logger.info("Detected FSDP v2; skipping custom full-model save and relying on Accelerate shards.")
+                # LoRA/LyCORIS adapters are not part of the FSDP-wrapped module; save them explicitly.
+                if is_main_process and "lora" in self.args.model_type:
+                    if self.args.lora_type == "lycoris":
+                        logger.info("Saving LyCORIS adapter weights alongside FSDP v2 shards.")
+                        self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
+                    elif self.args.lora_type == "standard":
+                        logger.info("Saving standard LoRA adapter weights alongside FSDP v2 shards.")
+                        self._save_lora(models=models, weights=weights, output_dir=output_dir)
+                        self._save_lyrics_embedder_state(
+                            output_dir=output_dir,
+                            is_main_process=is_main_process,
+                        )
                 if self.accelerator is not None and distributed_type != DistributedType.NO:
                     self.accelerator.wait_for_everyone()
                 return
