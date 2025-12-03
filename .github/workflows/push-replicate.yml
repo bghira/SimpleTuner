@@ -1,0 +1,41 @@
+name: Push Cog Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Target Replicate image (e.g., r8.im/simpletuner/z-image)"
+        required: false
+        default: "r8.im/simpletuner/z-image"
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    env:
+      REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_KEY }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Cog CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/replicate/cog/main/tools/install.sh -o /tmp/install-cog.sh
+          chmod +x /tmp/install-cog.sh
+          INSTALL_DIR="$HOME/.local/bin" /tmp/install-cog.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          cog --version
+
+      - name: Push image to Replicate
+        env:
+          TARGET_IMAGE: ${{ github.event.inputs.image }}
+        run: |
+          if [ -z "$REPLICATE_API_TOKEN" ]; then
+            echo "REPLICATE_API_KEY secret is missing" >&2
+            exit 1
+          fi
+          cog login --token "$REPLICATE_API_TOKEN"
+          cog push "${TARGET_IMAGE:-r8.im/simpletuner/z-image}"
