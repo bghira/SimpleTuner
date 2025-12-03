@@ -1576,6 +1576,36 @@ class TestTrainer(unittest.TestCase):
         )
         mock_trained_model.set_requires_gradient_sync.assert_any_call(False)
 
+    def test_build_init_tracker_kwargs_filters_to_active_trackers(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(log_with=["tensorboard", "wandb"])
+
+        init_kwargs = trainer._build_init_tracker_kwargs("run-name", "abc123")
+
+        self.assertIn("wandb", init_kwargs)
+        self.assertEqual(init_kwargs["wandb"]["name"], "run-name")
+        self.assertEqual(init_kwargs["wandb"]["id"], "abc123")
+        self.assertEqual(init_kwargs["wandb"]["resume"], "allow")
+        self.assertTrue(init_kwargs["wandb"]["allow_val_change"])
+        self.assertNotIn("tensorboard", init_kwargs)
+
+    def test_build_init_tracker_kwargs_supports_swanlab(self):
+        tracker_enum_like = SimpleNamespace(value="swanlab")
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(log_with=[tracker_enum_like])
+
+        init_kwargs = trainer._build_init_tracker_kwargs("swan-run", "hash456")
+
+        self.assertIn("swanlab", init_kwargs)
+        self.assertEqual(
+            init_kwargs["swanlab"],
+            {
+                "experiment_name": "swan-run",
+                "id": "hash456",
+                "resume": "allow",
+            },
+        )
+
     @patch("simpletuner.helpers.training.trainer.TorchDynamoPlugin")
     @patch("simpletuner.helpers.training.trainer.Accelerator")
     def test_dynamo_plugin_created_when_advanced_options_enabled(self, mock_accelerator, mock_dynamo_plugin):

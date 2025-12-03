@@ -3470,6 +3470,47 @@ class Trainer:
 
         return lr_scheduler
 
+    def _build_init_tracker_kwargs(self, tracker_run_name: str, public_args_hash: str) -> Dict[str, Dict[str, object]]:
+        """Prepare tracker-specific init kwargs for the active logging backends."""
+        loggers = getattr(self.accelerator, "log_with", None)
+        if not loggers:
+            return {}
+
+        tracker_names = set()
+        if not isinstance(loggers, (list, tuple, set)):
+            loggers = [loggers]
+
+        for tracker in loggers:
+            if isinstance(tracker, GeneralTracker):
+                continue
+            candidate = None
+            if isinstance(tracker, str):
+                candidate = tracker
+            elif hasattr(tracker, "value") and isinstance(tracker.value, str):
+                candidate = tracker.value
+            elif hasattr(tracker, "name") and isinstance(tracker.name, str):
+                candidate = tracker.name
+            if candidate:
+                normalized = candidate.strip().lower()
+                if normalized:
+                    tracker_names.add(normalized)
+
+        init_kwargs: Dict[str, Dict[str, object]] = {}
+        if "wandb" in tracker_names:
+            init_kwargs["wandb"] = {
+                "name": tracker_run_name,
+                "id": f"{public_args_hash}",
+                "resume": "allow",
+                "allow_val_change": True,
+            }
+        if "swanlab" in tracker_names:
+            init_kwargs["swanlab"] = {
+                "experiment_name": tracker_run_name,
+                "id": f"{public_args_hash}",
+                "resume": "allow",
+            }
+        return init_kwargs
+
     def init_trackers(self):
         # We need to initialize the trackers we use, and also store our configuration.
         # The trackers initializes automatically on the main process.
@@ -3493,17 +3534,11 @@ class Trainer:
             public_args_hash = hashlib.md5(json.dumps(vars(public_args), sort_keys=True).encode("utf-8")).hexdigest()
             project_name, tracker_run_name = self._resolve_tracker_identifiers()
             try:
+                init_kwargs = self._build_init_tracker_kwargs(tracker_run_name, public_args_hash)
                 self.accelerator.init_trackers(
                     project_name,
                     config=vars(public_args),
-                    init_kwargs={
-                        "wandb": {
-                            "name": tracker_run_name,
-                            "id": f"{public_args_hash}",
-                            "resume": "allow",
-                            "allow_val_change": True,
-                        }
-                    },
+                    init_kwargs=init_kwargs,
                 )
             except Exception as e:
                 if "Object has no attribute 'disabled'" in repr(e):
