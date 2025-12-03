@@ -488,6 +488,7 @@ A lot of settings are instead set through the [dataloader config](/documentation
 - **What**: Enable CLIP evaluation of generated images during validations.
 - **Why**: CLIP scores calculate the distance of the generated image features to the provided validation prompt. This can give an idea of whether prompt adherence is improving, though it requires a large number of validation prompts to have any meaningful value.
 - **Options**: "none" or "clip"
+- **Scheduling**: Use `--eval_steps_interval` for step-based scheduling or `--eval_epoch_interval` for epoch-based scheduling (fractions like `0.5` run multiple times per epoch). If both are set, the trainer logs a warning and runs both schedules.
 
 ### `--caption_strategy`
 
@@ -754,6 +755,7 @@ usage: train.py [-h] --model_family
                 [--num_validation_images NUM_VALIDATION_IMAGES]
                 [--num_eval_images NUM_EVAL_IMAGES]
                 [--eval_steps_interval EVAL_STEPS_INTERVAL]
+                [--eval_epoch_interval EVAL_EPOCH_INTERVAL]
                 [--eval_timesteps EVAL_TIMESTEPS]
                 [--eval_dataset_pooling [EVAL_DATASET_POOLING]]
                 [--evaluation_type {none,clip}]
@@ -1139,6 +1141,9 @@ options:
                         Number of images to generate for evaluation metrics
   --eval_steps_interval EVAL_STEPS_INTERVAL
                         Run evaluation every N training steps
+  --eval_epoch_interval EVAL_EPOCH_INTERVAL
+                        Run evaluation every N training epochs (decimals run
+                        multiple times per epoch)
   --eval_timesteps EVAL_TIMESTEPS
                         Number of timesteps for evaluation
   --eval_dataset_pooling [EVAL_DATASET_POOLING]

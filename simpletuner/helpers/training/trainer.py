@@ -3249,7 +3249,22 @@ class Trainer:
         self.evaluation = None
         if self.config.validation_disable:
             return
-        if self.config.eval_steps_interval is not None and self.config.eval_steps_interval > 0:
+        eval_step_interval = getattr(self.config, "eval_steps_interval", None)
+        eval_epoch_interval = getattr(self.config, "eval_epoch_interval", None)
+
+        def _normalize_interval(raw_value, cast):
+            if raw_value in (None, "", "None"):
+                return None
+            try:
+                value = cast(raw_value)
+            except (TypeError, ValueError):
+                return None
+            return value if value > 0 else None
+
+        has_eval_schedule = bool(
+            _normalize_interval(eval_step_interval, int) or _normalize_interval(eval_epoch_interval, float)
+        )
+        if has_eval_schedule:
             from simpletuner.helpers.training.validation import Evaluation
 
             self.evaluation = Evaluation(accelerator=self.accelerator)
