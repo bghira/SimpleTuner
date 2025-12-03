@@ -1717,6 +1717,15 @@ class Validation:
         except (TypeError, ValueError):
             epoch_interval = None
 
+        epoch_step_ready = False
+        num_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", None)
+        if num_steps_per_epoch is not None and self.current_epoch_step is not None:
+            try:
+                steps_per_epoch_int = int(num_steps_per_epoch)
+                epoch_step_ready = self.current_epoch_step >= max(steps_per_epoch_int - 1, 0)
+            except (TypeError, ValueError):
+                epoch_step_ready = False
+
         should_do_step_validation = False
         if (
             validation_prompts
@@ -1736,6 +1745,7 @@ class Validation:
             and self.global_step > self.global_resume_step
             and self.current_epoch is not None
             and self.current_epoch > 0
+            and epoch_step_ready
         ):
             if self._pending_epoch_validation is not None and self._pending_epoch_validation == self.current_epoch:
                 should_do_epoch_validation = True
