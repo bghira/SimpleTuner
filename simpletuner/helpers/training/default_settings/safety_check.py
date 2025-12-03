@@ -145,5 +145,16 @@ def safety_check(args, accelerator):
         if args.gradient_checkpointing_interval == 0:
             raise ValueError("Gradient checkpointing interval must be greater than 0. Please set it to a positive integer.")
 
-    if args.report_to == "none" and args.eval_steps_interval is not None and args.eval_steps_interval > 0:
-        logger.warning("Evaluation steps interval is set, but no reporting is enabled. Evaluation will not be logged.")
+    def _normalize_interval(raw_value, cast):
+        if raw_value in (None, "", "None"):
+            return None
+        try:
+            value = cast(raw_value)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    eval_step_interval = _normalize_interval(getattr(args, "eval_steps_interval", None), int)
+    eval_epoch_interval = _normalize_interval(getattr(args, "eval_epoch_interval", None), float)
+    if args.report_to == "none" and (eval_step_interval or eval_epoch_interval):
+        logger.warning("Evaluation scheduling is set, but no reporting is enabled. Evaluation will not be logged.")

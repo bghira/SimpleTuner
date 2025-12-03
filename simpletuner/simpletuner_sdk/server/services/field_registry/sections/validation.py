@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ParserType, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -222,6 +222,24 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="How often to run evaluation metrics during training. Clear this field to skip scheduled evaluation runs.",
             importance=ImportanceLevel.ADVANCED,
             order=4,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="eval_epoch_interval",
+            arg_name="--eval_epoch_interval",
+            ui_label="Evaluation Epoch Interval",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="evaluation",
+            default_value=None,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0001, message="Must be greater than 0")],
+            help_text="Run evaluation every N epochs (decimals run multiple times per epoch)",
+            tooltip="Supports fractional epochs, e.g. 0.5 evaluates twice per epoch. Leave blank to disable.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+            parser_type=ParserType.FLOAT,
         )
     )
 
