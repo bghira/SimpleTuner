@@ -25,6 +25,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             choices=[
                 {"value": "tensorboard", "label": "TensorBoard"},
                 {"value": "wandb", "label": "Weights & Biases"},
+                {"value": "swanlab", "label": "SwanLab"},
                 {"value": "comet_ml", "label": "Comet ML"},
                 {"value": "custom-tracker", "label": "Custom Tracker"},
                 {"value": "all", "label": "All Platforms"},
