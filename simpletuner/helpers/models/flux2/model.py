@@ -54,6 +54,7 @@ SCHEDULER_CONFIG = {
 
 
 class Flux2(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     """FLUX.2 model implementation for SimpleTuner."""
 
     NAME = "Flux.2"

@@ -224,6 +224,7 @@ class ModelFoundation(ABC):
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
+    SUPPORTS_MUON_CLIP = False
 
     def __init__(self, config: dict, accelerator):
         self.config = config
@@ -244,6 +245,10 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    def enable_muon_clip_logging(self) -> None:
+        """Override in subclasses to wire attention logit publishers when MuonClip is in use."""
+        return
 
     def unpack_text_embeddings_from_cache(self, embeddings):
         """

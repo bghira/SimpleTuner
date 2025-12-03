@@ -29,6 +29,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import logging
 from torch import Tensor
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
 try:
@@ -359,6 +360,13 @@ class Kandinsky5AttnProcessor:
             attn_mask = None
 
         try:
+            publish_attention_max_logits(
+                query,
+                key,
+                attn_mask,
+                getattr(attn, "to_query", None) and attn.to_query.weight,
+                getattr(attn, "to_key", None) and attn.to_key.weight,
+            )
             attn_output = dispatch_attention_fn(
                 query,
                 key,
