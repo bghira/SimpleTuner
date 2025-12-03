@@ -24,7 +24,7 @@ simpletuner train example=kontext.peft-lora
 ```bash
 git clone https://github.com/bghira/simpletuner
 cd simpletuner
-python3.11 -m venv .venv
+python3.12 -m venv .venv
 . .venv/bin/activate
 pip install -e .
 simpletuner train env=examples/kontext.peft-lora
@@ -34,7 +34,7 @@ simpletuner train env=examples/kontext.peft-lora
 ```bash
 git clone https://github.com/bghira/simpletuner
 cd simpletuner
-python3.11 -m venv .venv
+python3.12 -m venv .venv
 . .venv/bin/activate
 pip install -e .
 ENV=examples/kontext.peft-lora ./train.sh
