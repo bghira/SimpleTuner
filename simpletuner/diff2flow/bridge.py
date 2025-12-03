@@ -39,14 +39,16 @@ class DiffusionToFlowBridge:
 
         z_pred = sqrt_alpha * noisy_latents - sqrt_one_minus * v_pred
         eps_pred = sqrt_alpha * v_pred + sqrt_one_minus * noisy_latents
-        return z_pred - eps_pred
+        # Align with SimpleTuner flow target: noise - latents
+        return eps_pred - z_pred
 
     def _flow_from_eps(self, eps_pred: torch.Tensor, noisy_latents: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
         sqrt_recip_alpha = self._extract(self.sqrt_recip_alphas_cumprod, timesteps, noisy_latents.shape)
         sqrt_recipm1_alpha = self._extract(self.sqrt_recipm1_alphas_cumprod, timesteps, noisy_latents.shape)
 
         z_pred = sqrt_recip_alpha * noisy_latents - sqrt_recipm1_alpha * eps_pred
-        return z_pred - eps_pred
+        # Align with SimpleTuner flow target: noise - latents
+        return eps_pred - z_pred
 
     def to(self, device=None, dtype=None):
         kwargs = {}
