@@ -54,7 +54,10 @@ class MuonClipQKClipTests(unittest.TestCase):
 
         state = opt.state_dict()
 
-        new_opt = MuonClip([p1.clone().detach().requires_grad_(), p2.clone().detach().requires_grad_()], lr=1e-3)
+        new_opt = MuonClip(
+            [torch.nn.Parameter(p1.clone().detach()), torch.nn.Parameter(p2.clone().detach())],
+            lr=1e-3,
+        )
         new_opt.load_state_dict(state)
 
         self.assertEqual(new_opt._param_to_name.get(id(new_opt.param_groups[0]["params"][0])), "a.to_q")
