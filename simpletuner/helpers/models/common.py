@@ -2121,6 +2121,65 @@ class ModelFoundation(ABC):
                 batch["conditioning_image_embeds"] = conditioning_embeds[0]
         return batch
 
+    def _get_patch_size_for_dynamic_shift(self, noise_scheduler):
+        component = None
+        try:
+            component = self.get_trained_component()
+        except Exception:
+            component = None
+
+        if component is not None:
+            patch_size = getattr(getattr(component, "config", None), "patch_size", None)
+            if patch_size is not None:
+                return patch_size
+
+        scheduler_config = getattr(noise_scheduler, "config", None)
+        if scheduler_config is not None:
+            patch_size = getattr(scheduler_config, "patch_size", None)
+            if patch_size is not None:
+                return patch_size
+
+        return getattr(self.config, "patch_size", None)
+
+    def calculate_dynamic_shift_mu(self, noise_scheduler, latents: torch.Tensor | None):
+        """
+        Compute resolution-dependent shift value for schedulers that support dynamic shifting.
+        """
+        if latents is None:
+            return None
+
+        scheduler_config = getattr(noise_scheduler, "config", None)
+        if scheduler_config is None:
+            return None
+
+        required_fields = [
+            "base_image_seq_len",
+            "max_image_seq_len",
+            "base_shift",
+            "max_shift",
+        ]
+        missing_fields = [field for field in required_fields if getattr(scheduler_config, field, None) is None]
+        if missing_fields:
+            raise ValueError(
+                f"Cannot compute dynamic timestep shift; scheduler is missing config values: {', '.join(missing_fields)}"
+            )
+
+        patch_size = self._get_patch_size_for_dynamic_shift(noise_scheduler)
+        if patch_size is None or patch_size <= 0:
+            raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
+
+        height, width = latents.shape[-2:]
+        image_seq_len = (int(height) // int(patch_size)) * (int(width) // int(patch_size))
+        from simpletuner.helpers.models.sd3.pipeline import calculate_shift
+
+        return calculate_shift(
+            image_seq_len,
+            scheduler_config.base_image_seq_len,
+            scheduler_config.max_image_seq_len,
+            scheduler_config.base_shift,
+            scheduler_config.max_shift,
+        )
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
