@@ -1259,6 +1259,11 @@ class ModelFoundation(ABC):
                 text_encoder_config,
             ) in self.TEXT_ENCODER_CONFIGURATION.items():
                 text_encoder_idx += 1
+                # Prefer indexed precision flags (text_encoder_1_precision, etc) to match config schema.
+                precision_attr = f"text_encoder_{text_encoder_idx}_precision"
+                text_encoder_precision = getattr(
+                    self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
+                )
                 # load_tes returns a variant and three text encoders
                 signature = inspect.signature(text_encoder_config["model"])
                 extra_kwargs = {}
@@ -1295,7 +1300,7 @@ class ModelFoundation(ABC):
                 if self._ramtorch_text_encoders_requested():
                     self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
 
-                if move_to_device and getattr(self.config, f"{attr_name}_precision", None) in ["no_change", None]:
+                if move_to_device and text_encoder_precision in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
@@ -1309,9 +1314,17 @@ class ModelFoundation(ABC):
 
     def unload_text_encoder(self):
         if self.text_encoders is not None:
-            for text_encoder in self.text_encoders:
+            for idx, text_encoder in enumerate(self.text_encoders):
+                if text_encoder is None:
+                    continue
                 if hasattr(text_encoder, "to"):
-                    text_encoder.to("meta")
+                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
+                    try:
+                        text_encoder.to("meta")
+                    except Exception as exc:
+                        logger.debug("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
+                        text_encoder.to("cpu")
+                setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
         if self.tokenizers is not None:
             self.tokenizers = None
