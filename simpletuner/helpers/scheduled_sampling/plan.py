@@ -17,6 +17,7 @@ def build_rollout_schedule(
     batch_size: int,
     max_step_offset: int,
     device,
+    base_timesteps: Optional[torch.Tensor] = None,
     strategy: str = "uniform",
     apply_probability: Optional[float] = None,
 ) -> ScheduledSamplingPlan:
@@ -25,12 +26,21 @@ def build_rollout_schedule(
 
     apply_probability controls how often a non-zero offset is used; when None, every
     sample is eligible, when 0.0 no samples are rolled out.
+    base_timesteps can be provided to respect an upstream timestep sampler (e.g., SNR-weighted).
     """
-    if max_step_offset <= 0:
+    if base_timesteps is not None:
+        base = base_timesteps.to(device=device)
+        if base.shape[0] != batch_size:
+            raise ValueError(
+                f"base_timesteps shape {tuple(base.shape)} does not match batch_size {batch_size} for scheduled sampling."
+            )
+        base = base.view(batch_size).long()
+    else:
         base = torch.randint(0, num_train_timesteps, (batch_size,), device=device)
+
+    if max_step_offset <= 0:
         return ScheduledSamplingPlan(target_timesteps=base, source_timesteps=base, rollout_steps=torch.zeros_like(base))
 
-    base = torch.randint(0, num_train_timesteps, (batch_size,), device=device)
     if apply_probability is not None and apply_probability < 1.0:
         mask = torch.bernoulli(torch.full((batch_size,), apply_probability, device=device)).bool()
     else:

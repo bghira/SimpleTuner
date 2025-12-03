@@ -139,6 +139,10 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
                 prev_samples = prev_samples[-sampler.require_previous :]
             current = sk_result.final.to(device=device, dtype=dtype)
 
+        if sampler.require_previous > 0:
+            prev_cache[i] = prev_samples[-sampler.require_previous :]
+        else:
+            prev_cache[i] = []
         new_noisy[i : i + 1] = current
         new_timesteps[i] = target_t
 
