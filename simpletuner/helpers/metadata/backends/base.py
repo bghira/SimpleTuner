@@ -488,7 +488,20 @@ class MetadataBackend:
         logger.debug(f"Count of items before split: {total_samples}")
 
         num_processes = self.accelerator.num_processes
-        effective_batch_size = self.batch_size * num_processes * gradient_accumulation_steps
+        # Evaluation datasets are not trained, so gradient accumulation does not apply.
+        dataset_type = getattr(self, "dataset_type", None)
+        try:
+            dataset_type_enum = ensure_dataset_type(dataset_type) if dataset_type is not None else DatasetType.IMAGE
+        except Exception:
+            dataset_type_enum = DatasetType.IMAGE
+
+        grad_accumulation_for_bucketing = 1 if dataset_type_enum is DatasetType.EVAL else gradient_accumulation_steps
+        if dataset_type_enum is DatasetType.EVAL and gradient_accumulation_steps != 1:
+            logger.debug(
+                f"(id={self.id}) Ignoring gradient accumulation for eval dataset; using 1 instead of {gradient_accumulation_steps}."
+            )
+
+        effective_batch_size = self.batch_size * num_processes * grad_accumulation_for_bucketing
         if self.bucket_report:
             self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
@@ -544,7 +557,7 @@ class MetadataBackend:
                     f"  - Repeats: {self.repeats}\n"
                     f"  - Batch size: {self.batch_size}\n"
                     f"  - Number of GPUs: {num_processes}\n"
-                    f"  - Gradient accumulation steps: {gradient_accumulation_steps}\n"
+                    f"  - Gradient accumulation steps: {grad_accumulation_for_bucketing}\n"
                     f"  - Effective batch size: {effective_batch_size}\n"
                     f"\nProblem: {len(buckets_that_will_fail)} bucket(s) have insufficient samples:\n"
                 )
@@ -563,7 +576,7 @@ class MetadataBackend:
                 error_msg += (
                     f"\nSolutions:\n"
                     f"  1. Reduce batch_size (current: {self.batch_size})\n"
-                    f"  2. Reduce gradient_accumulation_steps (current: {gradient_accumulation_steps})\n"
+                    f"  2. Reduce gradient_accumulation_steps (current: {grad_accumulation_for_bucketing})\n"
                     f"  3. Use fewer GPUs (current: {num_processes})\n"
                     f"  4. Increase repeats to at least {max_needed_repeats} (current: {self.repeats})\n"
                     f"  5. Add more samples to the dataset\n"
