@@ -2324,6 +2324,7 @@ class ModelFoundation(ABC):
                 batch_size=bsz,
                 max_step_offset=getattr(self.config, "scheduled_sampling_max_step_offset", 0),
                 device=self.accelerator.device,
+                base_timesteps=batch["timesteps"],
                 strategy=getattr(self.config, "scheduled_sampling_strategy", "uniform"),
                 apply_probability=effective_prob,
             )
