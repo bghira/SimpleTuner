@@ -156,6 +156,26 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         self.mock_accelerator = MagicMock()
         self.mock_accelerator.device = torch.device("cpu")
 
+    def _build_zimage_config(self, flavour: str):
+        config = MagicMock()
+        config.model_family = "z-image"
+        config.model_flavour = flavour
+        config.model_type = "lora"
+        config.assistant_lora_path = None
+        config.disable_assistant_lora = False
+        config.assistant_lora_weight_name = None
+        config.weight_dtype = torch.float32
+        config.pretrained_model_name_or_path = "TONGYI-MAI/Z-Image-Turbo"
+        config.revision = None
+        config.variant = None
+        config.vae_path = None
+        config.controlnet = False
+        config.pretrained_transformer_model_name_or_path = None
+        config.pretrained_unet_model_name_or_path = None
+        config.pretrained_transformer_subfolder = None
+        config.pretrained_unet_subfolder = None
+        return config
+
     def test_flux_schnell_sets_default_assistant_path(self):
         config = MagicMock()
         config.model_family = "flux"
@@ -186,24 +206,7 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         self.assertEqual(config.assistant_lora_path, Flux.ASSISTANT_LORA_PATH)
 
     def test_zimage_turbo_requires_assistant_path(self):
-        config = MagicMock()
-        config.model_family = "z-image"
-        config.model_flavour = "turbo"
-        config.model_type = "lora"
-        config.assistant_lora_path = None
-        config.disable_assistant_lora = False
-        config.assistant_lora_weight_name = None
-        config.weight_dtype = torch.float32
-        config.pretrained_model_name_or_path = "TONGYI-MAI/Z-Image-Turbo"
-        config.revision = None
-        config.variant = None
-        config.vae_path = None
-        config.controlnet = False
-        config.pretrained_transformer_model_name_or_path = None
-        config.pretrained_unet_model_name_or_path = None
-        config.pretrained_transformer_subfolder = None
-        config.pretrained_unet_subfolder = None
-        config.model_type = "lora"
+        config = self._build_zimage_config("turbo")
 
         with (
             patch.object(ZImage, "setup_model_flavour", lambda self: None),
@@ -213,6 +216,18 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         model.check_user_config()
         self.assertEqual(config.assistant_lora_path, ZImage.ASSISTANT_LORA_PATH)
         self.assertEqual(config.assistant_lora_weight_name, ZImage.ASSISTANT_LORA_WEIGHT_NAME)
+
+    def test_zimage_turbo_v2_sets_assistant_defaults(self):
+        config = self._build_zimage_config("turbo-ostris-v2")
+
+        with (
+            patch.object(ZImage, "setup_model_flavour", lambda self: None),
+            patch.object(ZImage, "setup_training_noise_schedule", lambda self: None),
+        ):
+            model = ZImage(config, self.mock_accelerator)
+        model.check_user_config()
+        self.assertEqual(config.assistant_lora_path, ZImage.ASSISTANT_LORA_PATH)
+        self.assertEqual(config.assistant_lora_weight_name, ZImage.ASSISTANT_LORA_WEIGHT_NAMES["turbo-ostris-v2"])
 
     def test_disable_flag_skips_requirements(self):
         config = MagicMock()

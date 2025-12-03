@@ -126,7 +126,7 @@ There, you will possibly need to modify the following variables:
 
 - `model_type` - Set this to `lora`.
 - `model_family` - Set this to `z-image`.
-- `model_flavour` - set to `turbo`, since the base points to a currently-unvailable checkpoint.
+- `model_flavour` - set to `turbo` (or `turbo-ostris-v2` for the v2 assistant adapter); the base flavour points to a currently-unavailable checkpoint.
 - `pretrained_model_name_or_path` - Set this to `TONGYI-MAI/Z-Image-Turbo`.
 - `output_dir` - Set this to the directory where you want to store your checkpoints and validation images. It's recommended to use a full path here.
 - `train_batch_size` - keep at 1, especially if you have a very small dataset.
@@ -147,9 +147,11 @@ There, you will possibly need to modify the following variables:
 Turbo expects an assistant adapter:
 
 - `assistant_lora_path`: `ostris/zimage_turbo_training_adapter`
-- `assistant_lora_weight_name`: `zimage_turbo_training_adapter_v1.safetensors`
+- `assistant_lora_weight_name`:
+  - `turbo`: `zimage_turbo_training_adapter_v1.safetensors`
+  - `turbo-ostris-v2`: `zimage_turbo_training_adapter_v2.safetensors`
 
-SimpleTuner auto-fills these for turbo unless you override them. Disable with `--disable_assistant_lora` if you accept the quality hit.
+SimpleTuner auto-fills these for turbo flavours unless you override them. Disable with `--disable_assistant_lora` if you accept the quality hit.
 
 ### Validation prompts
 
