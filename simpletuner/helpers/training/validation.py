@@ -1,6 +1,7 @@
 import base64
 import inspect
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -3185,21 +3186,96 @@ class Evaluation:
     def __init__(self, accelerator):
         self.config = StateTracker.get_args()
         self.accelerator = accelerator
+        self._epoch_intervals_completed: int | None = None
+        self._warned_dual_schedule = False
 
-    def would_evaluate(self, training_state: dict):
-        if not self.accelerator.is_main_process:
-            return
-        if self.config.eval_steps_interval is None:
+    def _step_interval(self) -> int | None:
+        raw_value = getattr(self.config, "eval_steps_interval", None)
+        if raw_value in ("", "None"):
+            return None
+        try:
+            interval = int(raw_value)
+        except (TypeError, ValueError):
+            return None
+        return interval if interval > 0 else None
+
+    def _epoch_interval(self) -> float | None:
+        raw_value = getattr(self.config, "eval_epoch_interval", None)
+        if raw_value in ("", "None"):
+            return None
+        try:
+            interval = float(raw_value)
+        except (TypeError, ValueError):
+            return None
+        return interval if interval > 0 else None
+
+    def _epoch_progress(self, training_state: dict, steps_per_epoch: float) -> float | None:
+        try:
+            current_epoch = training_state.get("current_epoch") or StateTracker.get_epoch() or 1
+        except Exception:
+            return None
+        try:
+            global_step = float(training_state.get("global_step", 0))
+            steps_per_epoch = float(steps_per_epoch)
+            if steps_per_epoch <= 0:
+                return None
+            epoch_start_step = max(0.0, (float(current_epoch) - 1.0) * steps_per_epoch)
+            epoch_steps_completed = max(0.0, global_step - epoch_start_step)
+            epoch_fraction = epoch_steps_completed / steps_per_epoch
+            return max(0.0, (float(current_epoch) - 1.0) + epoch_fraction)
+        except (TypeError, ValueError):
+            return None
+
+    def _should_eval_epoch(self, training_state: dict, epoch_interval: float | None) -> bool:
+        if epoch_interval is None:
             return False
-        if self.config.eval_steps_interval == 0:
+        if training_state.get("global_step", 0) <= training_state.get("global_resume_step", 0):
             return False
-        if (
-            training_state["global_step"] % self.config.eval_steps_interval == 0
-            and training_state["global_step"] > training_state["global_resume_step"]
-        ):
+
+        steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", None)
+        if steps_per_epoch is None:
+            return False
+
+        epoch_progress = self._epoch_progress(training_state, steps_per_epoch)
+        if epoch_progress is None:
+            return False
+
+        completed_intervals = math.floor(epoch_progress / epoch_interval)
+        if self._epoch_intervals_completed is None:
+            self._epoch_intervals_completed = completed_intervals
+            return False
+
+        if completed_intervals > self._epoch_intervals_completed:
+            self._epoch_intervals_completed = completed_intervals
             return True
 
         return False
+
+    def would_evaluate(self, training_state: dict):
+        if not self.accelerator.is_main_process:
+            return False
+        step_interval = self._step_interval()
+        epoch_interval = self._epoch_interval()
+
+        if step_interval is None and epoch_interval is None:
+            return False
+
+        if step_interval is not None and epoch_interval is not None and not self._warned_dual_schedule:
+            logger.warning(
+                "Both eval_steps_interval and eval_epoch_interval are set; evaluation will run on both schedules."
+            )
+            self._warned_dual_schedule = True
+
+        global_step = training_state.get("global_step", 0)
+        resume_step = training_state.get("global_resume_step", 0)
+
+        should_do_step_eval = False
+        if step_interval is not None and step_interval > 0 and global_step > resume_step:
+            should_do_step_eval = global_step % step_interval == 0
+
+        should_do_epoch_eval = self._should_eval_epoch(training_state, epoch_interval)
+
+        return should_do_step_eval or should_do_epoch_eval
 
     def total_eval_batches(self, dataset_name=None):
         """
