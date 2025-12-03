@@ -2555,6 +2555,19 @@ function trainingWizardComponent() {
             return overrides.length > 0 ? overrides.join(', ') : 'Defaults';
         },
 
+        hasAnyPrecisionChanged() {
+            if (this.answers.base_model_precision && this.answers.base_model_precision !== 'no_change') {
+                return true;
+            }
+            for (let i = 1; i <= 4; i++) {
+                const value = this.answers[`text_encoder_${i}_precision`];
+                if (value && value !== 'no_change') {
+                    return true;
+                }
+            }
+            return false;
+        },
+
         // Dataset wizard integration
         async openDatasetWizard(createStandalone = false) {
             console.log('[TRAINING WIZARD] openDatasetWizard called, createStandalone:', createStandalone);
