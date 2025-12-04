@@ -188,12 +188,9 @@ class Kandinsky5Video(VideoModelFoundation):
         pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
         attention_mask = text_embedding.get("attention_masks")
 
-        return {
-            "prompt_embeds": prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
-            "attention_masks": attention_mask,
-        }
+        prompt_cu_seqlens = None
         if attention_mask is not None:
+            # Build cu_seqlens expected by the transformer from the attention mask.
             prompt_cu_seqlens = torch.cumsum(attention_mask.sum(1), dim=0)
             prompt_cu_seqlens = torch.cat([torch.zeros_like(prompt_cu_seqlens)[:1], prompt_cu_seqlens]).to(dtype=torch.int32)
 
@@ -201,6 +198,7 @@ class Kandinsky5Video(VideoModelFoundation):
             "prompt_embeds_qwen": prompt_embeds,
             "prompt_embeds_clip": pooled_prompt_embeds,
             "prompt_cu_seqlens": prompt_cu_seqlens,
+            "attention_masks": attention_mask,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
@@ -217,6 +215,7 @@ class Kandinsky5Video(VideoModelFoundation):
             "negative_prompt_embeds_qwen": prompt_embeds,
             "negative_prompt_embeds_clip": pooled_prompt_embeds,
             "negative_prompt_cu_seqlens": prompt_cu_seqlens,
+            "attention_masks": attention_mask,
         }
 
     def _find_attention_mask(self, embeddings: dict):
