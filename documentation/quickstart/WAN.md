@@ -244,6 +244,14 @@ Your config at the end will look like mine:
 
 Of particular importance in this configuration are the validation settings. Without these, the outputs do not look super great.
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 ### TREAD training
 
 > ⚠️ **Experimental**: TREAD is a newly implemented feature. While functional, optimal configurations are still being explored.

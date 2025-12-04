@@ -65,6 +65,14 @@ Add these to your `config.json` to monitor progress:
 - **`validation_guidance`**: Guidance scale (default: ~3.0 - 5.0).
 - **`validation_step_interval`**: How often to generate samples (e.g., every 100 steps).
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 ## Dataset Configuration
 
 ACE-Step requires an **audio-specific** dataset configuration.

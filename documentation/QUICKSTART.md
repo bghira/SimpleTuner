@@ -45,3 +45,8 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 
 - **Z-Image Turbo**: Fully supported LoRA with TREAD; runs fast on NVIDIA and macOS even without quant (int8 works too). Often the bottleneck is just trainer setup.
 - **Flux Schnell**: The quickstart config handles the fast noise schedule and assistant LoRA stack automatically; no extra flags needed to train Schnell LoRAs.
+
+### Advanced Experimental Features
+
+- **Diff2Flow**: Allows training standard epsilon/v-prediction models (SD1.5, SDXL, DeepFloyd, etc.) using a Flow Matching loss objective. This bridges the gap between older architectures and modern flow-based training.
+- **Scheduled Sampling**: Reduces exposure bias by letting the model generate its own intermediate noisy latents during training ("rollout"). This helps the model learn to recover from its own generation errors.

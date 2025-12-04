@@ -139,6 +139,15 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_c
 export OPTIMIZER="adamw_bf16"
 ```
 
+#### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Diff2Flow](/documentation/experimental/DIFF2FLOW.md):** allows training Kolors with a Flow Matching objective, potentially improving generation straightness and quality.
+
+> ⚠️ These features increase the computational overhead of training.
+
 #### Dataset considerations
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS`. The dataset will not be discoverable by the trainer if it is too small.

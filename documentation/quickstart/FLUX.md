@@ -143,6 +143,14 @@ There, you will possibly need to modify the following variables:
 - `gradient_checkpointing` - set this to true in practically every situation on every device
 - `gradient_checkpointing_interval` - this could be set to a value of 2 or higher on larger GPUs to only checkpoint every _n_ blocks. A value of 2 would checkpoint half of the blocks, and 3 would be one-third.
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 ### Memory offloading (optional)
 
 Flux supports grouped module offloading via diffusers v0.33+. This dramatically reduces VRAM pressure when you are bottlenecked by the transformer weights. You can enable it by adding the following flags to `TRAINER_EXTRA_ARGS` (or the WebUI Hardware page):

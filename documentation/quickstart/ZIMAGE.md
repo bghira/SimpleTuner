@@ -142,6 +142,14 @@ There, you will possibly need to modify the following variables:
 - `gradient_checkpointing` - set this to true in practically every situation on every device.
 - `gradient_checkpointing_interval` - can be set to 2+ on larger GPUs to checkpoint every _n_ blocks.
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 ### Assistant LoRA (Turbo)
 
 Turbo expects an assistant adapter:

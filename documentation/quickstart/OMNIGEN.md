@@ -172,6 +172,14 @@ And a simple `config/lycoris_config.json` file - note that the `FeedForward` may
 }
 ```
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 #### Validation prompts
 
 Inside `config/config.json` is the "primary validation prompt" (`--validation_prompt`), which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.

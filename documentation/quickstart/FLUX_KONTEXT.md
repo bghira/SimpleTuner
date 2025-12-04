@@ -62,6 +62,14 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
 }
 ```
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 ### Dataloader snippet (multi‑data‑backend)
 
 If you've manually curated an image-pair dataset, you can configure it using two separate directories: one for the edit images and one for the reference images.

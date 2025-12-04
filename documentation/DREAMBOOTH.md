@@ -222,6 +222,30 @@ Alternatively, one might use the real name of their subject, or a 'similar enoug
 
 After a number of training experiments, it seems as though a 'similar enough' celebrity is the best choice, especially if prompting the model for the person's real name ends up looking dissimilar.
 
+# Scheduled Sampling (Rollout)
+
+When training on small datasets like in Dreambooth, models can quickly overfit to the "perfect" noise added during training. This leads to **exposure bias**: the model learns to denoise perfect inputs but fails when faced with its own slightly imperfect outputs during inference.
+
+**Scheduled Sampling (Rollout)** addresses this by occasionally letting the model generate its own noisy latents for a few steps during the training loop. Instead of training on pure Gaussian noise + signal, it trains on "rollout" samples that contain the model's own previous errors. This teaches the model to correct itself, leading to more robust and stable subject generation.
+
+> 🟢 This feature is experimental but highly recommended for small datasets where overfitting or "frying" is common.
+> ⚠️ Enabling rollout increases compute requirements, as the model must perform extra inference steps during the training loop.
+
+To enable it, add these keys to your `config.json`:
+
+```json
+{
+  "scheduled_sampling_max_step_offset": 10,
+  "scheduled_sampling_probability": 1.0,
+  "scheduled_sampling_ramp_steps": 1000,
+  "scheduled_sampling_sampler": "unipc"
+}
+```
+
+*   `scheduled_sampling_max_step_offset`: How many steps to generate. A small value (e.g., 5-10) is often enough.
+*   `scheduled_sampling_probability`: How often to apply this technique (0.0 to 1.0).
+*   `scheduled_sampling_ramp_steps`: Ramp up the probability over the first N steps to avoid destabilizing early training.
+
 # Exponential moving average (EMA)
 
 A second model can be trained in parallel to your checkpoint, nearly for free - only the resulting system memory (by default) is consumed, rather than more VRAM.

@@ -216,3 +216,12 @@ Set `validation_preview_steps` to a higher value (e.g., 3 or 5) to reduce Tiny A
 When using `--attention_mechanism=sageattention`, inference can be sped-up at validation time.
 
 **Note**: This isn't compatible with _every_ model configuration, but it's worth trying.
+
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Diff2Flow](/documentation/experimental/DIFF2FLOW.md):** allows training with a Flow Matching objective, potentially improving generation straightness and quality.
+
+> ⚠️ These features increase the computational overhead of training.
