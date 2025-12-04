@@ -115,6 +115,9 @@ class PromptLibraryService:
             shortname = str(key).strip()
             if not shortname:
                 continue
+            if isinstance(value, PromptLibraryEntry):
+                normalized[shortname] = value
+                continue
             try:
                 normalized[shortname] = PromptLibraryEntry.from_payload(value)
             except PromptLibraryError:

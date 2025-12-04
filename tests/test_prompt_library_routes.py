@@ -61,6 +61,17 @@ class PromptLibraryRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
         response = self.client.put("/api/prompt-libraries/invalid name.json", json=payload)
         self.assertEqual(response.status_code, 400)
 
+    def test_save_prompt_library_with_adapter_strength(self) -> None:
+        payload = {"entries": {"slider": {"prompt": "hello", "adapter_strength": 0.25}}}
+        response = self.client.put("/api/prompt-libraries/user_prompt_library-slider.json", json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["entries"]["slider"]["adapter_strength"], 0.25)
+
+        get_resp = self.client.get("/api/prompt-libraries/user_prompt_library-slider.json")
+        self.assertEqual(get_resp.status_code, 200)
+        self.assertEqual(get_resp.json()["entries"]["slider"], {"prompt": "hello", "adapter_strength": 0.25})
+
 
 if __name__ == "__main__":
     unittest.main()
