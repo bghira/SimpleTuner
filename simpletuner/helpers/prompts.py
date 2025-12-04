@@ -7,6 +7,7 @@ import regex as re
 from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryService
 
 try:
     import pandas as pd
@@ -620,8 +621,7 @@ class PromptHandler:
         try:
             with user_prompt_path.open("r", encoding="utf-8") as f:
                 user_prompts = json.load(f)
-                # logger.debug(f"Loaded user prompts: {user_prompts}")
-            return user_prompts
+            return PromptLibraryService.parse_entries(user_prompts)
         except Exception as e:
             logger.error(f"Could not read user prompt file {user_prompt_path}: {e}")
             return {}

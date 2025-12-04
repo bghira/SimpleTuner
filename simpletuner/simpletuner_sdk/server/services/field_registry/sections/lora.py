@@ -80,6 +80,28 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Slider-specific target selection
+    registry._add_field(
+        ConfigField(
+            name="slider_lora_target",
+            arg_name="--slider_lora_target",
+            ui_label="Use slider LoRA targets",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value=False,
+            dependencies=[
+                FieldDependency(field="model_type", value="lora"),
+                FieldDependency(field="lora_type", value="standard"),
+            ],
+            help_text="Route LoRA training to slider-friendly modules (self-attn + conv/time embeddings).",
+            tooltip="Enable this to match the Concept Sliders paper: focus on attn1/convolution/time-embedding layers.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3.5,
+        )
+    )
+
     # LoRA Dropout
     registry._add_field(
         ConfigField(

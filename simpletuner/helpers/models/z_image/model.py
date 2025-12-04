@@ -24,6 +24,7 @@ class ZImage(ImageModelFoundation):
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
+    SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
 
     MODEL_CLASS = ZImageTransformer2DModel
     MODEL_SUBFOLDER = "transformer"

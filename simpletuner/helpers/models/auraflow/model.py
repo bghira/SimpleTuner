@@ -41,6 +41,14 @@ class Auraflow(ImageModelFoundation):
         "to_add_out",
         "to_qkv",
     ]
+    SLIDER_LORA_TARGET = [
+        # Exclude add_* (text) projections to stay on the visual stream.
+        "to_k",
+        "to_q",
+        "to_v",
+        "to_out.0",
+        "to_qkv",
+    ]
     # Only training the Attention blocks by default seems to help more since this model is relatively unstable.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
@@ -338,6 +346,8 @@ class Auraflow(ImageModelFoundation):
         return {"model_prediction": model_pred}
 
     def get_lora_target_layers(self):
+        if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             controlnet_block_modules = [f"controlnet_blocks.{i}" for i in range(36)]
             return controlnet_block_modules

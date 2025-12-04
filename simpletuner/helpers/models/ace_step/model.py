@@ -110,6 +110,8 @@ class ACEStep(AudioModelFoundation):
         self._checkpoint_base: Optional[str] = None
 
     def get_lora_target_layers(self):
+        if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if getattr(self.config, "controlnet", False):
             return self.DEFAULT_CONTROLNET_LORA_TARGET
 

@@ -365,6 +365,8 @@ class PixartSigma(ImageModelFoundation):
         """
         Get LoRA target layers, with special handling for ControlNet.
         """
+        if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             # ONLY target the controlnet adapter blocks, NOT the transformer
             num_layers = getattr(self.config, "controlnet_num_layers", 13)

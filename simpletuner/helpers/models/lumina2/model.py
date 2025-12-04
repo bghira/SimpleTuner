@@ -262,6 +262,8 @@ class Lumina2(ImageModelFoundation):
 
     def get_lora_target_layers(self):
         """Get LoRA target layers for Lumina2"""
+        if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if self.config.lora_type.lower() == "standard":
             # Lumina2 uses standard attention layer targeting
             return self.DEFAULT_LORA_TARGET

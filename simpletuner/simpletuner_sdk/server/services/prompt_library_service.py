@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import status
 
@@ -36,6 +36,34 @@ class PromptLibraryRecord:
     library_name: str
     prompt_count: int
     updated_at: str
+
+
+@dataclass
+class PromptLibraryEntry:
+    prompt: str
+    adapter_strength: Optional[float] = None
+
+    @classmethod
+    def from_payload(cls, payload: Union[str, Dict[str, Any]]) -> "PromptLibraryEntry":
+        if isinstance(payload, str):
+            return cls(prompt=payload, adapter_strength=None)
+        if not isinstance(payload, dict):
+            raise PromptLibraryError("Prompt entries must be strings or objects with a prompt field.")
+        prompt_value = payload.get("prompt")
+        if prompt_value is None:
+            raise PromptLibraryError("Prompt entry objects must include a 'prompt' field.")
+        strength = payload.get("adapter_strength", None)
+        try:
+            strength_value = None if strength is None else float(strength)
+        except (TypeError, ValueError):
+            raise PromptLibraryError("adapter_strength must be numeric when provided.")
+        return cls(prompt=str(prompt_value), adapter_strength=strength_value)
+
+    def serialise(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {"prompt": self.prompt}
+        if self.adapter_strength is not None:
+            data["adapter_strength"] = self.adapter_strength
+        return data
 
 
 class PromptLibraryService:
@@ -78,19 +106,34 @@ class PromptLibraryService:
             )
         return candidate
 
-    def _normalize_entries(self, payload: Any) -> Dict[str, str]:
+    @staticmethod
+    def parse_entries(payload: Any) -> Dict[str, PromptLibraryEntry]:
         if not isinstance(payload, dict):
             raise PromptLibraryError("Prompt library entries must be an object with ID -> prompt mappings.")
-        normalized: Dict[str, str] = {}
+        normalized: Dict[str, PromptLibraryEntry] = {}
         for key, value in payload.items():
             shortname = str(key).strip()
             if not shortname:
                 continue
-            prompt = "" if value is None else str(value)
-            normalized[shortname] = prompt
+            try:
+                normalized[shortname] = PromptLibraryEntry.from_payload(value)
+            except PromptLibraryError:
+                raise
+            except Exception as exc:
+                raise PromptLibraryError(f"Invalid prompt entry for '{shortname}': {exc}")
         return normalized
 
-    def _load_entries(self, path: Path) -> Dict[str, str]:
+    @staticmethod
+    def serialise_entries(entries: Dict[str, PromptLibraryEntry]) -> Dict[str, Any]:
+        serialised: Dict[str, Any] = {}
+        for key, entry in entries.items():
+            if entry.adapter_strength is None:
+                serialised[key] = entry.prompt
+            else:
+                serialised[key] = entry.serialise()
+        return serialised
+
+    def _load_entries(self, path: Path) -> Dict[str, PromptLibraryEntry]:
         if not path.exists():
             raise PromptLibraryError(f"Prompt library '{path.name}' not found", status.HTTP_404_NOT_FOUND)
         try:
@@ -100,7 +143,7 @@ class PromptLibraryService:
             raise PromptLibraryError(f"Invalid JSON in '{path.name}': {exc}", status.HTTP_422_UNPROCESSABLE_CONTENT) from exc
         except OSError as exc:
             raise PromptLibraryError(f"Failed to read '{path.name}': {exc}", status.HTTP_500_INTERNAL_SERVER_ERROR) from exc
-        return self._normalize_entries(payload)
+        return self.parse_entries(payload)
 
     def _build_metadata(self, path: Path, entries: Dict[str, str]) -> PromptLibraryRecord:
         match = self._FILENAME_PATTERN.fullmatch(path.name)
@@ -148,21 +191,24 @@ class PromptLibraryService:
         path = self._libraries_dir / sanitized
         entries = self._load_entries(path)
         metadata = self._build_metadata(path, entries)
-        return {"entries": entries, "library": metadata}
+        return {
+            "entries": self.serialise_entries(entries),
+            "library": metadata,
+        }
 
     def save_library(
         self,
         filename: str,
-        entries: Dict[str, str],
+        entries: Dict[str, Union[str, Dict[str, Any], PromptLibraryEntry]],
         previous_filename: Optional[str] = None,
     ) -> Dict[str, Any]:
-        normalized = self._normalize_entries(entries)
+        normalized = self.parse_entries(entries)
         sanitized = self._validate_filename(filename)
         target = self._libraries_dir / sanitized
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             with target.open("w", encoding="utf-8") as handle:
-                json.dump(normalized, handle, indent=2, ensure_ascii=False)
+                json.dump(self.serialise_entries(normalized), handle, indent=2, ensure_ascii=False)
                 handle.write("\n")
         except OSError as exc:
             raise PromptLibraryError(
@@ -180,4 +226,4 @@ class PromptLibraryService:
                     logger.warning("Could not remove old prompt library '%s': %s", previous, exc)
 
         metadata = self._build_metadata(target, normalized)
-        return {"entries": normalized, "library": metadata}
+        return {"entries": self.serialise_entries(normalized), "library": metadata}

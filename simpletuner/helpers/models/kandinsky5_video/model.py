@@ -109,6 +109,15 @@ class Kandinsky5Video(VideoModelFoundation):
         PipelineTypes.IMG2VIDEO: Kandinsky5I2VPipeline,
     }
     DEFAULT_LORA_TARGET = ["to_key", "to_query", "to_value"]
+    SLIDER_LORA_TARGET = [
+        "attn1.to_query",
+        "attn1.to_key",
+        "attn1.to_value",
+        "conv_in",
+        "conv_out",
+        "time_embedding.linear_1",
+        "time_embedding.linear_2",
+    ]
 
     # Default model flavor to use when none specified.
     DEFAULT_MODEL_FLAVOUR = "t2v-lite-sft-5s"
