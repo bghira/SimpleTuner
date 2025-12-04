@@ -79,6 +79,14 @@ The UI will be available at http://localhost:8001.
 
 > ⚠️ If Hugging Face access is slow in your region, export `HF_ENDPOINT=https://hf-mirror.com` before launching.
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 ## Dataset & dataloader
 
 Chroma uses the same dataloader format as Flux. Refer to the [general tutorial](/documentation/TUTORIAL.md) or the [web UI tutorial](/documentation/webui/TUTORIAL.md) for dataset preparation and prompt libraries.

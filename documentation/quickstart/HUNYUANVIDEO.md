@@ -150,6 +150,14 @@ Key configuration overrides for HunyuanVideo:
   - `i2v-720p` (Image-to-Video)
 - `validation_num_video_frames`: Must be `(frames - 1) % 4 == 0`. E.g., 61, 129.
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 #### Dataset considerations
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:

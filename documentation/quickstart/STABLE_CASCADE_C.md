@@ -196,6 +196,15 @@ During the first epoch, monitor:
 - To swap the decoder flavour, set `stable_cascade_decoder_subfolder` to `"decoder"`, `"decoder_lite"`, or a custom folder containing the Stage B or Stage C weights.
 - For quicker previews, lower `stable_cascade_validation_prior_num_inference_steps` to ~12 and `validation_num_inference_steps` to 20. Once satisfied, raise them back for higher quality.
 
+## Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Diff2Flow](/documentation/experimental/DIFF2FLOW.md):** allows training Stable Cascade with a Flow Matching objective.
+
+> ⚠️ These features increase the computational overhead of training.
+
 ## Troubleshooting
 
 | Symptom | Fix |

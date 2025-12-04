@@ -94,6 +94,14 @@ Key settings for Kandinsky 5 Video:
 - `validation_guidance`: `5.0`.
 - `frame_rate`: Default is 24.
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 #### Dataset considerations
 
 Video datasets require careful setup. Create `config/multidatabackend.json`:

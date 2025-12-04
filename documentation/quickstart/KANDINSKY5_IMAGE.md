@@ -154,6 +154,14 @@ In `config.json`:
 
 > **Note**: We do not recommend quantizing the text encoders (`no_change`) as Qwen2.5-VL is sensitive to quantization effects and is already the heaviest part of the pipeline.
 
+### Advanced Experimental Features
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 #### Dataset considerations
 
 You will need a dataset configuration file, e.g., `config/multidatabackend.json`.
