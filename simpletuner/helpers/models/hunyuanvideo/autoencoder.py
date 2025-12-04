@@ -29,9 +29,10 @@ from einops import rearrange
 from torch import Tensor
 from torch import distributed as dist
 from torch import nn
-from torch.nn import Conv3d
 
 from simpletuner.helpers.models.hunyuanvideo.commons.parallel_states import get_parallel_state
+
+MEMORY_LIMIT = 512 * 1024**2  # 512MB
 
 
 @dataclass
@@ -86,17 +87,28 @@ class PatchCausalConv3d(nn.Conv3d):
 
     def forward(self, input):
         T = input.shape[2]  # input: NCTHW
-        memory_count = torch.prod(torch.tensor(input.shape)).item() * 2 / 1024**3
-        if T > self.kernel_size[0] and memory_count > 0.6:
+        memory_count = torch.prod(torch.tensor(input.shape)).item() * 2 / MEMORY_LIMIT
+        part_num = int(memory_count / 2) + 1
+
+        if T > self.kernel_size[0] and memory_count > 0.6 and part_num >= 2:
+            if part_num > T // self.kernel_size[0]:
+                part_num = T // self.kernel_size[0]
             kernel_size = self.kernel_size[0]
-            part_num = int(memory_count / 2) + 1
             split_indices = self.find_split_indices(T, part_num)
-            input_chunks = torch.tensor_split(input, split_indices, dim=2) if len(split_indices) > 0 else [input]
-            if kernel_size > 1:
-                input_chunks = [input_chunks[0]] + [
-                    torch.cat((input_chunks[i - 1][:, :, -kernel_size + 1 :], input_chunks[i]), dim=2)
-                    for i in range(1, len(input_chunks))
-                ]
+
+            if len(split_indices) == 0 or kernel_size == 1:
+                input_chunks = torch.tensor_split(input, split_indices, dim=2) if len(split_indices) > 0 else [input]
+            else:
+                boundaries = [0] + split_indices + [T]
+                input_chunks = []
+                for i in range(len(boundaries) - 1):
+                    start = boundaries[i]
+                    end = boundaries[i + 1]
+                    overlap_start = max(start - kernel_size + 1, 0)
+                    if i == 0:
+                        input_chunks.append(input[:, :, start:end])
+                    else:
+                        input_chunks.append(input[:, :, overlap_start:end])
             output_chunks = []
             for input_chunk in input_chunks:
                 output_chunks.append(super().forward(input_chunk))
@@ -104,6 +116,34 @@ class PatchCausalConv3d(nn.Conv3d):
             return output
         else:
             return super().forward(input)
+
+
+class PatchConv3d(nn.Conv3d):
+    r"""Conv3d with efficient patch processing for large tensors."""
+
+    def forward(self, input):
+        assert (
+            self.kernel_size[0] == 1 and self.kernel_size[1] == 1 and self.kernel_size[2] == 1
+        ), "PatchConv3d only supports kernel_size=1 for now."
+        assert (
+            self.stride[0] == 1 and self.stride[1] == 1 and self.stride[2] == 1
+        ), "PatchConv3d only supports stride=1 for now."
+        assert (
+            self.padding[0] == 0 and self.padding[1] == 0 and self.padding[2] == 0
+        ), "PatchConv3d only supports padding=0 for now."
+
+        T = input.shape[2]  # input: NCTHW
+        memory_count = torch.prod(torch.tensor(input.shape)).item() * 2 / MEMORY_LIMIT
+        part_num = int(memory_count / 2) + 1
+
+        if T > self.kernel_size[0] and memory_count > 0.6 and part_num >= 2:
+            input_chunks = torch.tensor_split(input, part_num, dim=2)
+            output_chunks = []
+            for input_chunk in input_chunks:
+                output_chunks.append(super().forward(input_chunk))
+            output = torch.cat(output_chunks, dim=2)
+            return output
+        return super().forward(input)
 
 
 class RMS_norm(nn.Module):
@@ -190,16 +230,41 @@ def prepare_causal_attention_mask(n_frame: int, n_hw: int, dtype, device, batch_
 class AttnBlock(nn.Module):
     """Self-attention block for 3D video tensors."""
 
-    def __init__(self, in_channels: int):
+    def __init__(self, in_channels: int, enable_patch_conv: bool = False):
         super().__init__()
         self.in_channels = in_channels
 
         self.norm = RMS_norm(in_channels, images=False)
 
-        self.q = Conv3d(in_channels, in_channels, kernel_size=1)
-        self.k = Conv3d(in_channels, in_channels, kernel_size=1)
-        self.v = Conv3d(in_channels, in_channels, kernel_size=1)
-        self.proj_out = Conv3d(in_channels, in_channels, kernel_size=1)
+        conv_module = PatchConv3d if enable_patch_conv else nn.Conv3d
+        self.q = conv_module(in_channels, in_channels, kernel_size=1)
+        self.k = conv_module(in_channels, in_channels, kernel_size=1)
+        self.v = conv_module(in_channels, in_channels, kernel_size=1)
+        self.proj_out = conv_module(in_channels, in_channels, kernel_size=1)
+
+    def sliced_attention(self, h_: Tensor) -> Tensor:
+        h_ = self.norm(h_)
+        q = self.q(h_)
+        k = self.k(h_)
+        v = self.v(h_)
+
+        b, c, f, h, w = q.shape
+        seq_hw = h * w
+        q = rearrange(q, "b c f h w -> b 1 (f h w) c").contiguous()
+        k = rearrange(k, "b c f h w -> b 1 (f h w) c").contiguous()
+        v = rearrange(v, "b c f h w -> b 1 (f h w) c").contiguous()
+
+        out = torch.empty_like(q)
+        for frame in range(f):
+            frm_start = frame * seq_hw
+            frm_end = frm_start + seq_hw
+            q_slice = q[:, :, frm_start:frm_end, :]
+            k_slice = k[:, :, :frm_end, :]
+            v_slice = v[:, :, :frm_end, :]
+            out[:, :, frm_start:frm_end, :] = nn.functional.scaled_dot_product_attention(q_slice, k_slice, v_slice)
+
+        out = rearrange(out, "b 1 (f h w) c -> b c f h w", f=f, h=h, w=w)
+        return out
 
     def attention(self, h_: Tensor) -> Tensor:
         h_ = self.norm(h_)
@@ -217,25 +282,26 @@ class AttnBlock(nn.Module):
         return rearrange(h_, "b 1 (f h w) c -> b c f h w", f=f, h=h, w=w, c=c, b=b)
 
     def forward(self, x: Tensor) -> Tensor:
-        return x + self.proj_out(self.attention(x))
+        return x + self.proj_out(self.sliced_attention(x))
 
 
 class ResnetBlock(nn.Module):
     """ResNet-style block for 3D video tensors."""
 
-    def __init__(self, in_channels: int, out_channels: int):
+    def __init__(self, in_channels: int, out_channels: int, enable_patch_conv: bool = False):
         super().__init__()
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
 
         self.norm1 = RMS_norm(in_channels, images=False)
-        self.conv1 = CausalConv3d(in_channels, out_channels, kernel_size=3)
+        self.conv1 = CausalConv3d(in_channels, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         self.norm2 = RMS_norm(out_channels, images=False)
-        self.conv2 = CausalConv3d(out_channels, out_channels, kernel_size=3)
+        self.conv2 = CausalConv3d(out_channels, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
         if self.in_channels != self.out_channels:
-            self.nin_shortcut = Conv3d(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
+            conv_module = PatchConv3d if enable_patch_conv else nn.Conv3d
+            self.nin_shortcut = conv_module(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
 
     def forward(self, x):
         h = x
@@ -254,15 +320,96 @@ class ResnetBlock(nn.Module):
 
 class Downsample(nn.Module):
 
-    def __init__(self, in_channels: int, out_channels: int, add_temporal_downsample: bool = True):
+    def __init__(
+        self, in_channels: int, out_channels: int, add_temporal_downsample: bool = True, enable_patch_conv: bool = False
+    ):
         super().__init__()
         factor = 2 * 2 * 2 if add_temporal_downsample else 1 * 2 * 2
         assert out_channels % factor == 0
-        self.conv = CausalConv3d(in_channels, out_channels // factor, kernel_size=3)
+        self.conv = CausalConv3d(in_channels, out_channels // factor, kernel_size=3, enable_patch_conv=enable_patch_conv)
         self.add_temporal_downsample = add_temporal_downsample
         self.group_size = factor * in_channels // out_channels
 
-    def forward(self, x: Tensor):
+    def _forward_fast(self, x: Tensor):
+        r1 = 2 if self.add_temporal_downsample else 1
+        h = self.conv(x)
+        if self.add_temporal_downsample:
+            h_first = h[:, :, :1, :, :]
+            h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
+            h_first = torch.cat([h_first, h_first], dim=1)
+            h_next = h[:, :, 1:, :, :]
+            h_next = rearrange(h_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            h = torch.cat([h_first, h_next], dim=2)
+            # shortcut computation
+            x_first = x[:, :, :1, :, :]
+            x_first = rearrange(x_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
+            B, C, T, H, W = x_first.shape
+            x_first = x_first.view(B, h.shape[1], self.group_size // 2, T, H, W)
+            if self.group_size <= 2:
+                x_first = x_first[:, :, 0]
+            elif self.group_size == 4:
+                x_first = x_first[:, :, 0].add_(x_first[:, :, 1]).mul_(0.5)
+            elif self.group_size == 8:
+                x_first = x_first[:, :, 0].add_(x_first[:, :, 1]).add_(x_first[:, :, 2]).add_(x_first[:, :, 3]).mul_(0.25)
+            else:
+                assert False, f"Unsupported group_size: {self.group_size}"
+
+            x_next = x[:, :, 1:, :, :]
+            x_next = rearrange(x_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            B, C, T, H, W = x_next.shape
+            x_next = x_next.view(B, h.shape[1], self.group_size, T, H, W)
+            if self.group_size == 1:
+                x_next = x_next[:, :, 0]
+            elif self.group_size == 2:
+                x_next = x_next[:, :, 0].add_(x_next[:, :, 1]).mul_(0.5)
+            elif self.group_size == 4:
+                x_next = x_next[:, :, 0].add_(x_next[:, :, 1]).add_(x_next[:, :, 2]).add_(x_next[:, :, 3]).mul_(0.25)
+            elif self.group_size == 8:
+                x_next = (
+                    x_next[:, :, 0]
+                    .add_(x_next[:, :, 1])
+                    .add_(x_next[:, :, 2])
+                    .add_(x_next[:, :, 3])
+                    .add_(x_next[:, :, 4])
+                    .add_(x_next[:, :, 5])
+                    .add_(x_next[:, :, 6])
+                    .add_(x_next[:, :, 7])
+                    .mul_(0.125)
+                )
+            else:
+                assert False, f"Unsupported group_size: {self.group_size}"
+            shortcut = torch.cat([x_first, x_next], dim=2)
+        else:
+            h = rearrange(h, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            shortcut = rearrange(x, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            B, C, T, H, W = shortcut.shape
+            shortcut = shortcut.view(B, h.shape[1], self.group_size, T, H, W)
+            if self.group_size == 1:
+                shortcut = shortcut[:, :, 0]
+            elif self.group_size == 2:
+                shortcut = shortcut[:, :, 0].add_(shortcut[:, :, 1]).mul_(0.5)
+            elif self.group_size == 4:
+                shortcut = (
+                    shortcut[:, :, 0].add_(shortcut[:, :, 1]).add_(shortcut[:, :, 2]).add_(shortcut[:, :, 3]).mul_(0.25)
+                )
+            elif self.group_size == 8:
+                shortcut = (
+                    shortcut[:, :, 0]
+                    .add_(shortcut[:, :, 1])
+                    .add_(shortcut[:, :, 2])
+                    .add_(shortcut[:, :, 3])
+                    .add_(shortcut[:, :, 4])
+                    .add_(shortcut[:, :, 5])
+                    .add_(shortcut[:, :, 6])
+                    .add_(shortcut[:, :, 7])
+                    .mul_(0.125)
+                )
+            else:
+                assert False, f"Unsupported group_size: {self.group_size}"
+
+        return h + shortcut
+
+    def _forward(self, x: Tensor):
         r1 = 2 if self.add_temporal_downsample else 1
         h = self.conv(x)
         if self.add_temporal_downsample:
@@ -291,14 +438,19 @@ class Downsample(nn.Module):
 
         return h + shortcut
 
+    def forward(self, x: Tensor):
+        return self._forward_fast(x)
+
 
 class Upsample(nn.Module):
     """Hierarchical upsampling with temporal/ spatial support."""
 
-    def __init__(self, in_channels: int, out_channels: int, add_temporal_upsample: bool = True):
+    def __init__(
+        self, in_channels: int, out_channels: int, add_temporal_upsample: bool = True, enable_patch_conv: bool = False
+    ):
         super().__init__()
         factor = 2 * 2 * 2 if add_temporal_upsample else 1 * 2 * 2
-        self.conv = CausalConv3d(in_channels, out_channels * factor, kernel_size=3)
+        self.conv = CausalConv3d(in_channels, out_channels * factor, kernel_size=3, enable_patch_conv=enable_patch_conv)
         self.add_temporal_upsample = add_temporal_upsample
         self.repeats = factor * out_channels // in_channels
 
@@ -342,6 +494,7 @@ class Encoder(nn.Module):
         ffactor_spatial: int,
         ffactor_temporal: int,
         downsample_match_channel: bool = True,
+        enable_patch_conv: bool = False,
     ):
         super().__init__()
         assert block_out_channels[-1] % (2 * z_channels) == 0
@@ -351,7 +504,7 @@ class Encoder(nn.Module):
         self.num_res_blocks = num_res_blocks
 
         # downsampling
-        self.conv_in = CausalConv3d(in_channels, block_out_channels[0], kernel_size=3)
+        self.conv_in = CausalConv3d(in_channels, block_out_channels[0], kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         self.down = nn.ModuleList()
         block_in = block_out_channels[0]
@@ -359,7 +512,7 @@ class Encoder(nn.Module):
             block = nn.ModuleList()
             block_out = ch
             for _ in range(self.num_res_blocks):
-                block.append(ResnetBlock(in_channels=block_in, out_channels=block_out))
+                block.append(ResnetBlock(in_channels=block_in, out_channels=block_out, enable_patch_conv=enable_patch_conv))
                 block_in = block_out
             down = nn.Module()
             down.block = block
@@ -371,19 +524,21 @@ class Encoder(nn.Module):
             if add_spatial_downsample or add_temporal_downsample:
                 assert i_level < len(block_out_channels) - 1
                 block_out = block_out_channels[i_level + 1] if downsample_match_channel else block_in
-                down.downsample = Downsample(block_in, block_out, add_temporal_downsample)
+                down.downsample = Downsample(
+                    block_in, block_out, add_temporal_downsample, enable_patch_conv=enable_patch_conv
+                )
                 block_in = block_out
             self.down.append(down)
 
         # middle
         self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in)
-        self.mid.attn_1 = AttnBlock(block_in)
-        self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in)
+        self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.attn_1 = AttnBlock(block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
 
         # end
         self.norm_out = RMS_norm(block_in, images=False)
-        self.conv_out = CausalConv3d(block_in, 2 * z_channels, kernel_size=3)
+        self.conv_out = CausalConv3d(block_in, 2 * z_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         self.gradient_checkpointing = False
 
@@ -426,6 +581,7 @@ class Decoder(nn.Module):
         ffactor_spatial: int,
         ffactor_temporal: int,
         upsample_match_channel: bool = True,
+        enable_patch_conv: bool = False,
     ):
         super().__init__()
         assert block_out_channels[0] % z_channels == 0
@@ -435,13 +591,13 @@ class Decoder(nn.Module):
         self.num_res_blocks = num_res_blocks
 
         block_in = block_out_channels[0]
-        self.conv_in = CausalConv3d(z_channels, block_in, kernel_size=3)
+        self.conv_in = CausalConv3d(z_channels, block_in, kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         # middle
         self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in)
-        self.mid.attn_1 = AttnBlock(block_in)
-        self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in)
+        self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.attn_1 = AttnBlock(block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
 
         # upsampling
         self.up = nn.ModuleList()
@@ -449,7 +605,7 @@ class Decoder(nn.Module):
             block = nn.ModuleList()
             block_out = ch
             for _ in range(self.num_res_blocks + 1):
-                block.append(ResnetBlock(in_channels=block_in, out_channels=block_out))
+                block.append(ResnetBlock(in_channels=block_in, out_channels=block_out, enable_patch_conv=enable_patch_conv))
                 block_in = block_out
             up = nn.Module()
             up.block = block
@@ -459,13 +615,13 @@ class Decoder(nn.Module):
             if add_spatial_upsample or add_temporal_upsample:
                 assert i_level < len(block_out_channels) - 1
                 block_out = block_out_channels[i_level + 1] if upsample_match_channel else block_in
-                up.upsample = Upsample(block_in, block_out, add_temporal_upsample)
+                up.upsample = Upsample(block_in, block_out, add_temporal_upsample, enable_patch_conv=enable_patch_conv)
                 block_in = block_out
             self.up.append(up)
 
         # end
         self.norm_out = RMS_norm(block_in, images=False)
-        self.conv_out = CausalConv3d(block_in, out_channels, kernel_size=3)
+        self.conv_out = CausalConv3d(block_in, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         self.gradient_checkpointing = False
 
@@ -517,6 +673,7 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
         shift_factor: Optional[float] = None,
         downsample_match_channel: bool = True,
         upsample_match_channel: bool = True,
+        enable_patch_conv: bool = False,
     ):
         super().__init__()
         self.ffactor_spatial = ffactor_spatial
@@ -532,6 +689,7 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
             ffactor_spatial=ffactor_spatial,
             ffactor_temporal=ffactor_temporal,
             downsample_match_channel=downsample_match_channel,
+            enable_patch_conv=enable_patch_conv,
         )
         self.decoder = Decoder(
             z_channels=latent_channels,
@@ -541,6 +699,7 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
             ffactor_spatial=ffactor_spatial,
             ffactor_temporal=ffactor_temporal,
             upsample_match_channel=upsample_match_channel,
+            enable_patch_conv=enable_patch_conv,
         )
 
         self.use_slicing = False

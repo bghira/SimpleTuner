@@ -813,6 +813,7 @@ usage: train.py [-h] --model_family
                 [--vae_cache_scan_behaviour {recreate,sync}]
                 [--vae_enable_slicing [VAE_ENABLE_SLICING]]
                 [--vae_enable_tiling [VAE_ENABLE_TILING]]
+                [--vae_enable_patch_conv [VAE_ENABLE_PATCH_CONV]]
                 [--vae_batch_size VAE_BATCH_SIZE]
                 [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                 [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
@@ -1186,6 +1187,9 @@ options:
                         Enable VAE attention slicing for memory efficiency
   --vae_enable_tiling [VAE_ENABLE_TILING]
                         Enable VAE tiling for large images
+  --vae_enable_patch_conv [VAE_ENABLE_PATCH_CONV]
+                        Enable patch-based 3D conv for HunyuanVideo VAE to
+                        reduce peak VRAM (slight slowdown)
   --vae_batch_size VAE_BATCH_SIZE
                         Batch size for VAE encoding during caching
   --caption_dropout_probability CAPTION_DROPOUT_PROBABILITY

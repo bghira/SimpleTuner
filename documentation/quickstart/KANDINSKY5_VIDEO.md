@@ -14,6 +14,7 @@ This setup is VRAM-intensive, though the "Lite" and "Pro" variants have differen
 - **Lite Model Training**: Surprisingly efficient, capable of training on **~13GB VRAM**.
   - **Note**: The initial **VAE pre-caching step** requires significantly more VRAM due to the massive HunyuanVideo VAE. You may need to use CPU offloading or a larger GPU just for the caching phase.
   - **Tip**: Set `"offload_during_startup": true` in your `config.json` to ensure the VAE and text encoder are not loaded to the GPU at the same time, which significantly reduces pre-caching memory pressure.
+  - **If VAE OOMs**: Set `--vae_enable_patch_conv=true` to slice HunyuanVideo VAE 3D convs; expect a small speed hit but lower peak VRAM.
 - **Pro Model Training**: Requires **FSDP2** (multi-gpu) or aggressive **Group Offload** with LoRA to fit on consumer hardware. Specific VRAM/RAM requirements have not been established, but "the more, the merrier" applies.
 - **System RAM**: Testing was comfortable on a system with **45GB** RAM for the Lite model. 64GB+ is recommended to be safe.
 

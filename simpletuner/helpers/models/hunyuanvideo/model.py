@@ -163,6 +163,9 @@ class HunyuanVideo(VideoModelFoundation):
             "force_upcast": False,
             "variant": self.config.variant,
         }
+        if getattr(self.config, "vae_enable_patch_conv", False):
+            logger.info("Enabling VAE patch-based convolution for HunyuanVideo VAE.")
+            self.config.vae_kwargs["enable_patch_conv"] = True
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
         if self.vae is None:

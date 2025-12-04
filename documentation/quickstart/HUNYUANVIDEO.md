@@ -124,8 +124,8 @@ Key configuration overrides for HunyuanVideo:
 ```json
 {
   "model_type": "lora",
-  "model_family": "hunyuan_video",
-  "pretrained_model_name_or_path": "tencent/HunyuanVideo",
+  "model_family": "hunyuanvideo",
+  "pretrained_model_name_or_path": "tencent/HunyuanVideo-1.5",
   "model_flavour": "t2v-480p",
   "output_dir": "output/hunyuan-video",
   "validation_resolution": "854x480",
@@ -212,7 +212,8 @@ simpletuner train
 
 - **Group Offload**: Essential for consumer GPUs. Ensure `enable_group_offload` is true.
 - **Resolution**: Stick to 480p (`854x480` or similar) if you have limited VRAM. 720p (`1280x720`) increases memory usage significantly.
-- **Quantization**: Not yet fully standardized for Hunyuan in SimpleTuner, but `base_model_precision` can be experimented with if available.
+- **Quantization**: Use `base_model_precision` (`bf16` default); `int8-torchao` works for further savings at the cost of speed.
+- **VAE patch convolution**: For HunyuanVideo VAE OOMs, set `--vae_enable_patch_conv=true` (or toggle in the UI). This slices 3D conv/attention work to lower peak VRAM; expect a small throughput hit.
 
 ### Image-to-Video (I2V)
 
