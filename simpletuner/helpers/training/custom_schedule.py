@@ -1415,7 +1415,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             pred_velocity = model_output
         else:
             raise ValueError(
-                f"prediction_type given as {self.config.prediction_type} must be one of `epsilon` or `velocity`."
+                f"prediction_type given as {self.config.prediction_type} must be one of 'epsilon', 'ddim_eps', 'diff_eps', 'flow_matching', or 'velocity'."
             )
 
         _, next_timestep = self._resolve_timestep_index(timestep)
