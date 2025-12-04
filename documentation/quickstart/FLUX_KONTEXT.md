@@ -45,6 +45,9 @@ Two `conditioning_type` modes are available for Kontext:
 
 Below is the *smallest* set of changes you need in `config/config.json` compared with your typical Flux training configuration.
 
+<details>
+<summary>View example config</summary>
+
 ```jsonc
 {
   "model_family":   "flux",
@@ -61,8 +64,13 @@ Below is the *smallest* set of changes you need in `config/config.json` compared
   "conditioning_multidataset_sampling": "random"    // <-- setting this to "combined" when you have two conditioning datasets defined will show them simultaneously instead of switching between them.
 }
 ```
+</details>
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -70,11 +78,16 @@ SimpleTuner includes experimental features that can significantly improve traini
 
 > ⚠️ These features increase the computational overhead of training.
 
+</details>
+
 ### Dataloader snippet (multi‑data‑backend)
 
 If you've manually curated an image-pair dataset, you can configure it using two separate directories: one for the edit images and one for the reference images.
 
 The `conditioning_data` field in the edit dataset should point to the reference dataset's `id`.
+
+<details>
+<summary>View example config</summary>
 
 ```jsonc
 [
@@ -103,6 +116,7 @@ The `conditioning_data` field in the edit dataset should point to the reference 
   }
 ]
 ```
+</details>
 
 *Every edit image **must** have 1‑to‑1 matching file names and extensions in both dataset folders. SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
 
@@ -114,13 +128,20 @@ Here's an example configuration that uses a training set with 200,000 samples an
 
 In your `config.json` you'll want to add:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "eval_dataset_id": "edited-images",
 }
 ```
+</details>
 
 For your `multidatabackend.json`, `edited-images` and `reference-images` should contain validation data with the same layout as a usual training split.
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -206,6 +227,7 @@ For your `multidatabackend.json`, `edited-images` and `reference-images` should 
     }
 ]
 ```
+</details>
 
 ### Automatic Reference-Edit Pair Generation
 
@@ -216,6 +238,9 @@ If you don't have pre-existing reference-edit pairs, SimpleTuner can automatical
 - Other restoration tasks
 
 #### Example: Deblurring Training Dataset
+
+<details>
+<summary>View example config</summary>
 
 ```jsonc
 [
@@ -245,6 +270,7 @@ If you don't have pre-existing reference-edit pairs, SimpleTuner can automatical
   }
 ]
 ```
+</details>
 
 This configuration will:
 1. Create blurred versions (these become the "reference" images) from your high-quality sharp images
@@ -254,6 +280,9 @@ This configuration will:
 > **NOTE**: You can't define `captions` on a conditioning dataset when using `conditioning_multidataset_sampling=combined`. The edit dataset's captions will be used instead.
 
 #### Example: JPEG Artifact Removal
+
+<details>
+<summary>View example config</summary>
 
 ```jsonc
 [
@@ -282,6 +311,7 @@ This configuration will:
   }
 ]
 ```
+</details>
 
 #### Important Notes
 

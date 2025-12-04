@@ -144,11 +144,17 @@ There, you will possibly need to modify the following variables:
 
 ### Advanced Experimental Features
 
+<details>
+<summary>Show advanced experimental details</summary>
+
+
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
 *   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
+
+</details>
 
 ### Assistant LoRA (Turbo)
 
@@ -167,22 +173,33 @@ Inside `config/config.json` is the "primary validation prompt", which is typical
 
 The example config file `config/user_prompt_library.json.example` contains the following format:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "nickname": "the prompt goes here",
   "another_nickname": "another prompt goes here"
 }
 ```
+</details>
 
 The nicknames are the filename for the validation, so keep them short and compatible with your filesystem.
 
 To point the trainer to this prompt library, add it to TRAINER_EXTRA_ARGS by adding a new line at the end of `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
   "--user_prompt_library": "config/user_prompt_library.json",
 ```
+</details>
 
 A set of diverse prompts will help determine whether the model is collapsing as it trains. In this example, the word `<token>` should be replaced with your subject name (instance_prompt).
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -203,6 +220,7 @@ A set of diverse prompts will help determine whether the model is collapsing as 
     "family": "a heartwarming and cohesive family portrait, showcasing the bonds and connections between loved ones"
 }
 ```
+</details>
 
 > ℹ️ Z-Image is a flow-matching model and shorter prompts that have strong similarities will result in practically the same image being produced. Use longer, more descriptive prompts.
 
@@ -219,12 +237,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration
@@ -242,12 +264,16 @@ TorchAO or other quantisation can reduce precision and VRAM requirements - Optim
 
 For `config.json` users:
 
+<details>
+<summary>View example config</summary>
+
 ```json
   "base_model_precision": "int8-torchao",
   "lora_rank": 16,
   "max_grad_norm": 1.0,
   "base_model_default_dtype": "bf16"
 ```
+</details>
 
 ### Dataset considerations
 
@@ -256,6 +282,9 @@ For `config.json` users:
 Keep your dataset large enough (at least `train_batch_size * gradient_accumulation_steps`, and more than `vae_batch_size`). Increase `repeats` if you see **no images detected in dataset**.
 
 Example multi-backend config (`config/multidatabackend.json`):
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -322,6 +351,7 @@ Example multi-backend config (`config/multidatabackend.json`):
   }
 ]
 ```
+</details>
 
 Running 512px and 1024px datasets concurrently is supported and can improve convergence.
 
@@ -441,6 +471,9 @@ Z-Image will absorb bad image artifacts early. A final pass on high-quality data
 
 Some fine-tuned checkpoints may lack full directory structure. Set these fields appropriately if needed:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "model_family": "z-image",
@@ -450,6 +483,7 @@ Some fine-tuned checkpoints may lack full directory structure. Set these fields 
     "pretrained_transformer_subfolder": "none"
 }
 ```
+</details>
 
 ## Troubleshooting
 

@@ -76,6 +76,9 @@ cp config/config.json.example config/config.json
 
 There, you will need to modify the following variables:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "model_type": "lora",
@@ -88,6 +91,7 @@ There, you will need to modify the following variables:
   "user_prompt_library": "config/user_prompt_library.json"
 }
 ```
+</details>
 
 
 - `pretrained_model_name_or_path` - Set this to `stabilityai/stable-diffusion-3.5-large`. Note that you will need to log in to Huggingface and be granted access to download this model. We will go over logging in to Huggingface later in this tutorial.
@@ -104,6 +108,10 @@ There are a few more if using a Mac M-series machine:
 - `mixed_precision` should be set to `no`.
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -132,6 +140,8 @@ Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to r
 For `config.env` users (deprecated):
 
 ```bash
+</details>
+
 # choices: int8-quanto, int4-quanto, int2-quanto, fp8-quanto
 # int8-quanto was tested with a single subject dreambooth LoRA.
 # fp8-quanto does not work on Apple systems. you must use int levels.
@@ -156,6 +166,9 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 In your `/home/user/simpletuner/config` directory, create a multidatabackend.json:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -188,6 +201,7 @@ In your `/home/user/simpletuner/config` directory, create a multidatabackend.jso
   }
 ]
 ```
+</details>
 
 Then, create a `datasets` directory:
 
@@ -240,6 +254,9 @@ StabilityAI recommends enabling SLG (Skip-layer guidance) on SD 3.5 Medium infer
 
 The following values are recommended for `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "--validation_guidance_skip_layers": [7, 8, 9],
@@ -251,6 +268,7 @@ The following values are recommended for `config.json`:
   "--flow_schedule_auto_shift": true
 }
 ```
+</details>
 
 - `..skip_scale` determines how much to scale the positive prompt prediction during skip-layer guidance. The default value of 2.8 is safe for the base model's skip value of `7, 8, 9` but will need to be increased if more layers are skipped, doubling it for each additional layer.
 - `..skip_layers` tells which layers to skip during the negative prompt prediction.
@@ -340,12 +358,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration

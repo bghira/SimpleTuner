@@ -81,6 +81,9 @@ There, you will need to modify the following variables:
 
 This goes into `config.json`
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "base_model_precision": "int8-torchao",
@@ -125,10 +128,15 @@ This goes into `config.json`
     "validation_step_interval": 50
 }
 ```
+</details>
 
 For Lycoris training, switch `lora_type` to `lycoris`
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -197,6 +205,8 @@ Create your dataset directory. Be sure to update this path with your actual loca
 
 ```bash
 mkdir -p /datasets/training
+</details>
+
 # Place your images and caption files in /datasets/training/
 ```
 

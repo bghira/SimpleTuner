@@ -106,6 +106,9 @@ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environm
 
 At the end, your config should resemble:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "resume_from_checkpoint": "latest",
@@ -156,8 +159,13 @@ At the end, your config should resemble:
   "ignore_final_epochs": true
 }
 ```
+</details>
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -214,6 +222,8 @@ A set of diverse prompts will help determine whether the model is collapsing as 
 
 This should not be enabled for video model training, at the present time.
 
+</details>
+
 # Stable evaluation loss
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
@@ -224,12 +234,16 @@ SimpleTuner supports streaming intermediate validation previews during generatio
 
 To enable:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 
@@ -261,6 +275,9 @@ Depending on the dataset you have, you will need to set up your dataset director
 In this example, we will be using [video-dataset-disney-organized](https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -296,6 +313,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   }
 ]
 ```
+</details>
 
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many frames of data we'll train on.

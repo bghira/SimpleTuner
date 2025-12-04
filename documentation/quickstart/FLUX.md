@@ -145,11 +145,17 @@ There, you will possibly need to modify the following variables:
 
 ### Advanced Experimental Features
 
+<details>
+<summary>Show advanced experimental details</summary>
+
+
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
 *   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
+
+</details>
 
 ### Memory offloading (optional)
 
@@ -174,22 +180,33 @@ Inside `config/config.json` is the "primary validation prompt", which is typical
 
 The example config file `config/user_prompt_library.json.example` contains the following format:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "nickname": "the prompt goes here",
   "another_nickname": "another prompt goes here"
 }
 ```
+</details>
 
 The nicknames are the filename for the validation, so keep them short and compatible with your filesystem.
 
 To point the trainer to this prompt library, add it to TRAINER_EXTRA_ARGS by adding a new line at the end of `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
   "--user_prompt_library": "config/user_prompt_library.json",
 ```
+</details>
 
 A set of diverse prompt will help determine whether the model is collapsing as it trains. In this example, the word `<token>` should be replaced with your subject name (instance_prompt).
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -210,6 +227,7 @@ A set of diverse prompt will help determine whether the model is collapsing as i
     "family": "a heartwarming and cohesive family portrait, showcasing the bonds and connections between loved ones"
 }
 ```
+</details>
 
 > ℹ️ Flux is a flow-matching model and shorter prompts that have strong similarities will result in practically the same image being produced by the model. Be sure to use longer, more descriptive prompts.
 
@@ -226,12 +244,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration
@@ -267,6 +289,9 @@ Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to r
 
 For `config.json` users:
 
+<details>
+<summary>View example config</summary>
+
 ```json
   "base_model_precision": "int8-quanto",
   "text_encoder_1_precision": "no_change",
@@ -275,6 +300,7 @@ For `config.json` users:
   "max_grad_norm": 1.0,
   "base_model_default_dtype": "bf16"
 ```
+</details>
 
 ##### LoRA-specific settings (not LyCORIS)
 
@@ -305,6 +331,9 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -371,6 +400,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   }
 ]
 ```
+</details>
 
 > ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence for Flux.
 
@@ -524,6 +554,9 @@ If you are training a subject or style and would like to mask one or the other, 
 
 Add this to your `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "tread_config": {
@@ -537,6 +570,7 @@ Add this to your `config.json`:
   }
 }
 ```
+</details>
 
 This configuration will:
 
@@ -670,6 +704,9 @@ Some fine-tuned Flux models on Hugging Face Hub (such as Dev2Pro) lack the full 
 
 Make sure to set these options `flux_guidance_value`,  `validation_guidance_real` and `flux_attention_masked_training` according to the way the creator did as well if that information is available.
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "model_family": "flux",
@@ -679,3 +716,4 @@ Make sure to set these options `flux_guidance_value`,  `validation_guidance_real
     "pretrained_transformer_subfolder": "none",
 }
 ```
+</details>

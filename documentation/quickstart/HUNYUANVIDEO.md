@@ -14,6 +14,9 @@ Hunyuan Video 1.5 is a large model (8.3B parameters).
 
 Add the following to your `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "enable_group_offload": true,
@@ -22,6 +25,7 @@ Add the following to your `config.json`:
   "group_offload_use_stream": true
 }
 ```
+</details>
 
 - `--group_offload_use_stream`: Only works on CUDA devices.
 - **Do not** combine this with `--enable_model_cpu_offload`.
@@ -121,6 +125,9 @@ cp config/config.json.example config/config.json
 
 Key configuration overrides for HunyuanVideo:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "model_type": "lora",
@@ -142,6 +149,7 @@ Key configuration overrides for HunyuanVideo:
   "dataset_backend_config": "config/multidatabackend.json"
 }
 ```
+</details>
 
 - `model_flavour` options:
   - `t2v-480p` (Default)
@@ -151,6 +159,10 @@ Key configuration overrides for HunyuanVideo:
 - `validation_num_video_frames`: Must be `(frames - 1) % 4 == 0`. E.g., 61, 129.
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -197,6 +209,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 wandb login
 huggingface-cli login
 ```
+
+</details>
 
 ### Executing the training run
 

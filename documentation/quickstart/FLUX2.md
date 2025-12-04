@@ -92,6 +92,9 @@ Access http://localhost:8001 and select FLUX.2 as the model family.
 
 Create `config/config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "model_type": "lora",
@@ -113,6 +116,7 @@ Create `config/config.json`:
   "lora_rank": 16
 }
 ```
+</details>
 
 ### Key Configuration Options
 
@@ -120,14 +124,21 @@ Create `config/config.json`:
 
 FLUX.2 uses guidance embedding similar to FLUX.1:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "flux_guidance_mode": "constant",
   "flux_guidance_value": 1.0
 }
 ```
+</details>
 
 Or for random guidance during training:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -136,10 +147,14 @@ Or for random guidance during training:
   "flux_guidance_max": 5.0
 }
 ```
+</details>
 
 #### Quantization (Memory Optimization)
 
 For reduced VRAM usage:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -148,10 +163,14 @@ For reduced VRAM usage:
   "base_model_default_dtype": "bf16"
 }
 ```
+</details>
 
 #### TREAD (Training Acceleration)
 
 FLUX.2 supports TREAD for faster training:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -162,8 +181,13 @@ FLUX.2 supports TREAD for faster training:
   }
 }
 ```
+</details>
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -171,9 +195,14 @@ SimpleTuner includes experimental features that can significantly improve traini
 
 > ⚠️ These features increase the computational overhead of training.
 
+</details>
+
 ### Dataset Configuration
 
 Create `config/multidatabackend.json`:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -203,6 +232,7 @@ Create `config/multidatabackend.json`:
   }
 ]
 ```
+</details>
 
 ### LoRA Targets
 
@@ -213,11 +243,15 @@ Available LoRA target presets:
 - `mlp`: Only MLP/feed-forward layers
 - `tiny`: Minimal training (just qkv layers)
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "--flux_lora_target": "all"
 }
 ```
+</details>
 
 ## Training
 
@@ -258,6 +292,9 @@ The `--group_offload_text_encoder` flag is recommended for FLUX.2 since the 24B 
 
 Create `config/user_prompt_library.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "portrait_subject": "a professional portrait photograph of <subject>, studio lighting, high detail",
@@ -265,6 +302,7 @@ Create `config/user_prompt_library.json`:
   "cinematic_subject": "a cinematic shot of <subject>, dramatic lighting, film grain"
 }
 ```
+</details>
 
 ## Inference
 
@@ -322,6 +360,9 @@ Mistral-3 is large; consider:
 
 TREAD (Token Routing for Efficient Architecture-agnostic Diffusion) speeds up training by selectively processing tokens:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "tread_config": {
@@ -335,6 +376,7 @@ TREAD (Token Routing for Efficient Architecture-agnostic Diffusion) speeds up tr
   }
 }
 ```
+</details>
 
 - `selection_ratio`: Fraction of tokens to keep (0.5 = 50%)
 - `start_layer_idx`: First layer to apply routing
