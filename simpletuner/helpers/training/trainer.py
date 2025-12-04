@@ -47,7 +47,7 @@ from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
-from simpletuner.helpers.training.custom_schedule import get_lr_scheduler
+from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler, get_lr_scheduler
 from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
@@ -236,6 +236,7 @@ SCHEDULER_NAME_MAP = {
     "unipc": UniPCMultistepScheduler,
     "ddim": DDIMScheduler,
     "ddpm": DDPMScheduler,
+    "perflow": PeRFlowScheduler,
 }
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",

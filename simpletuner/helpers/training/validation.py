@@ -52,6 +52,7 @@ from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.script_runner import build_script_command, run_hook_script
@@ -83,6 +84,7 @@ SCHEDULER_NAME_MAP = {
     "dpm++": DPMSolverMultistepScheduler,
     "sana": FlowMatchEulerDiscreteScheduler,
     "rectified_flow_ab2": RectifiedFlowAB2Scheduler,
+    "perflow": PeRFlowScheduler,
 }
 
 import logging
@@ -1814,6 +1816,8 @@ class Validation:
             scheduler_args.setdefault("sigma_data", getattr(self.model, "sigma_data", 1.0))
             scheduler_args.setdefault("final_sigmas_type", getattr(self.model, "final_sigmas_type", "sigma_min"))
             scheduler_args.setdefault("order", getattr(self.model, "sigma_schedule_order", 7.0))
+            scheduler = scheduler_cls(**scheduler_args)
+        elif scheduler_cls is PeRFlowScheduler:
             scheduler = scheduler_cls(**scheduler_args)
         else:
             scheduler = scheduler_cls.from_pretrained(
