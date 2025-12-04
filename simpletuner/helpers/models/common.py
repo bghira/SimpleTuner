@@ -2117,7 +2117,7 @@ class ModelFoundation(ABC):
         if not self.config.diff2flow_enabled:
             return
         alphas_cumprod = getattr(self.noise_schedule, "alphas_cumprod", None)
-        if alphas_cumprod is None:
+        if alphas_cumprod is None or not torch.is_tensor(alphas_cumprod):
             logger.warning("Diff2Flow requested but scheduler lacks alphas_cumprod; disabling.")
             self.config.diff2flow_enabled = False
             return
