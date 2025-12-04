@@ -248,6 +248,23 @@ def register_data_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # VAE Enable Patch Convolution
+    registry._add_field(
+        ConfigField(
+            name="vae_enable_patch_conv",
+            arg_name="--vae_enable_patch_conv",
+            ui_label="Enable VAE Patch Convolution",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="vae_config",
+            default_value=False,
+            help_text="Process VAE conv layers in temporal patches to lower memory usage.",
+            tooltip="Useful for HunyuanVideo VAE on limited VRAM; may slightly reduce throughput.",
+            importance=ImportanceLevel.ADVANCED,
+            order=23,
+        )
+    )
+
     # VAE Batch Size
     registry._add_field(
         ConfigField(
