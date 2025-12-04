@@ -43,8 +43,9 @@ class ZImage(ImageModelFoundation):
         "base": "TONGYI-MAI/Z-Image-Base",
         "turbo": "TONGYI-MAI/Z-Image-Turbo",
         "turbo-ostris-v2": "TONGYI-MAI/Z-Image-Turbo",
+        "ostris-de-turbo": "ostris/Z-Image-De-Turbo",
     }
-    DEFAULT_MODEL_FLAVOUR = "base"
+    DEFAULT_MODEL_FLAVOUR = "turbo-ostris-v2"
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
