@@ -4,6 +4,7 @@ import os
 from typing import Dict, Optional
 
 import torch
+import torch.nn.functional as F
 from diffusers import AutoencoderKLHunyuanVideo
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
 
@@ -20,6 +21,70 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+
+def _patch_diffusers_hunyuanvideo_conv(memory_limit: int = 512 * 1024**2):
+    """
+    Monkeypatch diffusers' HunyuanVideo VAE Conv3d to split along time for lower peak VRAM.
+    """
+    from diffusers.models.autoencoders import autoencoder_kl_hunyuan_video as hv_mod
+
+    if getattr(hv_mod, "_st_patch_conv_applied", False):
+        return hv_mod.HunyuanVideoCausalConv3d
+
+    def find_split_indices(seq_len: int, part_num: int, stride: int):
+        ideal_interval = seq_len / part_num
+        possible_indices = list(range(0, seq_len, stride))
+        selected_indices = []
+
+        for i in range(1, part_num):
+            closest = min(possible_indices, key=lambda x: abs(x - round(i * ideal_interval)))
+            if closest not in selected_indices:
+                selected_indices.append(closest)
+
+        merged_indices = []
+        prev_idx = 0
+        for idx in selected_indices:
+            if idx - prev_idx >= stride:
+                merged_indices.append(idx)
+                prev_idx = idx
+
+        return merged_indices
+
+    def patched_forward(self, hidden_states: torch.Tensor):
+        hidden_states = F.pad(hidden_states, self.time_causal_padding, mode=self.pad_mode)
+        T = hidden_states.shape[2]
+        kernel_size = self.conv.kernel_size[0]
+        stride = self.conv.stride[0]
+        memory_count = torch.prod(torch.tensor(hidden_states.shape)).item() * 2 / memory_limit
+        part_num = int(memory_count / 2) + 1
+
+        if T > kernel_size and memory_count > 0.6 and part_num >= 2:
+            max_parts = max(1, T // kernel_size)
+            if part_num > max_parts:
+                part_num = max_parts
+            split_indices = find_split_indices(T, part_num, stride)
+            if len(split_indices) == 0 or kernel_size == 1:
+                input_chunks = torch.tensor_split(hidden_states, split_indices, dim=2) if split_indices else [hidden_states]
+            else:
+                boundaries = [0] + split_indices + [T]
+                input_chunks = []
+                for i in range(len(boundaries) - 1):
+                    start = boundaries[i]
+                    end = boundaries[i + 1]
+                    overlap_start = max(start - kernel_size + 1, 0)
+                    if i == 0:
+                        input_chunks.append(hidden_states[:, :, start:end])
+                    else:
+                        input_chunks.append(hidden_states[:, :, overlap_start:end])
+            output_chunks = [self.conv(chunk) for chunk in input_chunks]
+            return torch.cat(output_chunks, dim=2)
+
+        return self.conv(hidden_states)
+
+    hv_mod.HunyuanVideoCausalConv3d.forward = patched_forward
+    hv_mod._st_patch_conv_applied = True
+    return hv_mod.HunyuanVideoCausalConv3d
 
 
 class Kandinsky5Video(VideoModelFoundation):
@@ -112,12 +177,22 @@ class Kandinsky5Video(VideoModelFoundation):
             "attention_masks": attention_mask,
         }
 
+    def load_vae(self, move_to_device: bool = True):
+        if getattr(self.config, "vae_enable_patch_conv", False):
+            logger.info("Enabling patch-based HunyuanVideo VAE conv for Kandinsky5 Video.")
+            _patch_diffusers_hunyuanvideo_conv()
+        return super().load_vae(move_to_device)
+
     def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]
         pooled_prompt_embeds = text_embedding["pooled_prompt_embeds"]
         attention_mask = text_embedding.get("attention_masks")
 
-        prompt_cu_seqlens = None
+        return {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "attention_masks": attention_mask,
+        }
         if attention_mask is not None:
             prompt_cu_seqlens = torch.cumsum(attention_mask.sum(1), dim=0)
             prompt_cu_seqlens = torch.cat([torch.zeros_like(prompt_cu_seqlens)[:1], prompt_cu_seqlens]).to(dtype=torch.int32)
