@@ -38,24 +38,35 @@ class ZImage(ImageModelFoundation):
         "turbo-ostris-v2": "zimage_turbo_training_adapter_v2.safetensors",
     }
 
+    TRANSFORMER_PATH_OVERRIDES = {
+        "ostris-de-turbo": "ostris/Z-Image-De-Turbo",
+    }
+
     # We do not bundle a default HF path; users must point at a released checkpoint.
     HUGGINGFACE_PATHS: dict = {
         "base": "TONGYI-MAI/Z-Image-Base",
         "turbo": "TONGYI-MAI/Z-Image-Turbo",
         "turbo-ostris-v2": "TONGYI-MAI/Z-Image-Turbo",
-        "ostris-de-turbo": "ostris/Z-Image-De-Turbo",
+        "ostris-de-turbo": "TONGYI-MAI/Z-Image-Turbo",
     }
     DEFAULT_MODEL_FLAVOUR = "turbo-ostris-v2"
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
-            "name": "Z-Image text encoder",
+            "name": "Qwen3 4B",
             "tokenizer": AutoTokenizer,
             "tokenizer_subfolder": "tokenizer",
             "model": AutoModelForCausalLM,
             "subfolder": "text_encoder",
         },
     }
+
+    def setup_model_flavour(self):
+        super().setup_model_flavour()
+        flavour = getattr(self.config, "model_flavour", None)
+        override_map = getattr(self, "TRANSFORMER_PATH_OVERRIDES", {})
+        if getattr(self.config, "pretrained_transformer_model_name_or_path", None) is None and flavour in override_map:
+            self.config.pretrained_transformer_model_name_or_path = override_map[flavour]
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)
