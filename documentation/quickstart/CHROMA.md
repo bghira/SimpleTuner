@@ -63,6 +63,9 @@ The UI will be available at http://localhost:8001.
 
 ### Example manual configuration snippet
 
+<details>
+<summary>View example config</summary>
+
 ```jsonc
 {
   "model_type": "lora",
@@ -76,16 +79,23 @@ The UI will be available at http://localhost:8001.
   "pretrained_model_name_or_path": null
 }
 ```
+</details>
 
 > ⚠️ If Hugging Face access is slow in your region, export `HF_ENDPOINT=https://hf-mirror.com` before launching.
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
 *   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
 
 > ⚠️ These features increase the computational overhead of training.
+
+</details>
 
 ## Dataset & dataloader
 

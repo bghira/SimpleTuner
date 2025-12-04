@@ -24,6 +24,9 @@ For almost any single-GPU setup training the **Pro** model, you **must** enable 
 
 Add this to your `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "enable_group_offload": true,
@@ -32,6 +35,7 @@ Add this to your `config.json`:
   "group_offload_use_stream": true
 }
 ```
+</details>
 
 ## Prerequisites
 
@@ -97,6 +101,10 @@ Key settings for Kandinsky 5 Video:
 
 ### Advanced Experimental Features
 
+<details>
+<summary>Show advanced experimental details</summary>
+
+
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
 *   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
@@ -138,6 +146,8 @@ Video datasets require careful setup. Create `config/multidatabackend.json`:
 
 ```bash
 mkdir -p datasets/videos
+</details>
+
 # Place .mp4 / .mov files here.
 # Place corresponding .txt files with same filename for captions.
 ```
@@ -177,6 +187,9 @@ TREAD works for video too and is highly recommended to save compute.
 
 Add to `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "tread_config": {
@@ -190,6 +203,7 @@ Add to `config.json`:
   }
 }
 ```
+</details>
 
 This can speed up training by ~25-40% depending on the ratio.
 

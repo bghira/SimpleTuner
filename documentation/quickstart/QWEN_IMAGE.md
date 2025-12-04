@@ -107,6 +107,9 @@ Memory optimization settings for 24GB GPUs:
 
 Your config.json will look something like this for a minimal setup:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "model_type": "lora",
@@ -153,6 +156,7 @@ Your config.json will look something like this for a minimal setup:
     "aspect_bucket_rounding": 2
 }
 ```
+</details>
 
 > ℹ️ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
@@ -177,6 +181,10 @@ ENV=examples/qwen_image.peft-lora ./train.sh
 ```
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -360,6 +368,8 @@ huggingface-cli login
 
 Follow the instructions to log in to both services.
 
+</details>
+
 ### Executing the training run
 
 From the SimpleTuner directory, one simply has to run:
@@ -398,6 +408,9 @@ The lowest VRAM Qwen Image configuration requires approximately 24GB:
 ### Running inference on the LoRA afterward
 
 Since Qwen Image is a newer model, here's a functioning example for inference:
+
+<details>
+<summary>Show Python inference example</summary>
 
 ```python
 import torch
@@ -440,6 +453,7 @@ image = pipeline(
 
 image.save("output.png", format="PNG")
 ```
+</details>
 
 ### Notes & troubleshooting tips
 

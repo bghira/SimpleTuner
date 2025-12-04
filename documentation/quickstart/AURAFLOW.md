@@ -117,6 +117,9 @@ The impact of these options are currently unknown.
 
 Your config.json will look something like mine by the end:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "validation_torch_compile": "false",
@@ -163,10 +166,14 @@ Your config.json will look something like mine by the end:
     "aspect_bucket_rounding": 2
 }
 ```
+</details>
 
 > ℹ️ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 And a simple `config/lycoris_config.json` file:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -187,8 +194,13 @@ And a simple `config/lycoris_config.json` file:
     }
 }
 ```
+</details>
 
 ### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
 
 SimpleTuner includes experimental features that can significantly improve training stability and performance.
 
@@ -244,6 +256,8 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
+</details>
+
 # Stable evaluation loss
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
@@ -253,12 +267,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration
@@ -292,6 +310,9 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -342,6 +363,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   }
 ]
 ```
+</details>
 
 > ℹ️ Use `caption_strategy=textfile` if you have `.txt` files containing captions.
 
@@ -407,6 +429,9 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 ### Running inference on the LoKr afterward
 
 Since it's a new model, the example will need some adjustment to work. Here's a functioning example:
+
+<details>
+<summary>Show Python inference example</summary>
 
 ```py
 import torch
@@ -479,6 +504,7 @@ model_output = pipeline(
 model_output.save("output.png", format="PNG")
 
 ```
+</details>
 
 ## Notes & troubleshooting tips
 
