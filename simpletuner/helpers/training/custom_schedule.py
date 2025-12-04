@@ -1295,8 +1295,9 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         # Original window-based timestep setting for other prediction types
         if num_inference_steps < self.config.num_time_windows:
             num_inference_steps = self.config.num_time_windows
-            print(
-                f"### We recommend a num_inference_steps not less than num_time_windows. It's set as {self.config.num_time_windows}."
+            logger.debug(
+                "num_inference_steps was below num_time_windows; using %s steps instead.",
+                self.config.num_time_windows,
             )
 
         timesteps = []
@@ -1309,13 +1310,22 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             t_s = self.time_windows.window_starts[i]
             t_e = self.time_windows.window_ends[i]
             timesteps_cur_win = np.linspace(t_s, t_e, num=num_steps_cur_win, endpoint=False)
-            print(f"Timesteps in current window {i}: {timesteps_cur_win}")
+            logger.debug("Timesteps in window %s: %s", i, timesteps_cur_win)
             timesteps.append(timesteps_cur_win)
 
         timesteps = np.concatenate(timesteps)
 
         self.timesteps = torch.from_numpy((timesteps * self.config.num_train_timesteps).astype(np.int64)).to(device)
-        print(f"Perflow scheduler using timesteps: {self.timesteps}")
+        logger.debug("PerFlow scheduler using timesteps: %s", self.timesteps)
+
+    def _resolve_timestep_index(self, timestep: torch.Tensor) -> Tuple[int, torch.Tensor]:
+        timestep = torch.as_tensor(timestep, device=self.timesteps.device, dtype=self.timesteps.dtype)
+        idx = (self.timesteps == timestep).nonzero(as_tuple=False).flatten()
+        if idx.numel() == 0:
+            raise ValueError(f"Timestep {int(timestep.item())} was not found in the configured schedule.")
+        i = int(idx[0].item())
+        next_timestep = self.timesteps[i + 1] if i + 1 < len(self.timesteps) else self.timesteps[i]
+        return i, torch.as_tensor(next_timestep, device=self.timesteps.device, dtype=self.timesteps.dtype)
 
     # 3. Add a helper method for specifically handling flow_matching
 
@@ -1326,15 +1336,12 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         Special step function specifically for flow_matching prediction type.
         Uses a simpler approach similar to FlowMatchEulerDiscreteScheduler.
         """
-        # Get the current step index
-        idx = torch.argwhere(torch.where(self.timesteps == timestep, 1, 0))
+        _, next_timestep = self._resolve_timestep_index(timestep)
 
-        # Get the next timestep
-        next_idx = idx + 1 if (idx + 1) < len(self.timesteps) else idx
-        next_timestep = self.timesteps[next_idx]
-
-        # Calculate dt
-        dt = (next_timestep - timestep) / self.config.num_train_timesteps
+        dt = (next_timestep - torch.as_tensor(timestep, device=next_timestep.device, dtype=next_timestep.dtype)) / (
+            self.config.num_train_timesteps
+        )
+        # Timesteps descend, so dt is expected to be non-positive for backward integration.
         dt = dt.to(sample.device, sample.dtype)
 
         # For flow_matching, model_output directly gives us velocity
@@ -1372,6 +1379,8 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
                 tuple is returned where the first element is the sample tensor.
         """
 
+        timestep = torch.as_tensor(timestep, device=self.timesteps.device, dtype=self.timesteps.dtype)
+
         if self.config.prediction_type in ["epsilon", "ddim_eps"]:
             pred_epsilon = model_output
             t_c = timestep / self.config.num_train_timesteps
@@ -1406,13 +1415,12 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
             pred_velocity = model_output
         else:
             raise ValueError(
-                f"prediction_type given as {self.config.prediction_type} must be one of `epsilon` or `velocity`."
+                f"prediction_type given as {self.config.prediction_type} must be one of 'epsilon', 'ddim_eps', 'diff_eps', 'flow_matching', or 'velocity'."
             )
 
-        # get dt
-        idx = torch.argwhere(torch.where(self.timesteps == timestep, 1, 0))
-        prev_step = self.timesteps[idx + 1] if (idx + 1) < len(self.timesteps) else 0
-        dt = (prev_step - timestep) / self.config.num_train_timesteps
+        _, next_timestep = self._resolve_timestep_index(timestep)
+        dt = (next_timestep - timestep) / self.config.num_train_timesteps
+        # Timesteps descend, so dt is expected to be non-positive for backward integration.
         dt = dt.to(sample.device, sample.dtype)
 
         prev_sample = sample + dt * pred_velocity

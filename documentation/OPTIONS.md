@@ -851,7 +851,7 @@ usage: train.py [-h] --model_family
                 [--validation_guidance_skip_layers_stop VALIDATION_GUIDANCE_SKIP_LAYERS_STOP]
                 [--validation_guidance_skip_scale VALIDATION_GUIDANCE_SKIP_SCALE]
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
-                [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++}]
+                [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}]
                 [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_seed_source {cpu,gpu}]
@@ -978,7 +978,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm}]
+                [--distillation_method {lcm,dcm,dmd,perflow}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -1273,7 +1273,7 @@ options:
                         Scale guidance strength when applying layer skipping
   --validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH
                         Strength multiplier for LyCORIS validation
-  --validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++}
+  --validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}
                         Noise scheduler for validation
   --validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES
                         Number of frames for video validation
@@ -1657,7 +1657,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm}
+  --distillation_method {lcm,dcm,dmd,perflow}
                         Method for model distillation
   --distillation_config DISTILLATION_CONFIG
                         Path to distillation configuration file

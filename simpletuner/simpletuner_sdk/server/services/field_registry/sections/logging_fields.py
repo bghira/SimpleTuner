@@ -387,9 +387,11 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                 {"value": None, "label": "None"},
                 {"value": "lcm", "label": "LCM"},
                 {"value": "dcm", "label": "DCM"},
+                {"value": "dmd", "label": "DMD"},
+                {"value": "perflow", "label": "PerFlow"},
             ],
             help_text="Method for model distillation",
-            tooltip="Select the distillation approach to use when converting models (LCM or DCM).",
+            tooltip="Select the distillation approach to use when converting models (LCM, DCM, DMD, or PerFlow).",
             importance=ImportanceLevel.ADVANCED,
             order=1,
         )
