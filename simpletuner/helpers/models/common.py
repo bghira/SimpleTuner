@@ -223,6 +223,21 @@ class ModelFoundation(ABC):
         "controlnet_down_blocks.8",
         "controlnet_mid_block",
     ]
+    DEFAULT_SLIDER_LORA_TARGET = [
+        "attn1.to_q",
+        "attn1.to_k",
+        "attn1.to_v",
+        "attn1.to_out.0",
+        "attn1.to_qkv",
+        "to_qkv",
+        "proj_in",
+        "proj_out",
+        "conv_in",
+        "conv_out",
+        "time_embedding.linear_1",
+        "time_embedding.linear_2",
+    ]
+    SLIDER_LORA_TARGET = DEFAULT_SLIDER_LORA_TARGET
     DEFAULT_LYCORIS_TARGET = ["Attention", "FeedForward"]
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
@@ -422,6 +437,12 @@ class ModelFoundation(ABC):
     def get_lora_target_layers(self):
         lora_type = getattr(self.config, "lora_type", "standard")
         if lora_type.lower() == "standard":
+            if getattr(self.config, "slider_lora_target", False):
+                slider_target = getattr(self, "SLIDER_LORA_TARGET", None) or getattr(
+                    self, "DEFAULT_SLIDER_LORA_TARGET", None
+                )
+                if slider_target:
+                    return slider_target
             if getattr(self.config, "controlnet", False):
                 return self.DEFAULT_CONTROLNET_LORA_TARGET
             return self.DEFAULT_LORA_TARGET

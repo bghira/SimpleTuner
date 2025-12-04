@@ -32,6 +32,7 @@ class DeepFloydIF(ImageModelFoundation):
     DEFAULT_NOISE_SCHEDULER = "ddpm"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to be the most stable..
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 

@@ -44,6 +44,7 @@ class HiDream(ImageModelFoundation):
     DEFAULT_NOISE_SCHEDULER = "flow_unipc"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with HiDream.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
     # Layers used from base in ControlNet model.
@@ -532,6 +533,8 @@ class HiDream(ImageModelFoundation):
         return {"model_prediction": model_pred * -1}  # the model is trained with inverted velocity :(
 
     def get_lora_target_layers(self):
+        if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if not self.config.controlnet:
             # If no controlnet, return the default LoRA target layers.
             return self.DEFAULT_LORA_TARGET

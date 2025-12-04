@@ -1152,6 +1152,10 @@ options:
                         PEFT LoRA training mode
   --singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS
                         Number of ramp-up steps for SingLoRA
+  --slider_lora_target [SLIDER_LORA_TARGET]
+                        Route LoRA training to slider-friendly targets
+                        (self-attn + conv/time embeddings). Only affects
+                        standard PEFT LoRA.
   --init_lora INIT_LORA
                         Specify an existing LoRA or LyCORIS safetensors file
                         to initialize the adapter

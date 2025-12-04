@@ -22,6 +22,8 @@ if should_log():
 else:
     prefetch_log.setLevel(logging.ERROR)
 
+_SCALED_SAMPLERS: dict[int, "ScaledDatasetSampler"] = {}
+
 
 def prefetch_log_debug(message: str) -> None:
     from simpletuner.helpers.training.multi_process import rank_info
@@ -98,6 +100,134 @@ def get_backend_weight(backend_id: str, backend: Any, step: int) -> float:
         raise ValueError(f"Unknown sampling weighting method: {sampling_method}")
 
 
+def _read_slider_strength(backend_id: str, backend: Any, slider_key: str = "slider_strength") -> Optional[float]:
+    """
+    Attempt to read a numeric slider strength from the backend or its config.
+    """
+    strength = None
+    candidate = None
+    if isinstance(backend, dict):
+        candidate = backend.get(slider_key, None)
+    else:
+        candidate = getattr(backend, slider_key, None)
+        if candidate is None:
+            backend_config = getattr(backend, "config", None)
+            if isinstance(backend_config, dict):
+                candidate = backend_config.get(slider_key, None)
+            else:
+                backend_config = StateTracker.get_data_backend_config(backend_id)
+                if isinstance(backend_config, dict):
+                    candidate = backend_config.get(slider_key, None)
+
+    if candidate is None:
+        return None
+    try:
+        strength = float(candidate)
+    except (TypeError, ValueError):
+        return None
+    return strength
+
+
+class ScaledDatasetSampler:
+    """
+    Alternates sampling across positive, negative, and unscaled (neutral) slider groups.
+    Selection within a group still honours backend probabilities via get_backend_weight.
+    """
+
+    def __init__(self, slider_key: str = "slider_strength") -> None:
+        self.slider_key = slider_key
+        self._groups: dict[str, list[str]] = {"positive": [], "negative": [], "neutral": []}
+        self._phase_index: int = 0
+        self._has_scaled_groups: bool = False
+
+    def rebuild(self, backends: Dict[str, Any]) -> None:
+        self._groups = {"positive": [], "negative": [], "neutral": []}
+        for backend_id, backend in backends.items():
+            strength = _read_slider_strength(backend_id, backend, self.slider_key)
+            if strength is None:
+                self._groups["neutral"].append(backend_id)
+            elif strength < 0:
+                self._groups["negative"].append(backend_id)
+            elif strength > 0:
+                self._groups["positive"].append(backend_id)
+            else:
+                self._groups["neutral"].append(backend_id)
+        self._has_scaled_groups = bool(self._groups["positive"] or self._groups["negative"])
+        order = self._phase_order()
+        if not order:
+            self._phase_index = 0
+        else:
+            self._phase_index = self._phase_index % len(order)
+
+    def has_scaled_groups(self) -> bool:
+        return self._has_scaled_groups
+
+    def remove_backend(self, backend_id: str) -> None:
+        for group in self._groups.values():
+            if backend_id in group:
+                group.remove(backend_id)
+        self._groups = {k: v for k, v in self._groups.items()}
+        self._has_scaled_groups = bool(self._groups["positive"] or self._groups["negative"])
+        if self._phase_index >= len(self._phase_order()):
+            self._phase_index = 0
+
+    def _phase_order(self) -> list[str]:
+        # Fixed order with empty groups removed.
+        return [phase for phase in ("positive", "negative", "neutral") if self._groups.get(phase)]
+
+    def _choose_from_group(self, group: str, step: int, backends: Dict[str, Any]) -> Optional[str]:
+        backend_ids = [backend_id for backend_id in self._groups.get(group, []) if backend_id in backends]
+        if not backend_ids:
+            return None
+        weights: list[float] = []
+        for backend_id in backend_ids:
+            try:
+                weights.append(get_backend_weight(backend_id, backends[backend_id], step))
+            except Exception:
+                weights.append(0.0)
+        weights_tensor = torch.tensor(weights, dtype=torch.float32)
+        total = weights_tensor.sum()
+        if total <= 0:
+            return backend_ids[0]
+        weights_tensor /= total
+        chosen_index = torch.multinomial(weights_tensor, 1).item()
+        return backend_ids[chosen_index]
+
+    def next_backend_id(self, step: int, backends: Dict[str, Any]) -> Optional[str]:
+        """
+        Return the next backend id following the fixed positive -> negative -> neutral cycle.
+        """
+        phases = self._phase_order()
+        if not phases:
+            return None
+        attempts = 0
+        while attempts < len(phases):
+            phase = phases[self._phase_index % len(phases)]
+            candidate = self._choose_from_group(phase, step, backends)
+            self._phase_index = (self._phase_index + 1) % len(phases)
+            if candidate is not None:
+                return candidate
+            attempts += 1
+        return None
+
+
+def _get_scaled_sampler(backends: Dict[str, Any]) -> Optional[ScaledDatasetSampler]:
+    """
+    Lazily build and cache a ScaledDatasetSampler keyed by the backends object's id.
+    """
+    if not backends:
+        return None
+    key = id(backends)
+    sampler = _SCALED_SAMPLERS.get(key)
+    if sampler is None:
+        sampler = ScaledDatasetSampler()
+        _SCALED_SAMPLERS[key] = sampler
+    sampler.rebuild(backends)
+    if not any(sampler._groups.values()):
+        return None
+    return sampler
+
+
 def random_dataloader_iterator(step: int, backends: Dict[str, Any]) -> Union[Any, bool]:
     if not backends:
         raise ValueError("No data backends provided to iterator.")
@@ -114,7 +244,12 @@ def random_dataloader_iterator(step: int, backends: Dict[str, Any]) -> Union[Any
         epoch_step = int(step / gradient_accumulation_steps)
         StateTracker.set_epoch_step(epoch_step)
 
-        chosen_backend_id = select_dataloader_index(step, backends)
+        sampler = _get_scaled_sampler(backends)
+        chosen_backend_id = None
+        if sampler and sampler.has_scaled_groups():
+            chosen_backend_id = sampler.next_backend_id(step, backends)
+        if chosen_backend_id is None:
+            chosen_backend_id = select_dataloader_index(step, backends)
         backend = backends.get(chosen_backend_id)
         if backend is None:
             raise KeyError(f"Selected backend {chosen_backend_id} not found.")
@@ -140,8 +275,11 @@ def random_dataloader_iterator(step: int, backends: Dict[str, Any]) -> Union[Any
             del backends[chosen_backend_id]
             StateTracker.backend_exhausted(chosen_backend_id)
             StateTracker.set_repeats(data_backend_id=chosen_backend_id, repeats=0)
+            if sampler:
+                sampler.remove_backend(chosen_backend_id)
         finally:
             if not backends:
                 logger.debug("All dataloaders exhausted. Moving to next epoch in main training loop.")
                 StateTracker.clear_exhausted_buckets()
+                _SCALED_SAMPLERS.pop(id(backends), None)
                 return False

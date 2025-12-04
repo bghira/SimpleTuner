@@ -13,12 +13,9 @@ import unittest
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
 
-from simpletuner.helpers.data_backend.runtime import (
-    BatchFetcher,
-    get_backend_weight,
-    random_dataloader_iterator,
-    select_dataloader_index,
-)
+from simpletuner.helpers.data_backend.runtime import BatchFetcher
+from simpletuner.helpers.data_backend.runtime import dataloader_iterator as dataloader_module
+from simpletuner.helpers.data_backend.runtime import get_backend_weight, random_dataloader_iterator, select_dataloader_index
 
 
 class TestBatchFetcher(unittest.TestCase):
@@ -269,6 +266,9 @@ class TestDataloaderIterator(unittest.TestCase):
         self.mock_backend2.id = "backend2"
         self.mock_backend2.get_data_loader.return_value = "dataloader2"
 
+    def tearDown(self):
+        dataloader_module._SCALED_SAMPLERS.clear()
+
     def test_get_backend_weight_with_probability(self):
         """Test get_backend_weight with probability setting"""
         backend_config = {"probability": 0.7}
@@ -389,10 +389,34 @@ class TestDataloaderIterator(unittest.TestCase):
         with patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index") as mock_select:
             mock_select.return_value = "backend1"
 
-            with self.assertRaises(Exception) as context:
-                random_dataloader_iterator(step=100, backends=backends)
+        with self.assertRaises(Exception) as context:
+            random_dataloader_iterator(step=100, backends=backends)
 
             self.assertIn("Dataloader error", str(context.exception))
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index")
+    def test_random_iterator_slider_cycle_respects_strength_groups(self, mock_select):
+        """Ensure slider_strength sampling cycles positive/negative/neutral backends."""
+
+        class DummyBackend:
+            def __init__(self, name: str, strength: float | None):
+                self.name = name
+                self.slider_strength = strength
+                self.config = {"probability": 1.0}
+
+            def get_data_loader(self):
+                return f"{self.name}_loader"
+
+        backends = {
+            "positive": DummyBackend("positive", 0.5),
+            "negative": DummyBackend("negative", -0.5),
+            "neutral": DummyBackend("neutral", None),
+        }
+
+        results = [random_dataloader_iterator(step=idx, backends=backends) for idx in range(3)]
+
+        self.assertEqual(results, ["positive_loader", "negative_loader", "neutral_loader"])
+        mock_select.assert_not_called()
 
 
 class TestRuntimeIntegration(unittest.TestCase):

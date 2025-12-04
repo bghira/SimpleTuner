@@ -54,6 +54,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **Multi-GPU training** - Distributed training across multiple GPUs with automatic optimization
 - **Advanced caching** - Image, video, audio, and caption embeddings cached to disk for faster training
 - **Aspect bucketing** - Support for varied image/video sizes and aspect ratios
+- **Concept sliders** - Slider-friendly targeting for LoRA/LyCORIS/full (via LyCORIS `full`) with positive/negative/neutral sampling and per-prompt strength; see [Slider LoRA guide](/documentation/SLIDER_LORA.md)
 - **Memory optimization** - Most models trainable on 24G GPU, many on 16G with optimizations
 - **DeepSpeed & FSDP2 integration** - Train large models on smaller GPUs with optim/grad/parameter sharding, context parallel attention, gradient checkpointing, and optimizer state offload
 - **S3 training** - Train directly from cloud storage (Cloudflare R2, Wasabi S3)
