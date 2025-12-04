@@ -256,6 +256,20 @@ class AssistantLoraModelDefaultsTests(unittest.TestCase):
         # Should not raise even without assistant_lora_path when disabled.
         model.check_user_config()
 
+    def test_zimage_de_turbo_overrides_transformer_path(self):
+        config = self._build_zimage_config("ostris-de-turbo")
+
+        with (
+            patch.object(ZImage, "setup_training_noise_schedule", lambda self: None),
+            patch.object(ZImage, "setup_diff2flow_bridge", lambda self: None),
+        ):
+            ZImage(config, self.mock_accelerator)
+
+        self.assertEqual(config.pretrained_model_name_or_path, ZImage.HUGGINGFACE_PATHS["ostris-de-turbo"])
+        self.assertEqual(
+            config.pretrained_transformer_model_name_or_path, ZImage.TRANSFORMER_PATH_OVERRIDES["ostris-de-turbo"]
+        )
+
 
 class ZImageAdapterMappingTests(unittest.TestCase):
     def test_set_adapters_mapping_registered(self):
