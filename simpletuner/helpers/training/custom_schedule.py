@@ -1316,7 +1316,7 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
         timesteps = np.concatenate(timesteps)
 
         self.timesteps = torch.from_numpy((timesteps * self.config.num_train_timesteps).astype(np.int64)).to(device)
-        logger.debug("Perflow scheduler using timesteps: %s", self.timesteps)
+        logger.debug("PerFlow scheduler using timesteps: %s", self.timesteps)
 
     def _resolve_timestep_index(self, timestep: torch.Tensor) -> Tuple[int, torch.Tensor]:
         timestep = torch.as_tensor(timestep, device=self.timesteps.device, dtype=self.timesteps.dtype)
