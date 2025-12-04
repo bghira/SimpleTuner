@@ -198,7 +198,6 @@ class Kandinsky5Video(VideoModelFoundation):
             "prompt_embeds_qwen": prompt_embeds,
             "prompt_embeds_clip": pooled_prompt_embeds,
             "prompt_cu_seqlens": prompt_cu_seqlens,
-            "attention_masks": attention_mask,
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
@@ -215,7 +214,6 @@ class Kandinsky5Video(VideoModelFoundation):
             "negative_prompt_embeds_qwen": prompt_embeds,
             "negative_prompt_embeds_clip": pooled_prompt_embeds,
             "negative_prompt_cu_seqlens": prompt_cu_seqlens,
-            "attention_masks": attention_mask,
         }
 
     def _find_attention_mask(self, embeddings: dict):
