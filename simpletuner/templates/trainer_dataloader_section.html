@@ -1,11 +1,11 @@
 <!-- Dataloader Configuration Section -->
-<script src="/static/js/dataloader-section-component.js"></script>
+<script src="/static/js/dataloader-section-component.js?v={{ asset_version|default('20241206') }}"></script>
 <script>
 (() => {
     if (window.dataloaderSectionComponent) {
         return;
     }
-    const src = '/static/js/dataloader-section-component.js';
+    const src = '/static/js/dataloader-section-component.js?v={{ asset_version|default('20241206') }}';
     try {
         const request = new XMLHttpRequest();
         request.open('GET', src, false);
