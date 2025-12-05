@@ -59,7 +59,17 @@ else:
     logger.setLevel("ERROR")
 
 
-flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma", "hunyuanvideo", "longcat_image"]
+flow_matching_model_families = [
+    "flux",
+    "sana",
+    "ltxvideo",
+    "wan",
+    "sd3",
+    "chroma",
+    "hunyuanvideo",
+    "longcat_image",
+    "longcat_video",
+]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
