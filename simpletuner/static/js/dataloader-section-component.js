@@ -89,6 +89,9 @@ function dataloaderSectionComponent() {
     // Dataset search
     datasetSearchQuery: '',
 
+    // Parameter filter (filters form fields by label text)
+    parameterFilterQuery: '',
+
     // Modal state for card view
     editingDataset: null,
     modalTab: 'basic',
@@ -307,6 +310,21 @@ function dataloaderSectionComponent() {
     // Search methods
     clearDatasetSearch() {
         this.datasetSearchQuery = '';
+    },
+
+    // Parameter filter methods
+    clearParameterFilter() {
+        this.parameterFilterQuery = '';
+    },
+
+    matchesParamFilter(...labels) {
+        if (!this.parameterFilterQuery.trim()) {
+            return true;
+        }
+        const query = this.parameterFilterQuery.toLowerCase();
+        return labels.some(label =>
+            label && label.toLowerCase().includes(query)
+        );
     },
 
     // Modal methods

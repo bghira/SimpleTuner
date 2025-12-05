@@ -1,7 +1,7 @@
 <!-- Captions & Metadata Body (for modal) -->
 <div class="modal-section-body" x-init="editingDataset.parquet = editingDataset.parquet || {}">
     <!-- Caption Strategy -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('caption', 'strategy', 'metadata', 'backend', 'text', 'csv', 'parquet', 'jsonl', 'instance')">
         <h6 class="modal-section-title">Caption Strategy</h6>
         <div class="row g-2">
             <div class="col-md-6">
@@ -34,7 +34,7 @@
     </div>
 
     <!-- Trigger Words -->
-    <div class="section-group" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
+    <div class="section-group" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds' && matchesParamFilter('trigger', 'word', 'instance', 'prompt', 'prepend')">
         <h6 class="modal-section-title">Trigger Words</h6>
         <div class="row g-2">
             <div class="col-md-8">
@@ -63,7 +63,7 @@
     </div>
 
     <!-- Parquet Details -->
-    <div class="section-group" x-show="editingDataset.caption_strategy === 'parquet' || editingDataset.metadata_backend === 'parquet'" x-cloak>
+    <div class="section-group" x-show="(editingDataset.caption_strategy === 'parquet' || editingDataset.metadata_backend === 'parquet') && matchesParamFilter('parquet', 'column', 'filename', 'caption', 'width', 'height', 'fallback', 'identifier', 'extension')" x-cloak>
         <h6 class="modal-section-title">Parquet Configuration</h6>
         <div class="row g-2">
             <div class="col-md-6">

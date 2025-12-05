@@ -84,9 +84,10 @@
                 </button>
                 <button type="button"
                         :class="{'active': modalTab === 'advanced'}"
-                        @click="modalTab = 'advanced'">
-                    <i class="fas fa-cog"></i>
-                    <span>Advanced</span>
+                        @click="modalTab = 'advanced'"
+                        x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
+                    <i class="fas fa-database"></i>
+                    <span>Caching</span>
                 </button>
             </div>
 
@@ -122,7 +123,7 @@
                     {% include 'components/dataloader/sections/conditioning_body.html' %}
                 </div>
 
-                <!-- Advanced Tab -->
+                <!-- Caching Tab -->
                 <div x-show="modalTab === 'advanced'" x-cloak>
                     {% include 'components/dataloader/sections/advanced_body.html' %}
                 </div>

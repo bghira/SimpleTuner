@@ -1,7 +1,7 @@
 <!-- Video Settings Body (for modal) -->
 <div class="modal-section-body" x-init="editingDataset.video = editingDataset.video || {}">
     <!-- Frame Configuration -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('frame', 'clip', 'video', 'min', 'max')">
         <h6 class="modal-section-title">Frame Configuration</h6>
         <div class="row g-2">
             <div class="col-md-4">
@@ -38,7 +38,7 @@
     </div>
 
     <!-- Video Processing -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('video', 'processing', 'i2v', 'augmentation', 'image')">
         <h6 class="modal-section-title">Video Processing</h6>
         <div class="form-check">
             <input class="form-check-input"

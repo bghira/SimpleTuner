@@ -1391,10 +1391,16 @@
     max-width: 300px;
 }
 
-#dataloaderSection .dataset-search .input-group-text {
+#dataloaderSection .dataset-search .input-group-text,
+#dataloaderSection .parameter-filter .input-group-text {
     background: var(--input-bg);
     border-color: var(--glass-border);
     color: var(--text-muted);
+}
+
+#dataloaderSection .parameter-filter {
+    flex: 1;
+    max-width: 250px;
 }
 
 #dataloaderSection .view-toggle {
@@ -1709,7 +1715,8 @@
 }
 
 /* Checkboxes - inline compact */
-#dataloaderSection .dataset-list-item-expanded .form-check {
+#dataloaderSection .dataset-list-item-expanded .form-check,
+#dataloaderSection .dataset-modal .form-check {
     display: flex;
     align-items: center;
     gap: 0.375rem;
@@ -1718,16 +1725,19 @@
     margin: 0;
 }
 
-#dataloaderSection .dataset-list-item-expanded .form-check-input {
+#dataloaderSection .dataset-list-item-expanded .form-check-input,
+#dataloaderSection .dataset-modal .form-check-input {
     width: 1rem;
     height: 1rem;
     margin: 0;
     flex-shrink: 0;
 }
 
-#dataloaderSection .dataset-list-item-expanded .form-check-label {
+#dataloaderSection .dataset-list-item-expanded .form-check-label,
+#dataloaderSection .dataset-modal .form-check-label {
     font-size: 0.8125rem;
     line-height: 1.2;
+    margin-left: 0; /* Override legacy rule */
 }
 
 /* Fix checkbox with mb-2 class */
@@ -1768,8 +1778,13 @@
 }
 
 /* Input groups - fix button alignment */
-#dataloaderSection .dataset-list-item-expanded .input-group-sm > .btn {
+#dataloaderSection .dataset-list-item-expanded .input-group-sm > .btn,
+#dataloaderSection .modal-section-body .input-group-sm > .btn,
+#dataloaderSection .dataset-modal .input-group-sm > .btn {
     padding: 0.25rem 0.5rem;
+    line-height: 1.5;
+    height: auto;
+    align-self: stretch;
 }
 
 /* Input groups inherit width from column */
@@ -2084,13 +2099,18 @@
         align-items: stretch;
     }
 
-    #dataloaderSection .dataset-search {
+    #dataloaderSection .dataset-search,
+    #dataloaderSection .parameter-filter {
         max-width: none;
     }
 
     #dataloaderSection .view-toggle {
         margin-left: 0;
         align-self: flex-end;
+    }
+
+    #dataloaderSection .dataset-builder-header {
+        gap: var(--spacing-sm);
     }
 
     #dataloaderSection .dataset-list-item {

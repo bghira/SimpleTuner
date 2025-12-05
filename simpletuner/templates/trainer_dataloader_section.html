@@ -145,8 +145,8 @@
 
         <!-- Dataset Builder Header: Search and View Toggle -->
         <div class="dataset-builder-header mb-3" x-show="!datasetsLoading && datasets.length > 0">
-            <!-- Search -->
-            <div class="dataset-search" x-show="datasets.length > 2">
+            <!-- Dataset Search -->
+            <div class="dataset-search">
                 <div class="input-group input-group-sm">
                     <span class="input-group-text"><i class="fas fa-search"></i></span>
                     <input type="text"
@@ -156,6 +156,22 @@
                     <button type="button" class="btn btn-outline-secondary"
                             x-show="datasetSearchQuery"
                             @click="clearDatasetSearch()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Parameter Filter -->
+            <div class="parameter-filter">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="fas fa-filter"></i></span>
+                    <input type="text"
+                           class="form-control"
+                           x-model="parameterFilterQuery"
+                           placeholder="Filter options...">
+                    <button type="button" class="btn btn-outline-secondary"
+                            x-show="parameterFilterQuery"
+                            @click="clearParameterFilter()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -241,6 +257,14 @@
                 <i class="fas fa-filter"></i>
                 Showing <span x-text="filteredDatasets.length"></span> of <span x-text="datasets.length"></span> datasets
                 <button type="button" class="btn btn-link btn-sm p-0 ms-2" @click="clearDatasetSearch()">Clear filter</button>
+            </div>
+
+            <!-- Parameter filter active notice -->
+            <div x-show="parameterFilterQuery"
+                 class="alert alert-secondary small py-2 mb-3" x-cloak>
+                <i class="fas fa-eye-slash"></i>
+                Filtering options by "<span x-text="parameterFilterQuery"></span>" — some fields may be hidden
+                <button type="button" class="btn btn-link btn-sm p-0 ms-2" @click="clearParameterFilter()">Show all</button>
             </div>
 
             <!-- List View -->

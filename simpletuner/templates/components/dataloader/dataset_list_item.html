@@ -142,9 +142,10 @@
         </button>
         <button type="button"
                 :class="{'active': getListTab(dataset) === 'advanced'}"
-                @click="setListTab(dataset, 'advanced')">
-            <i class="fas fa-cog"></i>
-            <span>Advanced</span>
+                @click="setListTab(dataset, 'advanced')"
+                x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+            <i class="fas fa-database"></i>
+            <span>Caching</span>
         </button>
     </div>
 
@@ -180,7 +181,7 @@
             {% include 'components/dataloader/sections/conditioning_body.html' %}
         </div>
 
-        <!-- Advanced Tab -->
+        <!-- Caching Tab -->
         <div x-show="getListTab(dataset) === 'advanced'" x-cloak>
             {% include 'components/dataloader/sections/advanced_body.html' %}
         </div>

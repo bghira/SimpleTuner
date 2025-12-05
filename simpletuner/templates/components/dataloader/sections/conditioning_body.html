@@ -1,7 +1,7 @@
 <!-- Conditioning Body (for modal) -->
 <div class="modal-section-body">
     <!-- Conditioning Dataset Links -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('conditioning', 'dataset', 'link', 'control')">
         <h6 class="modal-section-title">Conditioning Datasets</h6>
         <p class="text-muted small mb-2">
             Link existing <code x-text="conditioningDatasetType"></code> datasets to feed control inputs.
@@ -24,7 +24,7 @@
     </div>
 
     <!-- Conditioning Generators -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('conditioning', 'generator', 'canny', 'depth', 'edge', 'lineart', 'normal', 'scribble', 'mask')">
         <div class="d-flex align-items-center justify-content-between mb-2">
             <h6 class="modal-section-title mb-0">Conditioning Generators</h6>
             <button type="button"

@@ -1,7 +1,7 @@
 <!-- Audio Settings Body (for modal) -->
 <div class="modal-section-body">
     <!-- Duration Settings -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('duration', 'min', 'max', 'interval', 'seconds', 'truncate')">
         <h6 class="modal-section-title">Duration</h6>
         <div class="row g-2">
             <div class="col-md-4">
@@ -39,7 +39,7 @@
     </div>
 
     <!-- Audio Format -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('format', 'channel', 'mono', 'stereo', 'truncation', 'mode')">
         <h6 class="modal-section-title">Format</h6>
         <div class="row g-2">
             <div class="col-md-6">

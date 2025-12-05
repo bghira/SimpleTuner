@@ -1,7 +1,7 @@
 <!-- Storage Settings Body (for modal) -->
 <div class="modal-section-body">
     <!-- Backend Selection -->
-    <div class="section-group">
+    <div class="section-group" x-show="matchesParamFilter('storage', 'backend', 'local', 'aws', 's3', 'csv', 'huggingface')">
         <h6 class="modal-section-title">Storage Backend</h6>
         <select class="form-select form-select-sm"
                 x-model="editingDataset.type"
@@ -14,7 +14,7 @@
     </div>
 
     <!-- Local Storage -->
-    <div class="section-group" x-show="editingDataset.type === 'local'" x-cloak>
+    <div class="section-group" x-show="editingDataset.type === 'local' && matchesParamFilter('local', 'path', 'directory', 'cache', 'vae', 'instance')" x-cloak>
         <h6 class="modal-section-title">Local Paths</h6>
         <div class="row g-2">
             <div class="col-md-6" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
@@ -49,11 +49,19 @@
                        @input="markAsUnsaved()"
                        placeholder="/path/to/cache">
             </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type === 'image_embeds'">
+                <label class="form-label small">Image Embed Cache</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model.lazy="editingDataset.cache_dir"
+                       @input="markAsUnsaved()"
+                       placeholder="/path/to/cache">
+            </div>
         </div>
     </div>
 
     <!-- AWS S3 -->
-    <div class="section-group" x-show="editingDataset.type === 'aws'" x-cloak>
+    <div class="section-group" x-show="editingDataset.type === 'aws' && matchesParamFilter('aws', 's3', 'bucket', 'region', 'endpoint', 'access', 'secret', 'key')" x-cloak>
         <h6 class="modal-section-title">AWS S3 Configuration</h6>
         <div class="row g-2">
             <div class="col-md-4">
@@ -132,7 +140,7 @@
     </div>
 
     <!-- CSV -->
-    <div class="section-group" x-show="editingDataset.type === 'csv'" x-cloak>
+    <div class="section-group" x-show="editingDataset.type === 'csv' && matchesParamFilter('csv', 'url', 'caption', 'cache')" x-cloak>
         <h6 class="modal-section-title">CSV Configuration</h6>
         <div class="row g-2">
             <div class="col-md-4">
@@ -163,7 +171,7 @@
     </div>
 
     <!-- Hugging Face -->
-    <div class="section-group" x-show="editingDataset.type === 'huggingface'" x-cloak>
+    <div class="section-group" x-show="editingDataset.type === 'huggingface' && matchesParamFilter('hugging', 'face', 'hf', 'dataset', 'config', 'split', 'image', 'caption', 'column', 'streaming', 'token')" x-cloak>
         <h6 class="modal-section-title">Hugging Face Dataset</h6>
         <div class="row g-2">
             <div class="col-md-4">
@@ -237,6 +245,35 @@
                        x-model="editingDataset.auth_token"
                        @input="touchConnectionField(editingDataset)"
                        placeholder="hf_...">
+            </div>
+        </div>
+    </div>
+
+    <!-- Embed Options (for text_embeds/image_embeds) -->
+    <div class="section-group" x-show="(editingDataset.dataset_type === 'text_embeds' || editingDataset.dataset_type === 'image_embeds') && matchesParamFilter('embed', 'batch', 'write', 'cache', 'preserve')">
+        <h6 class="modal-section-title">Embed Options</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Write Batch Size</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.write_batch_size"
+                       @input="markAsUnsaved()"
+                       placeholder="128">
+            </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type !== 'image_embeds'">
+                <div class="form-check mt-4">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'preserve-cache-storage-' + editingDataset.id"
+                           x-model="editingDataset.preserve_data_backend_cache"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'preserve-cache-storage-' + editingDataset.id">
+                        Preserve backend cache
+                    </label>
+                </div>
             </div>
         </div>
     </div>
