@@ -1,0 +1,121 @@
+<!-- Compact card for dataset (Grid View) -->
+<div class="dataset-grid-card"
+     x-bind:data-dataset-id="dataset.id"
+     :class="{ 'disabled': dataset.disabled }"
+     @click="openDatasetModal(dataset)">
+
+    <!-- Card Header -->
+    <div class="grid-card-header">
+        <span class="grid-card-icon" x-text="getDatasetTypeIcon(dataset.dataset_type)"></span>
+        <div class="grid-card-title" x-text="dataset.id" :title="dataset.id"></div>
+        <div class="grid-card-actions" @click.stop>
+            <button type="button"
+                    class="btn btn-sm btn-link"
+                    :class="{
+                        'text-success': dataset._connectionStatus === 'success',
+                        'text-danger': dataset._connectionStatus === 'error',
+                        'text-muted': !dataset._connectionStatus
+                    }"
+                    title="Test connection"
+                    @click="testDatasetConnection(dataset)"
+                    :disabled="dataset._connectionTesting || !supportsConnectionTest(dataset)">
+                <i class="fas" :class="dataset._connectionTesting ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Card Body -->
+    <div class="grid-card-body">
+        <!-- Type Badge -->
+        <span class="badge grid-card-type-badge" :class="{
+            'bg-primary': dataset.dataset_type === 'image',
+            'bg-info': dataset.dataset_type === 'video',
+            'bg-success': dataset.dataset_type === 'audio',
+            'bg-secondary': dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds',
+            'bg-warning text-dark': dataset.dataset_type === 'conditioning'
+        }" x-text="dataset.dataset_type"></span>
+
+        <!-- Resolution Info -->
+        <div class="grid-card-stat" x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video' || dataset.dataset_type === 'conditioning'">
+            <span class="grid-card-stat-label">Resolution</span>
+            <span class="grid-card-stat-value">
+                <span x-text="dataset.resolution || '—'"></span>
+                <span class="text-muted small" x-text="dataset.resolution_type === 'pixel_area' ? 'area' : 'px'"></span>
+            </span>
+        </div>
+
+        <!-- Size Range -->
+        <div class="grid-card-stat" x-show="dataset.minimum_image_size || dataset.maximum_image_size">
+            <span class="grid-card-stat-label">Size Range</span>
+            <span class="grid-card-stat-value">
+                <span x-text="dataset.minimum_image_size || '—'"></span>
+                <span class="text-muted">-</span>
+                <span x-text="dataset.maximum_image_size || '—'"></span>
+            </span>
+        </div>
+
+        <!-- Cropping -->
+        <div class="grid-card-stat" x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video' || dataset.dataset_type === 'conditioning'">
+            <span class="grid-card-stat-label">Cropping</span>
+            <span class="grid-card-stat-value">
+                <template x-if="dataset.crop">
+                    <span class="text-success">
+                        <i class="fas fa-check"></i>
+                        <span x-text="dataset.crop_style || 'center'"></span>
+                    </span>
+                </template>
+                <template x-if="!dataset.crop">
+                    <span class="text-muted">Off</span>
+                </template>
+            </span>
+        </div>
+
+        <!-- Video frames -->
+        <div class="grid-card-stat" x-show="dataset.dataset_type === 'video'">
+            <span class="grid-card-stat-label">Frames</span>
+            <span class="grid-card-stat-value">
+                <span x-text="dataset.video?.num_frames || '—'"></span>
+            </span>
+        </div>
+
+        <!-- Audio duration -->
+        <div class="grid-card-stat" x-show="dataset.dataset_type === 'audio'">
+            <span class="grid-card-stat-label">Duration</span>
+            <span class="grid-card-stat-value">
+                <span x-text="(dataset.audio_min_duration_seconds || '0') + '-' + (dataset.audio_max_duration_seconds || '∞') + 's'"></span>
+            </span>
+        </div>
+
+        <!-- Path Preview -->
+        <div class="grid-card-path" :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || ''">
+            <i class="fas fa-folder-open"></i>
+            <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path').split('/').slice(-2).join('/') || '...'"></span>
+        </div>
+    </div>
+
+    <!-- Card Footer -->
+    <div class="grid-card-footer" @click.stop>
+        <button type="button"
+                class="btn btn-sm btn-outline-secondary"
+                title="Duplicate"
+                @click="duplicateDataset(dataset.id)">
+            <i class="fas fa-copy"></i>
+        </button>
+        <button type="button"
+                class="btn btn-sm btn-outline-danger"
+                title="Remove"
+                @click="removeDataset(dataset.id)">
+            <i class="fas fa-trash"></i>
+        </button>
+        <button type="button"
+                class="btn btn-sm btn-primary"
+                @click="openDatasetModal(dataset)">
+            <i class="fas fa-cog"></i> Configure
+        </button>
+    </div>
+
+    <!-- Disabled Overlay -->
+    <div x-show="dataset.disabled" class="grid-card-disabled-overlay" x-cloak>
+        <span class="badge bg-secondary">Disabled</span>
+    </div>
+</div>

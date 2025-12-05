@@ -77,6 +77,22 @@ function dataloaderSectionComponent() {
     _collapseStateLoading: false,
     _collapseSaveTimeout: null,
 
+    // View mode: 'list' or 'cards'
+    viewMode: (() => {
+        try {
+            return localStorage.getItem('datasetBuilderViewMode') || 'list';
+        } catch (e) {
+            return 'list';
+        }
+    })(),
+
+    // Dataset search
+    datasetSearchQuery: '',
+
+    // Modal state for card view
+    editingDataset: null,
+    modalTab: 'basic',
+
     init() {
         window.dataloaderSectionComponentInstance = this;
         if (window.__pendingGeneratorSync) {
@@ -258,6 +274,65 @@ function dataloaderSectionComponent() {
         this._captionFilterCacheTime = now;
         return this._captionFilterCache;
     },
+
+    // Filtered datasets for search
+    get filteredDatasets() {
+        if (!this.datasetSearchQuery.trim()) {
+            return this.datasets;
+        }
+        const query = this.datasetSearchQuery.toLowerCase();
+        return this.datasets.filter(dataset => {
+            if (!dataset || typeof dataset !== 'object') {
+                return false;
+            }
+            return (
+                (dataset.id && dataset.id.toLowerCase().includes(query)) ||
+                (dataset.instance_data_dir && dataset.instance_data_dir.toLowerCase().includes(query)) ||
+                (dataset.dataset_type && dataset.dataset_type.toLowerCase().includes(query)) ||
+                (dataset.type && dataset.type.toLowerCase().includes(query))
+            );
+        });
+    },
+
+    // View mode methods
+    setViewMode(mode) {
+        this.viewMode = mode;
+        try {
+            localStorage.setItem('datasetBuilderViewMode', mode);
+        } catch (e) {
+            console.warn('[DatasetBuilder] Unable to save view mode preference');
+        }
+    },
+
+    // Search methods
+    clearDatasetSearch() {
+        this.datasetSearchQuery = '';
+    },
+
+    // Modal methods
+    openDatasetModal(dataset) {
+        this.editingDataset = dataset;
+        this.modalTab = 'basic';
+        document.body.classList.add('modal-open');
+    },
+
+    closeDatasetModal() {
+        this.editingDataset = null;
+        document.body.classList.remove('modal-open');
+    },
+
+    // List view tab methods (per-dataset tab state)
+    getListTab(dataset) {
+        if (dataset._listTab) return dataset._listTab;
+        // Default to 'storage' for types without a Basic tab
+        const noBasicTypes = ['text_embeds', 'image_embeds', 'audio'];
+        return noBasicTypes.includes(dataset.dataset_type) ? 'storage' : 'basic';
+    },
+
+    setListTab(dataset, tab) {
+        dataset._listTab = tab;
+    },
+
     ensureCaptionFiltersLoaded() {
         const trainer = Alpine.store('trainer');
         if (trainer && typeof trainer.loadCaptionFilters === 'function') {

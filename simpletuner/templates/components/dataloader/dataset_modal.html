@@ -1,0 +1,175 @@
+<!-- Dataset Configuration Modal (Windows Explorer-style tabs) -->
+<template x-if="editingDataset">
+    <div class="dataset-modal-backdrop"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click.self="closeDatasetModal()"
+         @keydown.escape.window="closeDatasetModal()">
+
+        <div class="dataset-modal"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 transform scale-95"
+             x-transition:enter-end="opacity-100 transform scale-100"
+             x-transition:leave="transition ease-in duration-150"
+             x-transition:leave-start="opacity-100 transform scale-100"
+             x-transition:leave-end="opacity-0 transform scale-95"
+             @click.stop>
+
+            <!-- Modal Header -->
+            <div class="modal-header compact">
+                <span class="modal-icon" x-text="getDatasetTypeIcon(editingDataset.dataset_type)"></span>
+                <input type="text"
+                       class="modal-title-input"
+                       x-model="editingDataset.id"
+                       @input="markAsUnsaved()"
+                       placeholder="dataset-id">
+                <div class="modal-header-badges">
+                    <span class="badge" :class="{
+                        'bg-primary': editingDataset.dataset_type === 'image',
+                        'bg-info': editingDataset.dataset_type === 'video',
+                        'bg-success': editingDataset.dataset_type === 'audio',
+                        'bg-secondary': editingDataset.dataset_type === 'text_embeds' || editingDataset.dataset_type === 'image_embeds',
+                        'bg-warning text-dark': editingDataset.dataset_type === 'conditioning'
+                    }" x-text="editingDataset.dataset_type"></span>
+                    <span class="badge bg-danger" x-show="editingDataset.disabled">Disabled</span>
+                </div>
+                <button type="button" class="btn-close" @click="closeDatasetModal()" aria-label="Close"></button>
+            </div>
+
+            <!-- Modal Tabs -->
+            <div class="modal-tabs">
+                <button type="button"
+                        :class="{'active': modalTab === 'basic'}"
+                        @click="modalTab = 'basic'">
+                    <i class="fas fa-sliders-h"></i>
+                    <span>Basic</span>
+                </button>
+                <button type="button"
+                        :class="{'active': modalTab === 'storage'}"
+                        @click="modalTab = 'storage'">
+                    <i class="fas fa-database"></i>
+                    <span>Storage</span>
+                </button>
+                <button type="button"
+                        :class="{'active': modalTab === 'captions'}"
+                        x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds' && editingDataset.dataset_type !== 'conditioning'"
+                        @click="modalTab = 'captions'">
+                    <i class="fas fa-comment-alt"></i>
+                    <span>Captions</span>
+                </button>
+                <button type="button"
+                        :class="{'active': modalTab === 'video'}"
+                        x-show="editingDataset.dataset_type === 'video'"
+                        @click="modalTab = 'video'">
+                    <i class="fas fa-film"></i>
+                    <span>Video</span>
+                </button>
+                <button type="button"
+                        :class="{'active': modalTab === 'audio'}"
+                        x-show="editingDataset.dataset_type === 'audio'"
+                        @click="modalTab = 'audio'">
+                    <i class="fas fa-music"></i>
+                    <span>Audio</span>
+                </button>
+                <button type="button"
+                        :class="{'active': modalTab === 'conditioning'}"
+                        x-show="(editingDataset.dataset_type === 'image' || editingDataset.dataset_type === 'video' || editingDataset.dataset_type === 'conditioning') && conditioningSupported"
+                        @click="modalTab = 'conditioning'">
+                    <i class="fas fa-project-diagram"></i>
+                    <span>Conditioning</span>
+                </button>
+                <button type="button"
+                        :class="{'active': modalTab === 'advanced'}"
+                        @click="modalTab = 'advanced'">
+                    <i class="fas fa-cog"></i>
+                    <span>Advanced</span>
+                </button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="modal-body">
+                <!-- Basic Tab -->
+                <div x-show="modalTab === 'basic'" x-cloak>
+                    {% include 'components/dataloader/sections/basic_body.html' %}
+                </div>
+
+                <!-- Storage Tab -->
+                <div x-show="modalTab === 'storage'" x-cloak>
+                    {% include 'components/dataloader/sections/storage_body.html' %}
+                </div>
+
+                <!-- Captions Tab -->
+                <div x-show="modalTab === 'captions'" x-cloak>
+                    {% include 'components/dataloader/sections/captions_body.html' %}
+                </div>
+
+                <!-- Video Tab -->
+                <div x-show="modalTab === 'video'" x-cloak>
+                    {% include 'components/dataloader/sections/video_body.html' %}
+                </div>
+
+                <!-- Audio Tab -->
+                <div x-show="modalTab === 'audio'" x-cloak>
+                    {% include 'components/dataloader/sections/audio_body.html' %}
+                </div>
+
+                <!-- Conditioning Tab -->
+                <div x-show="modalTab === 'conditioning'" x-cloak>
+                    {% include 'components/dataloader/sections/conditioning_body.html' %}
+                </div>
+
+                <!-- Advanced Tab -->
+                <div x-show="modalTab === 'advanced'" x-cloak>
+                    {% include 'components/dataloader/sections/advanced_body.html' %}
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="modal-footer compact">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="testDatasetConnection(editingDataset)"
+                        :disabled="editingDataset._connectionTesting || !supportsConnectionTest(editingDataset)">
+                    <i class="fas" :class="editingDataset._connectionTesting ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+                    <span x-show="!editingDataset._connectionTesting">Test Connection</span>
+                    <span x-show="editingDataset._connectionTesting">Testing...</span>
+                </button>
+
+                <div class="form-check form-check-inline mb-0 ms-3">
+                    <input type="checkbox"
+                           class="form-check-input"
+                           id="modal-dataset-disabled"
+                           x-model="editingDataset.disabled"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" for="modal-dataset-disabled">
+                        Disable dataset
+                    </label>
+                </div>
+
+                <div class="modal-footer-spacer"></div>
+
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        title="Duplicate dataset"
+                        @click="duplicateDataset(editingDataset.id); closeDatasetModal()">
+                    <i class="fas fa-copy"></i>
+                </button>
+                <button type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        title="Remove dataset"
+                        @click="if (confirm('Remove this dataset?')) { removeDataset(editingDataset.id); closeDatasetModal(); }">
+                    <i class="fas fa-trash"></i>
+                </button>
+                <button type="button"
+                        class="btn btn-sm btn-primary"
+                        @click="closeDatasetModal()">
+                    <i class="fas fa-check"></i> Done
+                </button>
+            </div>
+        </div>
+    </div>
+</template>

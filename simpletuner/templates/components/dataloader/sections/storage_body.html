@@ -1,0 +1,243 @@
+<!-- Storage Settings Body (for modal) -->
+<div class="modal-section-body">
+    <!-- Backend Selection -->
+    <div class="section-group">
+        <h6 class="modal-section-title">Storage Backend</h6>
+        <select class="form-select form-select-sm"
+                x-model="editingDataset.type"
+                @change="onStorageBackendChange(editingDataset)">
+            <option value="local">Local filesystem</option>
+            <option value="aws">AWS S3 / compatible</option>
+            <option value="csv">CSV URL list</option>
+            <option value="huggingface">Hugging Face dataset</option>
+        </select>
+    </div>
+
+    <!-- Local Storage -->
+    <div class="section-group" x-show="editingDataset.type === 'local'" x-cloak>
+        <h6 class="modal-section-title">Local Paths</h6>
+        <div class="row g-2">
+            <div class="col-md-6" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
+                <label class="form-label small">Instance Data Directory</label>
+                <div class="input-group input-group-sm">
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           x-model.lazy="editingDataset.instance_data_dir"
+                           @input="markAsUnsaved()"
+                           placeholder="/path/to/data">
+                    <button class="btn btn-outline-secondary"
+                            type="button"
+                            @click.prevent="openDatasetPathBrowser(editingDataset, 'instance_data_dir')"
+                            title="Browse">
+                        <i class="fas fa-folder-open"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
+                <label class="form-label small">VAE Cache Directory</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model.lazy="editingDataset.cache_dir_vae"
+                       @input="markAsUnsaved()"
+                       placeholder="/path/to/cache/vae">
+            </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds'">
+                <label class="form-label small">Text Embed Cache</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model.lazy="editingDataset.cache_dir"
+                       @input="markAsUnsaved()"
+                       placeholder="/path/to/cache">
+            </div>
+        </div>
+    </div>
+
+    <!-- AWS S3 -->
+    <div class="section-group" x-show="editingDataset.type === 'aws'" x-cloak>
+        <h6 class="modal-section-title">AWS S3 Configuration</h6>
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label small">Bucket Name</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.aws_bucket_name"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="my-bucket">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Object Prefix</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.aws_data_prefix"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="datasets/">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Region</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.aws_region_name"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="us-east-1">
+            </div>
+        </div>
+        <div class="row g-2 mt-2">
+            <div class="col-md-4">
+                <label class="form-label small">Endpoint URL</label>
+                <div class="input-group input-group-sm">
+                    <input :type="editingDataset._awsEndpointVisible ? 'text' : 'password'"
+                           class="form-control"
+                           x-model="editingDataset.aws_endpoint_url"
+                           @input="touchConnectionField(editingDataset)"
+                           placeholder="https://s3.amazonaws.com"
+                           autocomplete="off">
+                    <button class="btn btn-outline-secondary"
+                            type="button"
+                            @click="editingDataset._awsEndpointVisible = !editingDataset._awsEndpointVisible">
+                        <i class="fas" :class="editingDataset._awsEndpointVisible ? 'fa-eye-slash' : 'fa-eye'"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Access Key ID</label>
+                <div class="input-group input-group-sm">
+                    <input :type="editingDataset._awsAccessVisible ? 'text' : 'password'"
+                           class="form-control"
+                           x-model="editingDataset.aws_access_key_id"
+                           @input="touchConnectionField(editingDataset)"
+                           autocomplete="off">
+                    <button class="btn btn-outline-secondary"
+                            type="button"
+                            @click="editingDataset._awsAccessVisible = !editingDataset._awsAccessVisible">
+                        <i class="fas" :class="editingDataset._awsAccessVisible ? 'fa-eye-slash' : 'fa-eye'"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Secret Access Key</label>
+                <div class="input-group input-group-sm">
+                    <input :type="editingDataset._awsSecretVisible ? 'text' : 'password'"
+                           class="form-control"
+                           x-model="editingDataset.aws_secret_access_key"
+                           @input="touchConnectionField(editingDataset)"
+                           autocomplete="off">
+                    <button class="btn btn-outline-secondary"
+                            type="button"
+                            @click="editingDataset._awsSecretVisible = !editingDataset._awsSecretVisible">
+                        <i class="fas" :class="editingDataset._awsSecretVisible ? 'fa-eye-slash' : 'fa-eye'"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CSV -->
+    <div class="section-group" x-show="editingDataset.type === 'csv'" x-cloak>
+        <h6 class="modal-section-title">CSV Configuration</h6>
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label small">CSV File</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.csv_file"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="/path/to/urls.csv">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Caption Column</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.csv_caption_column"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="caption">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Cache Directory</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.csv_cache_dir"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="/path/to/cache">
+            </div>
+        </div>
+    </div>
+
+    <!-- Hugging Face -->
+    <div class="section-group" x-show="editingDataset.type === 'huggingface'" x-cloak>
+        <h6 class="modal-section-title">Hugging Face Dataset</h6>
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label small">Dataset Name</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.dataset_name"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="username/dataset">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Config</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.dataset_config"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="default">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Split</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.split"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="train">
+            </div>
+        </div>
+        <div class="row g-2 mt-2">
+            <div class="col-md-4">
+                <label class="form-label small">Image Column</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.image_column"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="image">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Caption Column</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.caption_column"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="text">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Revision</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.revision"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="main">
+            </div>
+        </div>
+        <div class="row g-2 mt-2">
+            <div class="col-md-6">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'hf-streaming-' + editingDataset.id"
+                           x-model="editingDataset.streaming"
+                           @change="touchConnectionField(editingDataset)">
+                    <label class="form-check-label small" :for="'hf-streaming-' + editingDataset.id">
+                        Enable streaming
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Auth Token</label>
+                <input type="password"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset.auth_token"
+                       @input="touchConnectionField(editingDataset)"
+                       placeholder="hf_...">
+            </div>
+        </div>
+    </div>
+</div>

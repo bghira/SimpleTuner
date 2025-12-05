@@ -1373,3 +1373,756 @@
         justify-content: center;
     }
 }
+
+/* ============================================
+   Dataset Builder - New Views & Modal
+   ============================================ */
+
+/* Dataset Builder Header (Search + View Toggle) */
+#dataloaderSection .dataset-builder-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) 0;
+}
+
+#dataloaderSection .dataset-search {
+    flex: 1;
+    max-width: 300px;
+}
+
+#dataloaderSection .dataset-search .input-group-text {
+    background: var(--input-bg);
+    border-color: var(--glass-border);
+    color: var(--text-muted);
+}
+
+#dataloaderSection .view-toggle {
+    margin-left: auto;
+}
+
+#dataloaderSection .view-toggle .btn {
+    padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+/* ============================================
+   List View
+   ============================================ */
+#dataloaderSection .dataset-list-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+#dataloaderSection .dataset-list-item-wrapper {
+    /* Wrapper for list item + expanded content to work with Alpine x-for */
+}
+
+#dataloaderSection .dataset-list-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    min-height: 48px;
+    position: relative;
+    transition: all 0.15s ease;
+}
+
+#dataloaderSection .dataset-list-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+#dataloaderSection .dataset-list-item.expanded {
+    border-color: var(--accent-blue);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+#dataloaderSection .dataset-list-item.disabled {
+    opacity: 0.6;
+}
+
+#dataloaderSection .list-item-toggle {
+    flex: 0 0 24px;
+    color: var(--text-muted);
+    padding: 0.25rem;
+}
+
+#dataloaderSection .list-item-toggle:hover {
+    color: var(--text-primary);
+}
+
+#dataloaderSection .list-item-type-icon {
+    flex: 0 0 28px;
+    font-size: 1.2rem;
+    text-align: center;
+}
+
+#dataloaderSection .list-item-id {
+    flex: 0 0 160px;
+}
+
+#dataloaderSection .list-item-id-input {
+    width: 100%;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+#dataloaderSection .list-item-id-input:hover {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: var(--glass-border);
+}
+
+#dataloaderSection .list-item-id-input:focus {
+    background: var(--input-bg);
+    border-color: var(--accent-blue);
+    outline: none;
+}
+
+#dataloaderSection .list-item-type-select {
+    flex: 0 0 110px;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.4rem;
+    background: var(--input-bg);
+    border-color: var(--glass-border);
+}
+
+#dataloaderSection .list-item-path {
+    flex: 1 1 120px;
+    min-width: 80px;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#dataloaderSection .list-item-resolution {
+    flex: 0 0 auto;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+}
+
+#dataloaderSection .list-item-resolution .resolution-icon {
+    color: var(--text-muted);
+    font-size: 0.7rem;
+}
+
+#dataloaderSection .list-item-crop {
+    flex: 0 0 24px;
+    text-align: center;
+}
+
+#dataloaderSection .list-item-actions {
+    flex: 0 0 auto;
+    opacity: 0.6;
+    transition: opacity 0.15s ease;
+}
+
+#dataloaderSection .dataset-list-item:hover .list-item-actions {
+    opacity: 1;
+}
+
+#dataloaderSection .list-item-disabled-badge {
+    position: absolute;
+    top: 50%;
+    right: var(--spacing-md);
+    transform: translateY(-50%);
+}
+
+/* Expanded content below list item */
+#dataloaderSection .dataset-list-item-expanded {
+    background: var(--card-bg);
+    border: 1px solid var(--accent-blue);
+    border-top: none;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    margin-bottom: var(--spacing-sm);
+}
+
+#dataloaderSection .dataset-list-item-expanded .expanded-content {
+    padding: var(--spacing-md);
+}
+
+/* Section body - sections flow horizontally when room, wrap when not */
+#dataloaderSection .dataset-list-item-expanded .modal-section-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+/* Each section-group can sit side-by-side, min-width ensures reasonable size */
+#dataloaderSection .dataset-list-item-expanded .section-group {
+    flex: 1 1 300px;
+    min-width: 280px;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem;
+}
+
+/* Section title styling */
+#dataloaderSection .dataset-list-item-expanded .modal-section-title {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+/* Row inside sections - flexbox for horizontal layout, centered, items don't grow */
+#dataloaderSection .dataset-list-item-expanded .section-group .row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+    gap: 0.5rem 1rem !important;
+    margin: 0 !important;
+}
+
+/* Override Bootstrap column sizing - fixed widths based on col-md-* */
+#dataloaderSection .dataset-list-item-expanded .section-group .row > [class*="col-"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    padding: 0 !important;
+}
+
+/* Approximate Bootstrap column widths for compact layout */
+#dataloaderSection .dataset-list-item-expanded .section-group .row > .col-md-3 { width: 120px !important; }
+#dataloaderSection .dataset-list-item-expanded .section-group .row > .col-md-4 { width: 150px !important; }
+#dataloaderSection .dataset-list-item-expanded .section-group .row > .col-md-6 { width: 200px !important; }
+#dataloaderSection .dataset-list-item-expanded .section-group .row > .col-md-8 { width: 280px !important; }
+
+/* Multiple rows within same section - tighter spacing */
+#dataloaderSection .dataset-list-item-expanded .section-group .row + .row {
+    margin-top: 0.5rem !important;
+}
+
+/* Form element styling defined in "Professional Form Layout" section below */
+
+/* List Item Folder Tabs */
+#dataloaderSection .list-item-tabs {
+    display: flex;
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid var(--glass-border);
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+#dataloaderSection .list-item-tabs button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    cursor: pointer;
+}
+
+#dataloaderSection .list-item-tabs button:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+#dataloaderSection .list-item-tabs button.active {
+    color: var(--accent-blue);
+    border-bottom-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.08);
+}
+
+#dataloaderSection .list-item-tabs button i {
+    font-size: 0.875rem;
+}
+
+/* Responsive: Hide tab labels on smaller screens */
+@media (max-width: 992px) {
+    #dataloaderSection .list-item-tabs button span {
+        display: none;
+    }
+
+    #dataloaderSection .list-item-tabs button i {
+        font-size: 1rem;
+    }
+
+    #dataloaderSection .list-item-tabs button {
+        padding: var(--spacing-sm);
+    }
+}
+
+/* ============================================
+   List View Expanded Content - Professional Form Layout
+   ============================================ */
+
+/* Remove duplicate earlier rules - keep only the well-structured ones below */
+
+/* Form labels - compact and consistent */
+#dataloaderSection .dataset-list-item-expanded .form-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+    color: var(--text-secondary);
+}
+
+#dataloaderSection .dataset-list-item-expanded .form-label.small {
+    font-size: 0.6875rem;
+}
+
+/* Inputs and selects - standardized sizing */
+#dataloaderSection .dataset-list-item-expanded .form-control-sm,
+#dataloaderSection .dataset-list-item-expanded .form-select-sm {
+    padding: 0.25rem 0.5rem !important;
+    font-size: 0.775rem !important;
+    height: 1.75rem !important;
+    min-height: unset !important;
+    line-height: 1.25rem !important;
+}
+
+/* Textareas - specific handling */
+#dataloaderSection .dataset-list-item-expanded textarea.form-control-sm {
+    height: auto;
+    min-height: 2.5rem;
+}
+
+/* Form hints - subtle */
+#dataloaderSection .dataset-list-item-expanded .form-text {
+    font-size: 0.625rem;
+    color: var(--text-muted);
+    margin-top: 0.125rem;
+    line-height: 1.4;
+}
+
+/* Checkboxes - inline compact */
+#dataloaderSection .dataset-list-item-expanded .form-check {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding-left: 0;
+    min-height: 2rem;
+    margin: 0;
+}
+
+#dataloaderSection .dataset-list-item-expanded .form-check-input {
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+#dataloaderSection .dataset-list-item-expanded .form-check-label {
+    font-size: 0.8125rem;
+    line-height: 1.2;
+}
+
+/* Fix checkbox with mb-2 class */
+#dataloaderSection .dataset-list-item-expanded .form-check.mb-2 {
+    grid-column: 1 / -1;
+    margin-bottom: 0.5rem !important;
+}
+
+/* Standalone checkboxes (not in a col) span full width */
+#dataloaderSection .dataset-list-item-expanded .modal-section-body > div > .form-check,
+#dataloaderSection .dataset-list-item-expanded .modal-section-body > div > div > .form-check.mt-2 {
+    grid-column: 1 / -1;
+}
+
+/* Remove Bootstrap margin utilities in our context */
+#dataloaderSection .dataset-list-item-expanded .row.mb-3 {
+    margin-bottom: 0 !important;
+}
+
+#dataloaderSection .dataset-list-item-expanded .row.mt-1,
+#dataloaderSection .dataset-list-item-expanded .row.mt-2 {
+    margin-top: 0 !important;
+}
+
+#dataloaderSection .dataset-list-item-expanded .mt-3 {
+    margin-top: 0 !important;
+}
+
+/* Checkbox next to textarea - align with input baseline */
+#dataloaderSection .dataset-list-item-expanded .form-check.mt-4 {
+    margin-top: 1.5rem !important;
+}
+
+/* Invalid feedback - compact */
+#dataloaderSection .dataset-list-item-expanded .invalid-feedback {
+    font-size: 0.6875rem;
+    margin-top: 0.125rem;
+}
+
+/* Input groups - fix button alignment */
+#dataloaderSection .dataset-list-item-expanded .input-group-sm > .btn {
+    padding: 0.25rem 0.5rem;
+}
+
+/* Input groups inherit width from column */
+
+/* Note: Section spacing now handled by flex gap on .modal-section-body */
+/* Row spacing within sections handled by rule at line ~1591 */
+
+/* ============================================
+   Grid/Card View
+   ============================================ */
+#dataloaderSection .dataset-grid-view {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--spacing-md);
+}
+
+#dataloaderSection .dataset-grid-card {
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-md);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+#dataloaderSection .dataset-grid-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+#dataloaderSection .dataset-grid-card.disabled {
+    opacity: 0.6;
+}
+
+#dataloaderSection .grid-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+#dataloaderSection .grid-card-icon {
+    font-size: 1.5rem;
+}
+
+#dataloaderSection .grid-card-title {
+    flex: 1;
+    font-weight: 600;
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#dataloaderSection .grid-card-actions {
+    margin-left: auto;
+}
+
+#dataloaderSection .grid-card-actions .btn {
+    padding: 0.25rem 0.5rem;
+}
+
+#dataloaderSection .grid-card-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+#dataloaderSection .grid-card-type-badge {
+    align-self: flex-start;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    margin-bottom: var(--spacing-xs);
+}
+
+#dataloaderSection .grid-card-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    padding: var(--spacing-xs) 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#dataloaderSection .grid-card-stat:last-of-type {
+    border-bottom: none;
+}
+
+#dataloaderSection .grid-card-stat-label {
+    color: var(--text-muted);
+}
+
+#dataloaderSection .grid-card-stat-value {
+    font-weight: 500;
+}
+
+#dataloaderSection .grid-card-path {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: var(--spacing-xs);
+}
+
+#dataloaderSection .grid-card-footer {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-sm);
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid var(--glass-border);
+}
+
+#dataloaderSection .grid-card-footer .btn-primary {
+    margin-left: auto;
+}
+
+#dataloaderSection .grid-card-disabled-overlay {
+    position: absolute;
+    top: var(--spacing-sm);
+    right: var(--spacing-sm);
+}
+
+/* ============================================
+   Dataset Modal (Windows Explorer-style)
+   ============================================ */
+#dataloaderSection .dataset-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1050;
+}
+
+#dataloaderSection .dataset-modal {
+    background: var(--card-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    width: 90%;
+    max-width: 800px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+#dataloaderSection .dataset-modal .modal-header.compact {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--glass-border);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+#dataloaderSection .dataset-modal .modal-icon {
+    font-size: 1.5rem;
+}
+
+#dataloaderSection .dataset-modal .modal-title-input {
+    flex: 1;
+    background: transparent;
+    border: 1px solid transparent;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 1rem;
+    border-radius: var(--radius-sm);
+}
+
+#dataloaderSection .dataset-modal .modal-title-input:hover {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: var(--glass-border);
+}
+
+#dataloaderSection .dataset-modal .modal-title-input:focus {
+    background: var(--input-bg);
+    border-color: var(--accent-blue);
+    outline: none;
+}
+
+#dataloaderSection .dataset-modal .modal-header-badges {
+    display: flex;
+    gap: var(--spacing-xs);
+}
+
+#dataloaderSection .dataset-modal .btn-close {
+    filter: invert(1);
+    opacity: 0.6;
+}
+
+#dataloaderSection .dataset-modal .btn-close:hover {
+    opacity: 1;
+}
+
+/* Modal Tabs */
+#dataloaderSection .dataset-modal .modal-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--glass-border);
+    background: rgba(0, 0, 0, 0.15);
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+
+#dataloaderSection .dataset-modal .modal-tabs button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    cursor: pointer;
+}
+
+#dataloaderSection .dataset-modal .modal-tabs button:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+#dataloaderSection .dataset-modal .modal-tabs button.active {
+    color: var(--accent-blue);
+    border-bottom-color: var(--accent-blue);
+}
+
+#dataloaderSection .dataset-modal .modal-tabs button i {
+    font-size: 0.875rem;
+}
+
+/* Modal Body */
+#dataloaderSection .dataset-modal .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-md);
+}
+
+/* Modal Section Styling */
+#dataloaderSection .modal-section-body {
+    padding: 0;
+}
+
+#dataloaderSection .modal-section-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--spacing-sm);
+    padding-bottom: var(--spacing-xs);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#dataloaderSection .modal-section-body .form-label {
+    font-size: 0.8125rem;
+    margin-bottom: var(--spacing-xs);
+}
+
+#dataloaderSection .modal-section-body .form-control,
+#dataloaderSection .modal-section-body .form-select {
+    font-size: 0.875rem;
+}
+
+#dataloaderSection .modal-section-body .form-text {
+    font-size: 0.75rem;
+}
+
+/* Modal Footer */
+#dataloaderSection .dataset-modal .modal-footer.compact {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-top: 1px solid var(--glass-border);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+#dataloaderSection .dataset-modal .modal-footer-spacer {
+    flex: 1;
+}
+
+/* Conditioning generator card in modal */
+#dataloaderSection .conditioning-generator-card {
+    background: rgba(0, 0, 0, 0.2);
+    border-color: var(--glass-border);
+}
+
+/* ============================================
+   Responsive - New Views
+   ============================================ */
+@media (max-width: 992px) {
+    #dataloaderSection .dataset-grid-view {
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    }
+}
+
+@media (max-width: 768px) {
+    #dataloaderSection .dataset-builder-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #dataloaderSection .dataset-search {
+        max-width: none;
+    }
+
+    #dataloaderSection .view-toggle {
+        margin-left: 0;
+        align-self: flex-end;
+    }
+
+    #dataloaderSection .dataset-list-item {
+        gap: var(--spacing-xs);
+        padding: var(--spacing-sm);
+        flex-wrap: wrap;
+    }
+
+    #dataloaderSection .list-item-id {
+        flex: 1 1 100px;
+    }
+
+    #dataloaderSection .list-item-path,
+    #dataloaderSection .list-item-resolution,
+    #dataloaderSection .list-item-crop {
+        display: none;
+    }
+
+    #dataloaderSection .dataset-grid-view {
+        grid-template-columns: 1fr;
+    }
+
+    #dataloaderSection .dataset-modal {
+        width: 95%;
+        max-height: 90vh;
+    }
+
+    #dataloaderSection .dataset-modal .modal-tabs button span {
+        display: none;
+    }
+
+    #dataloaderSection .dataset-modal .modal-tabs button i {
+        font-size: 1rem;
+    }
+}

@@ -818,5 +818,111 @@ class OnboardingFlowTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_first_time_user_onboarding", scenario)
 
 
+class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test dataset builder view mode switching and new UI features."""
+
+    MAX_BROWSERS = 1
+
+    def test_view_mode_toggle(self) -> None:
+        """Test switching between list and grid view modes."""
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            # Add a dataset first
+            datasets_tab.add_dataset("image")
+
+            # Default should be list view
+            self.assertEqual(datasets_tab.get_view_mode(), "list")
+
+            # Switch to grid view
+            datasets_tab.switch_to_grid_view()
+            self.assertEqual(datasets_tab.get_view_mode(), "cards")
+
+            # Switch back to list view
+            datasets_tab.switch_to_list_view()
+            self.assertEqual(datasets_tab.get_view_mode(), "list")
+
+        self.for_each_browser("test_view_mode_toggle", scenario)
+
+    def test_dataset_modal(self) -> None:
+        """Test opening and closing the dataset configuration modal."""
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            # Add a dataset
+            datasets_tab.add_dataset("image")
+
+            # Open modal via JavaScript
+            datasets_tab.open_dataset_modal_by_js(0)
+            self.assertTrue(datasets_tab.is_modal_open())
+
+            # Default tab should be basic
+            self.assertEqual(datasets_tab.get_modal_tab(), "basic")
+
+            # Switch tabs
+            datasets_tab.switch_modal_tab("storage")
+            self.assertEqual(datasets_tab.get_modal_tab(), "storage")
+
+            datasets_tab.switch_modal_tab("advanced")
+            self.assertEqual(datasets_tab.get_modal_tab(), "advanced")
+
+            # Close modal
+            datasets_tab.close_dataset_modal()
+            self.assertFalse(datasets_tab.is_modal_open())
+
+        self.for_each_browser("test_dataset_modal", scenario)
+
+    def test_dataset_search(self) -> None:
+        """Test searching/filtering datasets."""
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            # Add multiple datasets
+            datasets_tab.add_dataset("image")
+            datasets_tab.add_dataset("video")
+            datasets_tab.add_dataset("text_embeds")
+
+            # All should be visible initially
+            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 3)
+
+            # Search for "image"
+            datasets_tab.search_datasets("image")
+            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 1)
+
+            # Clear search
+            datasets_tab.clear_dataset_search()
+            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 3)
+
+            # Search for "video"
+            datasets_tab.search_datasets("video")
+            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 1)
+
+        self.for_each_browser("test_dataset_search", scenario)
+
+
 if __name__ == "__main__":
     unittest.main()

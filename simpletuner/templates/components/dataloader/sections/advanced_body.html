@@ -1,0 +1,150 @@
+<!-- Advanced Options Body (for modal) -->
+<div class="modal-section-body">
+    <!-- Sampling & Repeats -->
+    <div class="section-group" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type)">
+        <h6 class="modal-section-title">Sampling & Repeats</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Repeats</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.repeats"
+                       @input="markAsUnsaved()"
+                       placeholder="0">
+                <div class="form-text small">0 = single pass, each repeat adds another sweep</div>
+            </div>
+            <div class="col-md-6" :class="{'opacity-50': !dangerModeEnabled()}">
+                <label class="form-label small">Probability</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       max="1"
+                       step="0.05"
+                       x-model.number.lazy="editingDataset.probability"
+                       :disabled="!dangerModeEnabled()"
+                       @input="markAsUnsaved()"
+                       placeholder="1.0">
+                <div class="form-text small" x-show="dangerModeEnabled()">Sampling weight when mixing datasets</div>
+                <div class="form-text small text-warning" x-show="!dangerModeEnabled()">Enable danger mode to adjust</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Embed Options -->
+    <div class="section-group" x-show="editingDataset.dataset_type === 'text_embeds' || editingDataset.dataset_type === 'image_embeds'">
+        <h6 class="modal-section-title">Embed Options</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Write Batch Size</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.write_batch_size"
+                       @input="markAsUnsaved()"
+                       placeholder="128">
+            </div>
+        </div>
+    </div>
+
+    <!-- Aspect Ratio Limits -->
+    <div class="section-group" x-show="!['text_embeds','image_embeds','audio'].includes(editingDataset.dataset_type)">
+        <h6 class="modal-section-title">Aspect Ratio Limits</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Min Aspect Ratio</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="0.01"
+                       x-model.number.lazy="editingDataset.minimum_aspect_ratio"
+                       @input="markAsUnsaved()"
+                       placeholder="0.5">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Max Aspect Ratio</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="0.01"
+                       x-model.number.lazy="editingDataset.maximum_aspect_ratio"
+                       @input="markAsUnsaved()"
+                       placeholder="3.0">
+            </div>
+        </div>
+    </div>
+
+    <!-- Embed Dataset Links -->
+    <div class="section-group" x-show="editingDataset.dataset_type === 'image' || editingDataset.dataset_type === 'video'">
+        <h6 class="modal-section-title">Embed Dataset Links</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Text Embeds Dataset</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.text_embeds"
+                        @change="markAsUnsaved()">
+                    <option value="">Use default</option>
+                    <template x-for="option in datasetOptionsForType(editingDataset, 'text_embeds')">
+                        <option :value="option.id" x-text="option.label"></option>
+                    </template>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Image Embeds Dataset</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.image_embeds"
+                        @change="markAsUnsaved()">
+                    <option value="">None</option>
+                    <template x-for="option in datasetOptionsForType(editingDataset, 'image_embeds')">
+                        <option :value="option.id" x-text="option.label"></option>
+                    </template>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache & Processing Options -->
+    <div class="section-group">
+        <h6 class="modal-section-title">Cache & Processing</h6>
+        <div class="row g-2">
+            <div class="col-md-6" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type)">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'hash-filenames-' + editingDataset.id"
+                           x-model="editingDataset.hash_filenames"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'hash-filenames-' + editingDataset.id">
+                        Hash cached filenames
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type !== 'image_embeds'">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'preserve-cache-' + editingDataset.id"
+                           x-model="editingDataset.preserve_data_backend_cache"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'preserve-cache-' + editingDataset.id">
+                        Preserve backend cache
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-6" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type)">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'regularisation-' + editingDataset.id"
+                           x-model="editingDataset.is_regularisation_data"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'regularisation-' + editingDataset.id">
+                        Regularisation data
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

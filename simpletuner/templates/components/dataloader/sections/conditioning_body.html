@@ -1,0 +1,121 @@
+<!-- Conditioning Body (for modal) -->
+<div class="modal-section-body">
+    <!-- Conditioning Dataset Links -->
+    <div class="section-group">
+        <h6 class="modal-section-title">Conditioning Datasets</h6>
+        <p class="text-muted small mb-2">
+            Link existing <code x-text="conditioningDatasetType"></code> datasets to feed control inputs.
+        </p>
+        <template x-if="conditioningOptions(editingDataset).length === 0">
+            <div class="alert alert-secondary small py-2 mb-2">
+                Create a <code x-text="conditioningDatasetType"></code> dataset first.
+            </div>
+        </template>
+        <select class="form-select form-select-sm"
+                multiple
+                x-model="editingDataset.conditioning_data"
+                @change="onConditioningDataChange(editingDataset, $event)"
+                style="min-height: 80px;">
+            <template x-for="option in conditioningOptions(editingDataset)" :key="option">
+                <option :value="option" x-text="option"></option>
+            </template>
+        </select>
+        <div class="form-text small">Hold <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> to select multiple</div>
+    </div>
+
+    <!-- Conditioning Generators -->
+    <div class="section-group">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+            <h6 class="modal-section-title mb-0">Conditioning Generators</h6>
+            <button type="button"
+                    class="btn btn-sm btn-outline-primary"
+                    @click="addConditioningGenerator(editingDataset)"
+                    :disabled="!conditioningSupported">
+                <i class="fas fa-plus"></i> Add
+            </button>
+        </div>
+
+        <template x-if="conditioningRequired && (!Array.isArray(editingDataset.conditioning) || editingDataset.conditioning.length === 0)">
+            <div class="alert alert-warning small py-2 mb-2">
+                This model requires conditioning. Link a dataset or add a generator.
+            </div>
+        </template>
+
+        <!-- Generator List -->
+        <template x-for="(generator, genIndex) in editingDataset.conditioning" :key="generator._uiKey || genIndex">
+            <div class="card mb-2 conditioning-generator-card">
+                <div class="card-body p-2">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="flex-grow-1 me-2">
+                            <label class="form-label small mb-1">Generator Type</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="generator._selectedType"
+                                    @change="onGeneratorTypeSelect(generator)"
+                                    :disabled="!conditioningSupported">
+                                <option value="">Select...</option>
+                                <template x-for="option in availableGeneratorTypes" :key="option.value">
+                                    <option :value="option.value"
+                                            :title="option.description"
+                                            x-text="option.label"></option>
+                                </template>
+                            </select>
+                            <div class="mt-1" x-show="generator._selectedType === '__custom__'" x-cloak>
+                                <input type="text"
+                                       class="form-control form-control-sm"
+                                       x-model="generator._customType"
+                                       @input="onGeneratorTypeManual(generator)"
+                                       placeholder="Custom generator id">
+                            </div>
+                        </div>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-danger"
+                                @click="removeConditioningGenerator(editingDataset, generator)"
+                                title="Remove">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label small mb-1">Parameters (JSON)</label>
+                        <textarea class="form-control form-control-sm font-monospace"
+                                  rows="3"
+                                  x-model="generator._paramsText"
+                                  @blur="onGeneratorParamsBlur(generator)"
+                                  :class="{'is-invalid': generator._paramsParseError}"></textarea>
+                        <div class="invalid-feedback" x-show="generator._paramsParseError" x-text="generator._paramsParseError"></div>
+                    </div>
+
+                    <div>
+                        <label class="form-label small mb-1">Captions</label>
+                        <select class="form-select form-select-sm"
+                                x-model="generator._captionsMode"
+                                @change="onGeneratorCaptionsModeChange(generator)">
+                            <option value="inherit">Inherit from dataset</option>
+                            <option value="none">Disable captions</option>
+                            <option value="single">Single prompt</option>
+                            <option value="list">Prompt list</option>
+                        </select>
+                        <div class="mt-1" x-show="generator._captionsMode === 'single'" x-cloak>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model="generator._captionsValue"
+                                   @input="onGeneratorCaptionsInput(generator)"
+                                   placeholder="e.g. outline sketch">
+                        </div>
+                        <div class="mt-1" x-show="generator._captionsMode === 'list'" x-cloak>
+                            <textarea class="form-control form-control-sm"
+                                      rows="2"
+                                      x-model="generator._captionsValue"
+                                      @input="onGeneratorCaptionsInput(generator)"
+                                      placeholder="One caption per line"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <div class="text-muted small" x-show="!editingDataset.conditioning || editingDataset.conditioning.length === 0">
+            No generators configured.
+        </div>
+    </div>
+</div>
