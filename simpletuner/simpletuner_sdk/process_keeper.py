@@ -1031,12 +1031,14 @@ logger.info("Subprocess exiting")
         self._dispatch_callback_event(status_payload)
 
     def _force_kill_process_tree(self, timeout: int) -> None:
-        """Forcefully terminate the subprocess and any children."""
+        """Terminate the subprocess tree with a short graceful window before force kill."""
 
         if not self.process or self.process.poll() is not None:
             return
 
         pid = self.process.pid
+        grace_timeout = max(0.0, min(timeout, 2))
+        remaining_timeout = max(0.0, timeout - grace_timeout)
 
         def _kill_with_psutil(proc_pid: int) -> None:
             if not psutil:
@@ -1059,21 +1061,42 @@ logger.info("Subprocess exiting")
                 pass
 
         try:
+            # First try to terminate so cleanup handlers can run.
             if os.name != "nt" and hasattr(os, "killpg"):
                 try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
                 except Exception as exc:
-                    logger.debug(f"killpg failed for {self.job_id}: {exc}")
+                    logger.debug(f"SIGTERM killpg failed for {self.job_id}: {exc}")
             else:  # pragma: no cover - Windows specific
                 try:
-                    self.process.kill()
+                    self.process.terminate()
                 except Exception as exc:
-                    logger.debug(f"kill() failed for {self.job_id}: {exc}")
+                    logger.debug(f"terminate() failed for {self.job_id}: {exc}")
 
+            try:
+                if grace_timeout:
+                    self.process.wait(timeout=grace_timeout)
+            except Exception:
+                pass
+
+            still_running = self.process and self.process.poll() is None
+            if still_running:
+                if os.name != "nt" and hasattr(os, "killpg"):
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    except Exception as exc:
+                        logger.debug(f"SIGKILL killpg failed for {self.job_id}: {exc}")
+                else:  # pragma: no cover - Windows specific
+                    try:
+                        self.process.kill()
+                    except Exception as exc:
+                        logger.debug(f"kill() failed for {self.job_id}: {exc}")
+
+            # Always attempt to clean up any children that may have survived.
             _kill_with_psutil(pid)
 
             try:
-                self.process.wait(timeout=timeout)
+                self.process.wait(timeout=remaining_timeout or timeout)
             except Exception:
                 pass
         except Exception as exc:
