@@ -1,0 +1,66 @@
+<!-- Audio Settings Body (for modal) -->
+<div class="modal-section-body">
+    <!-- Duration Settings -->
+    <div class="section-group" x-show="matchesParamFilter('duration', 'min', 'max', 'interval', 'seconds', 'truncate')">
+        <h6 class="modal-section-title">Duration</h6>
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label small">Min (seconds)</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       x-model.number.lazy="editingDataset.audio_min_duration_seconds"
+                       @input="markAsUnsaved()"
+                       step="0.1"
+                       min="0"
+                       placeholder="0">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Max (seconds)</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       x-model.number.lazy="editingDataset.audio_max_duration_seconds"
+                       @input="markAsUnsaved()"
+                       step="0.1"
+                       min="0"
+                       placeholder="30">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Interval</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       x-model.number.lazy="editingDataset.audio_duration_interval"
+                       @input="markAsUnsaved()"
+                       step="0.1"
+                       min="0.1"
+                       placeholder="3.0">
+                <div class="form-text small">Truncate to nearest multiple</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Format -->
+    <div class="section-group" x-show="matchesParamFilter('format', 'channel', 'mono', 'stereo', 'truncation', 'mode')">
+        <h6 class="modal-section-title">Format</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Channels</label>
+                <select class="form-select form-select-sm"
+                        x-model.number.lazy="editingDataset.audio_channels"
+                        @change="markAsUnsaved()">
+                    <option value="1">1 (Mono)</option>
+                    <option value="2">2 (Stereo)</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Truncation Mode</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.audio_truncation_mode"
+                        @change="markAsUnsaved()">
+                    <option value="beginning">Beginning</option>
+                    <option value="end">End</option>
+                    <option value="random">Random</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>

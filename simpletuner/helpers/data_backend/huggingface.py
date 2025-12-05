@@ -983,6 +983,34 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         os.makedirs(directory_path, exist_ok=True)
 
 
+def _sanitize_sample_for_json(sample: Any) -> Any:
+    """Convert non-JSON-serializable objects to string representations."""
+    import json
+
+    if sample is None:
+        return None
+
+    if isinstance(sample, list):
+        return [_sanitize_sample_for_json(item) for item in sample]
+
+    if isinstance(sample, dict):
+        result = {}
+        for key, value in sample.items():
+            try:
+                json.dumps(value)
+                result[key] = value
+            except (TypeError, ValueError):
+                # Non-serializable: show type info instead
+                result[key] = f"<{type(value).__name__}>"
+        return result
+
+    try:
+        json.dumps(sample)
+        return sample
+    except (TypeError, ValueError):
+        return f"<{type(sample).__name__}>"
+
+
 def test_huggingface_dataset(
     dataset_name: str,
     dataset_config: Optional[str] = None,
@@ -1074,7 +1102,7 @@ def test_huggingface_dataset(
         "features": features,
         "available_splits": available_splits,
         "description": getattr(info, "description", None),
-        "sample": sample,
+        "sample": _sanitize_sample_for_json(sample),
         "streaming_used": sample_via_streaming,
         "estimated_num_examples": dataset_size,
     }

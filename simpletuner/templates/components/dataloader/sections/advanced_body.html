@@ -1,0 +1,74 @@
+<!-- Caching Options Body (for modal) -->
+<div class="modal-section-body">
+    <!-- Embed Dataset Links -->
+    <div class="section-group" x-show="(editingDataset.dataset_type === 'image' || editingDataset.dataset_type === 'video') && matchesParamFilter('embed', 'link', 'text', 'image', 'dataset')">
+        <h6 class="modal-section-title">Embed Dataset Links</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Text Embeds Dataset</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.text_embeds"
+                        @change="markAsUnsaved()">
+                    <option value="">Use default</option>
+                    <template x-for="option in datasetOptionsForType(editingDataset, 'text_embeds')">
+                        <option :value="option.id" x-text="option.label"></option>
+                    </template>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Image Embeds Dataset</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.image_embeds"
+                        @change="markAsUnsaved()">
+                    <option value="">None</option>
+                    <template x-for="option in datasetOptionsForType(editingDataset, 'image_embeds')">
+                        <option :value="option.id" x-text="option.label"></option>
+                    </template>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache & Processing Options -->
+    <div class="section-group" x-show="matchesParamFilter('cache', 'processing', 'hash', 'filename', 'preserve', 'backend', 'regularisation', 'regularization')">
+        <h6 class="modal-section-title">Cache & Processing</h6>
+        <div class="row g-2">
+            <div class="col-md-6" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type)">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'hash-filenames-' + editingDataset.id"
+                           x-model="editingDataset.hash_filenames"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'hash-filenames-' + editingDataset.id">
+                        Hash cached filenames
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type !== 'image_embeds'">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'preserve-cache-' + editingDataset.id"
+                           x-model="editingDataset.preserve_data_backend_cache"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'preserve-cache-' + editingDataset.id">
+                        Preserve backend cache
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-6" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type)">
+                <div class="form-check">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'regularisation-' + editingDataset.id"
+                           x-model="editingDataset.is_regularisation_data"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'regularisation-' + editingDataset.id">
+                        Regularisation data
+                    </label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

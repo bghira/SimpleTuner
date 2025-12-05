@@ -1587,6 +1587,28 @@ class DatasetsTab(BasePage):
     DATASET_ITEMS = (By.CSS_SELECTOR, ".dataset-card")
     SAVE_DATASETS_BUTTON = (By.XPATH, "//button[contains(., 'Save Dataset Configuration')]")  # Unused fallback
 
+    # View mode toggle
+    VIEW_TOGGLE_LIST = (By.CSS_SELECTOR, ".view-toggle button[title='List view']")
+    VIEW_TOGGLE_GRID = (By.CSS_SELECTOR, ".view-toggle button[title='Grid view']")
+
+    # Search
+    DATASET_SEARCH_INPUT = (By.CSS_SELECTOR, ".dataset-search input")
+    DATASET_SEARCH_CLEAR = (By.CSS_SELECTOR, ".dataset-search button")
+
+    # List view
+    DATASET_LIST_ITEMS = (By.CSS_SELECTOR, ".dataset-list-item")
+    DATASET_LIST_EXPANDED = (By.CSS_SELECTOR, ".dataset-list-item-expanded")
+
+    # Grid view
+    DATASET_GRID_CARDS = (By.CSS_SELECTOR, ".dataset-grid-card")
+
+    # Modal
+    DATASET_MODAL = (By.CSS_SELECTOR, ".dataset-modal")
+    DATASET_MODAL_BACKDROP = (By.CSS_SELECTOR, ".dataset-modal-backdrop")
+    MODAL_TABS = (By.CSS_SELECTOR, ".dataset-modal .modal-tabs button")
+    MODAL_CLOSE = (By.CSS_SELECTOR, ".dataset-modal .btn-close")
+    MODAL_DONE = (By.CSS_SELECTOR, ".dataset-modal .modal-footer .btn-primary")
+
     def _wait_for_dataset_count(self, expected: int) -> None:
         self.wait.until(lambda driver: len(driver.find_elements(*self.DATASET_ITEMS)) == expected)
 
@@ -1763,3 +1785,143 @@ class DatasetsTab(BasePage):
                 return False
 
         self.wait.until(_store_reduced)
+
+    # View mode methods
+    def switch_to_list_view(self) -> None:
+        """Switch to list view mode."""
+        self.driver.execute_script(
+            "const comp = window.dataloaderSectionComponentInstance;"
+            "if (comp && comp.setViewMode) { comp.setViewMode('list'); }"
+        )
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;" "return comp && comp.viewMode === 'list';"
+            )
+        )
+
+    def switch_to_grid_view(self) -> None:
+        """Switch to grid/card view mode."""
+        self.driver.execute_script(
+            "const comp = window.dataloaderSectionComponentInstance;"
+            "if (comp && comp.setViewMode) { comp.setViewMode('cards'); }"
+        )
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;" "return comp && comp.viewMode === 'cards';"
+            )
+        )
+
+    def get_view_mode(self) -> str:
+        """Get the current view mode."""
+        return (
+            self.driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;" "return comp ? comp.viewMode : 'list';"
+            )
+            or "list"
+        )
+
+    # Search methods
+    def search_datasets(self, query: str) -> None:
+        """Search datasets by query."""
+        self.driver.execute_script(
+            "const comp = window.dataloaderSectionComponentInstance;"
+            "if (comp) { comp.datasetSearchQuery = arguments[0]; }",
+            query,
+        )
+
+    def clear_dataset_search(self) -> None:
+        """Clear the dataset search query."""
+        self.driver.execute_script(
+            "const comp = window.dataloaderSectionComponentInstance;"
+            "if (comp && comp.clearDatasetSearch) { comp.clearDatasetSearch(); }"
+        )
+
+    def get_filtered_dataset_count(self) -> int:
+        """Get the number of filtered datasets."""
+        return (
+            self.driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;"
+                "return comp && comp.filteredDatasets ? comp.filteredDatasets.length : 0;"
+            )
+            or 0
+        )
+
+    # List view methods
+    def get_list_item_count(self) -> int:
+        """Get the number of list items rendered."""
+        return len(self.driver.find_elements(*self.DATASET_LIST_ITEMS))
+
+    def expand_list_item(self, index: int = 0) -> None:
+        """Expand a list item by index."""
+        items = self.driver.find_elements(*self.DATASET_LIST_ITEMS)
+        if index < len(items):
+            toggle = items[index].find_element(By.CSS_SELECTOR, ".list-item-toggle")
+            toggle.click()
+
+    # Grid view methods
+    def get_grid_card_count(self) -> int:
+        """Get the number of grid cards rendered."""
+        return len(self.driver.find_elements(*self.DATASET_GRID_CARDS))
+
+    def open_dataset_modal(self, index: int = 0) -> None:
+        """Open the dataset configuration modal for a grid card."""
+        cards = self.driver.find_elements(*self.DATASET_GRID_CARDS)
+        if index < len(cards):
+            cards[index].click()
+            self.wait.until(EC.visibility_of_element_located(self.DATASET_MODAL))
+
+    def open_dataset_modal_by_js(self, index: int = 0) -> None:
+        """Open the dataset configuration modal via JavaScript."""
+        self.driver.execute_script(
+            "const comp = window.dataloaderSectionComponentInstance;"
+            "const datasets = comp && comp.datasets ? comp.datasets : [];"
+            "if (datasets[arguments[0]]) { comp.openDatasetModal(datasets[arguments[0]]); }",
+            index,
+        )
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;" "return comp && comp.editingDataset !== null;"
+            )
+        )
+
+    def close_dataset_modal(self) -> None:
+        """Close the dataset configuration modal."""
+        self.driver.execute_script(
+            "const comp = window.dataloaderSectionComponentInstance;"
+            "if (comp && comp.closeDatasetModal) { comp.closeDatasetModal(); }"
+        )
+        self.wait.until(
+            lambda driver: driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;" "return comp && comp.editingDataset === null;"
+            )
+        )
+
+    def is_modal_open(self) -> bool:
+        """Check if the dataset modal is currently open."""
+        return (
+            self.driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;" "return comp && comp.editingDataset !== null;"
+            )
+            or False
+        )
+
+    def switch_modal_tab(self, tab_name: str) -> None:
+        """Switch to a specific tab in the modal."""
+        self.driver.execute_script(
+            "const comp = window.dataloaderSectionComponentInstance;" "if (comp) { comp.modalTab = arguments[0]; }",
+            tab_name.lower(),
+        )
+
+    def get_modal_tab(self) -> str:
+        """Get the current modal tab."""
+        return (
+            self.driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;" "return comp ? comp.modalTab : 'basic';"
+            )
+            or "basic"
+        )
+
+    def get_modal_tabs(self) -> list:
+        """Get a list of visible modal tabs."""
+        tabs = self.driver.find_elements(*self.MODAL_TABS)
+        return [tab.text.strip() for tab in tabs if tab.is_displayed()]

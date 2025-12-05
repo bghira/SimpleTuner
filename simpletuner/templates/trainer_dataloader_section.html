@@ -143,6 +143,57 @@
             </div>
         </div>
 
+        <!-- Dataset Builder Header: Search and View Toggle -->
+        <div class="dataset-builder-header mb-3" x-show="!datasetsLoading && datasets.length > 0">
+            <!-- Dataset Search -->
+            <div class="dataset-search">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="fas fa-search"></i></span>
+                    <input type="text"
+                           class="form-control"
+                           x-model="datasetSearchQuery"
+                           placeholder="Search datasets...">
+                    <button type="button" class="btn btn-outline-secondary"
+                            x-show="datasetSearchQuery"
+                            @click="clearDatasetSearch()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Parameter Filter -->
+            <div class="parameter-filter">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="fas fa-filter"></i></span>
+                    <input type="text"
+                           class="form-control"
+                           x-model="parameterFilterQuery"
+                           placeholder="Filter options...">
+                    <button type="button" class="btn btn-outline-secondary"
+                            x-show="parameterFilterQuery"
+                            @click="clearParameterFilter()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- View Toggle -->
+            <div class="view-toggle btn-group btn-group-sm">
+                <button type="button" class="btn"
+                        :class="viewMode === 'list' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="setViewMode('list')"
+                        title="List view">
+                    <i class="fas fa-list"></i>
+                </button>
+                <button type="button" class="btn"
+                        :class="viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary'"
+                        @click="setViewMode('cards')"
+                        title="Grid view">
+                    <i class="fas fa-th-large"></i>
+                </button>
+            </div>
+        </div>
+
         <!-- Add Dataset Buttons -->
         <div class="mb-4" x-show="!datasetsLoading">
             <h6 class="subsection-title">Add Dataset Manually</h6>
@@ -199,14 +250,50 @@
                     </div>
                 </div>
             </div>
-            <template x-for="dataset in datasets" :key="dataset.id">
-                {% include 'components/dataloader/dataset_card.html' %}
-            </template>
+
+            <!-- Search results info -->
+            <div x-show="datasetSearchQuery && filteredDatasets.length !== datasets.length"
+                 class="alert alert-info small py-2 mb-3">
+                <i class="fas fa-filter"></i>
+                Showing <span x-text="filteredDatasets.length"></span> of <span x-text="datasets.length"></span> datasets
+                <button type="button" class="btn btn-link btn-sm p-0 ms-2" @click="clearDatasetSearch()">Clear filter</button>
+            </div>
+
+            <!-- Parameter filter active notice -->
+            <div x-show="parameterFilterQuery"
+                 class="alert alert-secondary small py-2 mb-3" x-cloak>
+                <i class="fas fa-eye-slash"></i>
+                Filtering options by "<span x-text="parameterFilterQuery"></span>" — some fields may be hidden
+                <button type="button" class="btn btn-link btn-sm p-0 ms-2" @click="clearParameterFilter()">Show all</button>
+            </div>
+
+            <!-- List View -->
+            <div class="dataset-list-view" x-show="viewMode === 'list'">
+                <template x-for="dataset in filteredDatasets" :key="dataset.id">
+                    {% include 'components/dataloader/dataset_list_item.html' %}
+                </template>
+            </div>
+
+            <!-- Grid/Card View -->
+            <div class="dataset-grid-view" x-show="viewMode === 'cards'">
+                <template x-for="dataset in filteredDatasets" :key="dataset.id">
+                    {% include 'components/dataloader/dataset_grid_card.html' %}
+                </template>
+            </div>
+
             <div x-show="datasets.length === 0" class="text-center text-muted py-4">
                 <i class="fas fa-database mb-2" style="font-size: 2rem;"></i>
                 <p>No datasets configured. Add a dataset to get started.</p>
             </div>
+
+            <div x-show="datasets.length > 0 && filteredDatasets.length === 0" class="text-center text-muted py-4">
+                <i class="fas fa-search mb-2" style="font-size: 2rem;"></i>
+                <p>No datasets match your search.</p>
+            </div>
         </div>
+
+        <!-- Dataset Modal (for card view) -->
+        {% include 'components/dataloader/dataset_modal.html' %}
 
         <!-- Save Buttons -->
         <div class="mt-3 d-flex gap-2">
