@@ -41,6 +41,7 @@ class LongCatVideo(VideoModelFoundation):
     MODEL_SUBFOLDER = "dit"
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: LongCatVideoPipeline,
+        PipelineTypes.IMG2IMG: LongCatVideoPipeline,
         PipelineTypes.IMG2VIDEO: LongCatVideoPipeline,
     }
 
@@ -96,6 +97,27 @@ class LongCatVideo(VideoModelFoundation):
             return prompt_embeds, prompt_attention_mask, None, None
 
         return prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask
+
+    def _is_i2v_like_flavour(self) -> bool:
+        """
+        LongCat-Video uses a single flavour; I2V is triggered by datasets marked is_i2v
+        (conditioning frames present). Expose this so collate/conditioners can route
+        conditioning latents correctly.
+        """
+        return True
+
+    def requires_conditioning_dataset(self) -> bool:
+        return True
+
+    def requires_conditioning_validation_inputs(self) -> bool:
+        return True
+
+    def default_validation_pipeline_type(self):
+        """
+        LongCat-Video uses a single pipeline for both T2V and I2V. When validation
+        is configured to use datasets (img2img mode), still route to the same pipeline.
+        """
+        return PipelineTypes.TEXT2IMG
 
     def _format_text_embedding(self, text_embedding: dict):
         prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask = text_embedding
