@@ -531,6 +531,24 @@ def _dataset_overview_for_model(model: ModelFoundation, dataset_id: str, dataset
     return sampler.log_state(show_rank=False, alt_stats=True)
 
 
+def _normalize_validation_prompts(validation_prompts):
+    if validation_prompts is None:
+        return None
+    normalized_prompts = []
+    for idx, entry in enumerate(validation_prompts):
+        if isinstance(entry, str):
+            normalized_prompts.append(entry)
+            continue
+        prompt_text = getattr(entry, "prompt", None)
+        if prompt_text is None or not isinstance(prompt_text, str):
+            raise TypeError(
+                f"Validation prompts must be strings or provide a string 'prompt' attribute "
+                f"(index {idx}, got {type(entry).__name__})."
+            )
+        normalized_prompts.append(prompt_text)
+    return normalized_prompts
+
+
 def save_model_card(
     model: ModelFoundation,
     repo_id: str,
@@ -548,6 +566,7 @@ def save_model_card(
     model_family = StateTracker.get_model_family()
     if base_model.count("/") > 1:
         base_model = f"{model_family}/unknown-model"
+    validation_prompts = _normalize_validation_prompts(validation_prompts)
     logger.debug(f"Validating from prompts: {validation_prompts}")
     assets_folder = os.path.join(repo_folder, "assets")
     optimizer_config = StateTracker.get_args().optimizer_config
