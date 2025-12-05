@@ -34,6 +34,8 @@ For the complete and most accurate feature matrix, refer to the [main README](..
 | Stable Cascade (C) | 1B, 3.6B prior | ✓ | ✓ | ✓* | not supported | fp32 (required) | ✓ | ✗ | ✗ | ✓ | [STABLE_CASCADE_C.md](/documentation/quickstart/STABLE_CASCADE_C.md) |
 | Kandinsky 5.0 Image | 6B (lite) | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | ✓ | [KANDINSKY5_IMAGE.md](/documentation/quickstart/KANDINSKY5_IMAGE.md) |
 | Kandinsky 5.0 Video | 2B (lite), 19B (pro) | ✓ | ✓ | ✓* | int8 optional | bf16 | ✓ | ✓ | ✗ | ✓ | [KANDINSKY5_VIDEO.md](/documentation/quickstart/KANDINSKY5_VIDEO.md) |
+| LongCat-Image | 6B | ✓ | ✓ | ✓* | int8/fp8 optional | bf16 | ✓ | ✓ | ✗ | ✓ | [LONGCAT_IMAGE.md](/documentation/quickstart/LONGCAT_IMAGE.md) |
+| LongCat-Image Edit | 6B | ✓ | ✓ | ✓* | int8/fp8 optional | bf16 | ✓ | ✓ | ✗ | ✓ | [LONGCAT_EDIT.md](/documentation/quickstart/LONGCAT_EDIT.md) |
 
 *✓ = supported, ✓* = requires DeepSpeed/FSDP2 for full-rank, ✗ = not supported, `✓+` indicates checkpointing is recommended due to VRAM pressure. †Sliders apply to LoRA and LyCORIS (including full-rank LyCORIS “full”).*
 
