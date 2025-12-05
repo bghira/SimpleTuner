@@ -261,6 +261,7 @@ class Trainer:
     sidecar_is_schedulefree = False
     sidecar_scheduler_disabled = False
     publishing_manager = None
+    _cleanup_invoked = False
 
     def __init__(
         self,
@@ -289,6 +290,7 @@ class Trainer:
         self._manual_checkpoint_consumer: Optional[Callable[[], bool]] = None
         self.ema_model = None
         self.job_id = job_id
+        self._cleanup_invoked = False
         self.sidecar_optimizer = None
         self.sidecar_lr_scheduler = None
         self.sidecar_lr = None
@@ -1753,6 +1755,10 @@ class Trainer:
             raise e
         finally:
             self._finish_hub_uploads()
+            try:
+                self.cleanup()
+            except Exception as cleanup_error:
+                logger.error("Trainer cleanup failed: %s", cleanup_error, exc_info=True)
 
     def _initialize_components_with_signal_check(self, initializers):
         """
@@ -3990,6 +3996,29 @@ class Trainer:
                 logger.debug(f"Aborting sampler")
                 backend["sampler"].should_abort = True
         self.should_abort = True
+
+    def cleanup(self) -> None:
+        """Release GPU resources and background workers."""
+        if self._cleanup_invoked:
+            return
+        self._cleanup_invoked = True
+
+        try:
+            if getattr(self, "bf", None) is not None:
+                self.bf.stop_fetching()
+        except Exception as exc:
+            logger.debug("Failed to stop batch fetcher during cleanup: %s", exc, exc_info=True)
+
+        try:
+            if getattr(self, "model", None) is not None and hasattr(self.model, "unload"):
+                self.model.unload()
+        except Exception as exc:
+            logger.warning("Failed to unload model components during cleanup: %s", exc, exc_info=True)
+
+        try:
+            reclaim_memory()
+        except Exception as exc:
+            logger.debug("Failed to reclaim accelerator memory during cleanup: %s", exc, exc_info=True)
 
     def model_predict(
         self,

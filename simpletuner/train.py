@@ -1,3 +1,4 @@
+import atexit
 import logging
 
 # Quiet down, you.
@@ -32,6 +33,15 @@ logger = get_logger("SimpleTuner")
 
 if __name__ == "__main__":
     trainer = None
+
+    def _cleanup_trainer():
+        if trainer is not None:
+            try:
+                trainer.cleanup()
+            except Exception as exc:
+                logger.error("Trainer cleanup failed during interpreter exit: %s", exc, exc_info=True)
+
+    atexit.register(_cleanup_trainer)
     try:
         import multiprocessing
 
@@ -105,5 +115,5 @@ if __name__ == "__main__":
             )
         print(e)
         print(traceback.format_exc())
-    if trainer is not None and trainer.bf is not None:
-        trainer.bf.stop_fetching()
+    if trainer is not None:
+        trainer.cleanup()

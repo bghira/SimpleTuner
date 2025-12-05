@@ -153,6 +153,12 @@ class SubprocessTrainerWrapper:
         """Clean up resources."""
         self.should_abort = True
 
+        if self.trainer and hasattr(self.trainer, "cleanup"):
+            try:
+                self.trainer.cleanup()
+            except Exception as exc:
+                logger.error("Trainer cleanup failed in subprocess: %s", exc, exc_info=True)
+
         # Close event pipe
         try:
             self.event_pipe.close()
