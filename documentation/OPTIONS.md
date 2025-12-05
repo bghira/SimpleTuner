@@ -619,6 +619,74 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: Train a model using a more gradual weighting on the loss landscape.
 - **Why**: When training pixel diffusion models, they will simply degrade without using a specific loss weighting schedule. This is the case with DeepFloyd, where soft-min-snr-gamma was found to essentially be mandatory for good results. You may find success with latent diffusion model training, but in small experiments, it was found to potentially produce blurry results.
 
+### `--diff2flow_enabled`
+
+- **What**: Enable the Diffusion-to-Flow bridge for epsilon or v-prediction models.
+- **Why**: Allows models trained with standard diffusion objectives to use flow-matching targets (noise - latents) without changing the model architecture.
+- **Note**: Experimental feature.
+
+### `--diff2flow_loss`
+
+- **What**: Train with Flow Matching loss instead of the native prediction loss.
+- **Why**: When enabled alongside `--diff2flow_enabled`, this calculates the loss against the flow target (noise - latents) instead of the model's native target (epsilon or velocity).
+- **Note**: Requires `--diff2flow_enabled`.
+
+### `--scheduled_sampling_max_step_offset`
+
+- **What**: Maximum number of steps to "roll out" during training.
+- **Why**: Enables Scheduled Sampling (Rollout), where the model generates its own inputs for a few steps during training. This helps the model learn to correct its own errors and reduces exposure bias.
+- **Default**: 0 (disabled). Set to a positive integer (e.g., 5 or 10) to enable.
+
+### `--scheduled_sampling_strategy`
+
+- **What**: Strategy for choosing the rollout offset.
+- **Choices**: `uniform`, `biased_early`, `biased_late`.
+- **Default**: `uniform`.
+- **Why**: Controls the distribution of rollout lengths. `uniform` samples evenly; `biased_early` favors shorter rollouts; `biased_late` favors longer rollouts.
+
+### `--scheduled_sampling_probability`
+
+- **What**: Probability of applying a non-zero rollout offset for a given sample.
+- **Default**: 0.0.
+- **Why**: Controls how often scheduled sampling is applied. A value of 0.0 disables it even if `max_step_offset` is > 0. A value of 1.0 applies it to every sample.
+
+### `--scheduled_sampling_prob_start`
+
+- **What**: Initial probability for scheduled sampling at the start of the ramp.
+- **Default**: 0.0.
+
+### `--scheduled_sampling_prob_end`
+
+- **What**: Final probability for scheduled sampling at the end of the ramp.
+- **Default**: 0.5.
+
+### `--scheduled_sampling_ramp_steps`
+
+- **What**: Number of steps to ramp the probability from `prob_start` to `prob_end`.
+- **Default**: 0 (no ramp).
+
+### `--scheduled_sampling_start_step`
+
+- **What**: Global step to start the scheduled sampling ramp.
+- **Default**: 0.0.
+
+### `--scheduled_sampling_ramp_shape`
+
+- **What**: Shape of the probability ramp.
+- **Choices**: `linear`, `cosine`.
+- **Default**: `linear`.
+
+### `--scheduled_sampling_sampler`
+
+- **What**: The solver used for the rollout generation steps.
+- **Choices**: `unipc`, `euler`, `dpm`, `rk4`.
+- **Default**: `unipc`.
+
+### `--scheduled_sampling_order`
+
+- **What**: The order of the solver used for rollout.
+- **Default**: 2.
+
 ---
 
 ## 🔄 Checkpointing and Resumption
@@ -745,6 +813,7 @@ usage: train.py [-h] --model_family
                 [--vae_cache_scan_behaviour {recreate,sync}]
                 [--vae_enable_slicing [VAE_ENABLE_SLICING]]
                 [--vae_enable_tiling [VAE_ENABLE_TILING]]
+                [--vae_enable_patch_conv [VAE_ENABLE_PATCH_CONV]]
                 [--vae_batch_size VAE_BATCH_SIZE]
                 [--caption_dropout_probability CAPTION_DROPOUT_PROBABILITY]
                 [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
@@ -782,7 +851,7 @@ usage: train.py [-h] --model_family
                 [--validation_guidance_skip_layers_stop VALIDATION_GUIDANCE_SKIP_LAYERS_STOP]
                 [--validation_guidance_skip_scale VALIDATION_GUIDANCE_SKIP_SCALE]
                 [--validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH]
-                [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++}]
+                [--validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}]
                 [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_seed_source {cpu,gpu}]
@@ -909,7 +978,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm}]
+                [--distillation_method {lcm,dcm,dmd,perflow}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -1083,6 +1152,10 @@ options:
                         PEFT LoRA training mode
   --singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS
                         Number of ramp-up steps for SingLoRA
+  --slider_lora_target [SLIDER_LORA_TARGET]
+                        Route LoRA training to slider-friendly targets
+                        (self-attn + conv/time embeddings). Only affects
+                        standard PEFT LoRA.
   --init_lora INIT_LORA
                         Specify an existing LoRA or LyCORIS safetensors file
                         to initialize the adapter
@@ -1118,6 +1191,9 @@ options:
                         Enable VAE attention slicing for memory efficiency
   --vae_enable_tiling [VAE_ENABLE_TILING]
                         Enable VAE tiling for large images
+  --vae_enable_patch_conv [VAE_ENABLE_PATCH_CONV]
+                        Enable patch-based 3D conv for HunyuanVideo VAE to
+                        reduce peak VRAM (slight slowdown)
   --vae_batch_size VAE_BATCH_SIZE
                         Batch size for VAE encoding during caching
   --caption_dropout_probability CAPTION_DROPOUT_PROBABILITY
@@ -1201,7 +1277,7 @@ options:
                         Scale guidance strength when applying layer skipping
   --validation_lycoris_strength VALIDATION_LYCORIS_STRENGTH
                         Strength multiplier for LyCORIS validation
-  --validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++}
+  --validation_noise_scheduler {ddim,ddpm,euler,euler-a,unipc,dpm++,perflow}
                         Noise scheduler for validation
   --validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES
                         Number of frames for video validation
@@ -1585,7 +1661,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm}
+  --distillation_method {lcm,dcm,dmd,perflow}
                         Method for model distillation
   --distillation_config DISTILLATION_CONFIG
                         Path to distillation configuration file

@@ -54,6 +54,7 @@ SCHEDULER_CONFIG = {
 
 
 class Flux2(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     """FLUX.2 model implementation for SimpleTuner."""
 
     NAME = "Flux.2"
@@ -85,6 +86,14 @@ class Flux2(ImageModelFoundation):
         # Single stream (parallel attention + FF)
         "attn.to_qkv_mlp_proj",
         # "attn.to_out",
+    ]
+    SLIDER_LORA_TARGET = [
+        # Restrict to image/self-stream attention; avoid add_* context projections
+        "attn.to_q",
+        "attn.to_k",
+        "attn.to_v",
+        "attn.to_out.0",
+        "attn.to_qkv_mlp_proj",
     ]
     DEFAULT_LYCORIS_TARGET = ["Flux2TransformerBlock", "Flux2SingleTransformerBlock"]
 

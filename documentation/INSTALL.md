@@ -35,8 +35,8 @@ git clone --branch=release https://github.com/bghira/SimpleTuner.git
 
 cd SimpleTuner
 
-# if python --version shows 3.11 you can just also use the 'python' command here.
-python3.11 -m venv .venv
+# if python --version shows 3.11 will have to upgrade to 3.12.
+python3.12 -m venv .venv
 
 source .venv/bin/activate
 ```

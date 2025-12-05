@@ -54,6 +54,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **Multi-GPU training** - Distributed training across multiple GPUs with automatic optimization
 - **Advanced caching** - Image, video, audio, and caption embeddings cached to disk for faster training
 - **Aspect bucketing** - Support for varied image/video sizes and aspect ratios
+- **Concept sliders** - Slider-friendly targeting for LoRA/LyCORIS/full (via LyCORIS `full`) with positive/negative/neutral sampling and per-prompt strength; see [Slider LoRA guide](/documentation/SLIDER_LORA.md)
 - **Memory optimization** - Most models trainable on 24G GPU, many on 16G with optimizations
 - **DeepSpeed & FSDP2 integration** - Train large models on smaller GPUs with optim/grad/parameter sharding, context parallel attention, gradient checkpointing, and optimizer state offload
 - **S3 training** - Train directly from cloud storage (Cloudflare R2, Wasabi S3)
@@ -127,6 +128,8 @@ Detailed quickstart guides are available for all supported models:
 - **[Sana Guide](/documentation/quickstart/SANA.md)** - Lightweight flow-matching model
 - **[Lumina2 Guide](/documentation/quickstart/LUMINA2.md)** - 2B parameter flow-matching model
 - **[Kwai Kolors Guide](/documentation/quickstart/KOLORS.md)** - SDXL-based with ChatGLM encoder
+- **[LongCat-Image Guide](/documentation/quickstart/LONGCAT_IMAGE.md)** - 6B bilingual flow-matching model with Qwen-2.5-VL encoder
+- **[LongCat-Image Edit Guide](/documentation/quickstart/LONGCAT_EDIT.md)** - Image editing flavour requiring reference latents
 - **[LTX Video Guide](/documentation/quickstart/LTXVIDEO.md)** - Video diffusion training
 - **[Hunyuan Video 1.5 Guide](/documentation/quickstart/HUNYUANVIDEO.md)** - 8.3B flow-matching T2V/I2V with SR stages
 - **[Wan Video Guide](/documentation/quickstart/WAN.md)** - Video flow-matching with TREAD support

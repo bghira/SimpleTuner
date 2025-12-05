@@ -33,6 +33,7 @@ else:
 
 
 class Chroma(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Chroma 1"
     MODEL_DESCRIPTION = "Flow-matching image transformer from Lodestone Labs"
     ENABLED_IN_WIZARD = True
@@ -42,6 +43,7 @@ class Chroma(ImageModelFoundation):
     LATENT_CHANNEL_COUNT = 16
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
+    SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
     MODEL_CLASS = ChromaTransformer2DModel
@@ -191,6 +193,8 @@ class Chroma(ImageModelFoundation):
         return result
 
     def get_lora_target_layers(self):
+        if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if self.config.lora_type.lower() == "standard":
             if getattr(self.config, "flux_lora_target", None) is None:
                 return self.DEFAULT_LORA_TARGET

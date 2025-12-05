@@ -42,6 +42,7 @@ else:
 
 
 class QwenImage(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Qwen-Image"
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER

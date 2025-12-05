@@ -107,6 +107,18 @@ There, you will possibly need to modify the following variables:
 
 Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 #### Validation prompts
 
 Inside `config/config.json` is the "primary validation prompt", which is typically the main instance_prompt you are training on for your single subject or style. Additionally, a JSON file may be created that contains extra prompts to run through during validations.
@@ -155,6 +167,8 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
+</details>
+
 # Stable evaluation loss
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
@@ -164,12 +178,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration
@@ -204,6 +222,9 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -270,6 +291,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   }
 ]
 ```
+</details>
 
 > ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence for Sana.
 

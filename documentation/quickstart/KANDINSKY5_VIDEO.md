@@ -14,6 +14,7 @@ This setup is VRAM-intensive, though the "Lite" and "Pro" variants have differen
 - **Lite Model Training**: Surprisingly efficient, capable of training on **~13GB VRAM**.
   - **Note**: The initial **VAE pre-caching step** requires significantly more VRAM due to the massive HunyuanVideo VAE. You may need to use CPU offloading or a larger GPU just for the caching phase.
   - **Tip**: Set `"offload_during_startup": true` in your `config.json` to ensure the VAE and text encoder are not loaded to the GPU at the same time, which significantly reduces pre-caching memory pressure.
+  - **If VAE OOMs**: Set `--vae_enable_patch_conv=true` to slice HunyuanVideo VAE 3D convs; expect a small speed hit but lower peak VRAM.
 - **Pro Model Training**: Requires **FSDP2** (multi-gpu) or aggressive **Group Offload** with LoRA to fit on consumer hardware. Specific VRAM/RAM requirements have not been established, but "the more, the merrier" applies.
 - **System RAM**: Testing was comfortable on a system with **45GB** RAM for the Lite model. 64GB+ is recommended to be safe.
 
@@ -23,6 +24,9 @@ For almost any single-GPU setup training the **Pro** model, you **must** enable 
 
 Add this to your `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "enable_group_offload": true,
@@ -31,10 +35,11 @@ Add this to your `config.json`:
   "group_offload_use_stream": true
 }
 ```
+</details>
 
 ## Prerequisites
 
-Ensure Python 3.10, 3.11, or 3.12 is installed.
+Ensure Python 3.12 is installed.
 
 ```bash
 python --version
@@ -94,6 +99,18 @@ Key settings for Kandinsky 5 Video:
 - `validation_guidance`: `5.0`.
 - `frame_rate`: Default is 24.
 
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
 #### Dataset considerations
 
 Video datasets require careful setup. Create `config/multidatabackend.json`:
@@ -129,6 +146,8 @@ Video datasets require careful setup. Create `config/multidatabackend.json`:
 
 ```bash
 mkdir -p datasets/videos
+</details>
+
 # Place .mp4 / .mov files here.
 # Place corresponding .txt files with same filename for captions.
 ```
@@ -168,6 +187,9 @@ TREAD works for video too and is highly recommended to save compute.
 
 Add to `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "tread_config": {
@@ -181,6 +203,7 @@ Add to `config.json`:
   }
 }
 ```
+</details>
 
 This can speed up training by ~25-40% depending on the ratio.
 

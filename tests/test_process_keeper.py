@@ -94,6 +94,12 @@ def cleanup_jobs(job_ids, timeout: int = _CLEANUP_TIMEOUT) -> None:
         _finalize_registry_job(job_id, timeout=timeout)
 
 
+def _kill_pid(pid: int) -> None:
+    sig = signal.SIGKILL if hasattr(signal, "SIGKILL") else signal.SIGTERM
+    with suppress(Exception):
+        os.kill(pid, sig)
+
+
 class ProcessKeeperTestCase(unittest.TestCase):
 
     cleanup_timeout = _CLEANUP_TIMEOUT
@@ -145,6 +151,46 @@ def slow_shutdown(config):
     signal.signal(signal.SIGTERM, lambda s, f: time.sleep(10))
     while True:
         time.sleep(0.1)
+
+
+def embed_cache_failure_with_child(config):
+    """Simulate a text-embed cache miss that leaves a child process running."""
+    pid_file = getattr(config, "pid_file", None)
+    if pid_file is None and hasattr(config, "get"):
+        pid_file = config.get("pid_file")
+
+    detached_code = """
+import os, time
+pid_file = os.environ.get("PID_FILE")
+if hasattr(os, "setsid"):
+    try:
+        os.setsid()
+    except Exception:
+        pass
+if hasattr(os, "fork"):
+    pid = os.fork()
+    if pid == 0:
+        time.sleep(30)
+    else:
+        if pid_file:
+            with open(pid_file, "w", encoding="utf-8") as handle:
+                handle.write(f"{pid},{os.getpgid(pid)}")
+        os._exit(0)
+else:
+    if pid_file:
+        with open(pid_file, "w", encoding="utf-8") as handle:
+            handle.write(f"{os.getpid()},{os.getpgid(0)}")
+    time.sleep(30)
+"""
+
+    env = os.environ.copy()
+    if pid_file:
+        env["PID_FILE"] = pid_file
+    popen_kwargs = {"env": env}
+    if hasattr(os, "setsid"):
+        popen_kwargs["preexec_fn"] = os.setsid
+    subprocess.Popen([sys.executable, "-c", detached_code], **popen_kwargs)
+    raise RuntimeError("simulated text embed cache missing element")
 
 
 class TestProcessLifecycle(ProcessKeeperTestCase):
@@ -466,6 +512,48 @@ class TestProcessTermination(ProcessKeeperTestCase):
             # verify signal handlers are installed
             calls = mock_signal.call_args_list
             signals_installed = [call[0][0] for call in calls]
+
+
+class TestFailureCleanupRegression(ProcessKeeperTestCase):
+
+    def test_failure_does_not_leave_child_process_alive(self):
+        """A failed training task should not leave spawned children running."""
+        job_id = "test_failure_child_cleanup"
+        self.test_jobs.append(job_id)
+        child_pid = None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_file = os.path.join(tmpdir, "child.pid")
+            config = {"pid_file": pid_file}
+
+            with (
+                patch("simpletuner.simpletuner_sdk.process_keeper.sys.stdout", new=MagicMock()),
+                patch("simpletuner.simpletuner_sdk.process_keeper.psutil", None),
+            ):
+                submit_job(job_id, embed_cache_failure_with_child, config)
+
+                status = None
+                deadline = time.time() + 5
+                while time.time() < deadline:
+                    status = get_process_status(job_id)
+                    if status not in {"pending", "running"}:
+                        break
+                    time.sleep(0.1)
+
+                self.assertEqual(status, "failed", f"status remained {status}")
+
+                with open(pid_file, "r", encoding="utf-8") as handle:
+                    pid_str = handle.read().strip()
+                child_pid, _child_pgid = (int(part) for part in pid_str.split(",", maxsplit=1))
+
+                terminate_process(job_id)
+                time.sleep(0.1)
+
+        if child_pid is not None:
+            self.addCleanup(_kill_pid, child_pid)
+
+        with self.assertRaises(OSError, msg="Child process survived training failure"):
+            os.kill(child_pid, 0)
 
 
 def tearDownModule():

@@ -174,6 +174,9 @@ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environm
 
 Your config at the end will look like mine:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "resume_from_checkpoint": "latest",
@@ -241,8 +244,23 @@ Your config at the end will look like mine:
   "ignore_final_epochs": true
 }
 ```
+</details>
 
 Of particular importance in this configuration are the validation settings. Without these, the outputs do not look super great.
+
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
+</details>
 
 ### TREAD training
 
@@ -253,6 +271,9 @@ Of particular importance in this configuration are the validation settings. With
 #### Quick setup
 
 Add this to your `config.json` for a simple and conservative approach to reach about 5 seconds per step with bs=2 and 480p (reduced from 10 seconds per step vanilla speed):
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -267,6 +288,7 @@ Add this to your `config.json` for a simple and conservative approach to reach a
   }
 }
 ```
+</details>
 
 This configuration will:
 - Keep only 50% of image tokens during layers 2 through second-to-last
@@ -275,6 +297,9 @@ This configuration will:
 - Potentially improves training quality and convergence
 
 For Wan 1.3B we can enhance this approach using a progressive route setup over all 29 layers and hit a speed around 7.7 seconds per step at bs=2 and 480p:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -289,6 +314,7 @@ For Wan 1.3B we can enhance this approach using a progressive route setup over a
   }
 }
 ```
+</details>
 
 This configuration will attempt to use more aggressive token dropout in the inner layers of the model where semantic knowledge isn't as important.
 
@@ -327,21 +353,32 @@ Inside `config/config.json` is the "primary validation prompt", which is typical
 
 The example config file `config/user_prompt_library.json.example` contains the following format:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "nickname": "the prompt goes here",
   "another_nickname": "another prompt goes here"
 }
 ```
+</details>
 
 The nicknames are the filename for the validation, so keep them short and compatible with your filesystem.
 
 To point the trainer to this prompt library, add it to TRAINER_EXTRA_ARGS by adding a new line at the end of `config.json`:
+<details>
+<summary>View example config</summary>
+
 ```json
   "--user_prompt_library": "config/user_prompt_library.json",
 ```
+</details>
 
 A set of diverse prompt will help determine whether the model is collapsing as it trains. In this example, the word `<token>` should be replaced with your subject name (instance_prompt).
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -362,6 +399,7 @@ A set of diverse prompt will help determine whether the model is collapsing as i
     "family": "a heartwarming and cohesive family video, showcasing the bonds and connections between loved ones through intimate moments and shared experiences"
 }
 ```
+</details>
 
 > ℹ️ Wan 2.1 uses the UMT5 text encoder only, which has a lot of local information in its embeddings which means that shorter prompts may not have enough information for the model to do a good job. Be sure to use longer, more descriptive prompts.
 
@@ -378,12 +416,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration
@@ -420,6 +462,9 @@ Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to r
 
 
 For `config.json` users:
+<details>
+<summary>View example config</summary>
+
 ```json
   "base_model_precision": "int8-quanto",
   "text_encoder_1_precision": "no_change",
@@ -428,6 +473,7 @@ For `config.json` users:
   "max_grad_norm": 1.0,
   "base_model_default_dtype": "bf16"
 ```
+</details>
 
 #### Validation settings
 
@@ -464,6 +510,9 @@ In this example, we will be using [video-dataset-disney-organized](https://huggi
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 [
   {
@@ -498,8 +547,12 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   }
 ]
 ```
+</details>
 
 - Wan 2.2 image-to-video runs create CLIP conditioning caches. In the **video** dataset entry, point at a dedicated backend and (optionally) override the cache path:
+
+<details>
+<summary>View example config</summary>
 
 ```json
   {
@@ -510,8 +563,12 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "cache_dir_conditioning_image_embeds": "cache/conditioning_image_embeds/disney-black-and-white"
   }
 ```
+</details>
 
 - Define the conditioning backend once and reuse it across datasets if needed (full object shown here for clarity):
+
+<details>
+<summary>View example config</summary>
 
 ```json
   {
@@ -522,6 +579,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "disabled": false
   }
 ```
+</details>
 
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many seconds of data we'll train on.
@@ -650,6 +708,9 @@ Like other DiT models, if you do these things (among others) some square grid ar
 
 Some fine-tuned models on Hugging Face Hub lack the full directory structure, requiring specific options to be set.
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "model_family": "wan",
@@ -659,5 +720,6 @@ Some fine-tuned models on Hugging Face Hub lack the full directory structure, re
     "pretrained_transformer_subfolder": "none",
 }
 ```
+</details>
 
 > Note: You can provide a path to a single-file `.safetensors` for the `pretrained_transformer_name_or_path`

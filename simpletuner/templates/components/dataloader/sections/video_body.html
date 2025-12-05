@@ -1,0 +1,55 @@
+<!-- Video Settings Body (for modal) -->
+<div class="modal-section-body" x-init="editingDataset.video = editingDataset.video || {}">
+    <!-- Frame Configuration -->
+    <div class="section-group" x-show="matchesParamFilter('frame', 'clip', 'video', 'min', 'max')">
+        <h6 class="modal-section-title">Frame Configuration</h6>
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label small">Frames per Clip</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       x-model.number.lazy="editingDataset.video.num_frames"
+                       @input="markAsUnsaved()"
+                       placeholder="125">
+                <div class="form-text small">Target frames per video</div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Min Frames</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       x-model.number.lazy="editingDataset.video.min_frames"
+                       @input="markAsUnsaved()"
+                       placeholder="125">
+                <div class="form-text small">Exclude shorter videos</div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Max Frames</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       x-model.number.lazy="editingDataset.video.max_frames"
+                       @input="markAsUnsaved()"
+                       placeholder="250">
+                <div class="form-text small">Exclude longer videos (0 = no limit)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Processing -->
+    <div class="section-group" x-show="matchesParamFilter('video', 'processing', 'i2v', 'augmentation', 'image')">
+        <h6 class="modal-section-title">Video Processing</h6>
+        <div class="form-check">
+            <input class="form-check-input"
+                   type="checkbox"
+                   :id="'video-i2v-' + editingDataset.id"
+                   x-model="editingDataset.video.is_i2v"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label" :for="'video-i2v-' + editingDataset.id">
+                Enable I2V augmentation
+            </label>
+            <div class="form-text small">Image-to-video augmentation mode for training</div>
+        </div>
+    </div>
+</div>

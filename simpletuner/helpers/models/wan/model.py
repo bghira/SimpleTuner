@@ -197,6 +197,7 @@ def add_first_frame_conditioning_v22(
 
 
 class Wan(VideoModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Wan"
     MODEL_DESCRIPTION = "Video generation model (text-to-video)"
     ENABLED_IN_WIZARD = True
@@ -209,6 +210,7 @@ class Wan(VideoModelFoundation):
     DEFAULT_NOISE_SCHEDULER = "unipc"
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 

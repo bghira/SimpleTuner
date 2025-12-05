@@ -4,7 +4,11 @@ from pathlib import Path
 
 from fastapi import status
 
-from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryError, PromptLibraryService
+from simpletuner.simpletuner_sdk.server.services.prompt_library_service import (
+    PromptLibraryEntry,
+    PromptLibraryError,
+    PromptLibraryService,
+)
 
 
 class PromptLibraryServiceTestCase(unittest.TestCase):
@@ -54,6 +58,35 @@ class PromptLibraryServiceTestCase(unittest.TestCase):
         with self.assertRaises(PromptLibraryError) as ctx:
             self.service.read_library("user_prompt_library-missing.json")
         self.assertEqual(ctx.exception.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_adapter_strength_entries_round_trip(self) -> None:
+        entries = {
+            "plain": "base prompt",
+            "weighted": {"prompt": "slider prompt", "adapter_strength": 0.4},
+            "entry_obj": PromptLibraryEntry(prompt="object prompt", adapter_strength=0.2),
+        }
+        result = self.service.save_library("user_prompt_library-slider.json", entries)
+        saved_entries = result["entries"]
+        self.assertEqual(
+            saved_entries["weighted"],
+            {"prompt": "slider prompt", "adapter_strength": 0.4},
+        )
+        self.assertEqual(
+            saved_entries["entry_obj"],
+            {"prompt": "object prompt", "adapter_strength": 0.2},
+        )
+
+        payload = self.service.read_library("user_prompt_library-slider.json")
+        self.assertEqual(payload["entries"]["weighted"]["adapter_strength"], 0.4)
+        self.assertEqual(payload["entries"]["entry_obj"]["prompt"], "object prompt")
+
+    def test_invalid_adapter_strength_entry_rejected(self) -> None:
+        with self.assertRaises(PromptLibraryError) as ctx:
+            self.service.save_library(
+                "user_prompt_library-invalid.json",
+                {"broken": {"adapter_strength": 0.5}},
+            )
+        self.assertEqual(ctx.exception.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 if __name__ == "__main__":

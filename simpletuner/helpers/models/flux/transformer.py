@@ -33,6 +33,7 @@ except:
     pass
 
 from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, FluxSingleAttnProcessor3_0
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -142,6 +143,14 @@ class FluxAttnProcessor2_0:
             attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
             attention_mask = (attention_mask > 0).bool()
             attention_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype)
+
+        publish_attention_max_logits(
+            query,
+            key,
+            attention_mask,
+            getattr(attn, "to_q", None) and attn.to_q.weight,
+            getattr(attn, "to_k", None) and attn.to_k.weight,
+        )
 
         hidden_states = F.scaled_dot_product_attention(
             query,

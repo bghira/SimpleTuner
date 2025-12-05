@@ -105,6 +105,7 @@ class SD3(ImageModelFoundation):
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taesd3")
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
+    SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default seems to help more with SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
@@ -435,6 +436,8 @@ class SD3(ImageModelFoundation):
         return {"model_prediction": model_pred}
 
     def get_lora_target_layers(self):
+        if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         # Override for ControlNet training if needed
         if self.config.model_type == "lora" and self.config.controlnet:
             # Comprehensive targeting including all layers

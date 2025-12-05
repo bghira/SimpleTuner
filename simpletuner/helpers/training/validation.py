@@ -9,7 +9,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import diffusers
 import numpy as np
@@ -22,6 +22,7 @@ from simpletuner.helpers.training import validation_audio
 from simpletuner.helpers.training import validation_images as validation_images_utils
 from simpletuner.helpers.training import validation_video
 from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryEntry
 
 try:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -29,6 +30,11 @@ try:
     FSDP_AVAILABLE = True
 except ImportError:
     FSDP_AVAILABLE = False
+
+try:
+    from peft.tuners.lora.layer import LoraLayer
+except Exception:
+    LoraLayer = None
 
 try:
     import pillow_jxl
@@ -52,6 +58,7 @@ from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.script_runner import build_script_command, run_hook_script
@@ -83,6 +90,7 @@ SCHEDULER_NAME_MAP = {
     "dpm++": DPMSolverMultistepScheduler,
     "sana": FlowMatchEulerDiscreteScheduler,
     "rectified_flow_ab2": RectifiedFlowAB2Scheduler,
+    "perflow": PeRFlowScheduler,
 }
 
 import logging
@@ -421,14 +429,16 @@ def retrieve_validation_edit_images() -> list[tuple[str, str, list[Image.Image]]
 
 
 def prepare_validation_prompt_list(args, embed_cache, model):
-    validation_prompts = [""] if not StateTracker.get_args().validation_disable_unconditional else []
+    validation_prompts: list[PromptLibraryEntry] = (
+        [PromptLibraryEntry(prompt="")] if not StateTracker.get_args().validation_disable_unconditional else []
+    )
     validation_shortnames = ["unconditional"] if not StateTracker.get_args().validation_disable_unconditional else []
     if not hasattr(embed_cache, "model_type"):
         raise ValueError(
             f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
         )
     # Precompute the unconditional prompt embedding if it was added
-    if validation_prompts and validation_prompts[0] == "":
+    if validation_prompts and validation_prompts[0].prompt == "":
         logger.info("Precomputing unconditional prompt embed for validations")
         prompt_record = {
             "prompt": "",
@@ -496,7 +506,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         "key": shortname,
                     }
                     embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
-                sample_prompts.append(validation_prompt)
+                sample_prompts.append(PromptLibraryEntry(prompt=validation_prompt))
                 sample_shortnames.append(shortname)
             if sample_prompts:
                 validation_prompts.extend(sample_prompts)
@@ -521,30 +531,34 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 "key": shortname,
             }
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
-            validation_prompts.append(prompt)
+            validation_prompts.append(PromptLibraryEntry(prompt=prompt))
             validation_shortnames.append(shortname)
 
     if allow_prompt_library and args.user_prompt_library is not None:
         user_prompt_library = PromptHandler.load_user_prompts(args.user_prompt_library)
-        for shortname, prompt in tqdm(
+        for shortname, entry in tqdm(
             user_prompt_library.items(),
             leave=False,
             ncols=125,
             desc="Precomputing user prompt library embeddings",
         ):
-            # move_text_encoders(embed_cache.text_encoders, embed_cache.accelerator.device)
+            if not isinstance(entry, PromptLibraryEntry):
+                try:
+                    entry = PromptLibraryEntry.from_payload(entry)
+                except Exception:
+                    logger.warning(f"Skipping invalid prompt library entry '{shortname}'")
+                    continue
             prompt_record = {
-                "prompt": prompt,
+                "prompt": entry.prompt,
                 "key": shortname,
             }
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
-            # move_text_encoders(embed_cache.text_encoders, "cpu")
-            validation_prompts.append(prompt)
+            validation_prompts.append(entry)
             validation_shortnames.append(shortname)
     if allow_prompt_library and args.validation_prompt is not None and args.validation_prompt != "None":
         # Use a single prompt for validation.
         # This will add a single prompt to the prompt library, if in use.
-        validation_prompts = validation_prompts + [args.validation_prompt]
+        validation_prompts = validation_prompts + [PromptLibraryEntry(prompt=args.validation_prompt)]
         validation_shortnames = validation_shortnames + ["validation"]
         # Use the same key format as retrieval to ensure cache hit
         prompt_record = {
@@ -881,6 +895,7 @@ class _ValidationWorkItem:
     shortname: str
     prompt: str
     conditioning: Any
+    adapter_strength: float | None
 
 
 @dataclass(frozen=True)
@@ -1815,6 +1830,8 @@ class Validation:
             scheduler_args.setdefault("final_sigmas_type", getattr(self.model, "final_sigmas_type", "sigma_min"))
             scheduler_args.setdefault("order", getattr(self.model, "sigma_schedule_order", 7.0))
             scheduler = scheduler_cls(**scheduler_args)
+        elif scheduler_cls is PeRFlowScheduler:
+            scheduler = scheduler_cls(**scheduler_args)
         else:
             scheduler = scheduler_cls.from_pretrained(
                 self.config.pretrained_model_name_or_path,
@@ -2005,6 +2022,59 @@ class Validation:
                 "Please ensure your pipeline supports adapter removal."
             )
 
+    def _baseline_adapter_strength(self) -> float:
+        if getattr(self.config, "model_type", "") != "lora":
+            return 1.0
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        if lora_type == "lycoris":
+            try:
+                return float(getattr(self.config, "validation_lycoris_strength", 1.0) or 1.0)
+            except Exception:
+                return 1.0
+        try:
+            return float(getattr(self.config, "validation_adapter_strength", 1.0) or 1.0)
+        except Exception:
+            return 1.0
+
+    def _set_peft_adapter_strength(self, strength: float) -> None:
+        if LoraLayer is None:
+            return
+        component = None
+        try:
+            component = self.model.get_trained_component(unwrap_model=False)
+        except Exception:
+            component = None
+        if component is None:
+            return
+        skip_adapter = getattr(self.model, "assistant_adapter_name", None)
+        for module in component.modules():
+            if not isinstance(module, LoraLayer):
+                continue
+            adapters = []
+            if hasattr(module, "active_adapters"):
+                adapters = list(module.active_adapters)
+            if not adapters and hasattr(module, "lora_A"):
+                adapters = list(module.lora_A.keys())
+            for adapter_name in adapters:
+                if skip_adapter and adapter_name == skip_adapter:
+                    continue
+                try:
+                    module.set_scale(adapter_name, strength)
+                except Exception:
+                    continue
+
+    def _set_adapter_strength(self, strength: Optional[float]) -> None:
+        if getattr(self.config, "model_type", "") != "lora":
+            return
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        target_strength = self._baseline_adapter_strength() if strength is None else float(strength)
+        if lora_type == "lycoris":
+            lycoris_network = getattr(self.accelerator, "_lycoris_wrapped_network", None)
+            if lycoris_network is not None:
+                lycoris_network.set_multiplier(target_strength)
+        elif lora_type == "standard":
+            self._set_peft_adapter_strength(target_strength)
+
     def _prepare_validation_work_items(self, content: list[Any] | None) -> list[_ValidationWorkItem]:
         if content is None:
             return []
@@ -2016,6 +2086,18 @@ class Validation:
             prompt_text: Any = entry
             conditioning: Any = None
             shortname: str | None = None
+            adapter_strength: float | None = None
+            if isinstance(entry, PromptLibraryEntry):
+                prompt_text = entry.prompt
+                adapter_strength = entry.adapter_strength
+            elif isinstance(entry, dict) and "prompt" in entry:
+                prompt_text = entry.get("prompt")
+                try:
+                    adapter_strength = (
+                        None if entry.get("adapter_strength", None) is None else float(entry.get("adapter_strength"))
+                    )
+                except Exception:
+                    adapter_strength = None
             if isinstance(entry, tuple):
                 if len(entry) == 3 and isinstance(entry[2], list):
                     shortname, prompt_text, conditioning = entry
@@ -2043,6 +2125,7 @@ class Validation:
                     shortname=shortname,
                     prompt=prompt_text,
                     conditioning=conditioning,
+                    adapter_strength=adapter_strength,
                 )
             )
         return work_items
@@ -2128,6 +2211,7 @@ class Validation:
             decorated_shortname,
             item.conditioning,
             validation_type,
+            adapter_strength=item.adapter_strength,
         )
         return {
             "index": item.index,
@@ -2596,6 +2680,7 @@ class Validation:
         validation_shortname,
         validation_input_image=None,
         validation_type=None,
+        adapter_strength: float | None = None,
     ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
@@ -2608,6 +2693,8 @@ class Validation:
         benchmark_image = None
         is_audio = isinstance(self.model, AudioModelFoundation)
         resolutions = self.validation_resolutions if not is_audio else [(0, 0)]
+        baseline_strength = self._baseline_adapter_strength()
+        self._set_adapter_strength(adapter_strength)
 
         for resolution in resolutions:
             extra_validation_kwargs = {}
@@ -2651,8 +2738,6 @@ class Validation:
                                 validation_resolution_width,
                                 validation_resolution_height,
                             ) = extra_validation_kwargs["image"].size
-                else:
-                    raise ValueError("Validation input images are not supported for this model type.")
                 extra_validation_kwargs["control_image"] = extra_validation_kwargs["image"]
             else:
                 if not is_audio:
@@ -2952,6 +3037,7 @@ class Validation:
                 logger.error(f"Error generating validation image: {e}, {traceback.format_exc()}")
                 continue
 
+        self._set_adapter_strength(baseline_strength)
         return (
             stitched_validation_images,
             checkpoint_validation_images,

@@ -27,6 +27,7 @@ else:
 
 
 class SanaVideo(VideoModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "SanaVideo"
     MODEL_DESCRIPTION = "Sana Video generation model"
     ENABLED_IN_WIZARD = True

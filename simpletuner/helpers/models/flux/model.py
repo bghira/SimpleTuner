@@ -37,6 +37,7 @@ else:
 
 
 class Flux(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Flux.1"
     MODEL_DESCRIPTION = "High-quality image generation, 12B parameters"
     ENABLED_IN_WIZARD = True
@@ -48,6 +49,7 @@ class Flux(ImageModelFoundation):
     VALIDATION_PREVIEW_SPEC = ImageTAESpec(repo_id="madebyollin/taef1")
     # The safe diffusers default value for LoRA training targets.
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
+    SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0", "to_qkv"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
     ASSISTANT_LORA_FLAVOURS = ["schnell"]
@@ -831,6 +833,8 @@ class Flux(ImageModelFoundation):
 
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
+        if self.config.lora_type.lower() == "standard" and getattr(self.config, "slider_lora_target", False):
+            return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):
             if "control" not in self.config.flux_lora_target.lower():
                 logger.warning(

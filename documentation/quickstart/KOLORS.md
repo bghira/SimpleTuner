@@ -77,6 +77,9 @@ popd
 
 There, you will need to modify the following variables:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "model_type": "lora",
@@ -89,6 +92,7 @@ There, you will need to modify the following variables:
   "learning_rate": 1e-4
 }
 ```
+</details>
 
 - `pretrained_model_name_or_path` - Set this to `Kwai-Kolors/Kolors-diffusers`.
 - `MODEL_TYPE` - Set this to `lora`.
@@ -111,6 +115,9 @@ There are a few more if using a Mac M-series machine:
 Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to reduce the precision and VRAM requirements of especially ChatGLM 6B (the text encoder).
 
 For `config.json`:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "base_model_precision": "int8-quanto",
@@ -118,6 +125,7 @@ For `config.json`:
   "optimizer": "adamw_bf16"
 }
 ```
+</details>
 
 For `config.env` users (deprecated):
 
@@ -139,6 +147,21 @@ export TRAINER_EXTRA_ARGS="${TRAINER_EXTRA_ARGS} --text_encoder_1_precision=no_c
 export OPTIMIZER="adamw_bf16"
 ```
 
+#### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Diff2Flow](/documentation/experimental/DIFF2FLOW.md):** allows training Kolors with a Flow Matching objective, potentially improving generation straightness and quality.
+
+> ⚠️ These features increase the computational overhead of training.
+
+</details>
+
 #### Dataset considerations
 
 It's crucial to have a substantial dataset to train your model on. There are limitations on the dataset size, and you will need to ensure that your dataset is large enough to train your model effectively. Note that the bare minimum dataset size is `TRAIN_BATCH_SIZE * GRADIENT_ACCUMULATION_STEPS`. The dataset will not be discoverable by the trainer if it is too small.
@@ -146,6 +169,9 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 In your `OUTPUT_DIR` directory, create a multidatabackend.json:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -178,6 +204,7 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
   }
 ]
 ```
+</details>
 
 Then, create a `datasets` directory:
 
@@ -233,12 +260,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration

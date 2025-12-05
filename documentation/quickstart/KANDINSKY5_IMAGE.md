@@ -22,6 +22,9 @@ Given the size of the text encoder, you should almost certainly use grouped offl
 
 Add the following to your `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "enable_group_offload": true,
@@ -30,6 +33,7 @@ Add the following to your `config.json`:
   "group_offload_use_stream": true
 }
 ```
+</details>
 
 - `--group_offload_use_stream`: Only works on CUDA devices.
 - **Do not** combine this with `--enable_model_cpu_offload`.
@@ -113,20 +117,28 @@ You will need to modify the following variables:
 
 Inside `config/config.json` is the "primary validation prompt". You can also create a library of prompts in `config/user_prompt_library.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "portrait": "A high quality portrait of a woman, cinematic lighting, 8k",
   "landscape": "A beautiful mountain landscape at sunset, oil painting style"
 }
 ```
+</details>
 
 Enable it by adding this to your `config.json`:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
   "user_prompt_library": "config/user_prompt_library.json"
 }
 ```
+</details>
 
 #### Flow schedule shifting
 
@@ -144,6 +156,9 @@ You can reduce VRAM usage significantly by quantizing the transformer to 8-bit.
 
 In `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
   "base_model_precision": "int8-quanto",
   "text_encoder_1_precision": "no_change",
@@ -151,8 +166,21 @@ In `config.json`:
   "lora_rank": 16,
   "base_model_default_dtype": "bf16"
 ```
+</details>
 
 > **Note**: We do not recommend quantizing the text encoders (`no_change`) as Qwen2.5-VL is sensitive to quantization effects and is already the heaviest part of the pipeline.
+
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
 
 #### Dataset considerations
 
@@ -186,6 +214,8 @@ Then create your dataset directory:
 
 ```bash
 mkdir -p datasets/my_images
+</details>
+
 # Copy your images and .txt caption files here
 ```
 
@@ -234,6 +264,9 @@ Kandinsky 5 supports [TREAD](/documentation/TREAD.md) for faster training by dro
 
 Add to `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "tread_config": {
@@ -247,5 +280,6 @@ Add to `config.json`:
   }
 }
 ```
+</details>
 
 This drops 50% of tokens in the middle layers, speeding up the transformer pass.

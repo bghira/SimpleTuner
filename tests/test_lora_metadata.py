@@ -1,12 +1,15 @@
+import os
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from safetensors import safe_open
+from safetensors.torch import save_file
 
 from simpletuner.helpers.models.common import PipelineTypes
-from simpletuner.helpers.training.save_hooks import SaveHookManager
+from simpletuner.helpers.training.save_hooks import MODEL_SPEC_VERSION, SaveHookManager
 
 
 class _DummyAccelerator:
@@ -143,6 +146,31 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertEqual(kwargs["controlnet_lora_adapter_metadata"], {"name": "controlnet"})
         self.assertNotIn("transformer_lora_adapter_metadata", kwargs)
         self.assertIn("text_encoder_lora_adapter_metadata", kwargs)
+
+    def test_models_spec_metadata_written_to_lora_file(self):
+        manager, _, _ = self._make_manager(
+            args_overrides={
+                "tracker_run_name": "run-name",
+                "model_family": "sdxl",
+                "model_flavour": "base-1.0",
+                "resolution": 1024,
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lora_path = os.path.join(tmpdir, "pytorch_lora_weights.safetensors")
+            save_file({"weight": torch.tensor([1.0])}, lora_path, metadata={"format": "pt"})
+
+            manager._apply_modelspec_metadata_to_lora(tmpdir)
+
+            with safe_open(lora_path, framework="pt", device="cpu") as handle:
+                metadata = handle.metadata()
+
+        self.assertEqual(metadata.get("modelspec.sai_model_spec"), MODEL_SPEC_VERSION)
+        self.assertEqual(metadata.get("modelspec.implementation"), "diffusers")
+        self.assertEqual(metadata.get("modelspec.architecture"), "sdxl-base-1.0/lora")
+        self.assertEqual(metadata.get("modelspec.title"), "run-name")
+        self.assertEqual(metadata.get("modelspec.resolution"), "1024x1024")
 
 
 class FluxPipelineMetadataTests(unittest.TestCase):

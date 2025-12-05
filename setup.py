@@ -91,7 +91,7 @@ def _resolve_ramtorch_dependency() -> str:
 def get_cuda_dependencies():
     ramtorch_dep = _resolve_ramtorch_dependency()
     return [
-        "torch>=2.9.0",
+        "torch>=2.9.1",
         "torchvision>=0.24.0",
         "torchaudio>=2.4.1",
         "triton>=3.3.0",
@@ -125,7 +125,7 @@ def get_rocm_dependencies():
     except Exception as exc:
         print(f"Warning: falling back to CPU PyTorch packages because ROCm wheel configuration failed: {exc}")
         return [
-            "torch>=2.9.0",
+            "torch>=2.9.1",
             "torchvision>=0.24.0",
             "torchao>=0.14.1",
             ramtorch_dep,
@@ -134,7 +134,7 @@ def get_rocm_dependencies():
 
 def get_apple_dependencies():
     return [
-        "torch>=2.9.0",
+        "torch>=2.9.1",
         "torchvision>=0.24.0",
         "torchao>=0.14.1",
     ]
@@ -142,7 +142,7 @@ def get_apple_dependencies():
 
 def get_cpu_dependencies():
     return [
-        "torch>=2.9.0",
+        "torch>=2.9.1",
         "torchvision>=0.24.0",
         "torchao>=0.14.1",
     ]
@@ -214,6 +214,7 @@ base_deps = [
     "boto3>=1.35.83",
     "pandas>=2.2.3",
     "botocore>=1.35.83",
+    "skrample>=0.5.0",
     "urllib3<1.27",
     "torchsde>=0.2.6",
     "torchmetrics>=1.1.1",
@@ -292,7 +293,7 @@ setup(
             "simpletuner/documentation",
         ),
     },
-    python_requires=">=3.11,<3.14",
+    python_requires=">=3.12,<3.14",
     install_requires=base_deps + platform_deps_for_install,
     extras_require=extras_require,
     entry_points={
@@ -309,8 +310,8 @@ setup(
         "Intended Audience :: Developers",
         "License :: OSI Approved :: GNU Affero General Public License v3",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Topic :: Multimedia :: Graphics",
     ],

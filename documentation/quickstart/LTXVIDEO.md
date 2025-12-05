@@ -129,6 +129,9 @@ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environm
 
 At the end, your config should resemble mine:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "resume_from_checkpoint": "latest",
@@ -190,6 +193,19 @@ At the end, your config should resemble mine:
   "ignore_final_epochs": true
 }
 ```
+</details>
+
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
 
 #### Validation prompts
 
@@ -239,6 +255,8 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 This should not be enabled for video model training, at the present time.
 
+</details>
+
 # Stable evaluation loss
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
@@ -248,12 +266,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration
@@ -290,6 +312,9 @@ Tested on Apple and NVIDIA systems, Hugging Face Optimum-Quanto can be used to r
 
 
 For `config.json` users:
+<details>
+<summary>View example config</summary>
+
 ```json
   "base_model_precision": "int8-quanto",
   "text_encoder_1_precision": "no_change",
@@ -298,6 +323,7 @@ For `config.json` users:
   "max_grad_norm": 1.0,
   "base_model_default_dtype": "bf16"
 ```
+</details>
 
 #### Dataset considerations
 
@@ -314,6 +340,9 @@ Depending on the dataset you have, you will need to set up your dataset director
 In this example, we will be using [video-dataset-disney-organized](https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -349,6 +378,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   }
 ]
 ```
+</details>
 
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many seconds of data we'll train on.
@@ -487,6 +517,9 @@ Like other DiT models, if you do these things (among others) some square grid ar
 
 Some fine-tuned models on Hugging Face Hub lack the full directory structure, requiring specific options to be set.
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "model_family": "ltxvideo",
@@ -496,6 +529,7 @@ Some fine-tuned models on Hugging Face Hub lack the full directory structure, re
     "pretrained_transformer_subfolder": "none",
 }
 ```
+</details>
 
 ## Credits
 

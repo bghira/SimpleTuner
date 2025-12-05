@@ -99,6 +99,9 @@ The impact of these options are currently unknown.
 
 Your config.json will look something like mine by the end:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "validation_torch_compile": "false",
@@ -147,12 +150,16 @@ Your config.json will look something like mine by the end:
     "aspect_bucket_rounding": 2
 }
 ```
+</details>
 
 > ℹ️ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 > ℹ️ This configuration sets the T5 (#3) and Llama (#4) text encoder precision levels to int8 to save memory for 24G cards. You can remove these options or set them to `no_change` if you have more memory available.
 
 And a simple `config/lycoris_config.json` file - note that the `FeedForward` may be removed for additional training stability.
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -175,12 +182,16 @@ And a simple `config/lycoris_config.json` file - note that the `FeedForward` may
     }
 }
 ```
+</details>
 
 Setting either `"use_scalar": true` in `config/lycoris_config.json` or setting `"init_lokr_norm": 1e-4` in `config/config.json` will speed up training considerably. Enabling both seems to slow down training slightly. Note that setting `init_lokr_norm` will slightly change the validation images at step 0.
 
 Adding the `FeedForward` module to `config/lycoris_config.json` will train a much larger number of parameters, including all the experts. Training the experts seems to be rather difficult though.
 
 An easier option is to only train the feed forward parameters outside the experts using the following `config/lycoris_config.json` file.
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -213,6 +224,19 @@ An easier option is to only train the feed forward parameters outside the expert
     }
 }
 ```
+</details>
+
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
 
 #### Validation prompts
 
@@ -262,6 +286,8 @@ A set of diverse prompt will help determine whether the model is collapsing as i
 
 If you wish to enable evaluations to score the model's performance, see [this document](/documentation/evaluation/CLIP_SCORES.md) for information on configuring and interpreting CLIP scores.
 
+</details>
+
 # Stable evaluation loss
 
 If you wish to use stable MSE loss to score the model's performance, see [this document](/documentation/evaluation/EVAL_LOSS.md) for information on configuring and interpreting evaluation loss.
@@ -271,12 +297,16 @@ If you wish to use stable MSE loss to score the model's performance, see [this d
 SimpleTuner supports streaming intermediate validation previews during generation using Tiny AutoEncoder models. This allows you to see validation images being generated step-by-step in real-time via webhook callbacks.
 
 To enable:
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "validation_preview": true,
   "validation_preview_steps": 1
 }
 ```
+</details>
 
 **Requirements:**
 - Webhook configuration
@@ -314,6 +344,9 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
 Create a `--data_backend_config` (`config/multidatabackend.json`) document containing this:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -364,6 +397,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   }
 ]
 ```
+</details>
 
 > ℹ️ Use `caption_strategy=textfile` if you have `.txt` files containing captions.
 
@@ -429,6 +463,9 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 ### Running inference on the LoKr afterward
 
 Since it's a new model, the example will need some adjustment to work. Here's a functioning example:
+
+<details>
+<summary>Show Python inference example</summary>
 
 ```py
 import torch
@@ -515,6 +552,7 @@ model_output = pipeline(
 model_output.save("output.png", format="PNG")
 
 ```
+</details>
 
 ## Notes & troubleshooting tips
 

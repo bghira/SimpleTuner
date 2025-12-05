@@ -106,6 +106,9 @@ There, you will possibly need to modify the following variables:
 
 Your config.json will look something like this:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "base_model_precision": "no_change",
@@ -149,10 +152,14 @@ Your config.json will look something like this:
     "validation_step_interval": 500
 }
 ```
+</details>
 
 > ℹ️ Multi-GPU users can reference [this document](/documentation/OPTIONS.md#environment-configuration-variables) for information on configuring the number of GPUs to use.
 
 And a `config/cosmos2image/lycoris_config.json` file:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 {
@@ -175,6 +182,19 @@ And a `config/cosmos2image/lycoris_config.json` file:
     }
 }
 ```
+</details>
+
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
 
 #### Validation prompts
 
@@ -343,6 +363,8 @@ huggingface-cli login
 
 Follow the instructions to log in to both services.
 
+</details>
+
 ### Executing the training run
 
 From the SimpleTuner directory, you have several options to start training:
@@ -370,6 +392,9 @@ For more information, see the [dataloader](/documentation/DATALOADER.md) and [tu
 ### Running inference on the LoKr afterward
 
 Since Cosmos2 is a newer model with limited documentation, inference examples may need adjustment. A basic example structure would be:
+
+<details>
+<summary>Show Python inference example</summary>
 
 ```py
 import torch
@@ -422,6 +447,8 @@ output = pipe(
 output.save("output.png")
 
 ```
+
+</details>
 
 ## Notes & troubleshooting tips
 

@@ -23,6 +23,7 @@ else:
 
 
 class Kandinsky5Image(ImageModelFoundation):
+    SUPPORTS_MUON_CLIP = True
     NAME = "Kandinsky5-Image"
     MODEL_DESCRIPTION = "Text-to-image diffusion transformer (flow matching)"
     ENABLED_IN_WIZARD = True
@@ -40,6 +41,15 @@ class Kandinsky5Image(ImageModelFoundation):
         PipelineTypes.IMG2IMG: None,  # filled below for I2I
     }
     DEFAULT_LORA_TARGET = ["to_key", "to_query", "to_value"]
+    SLIDER_LORA_TARGET = [
+        "attn1.to_query",
+        "attn1.to_key",
+        "attn1.to_value",
+        "conv_in",
+        "conv_out",
+        "time_embedding.linear_1",
+        "time_embedding.linear_2",
+    ]
 
     DEFAULT_MODEL_FLAVOUR = "t2i-lite-sft"
     HUGGINGFACE_PATHS: Dict[str, str] = {

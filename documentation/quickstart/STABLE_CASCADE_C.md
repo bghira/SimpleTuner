@@ -69,6 +69,9 @@ Set the following keys (values shown are a good baseline for Stage C):
 
 #### Example `config/config.json`
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "base_model_precision": "int8-torchao",
@@ -107,6 +110,7 @@ Set the following keys (values shown are a good baseline for Stage C):
   "validation_resolution": "1024x1024"
 }
 ```
+</details>
 
 Key takeaways:
 
@@ -117,6 +121,9 @@ Key takeaways:
 ### 2. Configure the data backend
 
 Create `config/stable_cascade/multidatabackend.json`:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -145,6 +152,7 @@ Create `config/stable_cascade/multidatabackend.json`:
   }
 ]
 ```
+</details>
 
 Tips:
 
@@ -156,6 +164,9 @@ Tips:
 
 Create `config/stable_cascade/prompt_library.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "portrait": "a cinematic portrait photograph lit by studio strobes",
@@ -164,6 +175,7 @@ Create `config/stable_cascade/prompt_library.json`:
   "stylized": "digital illustration in the style of a retro sci-fi book cover"
 }
 ```
+</details>
 
 Enable it in your config by adding `"validation_prompt_library": "config/stable_cascade/prompt_library.json"`.
 
@@ -195,6 +207,21 @@ During the first epoch, monitor:
 - The Stage C prior on its own only produces image embeddings. The SimpleTuner validation wrapper automatically feeds them through the decoder when `stable_cascade_use_decoder_for_validation=true`.
 - To swap the decoder flavour, set `stable_cascade_decoder_subfolder` to `"decoder"`, `"decoder_lite"`, or a custom folder containing the Stage B or Stage C weights.
 - For quicker previews, lower `stable_cascade_validation_prior_num_inference_steps` to ~12 and `validation_num_inference_steps` to 20. Once satisfied, raise them back for higher quality.
+
+## Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+*   **[Diff2Flow](/documentation/experimental/DIFF2FLOW.md):** allows training Stable Cascade with a Flow Matching objective.
+
+> ⚠️ These features increase the computational overhead of training.
+
+</details>
 
 ## Troubleshooting
 

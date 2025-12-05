@@ -843,6 +843,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
                 {"value": "euler-a", "label": "Euler A"},
                 {"value": "unipc", "label": "UniPC"},
                 {"value": "dpm++", "label": "DPM++"},
+                {"value": "perflow", "label": "PerFlow"},
             ],
             help_text="Noise scheduler for validation",
             tooltip="Override the scheduler used for validation renders, otherwise use the model default.",

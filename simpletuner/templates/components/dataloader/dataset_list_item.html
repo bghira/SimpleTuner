@@ -1,0 +1,190 @@
+<!-- Compact list item for dataset (List View) -->
+<div class="dataset-list-item-wrapper">
+<div class="dataset-list-item" x-bind:data-dataset-id="dataset.id"
+     :class="{ 'disabled': dataset.disabled, 'expanded': sectionIsExpanded(dataset, 'card') }">
+    <!-- Collapse/Expand Toggle -->
+    <button type="button"
+            class="btn btn-sm btn-link list-item-toggle"
+            @click="toggleSectionCollapsed(dataset, 'card')"
+            :aria-expanded="sectionIsCollapsed(dataset, 'card') ? 'false' : 'true'">
+        <i class="fas" :class="sectionIsExpanded(dataset, 'card') ? 'fa-chevron-down' : 'fa-chevron-right'"></i>
+    </button>
+
+    <!-- Type Icon -->
+    <span class="list-item-type-icon" x-text="getDatasetTypeIcon(dataset.dataset_type)" :title="dataset.dataset_type"></span>
+
+    <!-- Dataset ID (inline editable) -->
+    <div class="list-item-id">
+        <input type="text"
+               class="form-control form-control-sm list-item-id-input"
+               x-model="dataset.id"
+               @input="markAsUnsaved()"
+               :title="dataset.id"
+               placeholder="dataset-id">
+    </div>
+
+    <!-- Type Selector -->
+    <select class="form-select form-select-sm list-item-type-select"
+            x-model="dataset.dataset_type"
+            @change="markAsUnsaved()"
+            @click.stop>
+        <option value="">Type...</option>
+        <option value="image">Image</option>
+        <option value="video">Video</option>
+        <option value="audio">Audio</option>
+        <option value="conditioning" :disabled="!conditioningSupported && dataset.dataset_type !== 'conditioning'">Conditioning</option>
+        <option value="text_embeds">Text Embeds</option>
+        <option value="image_embeds">Image Embeds</option>
+    </select>
+
+    <!-- Path (truncated) - hide for embed types -->
+    <div class="list-item-path text-muted small"
+         x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+         :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path configured'">
+        <i class="fas fa-folder-open me-1"></i>
+        <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || '...').split('/').slice(-2).join('/') || '...'"></span>
+    </div>
+
+    <!-- Resolution Info -->
+    <div class="list-item-resolution" x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds' && dataset.dataset_type !== 'audio'">
+        <i class="fas fa-ruler-combined resolution-icon" title="Resolution"></i>
+        <span x-text="dataset.resolution || '—'"></span>
+        <span class="text-muted" x-text="dataset.resolution_type === 'pixel_area' ? 'area' : 'px'"></span>
+    </div>
+
+    <!-- Cropping Status -->
+    <div class="list-item-crop" x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds' && dataset.dataset_type !== 'audio'">
+        <span x-show="dataset.crop" class="text-success" title="Cropping enabled">
+            <i class="fas fa-crop-alt"></i>
+        </span>
+        <span x-show="!dataset.crop" class="text-muted" title="No cropping">
+            <i class="fas fa-expand"></i>
+        </span>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="list-item-actions btn-group btn-group-sm">
+        <button type="button"
+                class="btn btn-sm btn-outline-secondary"
+                title="Test connection"
+                @click.stop="testDatasetConnection(dataset)"
+                :disabled="dataset._connectionTesting || !supportsConnectionTest(dataset)">
+            <i class="fas fa-plug"></i>
+        </button>
+        <button type="button"
+                class="btn btn-sm btn-outline-secondary"
+                title="Duplicate"
+                @click.stop="duplicateDataset(dataset.id)">
+            <i class="fas fa-copy"></i>
+        </button>
+        <button type="button"
+                class="btn btn-sm btn-outline-danger"
+                title="Remove"
+                @click.stop="removeDataset(dataset.id)">
+            <i class="fas fa-trash"></i>
+        </button>
+    </div>
+
+    <!-- Disabled overlay -->
+    <div x-show="dataset.disabled" class="list-item-disabled-badge" x-cloak>
+        <span class="badge bg-secondary">Disabled</span>
+    </div>
+</div>
+
+<!-- Expanded Content (inline below the list item) -->
+<div class="dataset-list-item-expanded"
+     x-show="sectionIsExpanded(dataset, 'card')"
+     x-transition
+     x-cloak
+     x-data="{ editingDataset: dataset }">
+    <!-- Inline Tabs -->
+    <div class="list-item-tabs">
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'basic'}"
+                @click="setListTab(dataset, 'basic')"
+                x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds' && dataset.dataset_type !== 'audio'">
+            <i class="fas fa-sliders-h"></i>
+            <span>Basic</span>
+        </button>
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'storage'}"
+                @click="setListTab(dataset, 'storage')">
+            <i class="fas fa-database"></i>
+            <span>Storage</span>
+        </button>
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'captions'}"
+                x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds' && dataset.dataset_type !== 'conditioning'"
+                @click="setListTab(dataset, 'captions')">
+            <i class="fas fa-comment-alt"></i>
+            <span>Captions & Metadata</span>
+        </button>
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'video'}"
+                x-show="dataset.dataset_type === 'video'"
+                @click="setListTab(dataset, 'video')">
+            <i class="fas fa-film"></i>
+            <span>Video</span>
+        </button>
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'audio'}"
+                x-show="dataset.dataset_type === 'audio'"
+                @click="setListTab(dataset, 'audio')">
+            <i class="fas fa-music"></i>
+            <span>Audio</span>
+        </button>
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'conditioning'}"
+                x-show="(dataset.dataset_type === 'image' || dataset.dataset_type === 'video' || dataset.dataset_type === 'conditioning') && conditioningSupported"
+                @click="setListTab(dataset, 'conditioning')">
+            <i class="fas fa-project-diagram"></i>
+            <span>Conditioning</span>
+        </button>
+        <button type="button"
+                :class="{'active': getListTab(dataset) === 'advanced'}"
+                @click="setListTab(dataset, 'advanced')"
+                x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'">
+            <i class="fas fa-database"></i>
+            <span>Caching</span>
+        </button>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="expanded-content">
+        <!-- Basic Tab -->
+        <div x-show="getListTab(dataset) === 'basic'" x-cloak>
+            {% include 'components/dataloader/sections/basic_body.html' %}
+        </div>
+
+        <!-- Storage Tab -->
+        <div x-show="getListTab(dataset) === 'storage'" x-cloak>
+            {% include 'components/dataloader/sections/storage_body.html' %}
+        </div>
+
+        <!-- Captions Tab -->
+        <div x-show="getListTab(dataset) === 'captions'" x-cloak>
+            {% include 'components/dataloader/sections/captions_body.html' %}
+        </div>
+
+        <!-- Video Tab -->
+        <div x-show="getListTab(dataset) === 'video'" x-cloak>
+            {% include 'components/dataloader/sections/video_body.html' %}
+        </div>
+
+        <!-- Audio Tab -->
+        <div x-show="getListTab(dataset) === 'audio'" x-cloak>
+            {% include 'components/dataloader/sections/audio_body.html' %}
+        </div>
+
+        <!-- Conditioning Tab -->
+        <div x-show="getListTab(dataset) === 'conditioning'" x-cloak>
+            {% include 'components/dataloader/sections/conditioning_body.html' %}
+        </div>
+
+        <!-- Caching Tab -->
+        <div x-show="getListTab(dataset) === 'advanced'" x-cloak>
+            {% include 'components/dataloader/sections/advanced_body.html' %}
+        </div>
+    </div>
+</div>
+</div><!-- End dataset-list-item-wrapper -->

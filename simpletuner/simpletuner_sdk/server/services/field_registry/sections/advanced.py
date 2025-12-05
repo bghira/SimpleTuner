@@ -30,6 +30,274 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Diff2Flow bridging (EPS/V -> flow targets)
+    registry._add_field(
+        ConfigField(
+            name="diff2flow_enabled",
+            arg_name="--diff2flow_enabled",
+            ui_label="Enable Diff2Flow Bridge",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Allow epsilon/v models to compute flow-style targets via Diffusion-to-Flow bridge.",
+            tooltip="Keeps the underlying UNet the same but exposes flow targets for optional loss computation.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=27,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="diff2flow_loss",
+            arg_name="--diff2flow_loss",
+            ui_label="Train With Flow Loss",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Compute loss on flow-converted predictions instead of raw eps/v targets.",
+            tooltip="Requires Diff2Flow bridge to be enabled; only applies to epsilon or v-prediction models.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=28,
+            dependencies=[FieldDependency(field="diff2flow_enabled", operator="equals", value=True, action="enable")],
+        )
+    )
+
+    # Scheduled sampling (training-time rollout)
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_max_step_offset",
+            arg_name="--scheduled_sampling_max_step_offset",
+            ui_label="Scheduled Sampling Max Offset",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Offset must be non-negative")],
+            help_text="Maximum additional reverse steps to roll out from a noisier source timestep during training.",
+            tooltip="Set >0 to enable scheduled sampling rollout for DDPM-style models. Higher values increase compute.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=29,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_strategy",
+            arg_name="--scheduled_sampling_strategy",
+            ui_label="Scheduled Sampling Strategy",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value="uniform",
+            choices=[
+                {"value": "uniform", "label": "Uniform"},
+                {"value": "biased_early", "label": "Biased Early"},
+                {"value": "biased_late", "label": "Biased Late"},
+            ],
+            help_text="Distribution for choosing rollout offsets.",
+            tooltip="Uniform samples offsets evenly; Biased Early favors small offsets; Biased Late favors larger ones.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=30,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_probability",
+            arg_name="--scheduled_sampling_probability",
+            ui_label="Scheduled Sampling Probability",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Probability must be >= 0"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Probability must be <= 1"),
+            ],
+            help_text="Chance to apply a non-zero rollout offset for each sample when scheduled sampling is enabled.",
+            tooltip="Use <1.0 to limit how often rollout is used; 0.0 disables rollout even if max offset > 0.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=31,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_prob_start",
+            arg_name="--scheduled_sampling_prob_start",
+            ui_label="Scheduled Sampling Prob (Start)",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0.0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Probability must be >= 0"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Probability must be <= 1"),
+            ],
+            help_text="Initial probability of applying a non-zero rollout offset.",
+            tooltip="Ramp from this value toward the end probability over the configured ramp steps.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=32,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_prob_end",
+            arg_name="--scheduled_sampling_prob_end",
+            ui_label="Scheduled Sampling Prob (End)",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0.5,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Probability must be >= 0"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Probability must be <= 1"),
+            ],
+            help_text="Target probability reached after ramping.",
+            tooltip="Typical schedules ramp from 0.0 to 0.5 over training.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=33,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_ramp_steps",
+            arg_name="--scheduled_sampling_ramp_steps",
+            ui_label="Scheduled Sampling Ramp Steps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Ramp steps must be >= 0")],
+            help_text="Number of steps to ramp probability from start to end (0 disables ramp).",
+            tooltip="Set >0 to increase probability over time; combine with start step for warmup.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=34,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_start_step",
+            arg_name="--scheduled_sampling_start_step",
+            ui_label="Scheduled Sampling Start Step",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Start step must be >= 0")],
+            help_text="Optional delay (steps) before ramping scheduled sampling probability.",
+            tooltip="Use to let the model learn basic denoising before applying rollout.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=35,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_ramp_shape",
+            arg_name="--scheduled_sampling_ramp_shape",
+            ui_label="Scheduled Sampling Ramp Shape",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value="linear",
+            choices=[
+                {"value": "linear", "label": "Linear"},
+                {"value": "cosine", "label": "Cosine"},
+            ],
+            help_text="Curve used to interpolate probability from start to end.",
+            tooltip="Cosine gives a gentler start; linear is straightforward.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=36,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_sampler",
+            arg_name="--scheduled_sampling_sampler",
+            ui_label="Scheduled Sampling Solver",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value="unipc",
+            choices=[
+                {"value": "unipc", "label": "UniPC"},
+                {"value": "euler", "label": "Euler"},
+                {"value": "dpm", "label": "DPM"},
+                {"value": "rk4", "label": "RK4"},
+            ],
+            help_text="Solver used for short reverse rollouts during scheduled sampling.",
+            tooltip="UniPC predictor-corrector is a good default; others are lighter but lower order.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=37,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_order",
+            arg_name="--scheduled_sampling_order",
+            ui_label="Scheduled Sampling Solver Order",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=2,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Order must be >= 1"),
+                ValidationRule(ValidationRuleType.MAX, value=9, message="Order must be <= 9"),
+            ],
+            help_text="Order for the chosen solver (UniPC/UniP up to 9; RK4/DPM/Euler ignore >4/3/1).",
+            tooltip="Order=2 is a safe default for predictor-corrector solvers.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=38,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+        )
+    )
+
     # Flow Matching Configuration
     registry._add_field(
         ConfigField(

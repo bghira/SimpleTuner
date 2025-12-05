@@ -14,6 +14,9 @@ Hunyuan Video 1.5 is a large model (8.3B parameters).
 
 Add the following to your `config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "enable_group_offload": true,
@@ -22,6 +25,7 @@ Add the following to your `config.json`:
   "group_offload_use_stream": true
 }
 ```
+</details>
 
 - `--group_offload_use_stream`: Only works on CUDA devices.
 - **Do not** combine this with `--enable_model_cpu_offload`.
@@ -121,11 +125,14 @@ cp config/config.json.example config/config.json
 
 Key configuration overrides for HunyuanVideo:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "model_type": "lora",
-  "model_family": "hunyuan_video",
-  "pretrained_model_name_or_path": "tencent/HunyuanVideo",
+  "model_family": "hunyuanvideo",
+  "pretrained_model_name_or_path": "tencent/HunyuanVideo-1.5",
   "model_flavour": "t2v-480p",
   "output_dir": "output/hunyuan-video",
   "validation_resolution": "854x480",
@@ -142,6 +149,7 @@ Key configuration overrides for HunyuanVideo:
   "dataset_backend_config": "config/multidatabackend.json"
 }
 ```
+</details>
 
 - `model_flavour` options:
   - `t2v-480p` (Default)
@@ -149,6 +157,18 @@ Key configuration overrides for HunyuanVideo:
   - `i2v-480p` (Image-to-Video)
   - `i2v-720p` (Image-to-Video)
 - `validation_num_video_frames`: Must be `(frames - 1) % 4 == 0`. E.g., 61, 129.
+
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
 
 #### Dataset considerations
 
@@ -190,6 +210,8 @@ wandb login
 huggingface-cli login
 ```
 
+</details>
+
 ### Executing the training run
 
 From the SimpleTuner directory:
@@ -204,7 +226,8 @@ simpletuner train
 
 - **Group Offload**: Essential for consumer GPUs. Ensure `enable_group_offload` is true.
 - **Resolution**: Stick to 480p (`854x480` or similar) if you have limited VRAM. 720p (`1280x720`) increases memory usage significantly.
-- **Quantization**: Not yet fully standardized for Hunyuan in SimpleTuner, but `base_model_precision` can be experimented with if available.
+- **Quantization**: Use `base_model_precision` (`bf16` default); `int8-torchao` works for further savings at the cost of speed.
+- **VAE patch convolution**: For HunyuanVideo VAE OOMs, set `--vae_enable_patch_conv=true` (or toggle in the UI). This slices 3D conv/attention work to lower peak VRAM; expect a small throughput hit.
 
 ### Image-to-Video (I2V)
 

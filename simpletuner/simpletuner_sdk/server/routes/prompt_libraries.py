@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
@@ -13,8 +13,13 @@ from simpletuner.simpletuner_sdk.server.services.prompt_library_service import P
 router = APIRouter(prefix="/api/prompt-libraries", tags=["prompt_libraries"])
 
 
+class PromptLibraryEntryModel(BaseModel):
+    prompt: str
+    adapter_strength: Optional[float] = None
+
+
 class PromptLibraryPayload(BaseModel):
-    entries: Dict[str, str]
+    entries: Dict[str, Union[str, PromptLibraryEntryModel]]
     previous_filename: Optional[str] = None
 
 
@@ -48,5 +53,11 @@ async def get_prompt_library(filename: str) -> Dict[str, object]:
 @router.put("/{filename}")
 async def save_prompt_library(filename: str, payload: PromptLibraryPayload) -> Dict[str, object]:
     service = _get_service()
-    result = _call_service(service.save_library, filename, payload.entries, payload.previous_filename)
+    entries: Dict[str, object] = {}
+    for key, value in payload.entries.items():
+        if isinstance(value, PromptLibraryEntryModel):
+            entries[key] = value.dict(exclude_none=True)
+        else:
+            entries[key] = value
+    result = _call_service(service.save_library, filename, entries, payload.previous_filename)
     return {"entries": result["entries"], "library": asdict(result["library"])}

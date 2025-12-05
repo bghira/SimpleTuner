@@ -29,6 +29,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import FP32LayerNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -141,6 +142,13 @@ class WanAttnProcessor2_0:
             key_img = key_img.unflatten(2, (attn.heads, -1)).transpose(1, 2)
             value_img = value_img.unflatten(2, (attn.heads, -1)).transpose(1, 2)
 
+            publish_attention_max_logits(
+                query,
+                key_img,
+                None,
+                getattr(attn, "to_q", None) and attn.to_q.weight,
+                getattr(attn, "add_k_proj", None) and attn.add_k_proj.weight,
+            )
             hidden_states_img = F.scaled_dot_product_attention(
                 query,
                 key_img,
@@ -152,6 +160,13 @@ class WanAttnProcessor2_0:
             hidden_states_img = hidden_states_img.transpose(1, 2).flatten(2, 3)
             hidden_states_img = hidden_states_img.type_as(query)
 
+        publish_attention_max_logits(
+            query,
+            key,
+            attention_mask,
+            getattr(attn, "to_q", None) and attn.to_q.weight,
+            getattr(attn, "to_k", None) and attn.to_k.weight,
+        )
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
         )

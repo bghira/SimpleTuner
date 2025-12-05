@@ -1,0 +1,180 @@
+<!-- Basic Settings Body (for modal) -->
+<div class="modal-section-body">
+    <!-- Sizing Section -->
+    <div class="section-group" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds' && editingDataset.dataset_type !== 'audio' && matchesParamFilter('sizing', 'resolution', 'downsample', 'min size', 'max size')">
+        <h6 class="modal-section-title">Sizing</h6>
+        <div class="row g-2">
+            <div class="col-md-4" x-show="matchesParamFilter('resolution')">
+                <label class="form-label small">Resolution</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.resolution"
+                       @input="markAsUnsaved()"
+                       placeholder="1024">
+                <div class="form-text small"
+                     x-text="editingDataset.resolution_type === 'pixel_area' ? 'Shorter edge (squared)' : 'Shorter edge px'">
+                </div>
+            </div>
+            <div class="col-md-4" x-show="matchesParamFilter('resolution', 'type')">
+                <label class="form-label small">Resolution Type</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.resolution_type"
+                        @change="markAsUnsaved()">
+                    <option value="pixel">Pixels</option>
+                    <option value="pixel_area">Pixel area</option>
+                </select>
+            </div>
+            <div class="col-md-4" x-show="matchesParamFilter('downsample', 'target')">
+                <label class="form-label small">Downsample Target</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       x-model.number.lazy="editingDataset.target_downsample_size"
+                       min="0"
+                       step="1"
+                       @input="markAsUnsaved()"
+                       placeholder="Auto">
+            </div>
+            <div class="col-md-4" x-show="matchesParamFilter('min', 'size', 'minimum')">
+                <label class="form-label small">Min Size</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       x-model.number.lazy="editingDataset.minimum_image_size"
+                       min="0"
+                       step="1"
+                       @input="markAsUnsaved()"
+                       placeholder="0 (no minimum)">
+            </div>
+            <div class="col-md-4" x-show="matchesParamFilter('max', 'size', 'maximum')">
+                <label class="form-label small">Max Size</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       x-model.number.lazy="editingDataset.maximum_image_size"
+                       min="0"
+                       step="1"
+                       @input="markAsUnsaved()"
+                       placeholder="0 (no maximum)">
+            </div>
+        </div>
+    </div>
+
+    <!-- Cropping Section -->
+    <div class="section-group" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds' && editingDataset.dataset_type !== 'audio' && matchesParamFilter('crop', 'cropping', 'aspect', 'bucket')">
+        <h6 class="modal-section-title">Cropping</h6>
+        <div class="form-check mb-2">
+            <input class="form-check-input"
+                   type="checkbox"
+                   :id="'crop-enable-' + editingDataset.id"
+                   x-model="editingDataset.crop"
+                   @change="markAsUnsaved()">
+            <label class="form-check-label" :for="'crop-enable-' + editingDataset.id">Enable cropping</label>
+        </div>
+        <div class="row g-2" x-show="editingDataset.crop" x-cloak>
+            <div class="col-md-4" x-show="matchesParamFilter('crop', 'style')">
+                <label class="form-label small">Crop Style</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.crop_style"
+                        @change="markAsUnsaved()">
+                    <option value="center">Center</option>
+                    <option value="corner">Corner</option>
+                    <option value="face">Face Detection</option>
+                    <option value="random">Random</option>
+                </select>
+            </div>
+            <div class="col-md-4" x-show="matchesParamFilter('crop', 'aspect')">
+                <label class="form-label small">Crop Aspect</label>
+                <select class="form-select form-select-sm"
+                        x-model="editingDataset.crop_aspect"
+                        @change="markAsUnsaved()">
+                    <option value="square">Square</option>
+                    <option value="preserve">Preserve</option>
+                    <option value="closest">Closest bucket</option>
+                    <option value="random">Weighted buckets</option>
+                </select>
+            </div>
+            <div class="col-md-4" x-show="matchesParamFilter('aspect', 'bucket')">
+                <label class="form-label small">Aspect Buckets</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model="editingDataset._cropAspectBucketsText"
+                       @input="markAsUnsaved()"
+                       :disabled="!['closest', 'random'].includes(editingDataset.crop_aspect)"
+                       placeholder="0.75, 1.0, 1.33">
+            </div>
+        </div>
+    </div>
+
+    <!-- Aspect Ratio Limits -->
+    <div class="section-group" x-show="!['text_embeds','image_embeds','audio'].includes(editingDataset.dataset_type) && matchesParamFilter('aspect', 'ratio', 'min', 'max', 'limit')">
+        <h6 class="modal-section-title">Aspect Ratio Limits</h6>
+        <div class="row g-2">
+            <div class="col-md-6">
+                <label class="form-label small">Min Aspect Ratio</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="0.01"
+                       x-model.number.lazy="editingDataset.minimum_aspect_ratio"
+                       @input="markAsUnsaved()"
+                       placeholder="0.5">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Max Aspect Ratio</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="0.01"
+                       x-model.number.lazy="editingDataset.maximum_aspect_ratio"
+                       @input="markAsUnsaved()"
+                       placeholder="3.0">
+            </div>
+        </div>
+    </div>
+
+    <!-- Sampling -->
+    <div class="section-group" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type) && matchesParamFilter('sampling', 'repeats', 'probability', 'weight', 'slider', 'concept', 'strength')">
+        <h6 class="modal-section-title">Sampling</h6>
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label small">Repeats</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.repeats"
+                       @input="markAsUnsaved()"
+                       placeholder="0">
+                <div class="form-text small">Extra sweeps per epoch</div>
+            </div>
+            <div class="col-md-4" :class="{'opacity-50': !dangerModeEnabled()}">
+                <label class="form-label small">Probability</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       max="1"
+                       step="0.05"
+                       x-model.number.lazy="editingDataset.probability"
+                       :disabled="!dangerModeEnabled()"
+                       @input="markAsUnsaved()"
+                       placeholder="1.0">
+                <div class="form-text small" x-show="dangerModeEnabled()">Mixing weight</div>
+                <div class="form-text small text-warning" x-show="!dangerModeEnabled()">Danger mode</div>
+            </div>
+            <div class="col-md-4" x-show="!['audio'].includes(editingDataset.dataset_type)">
+                <label class="form-label small">Slider Strength</label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       step="0.1"
+                       x-model.number.lazy="editingDataset.slider_strength"
+                       @input="markAsUnsaved()"
+                       placeholder="None">
+                <div class="form-text small">
+                    <span x-show="editingDataset.slider_strength > 0" class="text-success">+concept</span>
+                    <span x-show="editingDataset.slider_strength < 0" class="text-danger">−concept</span>
+                    <span x-show="!editingDataset.slider_strength">Neutral</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

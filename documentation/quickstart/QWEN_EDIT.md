@@ -27,6 +27,9 @@ All other training prerequisites from the [Qwen Image guide](./QWEN_IMAGE.md) ap
 
 Inside `config/config.json`:
 
+<details>
+<summary>View example config</summary>
+
 ```jsonc
 {
   "model_type": "lora",
@@ -46,18 +49,37 @@ Inside `config/config.json`:
   "data_backend_config": "config/qwen_edit/multidatabackend.json"
 }
 ```
+</details>
 
 - EMA runs on the CPU by default and is safe to leave enabled unless you need faster checkpoints.
 - `validation_resolution` must be reduced (e.g. `768x768`) on 24 G cards.
 - `match_target_res` may be added under `model_kwargs` for `edit-v2` if you want the control images to inherit the target resolution instead of the default 1 MP packing:
+
+<details>
+<summary>View example config</summary>
 
 ```jsonc
 "model_kwargs": {
   "match_target_res": true
 }
 ```
+</details>
+
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
 
 ---
+
+</details>
 
 ## 3. Dataloader layout
 
@@ -66,6 +88,9 @@ Both flavours expect **paired datasets**: an edit image, optional edit caption, 
 ### 3.1 edit‑v1 (single control image)
 
 The main dataset should reference one conditioning dataset **and** a conditioning-image-embed cache:
+
+<details>
+<summary>View example config</summary>
 
 ```jsonc
 [
@@ -96,6 +121,7 @@ The main dataset should reference one conditioning dataset **and** a conditionin
   }
 ]
 ```
+</details>
 
 - `conditioning_type=reference_strict` guarantees that crops match the edit image. Use `reference_loose` only if the reference can be aspect-mismatched.
 - The `conditioning_image_embeds` entry stores the Qwen2.5-VL visual tokens produced for each reference. If omitted, SimpleTuner will create a default cache under `cache/conditioning_image_embeds/<dataset_id>`.
@@ -103,6 +129,9 @@ The main dataset should reference one conditioning dataset **and** a conditionin
 ### 3.2 edit‑v2 (multi‑control)
 
 For `edit-v2`, list every control dataset under `conditioning_data`. Each entry supplies one additional control frame. You do **not** need a conditioning-image-embed cache because latents are computed on the fly.
+
+<details>
+<summary>View example config</summary>
 
 ```jsonc
 [
@@ -148,6 +177,7 @@ For `edit-v2`, list every control dataset under `conditioning_data`. Each entry 
   }
 ]
 ```
+</details>
 
 Use as many control datasets as you have reference images (1–3). SimpleTuner keeps them aligned per sample by matching filenames.
 
@@ -183,11 +213,15 @@ simpletuner train \
 
 If you want to preview the reference image alongside the validation output, store your validation edit/reference pairs in a dedicated dataset (same layout as the training split) and set:
 
+<details>
+<summary>View example config</summary>
+
 ```jsonc
 {
   "eval_dataset_id": "qwen-edit-val"
 }
 ```
+</details>
 
 SimpleTuner will reuse the conditioning images from that dataset during validation.
 

@@ -42,6 +42,9 @@ mkdir -p config/acestep-training-demo
 
 Create `config/acestep-training-demo/config.json` with these values:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "model_family": "ace_step",
@@ -54,6 +57,7 @@ Create `config/acestep-training-demo/config.json` with these values:
   "data_backend_config": "config/acestep-training-demo/multidatabackend.json"
 }
 ```
+</details>
 
 ### Validation Settings
 
@@ -65,6 +69,20 @@ Add these to your `config.json` to monitor progress:
 - **`validation_guidance`**: Guidance scale (default: ~3.0 - 5.0).
 - **`validation_step_interval`**: How often to generate samples (e.g., every 100 steps).
 
+### Advanced Experimental Features
+
+<details>
+<summary>Show advanced experimental details</summary>
+
+
+SimpleTuner includes experimental features that can significantly improve training stability and performance.
+
+*   **[Scheduled Sampling (Rollout)](/documentation/experimental/SCHEDULED_SAMPLING.md):** reduces exposure bias and improves output quality by letting the model generate its own inputs during training.
+
+> ⚠️ These features increase the computational overhead of training.
+
+</details>
+
 ## Dataset Configuration
 
 ACE-Step requires an **audio-specific** dataset configuration.
@@ -74,6 +92,9 @@ ACE-Step requires an **audio-specific** dataset configuration.
 For a quick start, you can use the prepared [ACEStep-Songs preset](/documentation/data_presets/preset_audio_dataset_with_lyrics.md).
 
 Create `config/acestep-training-demo/multidatabackend.json`:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -95,10 +116,14 @@ Create `config/acestep-training-demo/multidatabackend.json`:
   }
 ]
 ```
+</details>
 
 ### Option 2: Local Audio Files
 
 Create `config/acestep-training-demo/multidatabackend.json`:
+
+<details>
+<summary>View example config</summary>
 
 ```json
 [
@@ -120,6 +145,7 @@ Create `config/acestep-training-demo/multidatabackend.json`:
   }
 ]
 ```
+</details>
 
 ### Data Structure
 
@@ -136,20 +162,28 @@ For captions and lyrics, place corresponding text files next to your audio files
 - **Caption (Prompt):** `track_01.txt` (Contains the text description, e.g., "A slow jazz ballad")
 - **Lyrics (Optional):** `track_01.lyrics` (Contains the lyrics text)
 
+<details>
+<summary>Example dataset layout</summary>
+
 ```text
 datasets/my_audio_files/
 ├── track_01.wav
 ├── track_01.txt
 └── track_01.lyrics
 ```
+</details>
 
-> 💡 **Advanced:** If your dataset uses a different naming convention (e.g. `_lyrics.txt`), you can customize this in your dataset config:
->
-> ```json
-> "audio": {
->   "lyrics_filename_format": "{filename}_lyrics.txt"
-> }
-> ```
+> 💡 **Advanced:** If your dataset uses a different naming convention (e.g. `_lyrics.txt`), you can customize this in your dataset config.
+
+<details>
+<summary>View custom lyrics filename example</summary>
+
+```json
+"audio": {
+  "lyrics_filename_format": "{filename}_lyrics.txt"
+}
+```
+</details>
 
 > ⚠️ **Note on Lyrics:** If a `.lyrics` file is not found for a sample, the lyric embeddings will be zeroed out. ACE-Step expects lyric conditioning; training heavily on data without lyrics (instrumentals) may require more training steps for the model to learn to generate high-quality instrumental audio with zeroed lyric inputs.
 
@@ -180,6 +214,9 @@ The upstream ACE-Step trainer fine-tunes the lyrics embedder alongside the denoi
 
 Example snippet:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
   "lyrics_embedder_train": true,
@@ -188,6 +225,7 @@ Example snippet:
   "lyrics_embedder_lr_scheduler": "cosine_with_restarts"
 }
 ```
+</details>
 Embedder weights are checkpointed with LoRA saves and restored on resume.
 
 ## Troubleshooting
@@ -216,6 +254,9 @@ If you have raw audio/text/lyrics files and want to use the Hugging Face dataset
 
 The upstream converter produces a dataset with `tags` and `norm_lyrics` columns. To use these, configure your backend like this:
 
+<details>
+<summary>View example config</summary>
+
 ```json
 {
     "type": "huggingface",
@@ -227,3 +268,4 @@ The upstream converter produces a dataset with `tags` and `norm_lyrics` columns.
     }
 }
 ```
+</details>
