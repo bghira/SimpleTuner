@@ -128,6 +128,8 @@ Detailed quickstart guides are available for all supported models:
 - **[Sana Guide](/documentation/quickstart/SANA.md)** - Lightweight flow-matching model
 - **[Lumina2 Guide](/documentation/quickstart/LUMINA2.md)** - 2B parameter flow-matching model
 - **[Kwai Kolors Guide](/documentation/quickstart/KOLORS.md)** - SDXL-based with ChatGLM encoder
+- **[LongCat-Image Guide](/documentation/quickstart/LONGCAT_IMAGE.md)** - 6B bilingual flow-matching model with Qwen-2.5-VL encoder
+- **[LongCat-Image Edit Guide](/documentation/quickstart/LONGCAT_EDIT.md)** - Image editing flavour requiring reference latents
 - **[LTX Video Guide](/documentation/quickstart/LTXVIDEO.md)** - Video diffusion training
 - **[Hunyuan Video 1.5 Guide](/documentation/quickstart/HUNYUANVIDEO.md)** - 8.3B flow-matching T2V/I2V with SR stages
 - **[Wan Video Guide](/documentation/quickstart/WAN.md)** - Video flow-matching with TREAD support
