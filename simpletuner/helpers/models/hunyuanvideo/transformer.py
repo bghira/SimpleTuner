@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.loaders import PeftAdapterMixin
+from diffusers.loaders import peft as diffusers_peft
 from diffusers.models import ModelMixin
 from einops import rearrange
 from loguru import logger
@@ -24,6 +26,12 @@ from .modules.token_refiner import SingleTokenRefiner
 from .text_encoders.byT5 import ByT5Mapper
 from .utils.communications import all_gather
 from .utils.infer_utils import torch_compile_wrapper
+
+# Ensure diffusers can scale stacked adapters for this transformer type.
+if "HunyuanVideo_1_5_DiffusionTransformer" not in diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING:
+    diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPING["HunyuanVideo_1_5_DiffusionTransformer"] = (
+        lambda model_cls, weights: weights
+    )
 
 
 class MMDoubleStreamBlock(nn.Module):
@@ -301,7 +309,7 @@ class MMSingleStreamBlock(nn.Module):
         return x + apply_gate(output, gate=mod_gate)
 
 
-class HunyuanVideo_1_5_DiffusionTransformer(ModelMixin, ConfigMixin):
+class HunyuanVideo_1_5_DiffusionTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin):
     """
     HunyuanVideo Transformer backbone.
 
