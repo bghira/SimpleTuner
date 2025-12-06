@@ -43,7 +43,7 @@ class HunyuanVideo(VideoModelFoundation):
     LATENT_CHANNEL_COUNT = 4
     DEFAULT_NOISE_SCHEDULER = "flow_match_discrete"
     MODEL_CLASS = HunyuanVideo_1_5_DiffusionTransformer
-    MODEL_SUBFOLDER = None  # Direct repos load from root
+    MODEL_SUBFOLDER = "transformer"
     PIPELINE_CLASSES = {
         PipelineTypes.TEXT2IMG: HunyuanVideo_1_5_Pipeline,
         PipelineTypes.IMG2VIDEO: HunyuanVideo_1_5_Pipeline,
@@ -94,8 +94,9 @@ class HunyuanVideo(VideoModelFoundation):
         super().__init__(config, accelerator)
         self._transformer_version = self._resolve_transformer_version()
         self._sr_version = TRANSFORMER_VERSION_TO_SR_VERSION.get(self._transformer_version)
-        # Direct repos load from root - no subfolder needed
-        self.config.pretrained_transformer_subfolder = None
+        if getattr(self.config, "pretrained_transformer_subfolder", None) is None:
+            # Default to the standard diffusers transformer folder layout.
+            self.config.pretrained_transformer_subfolder = self.MODEL_SUBFOLDER
         if getattr(self.config, "flow_schedule_shift", None) is None:
             default_cfg = PIPELINE_CONFIGS.get(self._transformer_version, {})
             self.config.flow_schedule_shift = default_cfg.get("flow_shift", 7.0)
