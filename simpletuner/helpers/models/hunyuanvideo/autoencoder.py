@@ -503,6 +503,12 @@ class Downsample(nn.Module):
             else:
                 assert False, f"Unsupported group_size: {self.group_size}"
             shortcut = torch.cat([x_first, x_next], dim=2)
+            if shortcut.shape[2] != h.shape[2]:
+                if shortcut.shape[2] < h.shape[2]:
+                    pad_len = h.shape[2] - shortcut.shape[2]
+                    shortcut = F.pad(shortcut, (0, 0, 0, 0, 0, pad_len), mode="replicate")
+                else:
+                    shortcut = shortcut[:, :, : h.shape[2], ...]
         else:
             h = rearrange(h, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             shortcut = rearrange(x, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
