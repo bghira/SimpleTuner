@@ -127,8 +127,23 @@ def conv_carry_causal_3d(
         if conv_carry_in is None:
             x = F.pad(x, pad, mode=op.pad_mode)
         else:
-            carry_len = conv_carry_in[0].shape[2]
-            x = torch.cat([conv_carry_in.pop(0), x], dim=2)
+            carry = conv_carry_in.pop(0)
+            # Align spatial dims (H, W) from carry to current chunk to avoid concat mismatches when tiling.
+            if carry.shape[3] != x.shape[3] or carry.shape[4] != x.shape[4]:
+                # Crop if carry is larger, pad if smaller.
+                h_delta = x.shape[3] - carry.shape[3]
+                w_delta = x.shape[4] - carry.shape[4]
+                if carry.shape[3] > x.shape[3]:
+                    carry = carry[:, :, :, : x.shape[3], :]
+                elif h_delta > 0:
+                    carry = F.pad(carry, (0, 0, 0, h_delta, 0, 0), mode=op.pad_mode)
+                if carry.shape[4] > x.shape[4]:
+                    carry = carry[:, :, :, :, : x.shape[4]]
+                elif w_delta > 0:
+                    carry = F.pad(carry, (0, w_delta, 0, 0, 0, 0), mode=op.pad_mode)
+
+            carry_len = carry.shape[2]
+            x = torch.cat([carry, x], dim=2)
             # Adjust the leading temporal pad so we do not double-count carried frames.
             x = F.pad(x, (pad[0], pad[1], pad[2], pad[3], max(pad[4] - carry_len, 0), pad[5]), mode=op.pad_mode)
 
