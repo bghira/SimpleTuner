@@ -75,6 +75,20 @@ class HunyuanVideo(VideoModelFoundation):
 
     # Only required to satisfy encode_text_batch checks; loading is handled manually.
     TEXT_ENCODER_CONFIGURATION = {"text_encoder": {"name": "Hunyuan LLM"}}
+    DEFAULT_LORA_TARGET = [
+        "img_attn_q",
+        "img_attn_k",
+        "img_attn_v",
+        "img_attn_proj",
+        "txt_attn_q",
+        "txt_attn_k",
+        "txt_attn_v",
+        "txt_attn_proj",
+        "linear1_q",
+        "linear1_k",
+        "linear1_v",
+        "linear1_mlp",
+    ]
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
