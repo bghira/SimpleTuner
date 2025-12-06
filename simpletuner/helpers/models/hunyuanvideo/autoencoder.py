@@ -475,6 +475,10 @@ class Downsample(nn.Module):
                 assert False, f"Unsupported group_size: {self.group_size}"
 
             x_next = x[:, :, 1:, :, :]
+            if x_next.shape[2] % r1 != 0:
+                pad_t = r1 - (x_next.shape[2] % r1)
+                pad_mode = "replicate" if x_next.shape[2] > 0 else "constant"
+                x_next = F.pad(x_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             x_next = rearrange(x_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             B, C, T, H, W = x_next.shape
             x_next = x_next.view(B, h.shape[1], self.group_size, T, H, W)
@@ -553,6 +557,10 @@ class Downsample(nn.Module):
             x_first = x_first.view(B, h.shape[1], self.group_size // 2, T, H, W).mean(dim=2)
 
             x_next = x[:, :, 1:, :, :]
+            if x_next.shape[2] % r1 != 0:
+                pad_t = r1 - (x_next.shape[2] % r1)
+                pad_mode = "replicate" if x_next.shape[2] > 0 else "constant"
+                x_next = F.pad(x_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             x_next = rearrange(x_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             B, C, T, H, W = x_next.shape
             x_next = x_next.view(B, h.shape[1], self.group_size, T, H, W).mean(dim=2)
