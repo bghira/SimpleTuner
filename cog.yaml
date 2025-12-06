@@ -1,0 +1,12 @@
+# Cog build configuration
+build:
+  gpu: true
+  cuda: "12.8"
+  python_version: "3.12"
+  system_packages:
+    - git
+  run:
+    - pip install --upgrade pip
+    - pip install "simpletuner[cuda]"
+
+predict: "predict.py:Predictor"
