@@ -176,10 +176,13 @@ class HunyuanVideo(VideoModelFoundation):
             "revision": self.config.revision,
             "force_upcast": False,
             "variant": self.config.variant,
+            "enable_temporal_roll": getattr(self.config, "vae_enable_temporal_roll", False),
         }
         if getattr(self.config, "vae_enable_patch_conv", False):
             logger.info("Enabling VAE patch-based convolution for HunyuanVideo VAE.")
             self.config.vae_kwargs["enable_patch_conv"] = True
+        if getattr(self.config, "vae_enable_temporal_roll", False):
+            logger.info("Enabling temporal rolling for HunyuanVideo VAE to reduce VRAM.")
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
         if self.vae is None:

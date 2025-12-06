@@ -23,13 +23,16 @@ else:
     logger.setLevel("ERROR")
 
 
-def _patch_diffusers_hunyuanvideo_conv(memory_limit: int = 512 * 1024**2):
+def _patch_diffusers_hunyuanvideo_conv(memory_limit: int = 512 * 1024**2, force_temporal_roll: bool = False):
     """
     Monkeypatch diffusers' HunyuanVideo VAE Conv3d to split along time for lower peak VRAM.
+    When force_temporal_roll is True, chunking is always applied to keep temporal memory footprints small.
     """
     from diffusers.models.autoencoders import autoencoder_kl_hunyuan_video as hv_mod
 
-    if getattr(hv_mod, "_st_patch_conv_applied", False):
+    already_patched = getattr(hv_mod, "_st_patch_conv_applied", False)
+    already_rolled = getattr(hv_mod, "_st_patch_conv_roll", False)
+    if already_patched and (force_temporal_roll is False or already_rolled):
         return hv_mod.HunyuanVideoCausalConv3d
 
     def find_split_indices(seq_len: int, part_num: int, stride: int):
@@ -59,7 +62,11 @@ def _patch_diffusers_hunyuanvideo_conv(memory_limit: int = 512 * 1024**2):
         memory_count = torch.prod(torch.tensor(hidden_states.shape)).item() * 2 / memory_limit
         part_num = int(memory_count / 2) + 1
 
-        if T > kernel_size and memory_count > 0.6 and part_num >= 2:
+        use_chunking = force_temporal_roll or (T > kernel_size and memory_count > 0.6 and part_num >= 2)
+        if use_chunking and T > 1:
+            if force_temporal_roll:
+                part_num = max(2, part_num, T // max(kernel_size, 1))
+
             max_parts = max(1, T // kernel_size)
             if part_num > max_parts:
                 part_num = max_parts
@@ -84,6 +91,7 @@ def _patch_diffusers_hunyuanvideo_conv(memory_limit: int = 512 * 1024**2):
 
     hv_mod.HunyuanVideoCausalConv3d.forward = patched_forward
     hv_mod._st_patch_conv_applied = True
+    hv_mod._st_patch_conv_roll = already_rolled or force_temporal_roll
     return hv_mod.HunyuanVideoCausalConv3d
 
 
@@ -187,9 +195,14 @@ class Kandinsky5Video(VideoModelFoundation):
         }
 
     def load_vae(self, move_to_device: bool = True):
-        if getattr(self.config, "vae_enable_patch_conv", False):
-            logger.info("Enabling patch-based HunyuanVideo VAE conv for Kandinsky5 Video.")
-            _patch_diffusers_hunyuanvideo_conv()
+        enable_patch_conv = getattr(self.config, "vae_enable_patch_conv", False)
+        enable_temporal_roll = getattr(self.config, "vae_enable_temporal_roll", False)
+        if enable_patch_conv or enable_temporal_roll:
+            logger.info(
+                "Enabling HunyuanVideo VAE patch-based convolution%s for Kandinsky5 Video.",
+                " with temporal rolling" if enable_temporal_roll else "",
+            )
+            _patch_diffusers_hunyuanvideo_conv(force_temporal_roll=enable_temporal_roll)
         return super().load_vae(move_to_device)
 
     def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
