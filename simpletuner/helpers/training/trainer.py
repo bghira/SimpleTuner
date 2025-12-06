@@ -2049,6 +2049,8 @@ class Trainer:
         self.state["first_epoch"] = 1
         self.state["args"] = self.config.__dict__
         self.timesteps_buffer = []
+        self._timesteps_scatter_table = None
+        self._timesteps_scatter_logged = False
         self.guidance_values_list = []
         self.train_loss = 0.0
         self.bf = None
@@ -4706,14 +4708,21 @@ class Trainer:
                     # Log scatter plot to wandb
                     if self.config.report_to == "wandb" and self.accelerator.is_main_process:
                         # Prepare the data for the scatter plot
-                        data = [[iteration, timestep] for iteration, timestep in self.timesteps_buffer]
-                        table = wandb.Table(data=data, columns=["global_step", "timestep"])
-                        wandb_logs["timesteps_scatter"] = wandb.plot.scatter(
-                            table,
-                            "global_step",
-                            "timestep",
-                            title="Timestep distribution by step",
-                        )
+                        if self.timesteps_buffer:
+                            if self._timesteps_scatter_table is None:
+                                self._timesteps_scatter_table = wandb.Table(columns=["global_step", "timestep"])
+                            for iteration, timestep in self.timesteps_buffer:
+                                self._timesteps_scatter_table.add_data(iteration, timestep)
+                            if not self._timesteps_scatter_logged:
+                                wandb_logs["timesteps_scatter"] = wandb.plot.scatter(
+                                    self._timesteps_scatter_table,
+                                    "global_step",
+                                    "timestep",
+                                    title="Timestep distribution by step",
+                                )
+                                self._timesteps_scatter_logged = True
+                            else:
+                                wandb_logs["timesteps_scatter_table"] = self._timesteps_scatter_table
 
                     # Clear buffers
                     self.timesteps_buffer = []
