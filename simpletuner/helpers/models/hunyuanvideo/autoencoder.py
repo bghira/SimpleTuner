@@ -444,6 +444,10 @@ class Downsample(nn.Module):
     def _forward_fast(self, x: Tensor, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
         r1 = 2 if self.add_temporal_downsample else 1
         h = conv_carry_causal_3d([x], self.conv, conv_carry_in, conv_carry_out)
+        # Ensure temporal length aligns with expected stride to avoid reshape issues.
+        if self.add_temporal_downsample and h.shape[2] % r1 != 0:
+            pad_t = r1 - (h.shape[2] % r1)
+            h = F.pad(h, (0, 0, 0, 0, 0, pad_t), mode="replicate")
         if self.add_temporal_downsample:
             h_first = h[:, :, :1, :, :]
             h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
@@ -523,6 +527,9 @@ class Downsample(nn.Module):
     def _forward(self, x: Tensor, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
         r1 = 2 if self.add_temporal_downsample else 1
         h = conv_carry_causal_3d([x], self.conv, conv_carry_in, conv_carry_out)
+        if self.add_temporal_downsample and h.shape[2] % r1 != 0:
+            pad_t = r1 - (h.shape[2] % r1)
+            h = F.pad(h, (0, 0, 0, 0, 0, pad_t), mode="replicate")
         if self.add_temporal_downsample:
             h_first = h[:, :, :1, :, :]
             h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
