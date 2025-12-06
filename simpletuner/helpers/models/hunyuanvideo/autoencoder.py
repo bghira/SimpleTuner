@@ -62,8 +62,17 @@ def forward_with_checkpointing(module, *inputs, use_checkpointing=False):
 
 
 def torch_cat_if_needed(tensors, dim: int):
-    """Concatenate a list of tensors if needed, otherwise return the single element."""
-    return torch.cat(tensors, dim=dim) if len(tensors) > 1 else tensors[0]
+    """
+    Concatenate a list of tensors if needed, otherwise return the single element.
+    If tensors are off by a few elements along the concat dimension (e.g., from streaming pads),
+    trim to the minimum length to keep shapes aligned.
+    """
+    if len(tensors) == 1:
+        return tensors[0]
+    min_len = min(t.shape[dim] for t in tensors)
+    if any(t.shape[dim] != min_len for t in tensors):
+        tensors = [t.narrow(dim, 0, min_len) for t in tensors]
+    return torch.cat(tensors, dim=dim)
 
 
 class CarriedCausalConv3d(nn.Module):
