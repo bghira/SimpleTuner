@@ -453,6 +453,11 @@ class Downsample(nn.Module):
             h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
             h_first = torch.cat([h_first, h_first], dim=1)
             h_next = h[:, :, 1:, :, :]
+            if h_next.shape[2] % r1 != 0:
+                pad_t = r1 - (h_next.shape[2] % r1)
+                # replicate padding requires data; if empty, fall back to zeros
+                pad_mode = "replicate" if h_next.shape[2] > 0 else "constant"
+                h_next = F.pad(h_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             h_next = rearrange(h_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             h = torch.cat([h_first, h_next], dim=2)
             # shortcut computation
@@ -535,6 +540,10 @@ class Downsample(nn.Module):
             h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
             h_first = torch.cat([h_first, h_first], dim=1)
             h_next = h[:, :, 1:, :, :]
+            if h_next.shape[2] % r1 != 0:
+                pad_t = r1 - (h_next.shape[2] % r1)
+                pad_mode = "replicate" if h_next.shape[2] > 0 else "constant"
+                h_next = F.pad(h_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             h_next = rearrange(h_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             h = torch.cat([h_first, h_next], dim=2)
             # shortcut computation
