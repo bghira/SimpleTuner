@@ -265,6 +265,23 @@ def register_data_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # VAE Temporal Rolling
+    registry._add_field(
+        ConfigField(
+            name="vae_enable_temporal_roll",
+            arg_name="--vae_enable_temporal_roll",
+            ui_label="Enable VAE Temporal Rolling",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="vae_config",
+            default_value=False,
+            help_text="Stream VAE convs across time with frame carry to reduce peak VRAM.",
+            tooltip="Useful for HunyuanVideo/Kandinsky5 video VAEs on long sequences; trades some speed for memory.",
+            importance=ImportanceLevel.ADVANCED,
+            order=24,
+        )
+    )
+
     # VAE Batch Size
     registry._add_field(
         ConfigField(
