@@ -91,6 +91,9 @@ async def lifespan(app: FastAPI):
     try:
         from simpletuner.helpers import log_format
 
+        # Make sure our custom handlers (console + debug.log) are installed for this process too.
+        if hasattr(log_format, "ensure_custom_handlers"):
+            log_format.ensure_custom_handlers()
         if hasattr(log_format, "configure_third_party_loggers"):
             log_format.configure_third_party_loggers()
     except Exception:
