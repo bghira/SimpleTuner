@@ -755,10 +755,11 @@ class TestTrainer(unittest.TestCase):
                 }
             )
 
-        self.assertEqual(result, 0)
+            self.assertEqual(result, 0)
         self.assertIn("cmd", captured)
         self.assertEqual(captured["cmd"][0], "accelerate")
         self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "1")
+        self.assertFalse(any("--accelerate_visible_devices" in arg for arg in captured["cmd"]))
 
     def test_accelerate_failure_summary_highlights_oom(self):
         from simpletuner.helpers.training import trainer as trainer_module
