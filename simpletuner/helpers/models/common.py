@@ -27,6 +27,7 @@ except ImportError:
     FSDP_AVAILABLE = False
 
 from simpletuner.diff2flow import DiffusionToFlowBridge
+from simpletuner.helpers.assistant_lora import build_adapter_stack, set_adapter_stack
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
@@ -328,34 +329,24 @@ class ModelFoundation(ABC):
         except Exception:
             assistant_weight = 1.0
 
-        adapter_names = []
-        adapter_weights = []
-
-        if assistant_weight != 0:
-            adapter_names.append(self.assistant_adapter_name)
-            adapter_weights.append(assistant_weight)
-
         peft_config = getattr(trained_component, "peft_config", {}) or {}
-        if "default" in peft_config:
-            adapter_names.append("default")
-            adapter_weights.append(1.0)
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name=self.assistant_adapter_name,
+            assistant_weight=assistant_weight if assistant_weight != 0 else None,
+        )
 
         if not adapter_names:
             return
 
-        weight_arg = None
-        if len(adapter_weights) == 1:
-            weight_arg = adapter_weights[0]
-        else:
-            weight_arg = adapter_weights
+        def _weight_for(idx: int) -> object:
+            if isinstance(weight_arg, list):
+                return weight_arg[idx]
+            return weight_arg
 
-        logger.info(f"Configuring assistant LoRA for training with weights: {self.assistant_adapter_name}={weight_arg}")
-        set_adapter_stack(
-            trained_component,
-            adapter_names,
-            weights=weight_arg,
-            freeze_names=[self.assistant_adapter_name],
-        )
+        weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
+        logger.info(f"Configuring assistant LoRA for training with weights: {weight_summary}")
+        set_adapter_stack(trained_component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     def configure_assistant_lora_for_inference(self):
         """
@@ -369,36 +360,33 @@ class ModelFoundation(ABC):
         if trained_component is None:
             return
 
-        from simpletuner.helpers.assistant_lora import set_adapter_stack
-
-        inference_weight = getattr(self.config, "assistant_lora_inference_strength", 0.0)
+        if getattr(self.config, "disable_assistant_lora", False):
+            return
         try:
-            inference_weight = float(inference_weight)
+            inference_weight = float(getattr(self.config, "assistant_lora_inference_strength", 0.0))
         except Exception:
             inference_weight = 0.0
-
-        adapter_names = []
-        adapter_weights = []
-        if inference_weight != 0:
-            adapter_names.append(self.assistant_adapter_name)
-            adapter_weights.append(inference_weight)
+        if inference_weight == 0:
+            return
 
         peft_config = getattr(trained_component, "peft_config", {}) or {}
-        if "default" in peft_config:
-            adapter_names.append("default")
-            adapter_weights.append(1.0)
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name=self.assistant_adapter_name,
+            assistant_weight=inference_weight,
+        )
 
         if not adapter_names:
             return
 
-        weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
-        logger.info(f"Configuring assistant LoRA for inference with weights: {self.assistant_adapter_name}={weight_arg}")
-        set_adapter_stack(
-            trained_component,
-            adapter_names,
-            weights=weight_arg,
-            freeze_names=[self.assistant_adapter_name],
-        )
+        def _weight_for(idx: int) -> object:
+            if isinstance(weight_arg, list):
+                return weight_arg[idx]
+            return weight_arg
+
+        weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
+        logger.info(f"Configuring assistant LoRA for inference with weights: {weight_summary}")
+        set_adapter_stack(trained_component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     @classmethod
     def supports_lora(cls) -> bool:
