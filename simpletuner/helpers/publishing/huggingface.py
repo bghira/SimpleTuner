@@ -72,7 +72,7 @@ class HubManager:
     def _load_hub_token(self):
         if not self.config.push_to_hub:
             return None
-        token_path = os.path.join(os.path.expanduser("~"), ".cache/huggingface/token")
+        token_path = os.path.join(os.environ.get("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache/huggingface")), "token")
         if os.path.exists(token_path):
             with open(token_path, "r") as f:
                 return f.read().strip()
