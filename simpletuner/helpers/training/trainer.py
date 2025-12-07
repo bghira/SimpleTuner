@@ -5278,6 +5278,36 @@ def run_trainer_job(config):
         launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
 
+        def _terminate_process(proc: subprocess.Popen) -> None:
+            """
+            Local terminate helper so we don't depend on outer-scope bindings when used in subprocess contexts.
+            """
+            try:
+                if proc.poll() is None:
+                    if os.name != "nt" and getattr(proc, "pid", None):
+                        try:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                            return
+                        except Exception:
+                            pass
+                    proc.terminate()
+            except Exception as exc:
+                launch_logger.warning("Failed to terminate accelerate process cleanly: %s", exc)
+
+        def _kill_process(proc: subprocess.Popen) -> None:
+            """Force-kill helper paired with _terminate_process."""
+            try:
+                if proc.poll() is None:
+                    if os.name != "nt" and getattr(proc, "pid", None):
+                        try:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                            return
+                        except Exception:
+                            pass
+                    proc.kill()
+            except Exception as exc:
+                launch_logger.warning("Failed to kill accelerate process: %s", exc)
+
         nonlocal accelerate_config_path, main_process_port_value, machine_rank_value
 
         config_candidate = accelerate_config_path
@@ -5626,17 +5656,17 @@ def run_trainer_job(config):
             while process.poll() is None:
                 if callable(should_abort_callable) and should_abort_callable():
                     launch_logger.info("Abort requested; terminating accelerate launcher")
-                    _terminate_accelerate_process(process)
+                    _terminate_process(process)
                     try:
                         process.wait(timeout=15)
                     except subprocess.TimeoutExpired:
                         launch_logger.warning("Accelerate process unresponsive; forcing kill")
-                        _kill_accelerate_process(process)
+                        _kill_process(process)
                     break
                 time.sleep(0.5)
         except KeyboardInterrupt:
             launch_logger.info("Keyboard interrupt received; terminating accelerate launcher")
-            _terminate_accelerate_process(process)
+            _terminate_process(process)
             raise
         finally:
             reader_thread.join(timeout=2)
@@ -5646,12 +5676,12 @@ def run_trainer_job(config):
                 except Exception:
                     pass
             if process.poll() is None:
-                _terminate_accelerate_process(process)
+                _terminate_process(process)
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     launch_logger.warning("Accelerate process still alive; forcing kill")
-                    _kill_accelerate_process(process)
+                    _kill_process(process)
 
         returncode = process.wait()
         _cleanup_signal_relay()
