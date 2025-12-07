@@ -1412,6 +1412,21 @@ class ModelFoundation(ABC):
             self.text_encoders = None
         if self.tokenizers is not None:
             self.tokenizers = None
+        # Drop references held by any pipeline instances to ensure full release.
+        pipeline_refs = []
+        if hasattr(self, "pipelines") and isinstance(self.pipelines, dict):
+            pipeline_refs.extend(self.pipelines.values())
+        if hasattr(self, "pipeline") and self.pipeline is not None:
+            pipeline_refs.append(self.pipeline)
+        if pipeline_refs:
+            for pipeline in pipeline_refs:
+                for attr, _ in self.TEXT_ENCODER_CONFIGURATION.items():
+                    if hasattr(pipeline, attr):
+                        setattr(pipeline, attr, None)
+                # Clear tokenizers on the pipeline if present
+                for attr in [k.replace("text_encoder", "tokenizer") for k in self.TEXT_ENCODER_CONFIGURATION.keys()]:
+                    if hasattr(pipeline, attr):
+                        setattr(pipeline, attr, None)
 
     def unload(self):
         """
