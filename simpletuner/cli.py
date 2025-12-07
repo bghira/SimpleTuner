@@ -360,7 +360,7 @@ def _candidate_config_paths(env: str, backend_override: Optional[str], config_pa
         search_roots.append(Path.cwd() / env_path)
         search_roots.append(Path("config") / env_path)
 
-        home_configs = Path.home() / "configs"
+        home_configs = Path.home() / "config"
         search_roots.append(home_configs / env_path)
 
         config_dir_override = os.environ.get("SIMPLETUNER_CONFIG_DIR")
