@@ -43,7 +43,7 @@ class FactoryBenchmark:
         self.iterations = iterations
         self.test_dir = Path(__file__).parent
         self.fixtures_dir = self.test_dir / "fixtures" / "factory_golden"
-        self.configs_dir = self.fixtures_dir / "configs"
+        self.configs_dir = self.fixtures_dir / "config"
 
         # Create temporary test environment
         self.temp_dir = Path(tempfile.mkdtemp(prefix="factory_benchmark_"))
