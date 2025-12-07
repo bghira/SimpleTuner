@@ -51,10 +51,13 @@ class HunyuanVideo(VideoModelFoundation):
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
     DEFAULT_MODEL_FLAVOUR = "t2v-480p"
     HUGGINGFACE_PATHS: Dict[str, str] = {
-        "t2v-480p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-480p_t2v",
-        "t2v-720p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-720p_t2v",
-        "i2v-480p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-480p_i2v",
-        "i2v-720p": "DiffusersVersionsOfModels/HunyuanVideo-1.5-720p_i2v",
+        "t2v-480p": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v",
+        "t2v-720p": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_t2v",
+        "t2v-480p-distilled": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_t2v_distilled",
+        "i2v-480p": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v",
+        "i2v-720p": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_i2v",
+        "i2v-480p-distilled": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v_distilled",
+        "i2v-720p-distilled": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_i2v_distilled",
     }
     MODEL_LICENSE = "agpl-3.0"
 
@@ -68,10 +71,13 @@ class HunyuanVideo(VideoModelFoundation):
     TRANSFORMER_VERSIONS: Dict[str, str] = {
         "t2v-480p": "480p_t2v",
         "t2v-720p": "720p_t2v",
+        "t2v-480p-distilled": "480p_t2v",
         "i2v-480p": "480p_i2v",
         "i2v-720p": "720p_i2v",
+        "i2v-480p-distilled": "480p_i2v",
+        "i2v-720p-distilled": "720p_i2v",
     }
-    STRICT_I2V_FLAVOURS = ("i2v-480p", "i2v-720p")
+    STRICT_I2V_FLAVOURS = ("i2v-480p", "i2v-720p", "i2v-480p-distilled", "i2v-720p-distilled")
 
     # Only required to satisfy encode_text_batch checks; loading is handled manually.
     TEXT_ENCODER_CONFIGURATION = {"text_encoder": {"name": "Hunyuan LLM"}}

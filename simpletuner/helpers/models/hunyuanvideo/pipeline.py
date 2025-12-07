@@ -19,6 +19,7 @@ from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import BaseOutput, logging
 from PIL import Image
 from torch import distributed as dist
+from transformers import AutoTokenizer, T5EncoderModel
 
 from simpletuner.helpers.models.hunyuanvideo.commons import (
     PIPELINE_CONFIGS,
@@ -50,6 +51,15 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 class HunyuanVideoPipelineOutput(BaseOutput):
     videos: Union[torch.Tensor, np.ndarray]
     sr_videos: Optional[Union[torch.Tensor, np.ndarray]] = None
+
+
+class _FallbackPromptFormat:
+    """Lightweight formatter when the Glyph prompt assets are unavailable."""
+
+    def format_prompt(self, glyph_texts: List[str], _styles: List[Dict[str, Any]]) -> str:
+        if not glyph_texts:
+            return ""
+        return ". ".join(f'Text "{txt}"' for txt in glyph_texts) + ". "
 
 
 class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
@@ -157,16 +167,26 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
 
     @classmethod
     def _load_byt5(cls, cached_folder, glyph_byT5_v2, byt5_max_length, device):
-        """Load ByT5 glyph encoder from dedicated repo."""
+        """Load ByT5 glyph encoder, preferring a locally bundled text_encoder_2 if present."""
         if not glyph_byT5_v2:
             return None, None
+
+        # 1) Prefer a locally packaged text_encoder_2 (e.g., from Diffusers-style checkpoints)
+        local_byt5_path = os.path.join(cached_folder, "text_encoder_2")
+        if os.path.isdir(local_byt5_path):
+            tokenizer = AutoTokenizer.from_pretrained(local_byt5_path)
+            model = T5EncoderModel.from_pretrained(local_byt5_path, torch_dtype=torch.bfloat16).to(device)
+            prompt_format = _FallbackPromptFormat()
+            return (
+                {"byt5_model": model, "byt5_tokenizer": tokenizer, "byt5_max_length": byt5_max_length},
+                prompt_format,
+            )
+
+        # 2) Fallback to the standalone Glyph ByT5 repo
         try:
             from huggingface_hub import snapshot_download
 
-            # Download from dedicated ByT5 repo
             glyph_root = snapshot_download(repo_id=cls.GLYPH_BYT5_REPO)
-
-            # Assets should be at root level in the dedicated repo
             multilingual_prompt_format_color_path = os.path.join(glyph_root, "assets/color_idx.json")
             multilingual_prompt_format_font_path = os.path.join(glyph_root, "assets/multilingual_10-lang_idx.json")
             byt5_ckpt_path = os.path.join(glyph_root, "checkpoints/byt5_model.pt")
