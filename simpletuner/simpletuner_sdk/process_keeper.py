@@ -444,6 +444,32 @@ signal.signal(signal.SIGTERM, handle_sigterm)
 command_check_thread = threading.Thread(target=check_commands, daemon=True)
 command_check_thread.start()
 
+# Detect parent exit and abort if this process is orphaned
+parent_pid_env = os.environ.get("SIMPLETUNER_PARENT_PID")
+try:
+    _parent_pid = int(parent_pid_env) if parent_pid_env else None
+except Exception:
+    _parent_pid = None
+
+def _monitor_parent():
+    global should_abort
+    if _parent_pid is None or _parent_pid <= 1:
+        return
+    while not should_abort:
+        try:
+            current_ppid = os.getppid()
+            if current_ppid != _parent_pid:
+                logger.info("Parent process disappeared; aborting trainer subprocess")
+                should_abort = True
+                send_event("state", {{"status": "aborting", "reason": "parent_exit"}})
+                break
+        except Exception:
+            break
+        time.sleep(1.0)
+
+parent_monitor_thread = threading.Thread(target=_monitor_parent, daemon=True)
+parent_monitor_thread.start()
+
 # Send starting event
 send_event("state", {{"status": "running"}})
 
@@ -527,6 +553,7 @@ logger.info("Subprocess exiting")
         env.setdefault("WANDB_DISABLE_SERVICE", "true")
         env.setdefault("WANDB_STDOUT_CAPTURE", "off")
         env.setdefault("WANDB_STDERR_CAPTURE", "off")
+        env.setdefault("SIMPLETUNER_PARENT_PID", str(os.getpid()))
 
         # Start the subprocess
         popen_kwargs = {
