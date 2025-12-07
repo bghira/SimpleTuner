@@ -330,7 +330,7 @@ class ModelFoundation(ABC):
             assistant_weight = 1.0
 
         peft_config = getattr(trained_component, "peft_config", {}) or {}
-        include_default = isinstance(peft_config, dict) and "default" in peft_config
+        include_default = str(getattr(self.config, "lora_type", "standard")).lower() == "standard"
         adapter_names, weight_arg, freeze_names = build_adapter_stack(
             peft_config=peft_config,
             assistant_adapter_name=self.assistant_adapter_name,
@@ -370,7 +370,7 @@ class ModelFoundation(ABC):
             inference_weight = 0.0
 
         peft_config = getattr(trained_component, "peft_config", {}) or {}
-        include_default = isinstance(peft_config, dict) and "default" in peft_config
+        include_default = str(getattr(self.config, "lora_type", "standard")).lower() == "standard"
 
         if inference_weight == 0:
             adapter_names, weight_arg, freeze_names = build_adapter_stack(

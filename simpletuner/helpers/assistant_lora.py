@@ -134,6 +134,8 @@ def build_adapter_stack(
         freeze_names.append(assistant_adapter_name)
 
     if include_default:
+        if not (isinstance(peft_config, dict) and "default" in peft_config):
+            raise ValueError("Expected trainable 'default' adapter to be present on the PEFT module.")
         adapter_names.append("default")
         adapter_weights.append(default_weight)
 
