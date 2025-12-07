@@ -82,10 +82,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         # Virtual file system mapping: index -> virtual path
         self._path_to_index = {}
         self._index_to_path = {}
-        if should_log():
-            logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-        else:
-            logger.setLevel("ERROR")
+        logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
         if self._auto_load:
             self._ensure_dataset_loaded()

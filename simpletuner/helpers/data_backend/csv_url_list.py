@@ -17,11 +17,8 @@ from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 
-logger = logging.getLogger("CSVDataBackend")
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = logging.getLogger(logging.getLogger("CSVDataBackend"))
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 def url_to_filename(url: str) -> str:

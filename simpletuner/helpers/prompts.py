@@ -80,7 +80,7 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger("PromptHandler")
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 class CaptionNotFoundError(Exception):

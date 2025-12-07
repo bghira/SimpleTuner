@@ -16,7 +16,7 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger("collate_fn")
-logger.setLevel(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO") if _get_rank() == 0 else "ERROR")
+logger.setLevel(logging._nameToLevel.get(str(environ.get("SIMPLETUNER_COLLATE_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 rank_text = rank_info()
 from torchvision.transforms import ToTensor
 

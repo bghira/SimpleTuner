@@ -15,11 +15,8 @@ from simpletuner.helpers.metadata.captions import CaptionRecord, normalize_capti
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
-logger = logging.getLogger("CaptionMetadataBackend")
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = logging.getLogger(logging.getLogger("CaptionMetadataBackend"))
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 class CaptionMetadataBackend(MetadataBackend):

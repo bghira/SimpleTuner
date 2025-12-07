@@ -29,10 +29,7 @@ from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.training.wrappers import unwrap_model as accelerator_unwrap_model
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 def time_text_monkeypatch(

@@ -9,10 +9,7 @@ from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 def segmented_timestep_selection(actual_num_timesteps, bsz, weights, config, use_refiner_range: bool = False):

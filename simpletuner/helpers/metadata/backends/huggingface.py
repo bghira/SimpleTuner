@@ -31,14 +31,8 @@ def _coerce_bucket_keys_to_float(indices: dict) -> dict:
 
 
 logger = logging.getLogger("HuggingfaceMetadataBackend")
-import trainingsample as tsr
-
-from simpletuner.helpers.training.multi_process import should_log
-
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+log_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+logger.setLevel(logging._nameToLevel.get(str(log_level).upper(), logging.INFO))
 
 
 class HuggingfaceMetadataBackend(MetadataBackend):
@@ -110,10 +104,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         self.num_frames_column = hf_config.get("num_frames_column", None)
         self.fps_column = hf_config.get("fps_column", None)
         self.composite_config = hf_config.get("composite_image_config", {})
-        if should_log():
-            logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-        else:
-            logger.setLevel("ERROR")
+        logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
         super().__init__(
             id=id,

@@ -339,6 +339,15 @@ def ensure_custom_handlers(verbose: bool = False) -> None:
     console_handler.setLevel(logging.INFO)
     file_handler.setLevel(logging.DEBUG)
 
+    # Normalise package loggers to respect SIMPLETUNER_LOG_LEVEL across all ranks.
+    target_level_name = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO").upper()
+    target_level = logging._nameToLevel.get(target_level_name, logging.INFO)
+    for name, log_obj in logging.Logger.manager.loggerDict.items():
+        if not isinstance(log_obj, logging.Logger):
+            continue
+        if name.startswith("simpletuner"):
+            log_obj.setLevel(target_level)
+
     if verbose:
         import sys
 

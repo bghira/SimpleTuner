@@ -12,11 +12,7 @@ from simpletuner.helpers.models.sd3.transformer import SD3Transformer2DModel
 from simpletuner.helpers.models.tae.types import ImageTAESpec
 
 logger = logging.getLogger(__name__)
-is_primary_process = True
-if os.environ.get("RANK") is not None:
-    if int(os.environ.get("RANK")) != 0:
-        is_primary_process = False
-logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO") if is_primary_process else "ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 def _encode_sd3_prompt_with_t5(

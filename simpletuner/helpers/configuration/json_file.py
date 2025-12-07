@@ -6,12 +6,8 @@ from pathlib import Path
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.training.multi_process import should_log
 
-logger = logging.getLogger("SimpleTuner")
-
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = logging.getLogger(logging.getLogger("SimpleTuner"))
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 def _candidate_json_paths(env: str | None) -> list[Path]:

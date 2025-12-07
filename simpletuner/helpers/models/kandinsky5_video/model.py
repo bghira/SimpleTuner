@@ -17,10 +17,7 @@ from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger(__name__)
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 def _patch_diffusers_hunyuanvideo_conv(memory_limit: int = 512 * 1024**2, force_temporal_roll: bool = False):

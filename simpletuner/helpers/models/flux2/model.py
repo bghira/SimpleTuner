@@ -30,10 +30,7 @@ from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 # FLUX.2 constants
 MISTRAL_PATH = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"

@@ -26,10 +26,7 @@ from simpletuner.helpers.training.wrappers import unwrap_model
 logger = logging.getLogger("SaveHookManager")
 from simpletuner.helpers.training.multi_process import should_log
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 MODEL_SPEC_VERSION = "1.0.1"
 LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"

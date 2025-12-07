@@ -12,10 +12,7 @@ from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER 
 from simpletuner.helpers.training.deepspeed_optimizers import normalize_optimizer_name
 from simpletuner.helpers.training.multi_process import should_log
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 from transformers.integrations.deepspeed import (
     is_deepspeed_zero3_enabled,

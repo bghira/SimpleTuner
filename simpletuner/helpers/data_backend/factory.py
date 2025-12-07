@@ -112,15 +112,11 @@ from .builders import build_backend_from_config, create_backend_builder
 from .config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig, create_backend_config
 
 logger = logging.getLogger("DataBackendFactory")
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel(logging.ERROR)
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 prefetch_log = logging.getLogger("DataBackendPrefetch")
-if should_log():
-    prefetch_log.setLevel(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO"))
-else:
-    prefetch_log.setLevel(logging.ERROR)
+prefetch_log.setLevel(
+    logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_PREFETCH_LOG_LEVEL", "INFO")).upper(), logging.INFO)
+)
 
 # For prefetching.
 
@@ -3496,7 +3492,7 @@ def configure_multi_databackend_new(
 
     StateTracker.clear_data_backends()
     StateTracker.set_accelerator(accelerator)
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO" if accelerator.is_main_process else "ERROR"))
+    logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
     args = _synchronise_state_tracker(args, accelerator)
 

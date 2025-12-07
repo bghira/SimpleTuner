@@ -17,10 +17,7 @@ from simpletuner.helpers.training import audio_file_extensions, image_file_exten
 logger = logging.getLogger("LocalDataBackend")
 from simpletuner.helpers.training.multi_process import should_log
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 class LocalDataBackend(BaseDataBackend):

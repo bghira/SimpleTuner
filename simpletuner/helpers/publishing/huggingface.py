@@ -10,10 +10,7 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"
@@ -72,7 +69,9 @@ class HubManager:
     def _load_hub_token(self):
         if not self.config.push_to_hub:
             return None
-        token_path = os.path.join(os.environ.get("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache/huggingface")), "token")
+        token_path = os.path.join(
+            os.environ.get("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache/huggingface")), "token"
+        )
         if os.path.exists(token_path):
             with open(token_path, "r") as f:
                 return f.read().strip()

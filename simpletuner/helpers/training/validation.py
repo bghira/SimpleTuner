@@ -74,10 +74,7 @@ from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 logger = logging.getLogger("Validation")
 from simpletuner.helpers.training.multi_process import gather_across_processes, should_log, split_across_processes
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 SCHEDULER_NAME_MAP = {

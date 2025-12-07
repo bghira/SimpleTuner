@@ -22,11 +22,8 @@ except Exception:  # pragma: no cover - optional dependency guard
             self.webhook_handler = webhook_handler
 
 
-logger = logging.getLogger("ConditioningImageEmbedCache")
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger = logging.getLogger(logging.getLogger("ConditioningImageEmbedCache"))
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 class ImageEmbedCache(WebhookMixin):

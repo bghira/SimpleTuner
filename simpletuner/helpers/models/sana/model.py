@@ -21,10 +21,7 @@ from simpletuner.helpers.models.sana.transformer import SanaTransformer2DModel
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
 
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel("ERROR")
+logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
 class Sana(ImageModelFoundation):
