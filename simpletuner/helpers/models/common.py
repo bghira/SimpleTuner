@@ -1398,10 +1398,12 @@ class ModelFoundation(ABC):
         if self.text_encoders is not None:
             for idx, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
+                    logger.debug("Text encoder %s is already unloaded.", idx + 1)
                     continue
                 if hasattr(text_encoder, "to"):
                     # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
                     try:
+                        logger.debug("Moving text encoder %s to meta device.", idx + 1)
                         text_encoder.to("meta")
                     except Exception as exc:
                         logger.debug("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
@@ -1658,11 +1660,32 @@ class ModelFoundation(ABC):
             return self.unwrap_model(model=self.model if base_model else None)
         return self.controlnet if self.config.controlnet and not base_model else self.model
 
+    def _should_cache_pipeline(self) -> bool:
+        """
+        Determine whether this process should retain pipeline instances.
+
+        Only the primary rank caches pipelines to avoid long-lived references
+        to heavyweight components (e.g., text encoder, VAE) on secondary ranks.
+        """
+        try:
+            if hasattr(self.accelerator, "is_main_process"):
+                return bool(self.accelerator.is_main_process)
+        except Exception:
+            pass
+        try:
+            return should_log()
+        except Exception:
+            return True
+
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
         """
-        active_pipelines = getattr(self, "pipelines", {})
+        cache_pipeline = self._should_cache_pipeline()
+        if not cache_pipeline and getattr(self, "pipelines", None):
+            # Clear stale cached pipelines on non-primary ranks to free memory.
+            self.pipelines.clear()
+        active_pipelines = getattr(self, "pipelines", {}) if cache_pipeline else {}
         if pipeline_type in active_pipelines:
             pipeline_instance = active_pipelines[pipeline_type]
             setattr(
@@ -1874,7 +1897,8 @@ class ModelFoundation(ABC):
                 pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
             else:
                 raise
-        self.pipelines[pipeline_type] = pipeline_instance
+        if cache_pipeline:
+            self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
 
