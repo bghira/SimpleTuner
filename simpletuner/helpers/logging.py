@@ -64,7 +64,6 @@ def _webhook_worker_loop():
                 continue
 
             with _suspend_webhook():
-                sent_structured = False
                 if task.structured_payload and hasattr(task.handler, "send_raw"):
                     try:
                         task.handler.send_raw(
@@ -75,14 +74,12 @@ def _webhook_worker_loop():
                             images=task.images,
                             videos=task.videos,
                         )
-                        sent_structured = True
                     except Exception:
                         logging.getLogger(INTERNAL_LOGGER_NAME).debug(
                             "Failed to forward structured log message to webhook.", exc_info=True
                         )
 
-                # Only send text message if structured send wasn't available or failed
-                if not sent_structured and hasattr(task.handler, "send"):
+                if hasattr(task.handler, "send"):
                     try:
                         task.handler.send(
                             message=task.text_message,
