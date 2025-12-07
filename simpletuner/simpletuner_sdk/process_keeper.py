@@ -462,6 +462,13 @@ def _monitor_parent():
                 logger.info("Parent process disappeared; aborting trainer subprocess")
                 should_abort = True
                 send_event("state", {{"status": "aborting", "reason": "parent_exit"}})
+                try:
+                    if hasattr(os, "getpgid") and hasattr(os, "killpg"):
+                        os.killpg(os.getpgid(0), signal.SIGTERM)
+                    else:
+                        os.kill(os.getpid(), signal.SIGTERM)
+                except Exception:
+                    pass
                 break
         except Exception:
             break
