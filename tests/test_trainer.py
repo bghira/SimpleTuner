@@ -2,6 +2,8 @@
 
 import importlib.machinery as machinery
 import importlib.util as _importlib_util
+import json
+import shutil
 import sys
 import time
 import types
@@ -779,6 +781,73 @@ class TestTrainer(unittest.TestCase):
         self.assertEqual(captured["cmd"][0], "accelerate")
         self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "1")
         self.assertFalse(any("--accelerate_visible_devices" in arg for arg in captured["cmd"]))
+
+    def test_accelerate_manual_triggers_are_relayed(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        captured = {}
+        trigger_calls = {"count": 0}
+
+        def manual_validation_consumer():
+            trigger_calls["count"] += 1
+            return trigger_calls["count"] == 1
+
+        class DummyStdout:
+            def readline(self):
+                return ""
+
+            def close(self):
+                captured["stdout_closed"] = True
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = DummyStdout()
+                self.pid = 4321
+                self._poll_calls = 0
+
+            def poll(self):
+                self._poll_calls += 1
+                return None if self._poll_calls < 2 else 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def terminate(self):
+                captured["terminated"] = True
+
+            def kill(self):
+                captured["killed"] = True
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env", {})
+            return DummyProcess()
+
+        removed_paths = []
+
+        def fake_rmtree(path, ignore_errors=True):
+            removed_paths.append(path)
+
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch("simpletuner.helpers.training.trainer.shutil.rmtree", side_effect=fake_rmtree),
+        ):
+            result = trainer_module.run_trainer_job(
+                {
+                    "accelerate_visible_devices": [0],
+                    "consume_manual_validation_request": manual_validation_consumer,
+                }
+            )
+
+        self.assertEqual(result, 0)
+        signal_file = captured.get("env", {}).get("SIMPLETUNER_ACCELERATE_SIGNAL_FILE")
+        self.assertIsNotNone(signal_file)
+        with open(signal_file, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertGreaterEqual(payload.get("manual_validation", 0), 1)
+        self.assertTrue(removed_paths)
+        for path in removed_paths:
+            shutil.rmtree(path, ignore_errors=True)
 
     def test_accelerate_failure_summary_highlights_oom(self):
         from simpletuner.helpers.training import trainer as trainer_module
