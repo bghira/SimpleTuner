@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from simpletuner.helpers import assistant_lora
+from simpletuner.helpers.assistant_lora import build_adapter_stack
 from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.models.z_image.model import ZImage
@@ -33,6 +34,55 @@ class _DummyModule:
 
     def set_adapter(self, name):
         self.set_adapter_called = name
+
+
+class BuildAdapterStackTests(unittest.TestCase):
+    def test_build_adapter_stack_includes_default_and_assistant(self):
+        peft_config = {"default": object(), "assistant": object()}
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name="assistant",
+            assistant_weight=0.5,
+            include_default=True,
+            require_default=True,
+        )
+        self.assertEqual(adapter_names, ["assistant", "default"])
+        self.assertEqual(weight_arg, [0.5, 1.0])
+        self.assertEqual(freeze_names, ["assistant"])
+
+    def test_build_adapter_stack_defaults_only_when_assistant_disabled(self):
+        peft_config = {"default": object()}
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name="assistant",
+            assistant_weight=None,
+            include_default=True,
+        )
+        self.assertEqual(adapter_names, ["default"])
+        self.assertEqual(weight_arg, 1.0)
+        self.assertEqual(freeze_names, [])
+
+    def test_build_adapter_stack_raises_when_default_missing_and_required(self):
+        with self.assertRaises(ValueError):
+            build_adapter_stack(
+                peft_config={},
+                assistant_adapter_name="assistant",
+                assistant_weight=0.5,
+                include_default=True,
+                require_default=True,
+            )
+
+    def test_build_adapter_stack_skips_missing_default_when_not_required(self):
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config={},
+            assistant_adapter_name="assistant",
+            assistant_weight=0.5,
+            include_default=True,
+            require_default=False,
+        )
+        self.assertEqual(adapter_names, [])
+        self.assertEqual(weight_arg, [])
+        self.assertEqual(freeze_names, [])
 
 
 class AssistantLoraTests(unittest.TestCase):
