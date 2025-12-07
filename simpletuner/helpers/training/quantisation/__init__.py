@@ -3,14 +3,15 @@ import os
 
 import torch
 
-from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
-if should_log():
-    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
-else:
-    logger.setLevel(logging.ERROR)
+log_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")
+# Apply the configured level for all ranks; console filtering is handled in log_format.
+try:
+    logger.setLevel(logging._nameToLevel.get(log_level.upper(), logging.INFO))
+except Exception:
+    logger.setLevel(logging.INFO)
 
 
 def _quanto_type_map(model_precision: str):

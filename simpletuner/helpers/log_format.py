@@ -73,6 +73,30 @@ class ColorizedFormatter(logging.Formatter):
             return f"[RANK {rank}] {message}"
 
 
+def _current_rank() -> int:
+    """Best-effort rank getter for logging filters."""
+    try:
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            return torch.distributed.get_rank()
+    except Exception:
+        pass
+    try:
+        return int(os.environ.get("RANK", 0))
+    except Exception:
+        return 0
+
+
+class MainProcessFilter(logging.Filter):
+    """Allow records only from the main/local rank for console output."""
+
+    def __init__(self, allowed_rank: int = 0):
+        super().__init__()
+        self.allowed_rank = allowed_rank
+
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - trivial
+        return _current_rank() == self.allowed_rank
+
+
 # Initialize colorama only if not disabled
 if not DISABLE_COLORS and COLORAMA_AVAILABLE:
     # strip=False ensures ANSI codes are preserved even when stdout is piped
@@ -89,10 +113,11 @@ console_handler = logging.StreamHandler(sys.stdout)
 default_console_level = os.environ.get("SIMPLETUNER_LOG_LEVEL", "ERROR").upper()
 console_numeric_level = getattr(logging, default_console_level, logging.INFO)
 console_handler.setLevel(console_numeric_level)
+console_handler.addFilter(MainProcessFilter())  # only main rank logs to console
 console_handler.setFormatter(ColorizedFormatter("%(asctime)s [%(levelname)s] %(message)s"))
 
 # blank out the existing debug.log, if exists
-if os.path.exists("debug.log"):
+if _current_rank() == 0 and os.path.exists("debug.log"):
     with open("debug.log", "w"):
         pass
 
