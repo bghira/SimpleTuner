@@ -329,13 +329,18 @@ class ModelFoundation(ABC):
         except Exception:
             assistant_weight = 1.0
 
-        peft_config = getattr(trained_component, "peft_config", {}) or {}
-        include_default = str(getattr(self.config, "lora_type", "standard")).lower() == "standard"
+        target_component = self.unwrap_model(trained_component)
+        peft_config = getattr(target_component, "peft_config", {}) or {}
+        has_default_adapter = isinstance(peft_config, dict) and "default" in peft_config
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        require_default = lora_type == "standard"
+        include_default = has_default_adapter or require_default
         adapter_names, weight_arg, freeze_names = build_adapter_stack(
             peft_config=peft_config,
             assistant_adapter_name=self.assistant_adapter_name,
             assistant_weight=assistant_weight if assistant_weight != 0 else None,
             include_default=include_default,
+            require_default=require_default,
         )
 
         if not adapter_names:
@@ -348,7 +353,21 @@ class ModelFoundation(ABC):
 
         weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
         logger.info(f"Configuring assistant LoRA for training with weights: {weight_summary}")
-        set_adapter_stack(trained_component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
+        components = [
+            target_component,
+            trained_component if trained_component is not target_component else None,
+        ]
+        pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+        if pipeline_component is not None:
+            components.append(pipeline_component)
+        seen: set[int] = set()
+        for component in components:
+            if component is None:
+                continue
+            if id(component) in seen:
+                continue
+            seen.add(id(component))
+            set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     def configure_assistant_lora_for_inference(self):
         """
@@ -362,15 +381,17 @@ class ModelFoundation(ABC):
         if trained_component is None:
             return
 
-        if getattr(self.config, "disable_assistant_lora", False):
-            return
         try:
             inference_weight = float(getattr(self.config, "assistant_lora_inference_strength", 0.0))
         except Exception:
             inference_weight = 0.0
 
-        peft_config = getattr(trained_component, "peft_config", {}) or {}
-        include_default = str(getattr(self.config, "lora_type", "standard")).lower() == "standard"
+        target_component = self.unwrap_model(trained_component)
+        peft_config = getattr(target_component, "peft_config", {}) or {}
+        has_default_adapter = isinstance(peft_config, dict) and "default" in peft_config
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        require_default = lora_type == "standard"
+        include_default = has_default_adapter or require_default
 
         if inference_weight == 0:
             adapter_names, weight_arg, freeze_names = build_adapter_stack(
@@ -378,11 +399,26 @@ class ModelFoundation(ABC):
                 assistant_adapter_name=self.assistant_adapter_name,
                 assistant_weight=None,
                 include_default=include_default,
+                require_default=require_default,
             )
             if not adapter_names:
                 return
             logger.info("Configuring assistant LoRA for inference with weights: default=1.0")
-            set_adapter_stack(trained_component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
+            components = [
+                target_component,
+                trained_component if trained_component is not target_component else None,
+            ]
+            pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+            if pipeline_component is not None:
+                components.append(pipeline_component)
+            seen: set[int] = set()
+            for component in components:
+                if component is None:
+                    continue
+                if id(component) in seen:
+                    continue
+                seen.add(id(component))
+                set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
             return
 
         adapter_names, weight_arg, freeze_names = build_adapter_stack(
@@ -390,6 +426,7 @@ class ModelFoundation(ABC):
             assistant_adapter_name=self.assistant_adapter_name,
             assistant_weight=inference_weight,
             include_default=include_default,
+            require_default=require_default,
         )
 
         if not adapter_names:
@@ -402,7 +439,21 @@ class ModelFoundation(ABC):
 
         weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
         logger.info(f"Configuring assistant LoRA for inference with weights: {weight_summary}")
-        set_adapter_stack(trained_component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
+        components = [
+            target_component,
+            trained_component if trained_component is not target_component else None,
+        ]
+        pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+        if pipeline_component is not None:
+            components.append(pipeline_component)
+        seen: set[int] = set()
+        for component in components:
+            if component is None:
+                continue
+            if id(component) in seen:
+                continue
+            seen.add(id(component))
+            set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     @classmethod
     def supports_lora(cls) -> bool:
