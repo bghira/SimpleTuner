@@ -5087,6 +5087,34 @@ class Trainer:
         self._emit_event(event)
 
 
+def _terminate_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    return
+                except Exception:
+                    pass
+            process.terminate()
+    except Exception as exc:
+        logging.getLogger("SimpleTuner").warning("Failed to terminate accelerate process cleanly: %s", exc)
+
+
+def _kill_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    return
+                except Exception:
+                    pass
+            process.kill()
+    except Exception as exc:
+        logging.getLogger("SimpleTuner").warning("Failed to kill accelerate process: %s", exc)
+
+
 def run_trainer_job(config):
     """Create a Trainer from the provided config and execute the full run loop."""
 
@@ -5468,7 +5496,10 @@ def run_trainer_job(config):
         process = subprocess.Popen(cmd, **popen_kwargs)
 
         output_lock = threading.Lock()
+        import sys as _sys
         from collections import deque as _deque
+
+        from simpletuner.helpers.log_format import strip_ansi as _strip_ansi
 
         recent_lines = _deque(maxlen=400)
 
@@ -5481,12 +5512,12 @@ def run_trainer_job(config):
                 recent_lines.append(line.rstrip("\n"))
                 with output_lock:
                     try:
-                        sys.stdout.write(line)
-                        sys.stdout.flush()
+                        _sys.stdout.write(line)
+                        _sys.stdout.flush()
                     except Exception:
                         # Fallback: print to stderr with ANSI codes stripped
                         # to avoid double-formatting and escape codes in logs/webhooks
-                        print(log_format.strip_ansi(line.rstrip()), file=sys.stderr)
+                        print(_strip_ansi(line.rstrip()), file=_sys.stderr)
 
         reader_thread = threading.Thread(target=_forward_output, daemon=True)
         reader_thread.start()
@@ -5643,31 +5674,3 @@ def run_trainer_job(config):
 
     trainer.run()
     return {"status": "completed"}
-
-
-def _terminate_accelerate_process(process: subprocess.Popen) -> None:
-    try:
-        if process.poll() is None:
-            if os.name != "nt" and getattr(process, "pid", None):
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    return
-                except Exception:
-                    pass
-            process.terminate()
-    except Exception as exc:
-        logging.getLogger("SimpleTuner").warning("Failed to terminate accelerate process cleanly: %s", exc)
-
-
-def _kill_accelerate_process(process: subprocess.Popen) -> None:
-    try:
-        if process.poll() is None:
-            if os.name != "nt" and getattr(process, "pid", None):
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    return
-                except Exception:
-                    pass
-            process.kill()
-    except Exception as exc:
-        logging.getLogger("SimpleTuner").warning("Failed to kill accelerate process: %s", exc)
