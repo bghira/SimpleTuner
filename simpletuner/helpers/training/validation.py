@@ -1778,10 +1778,10 @@ class Validation:
                 self._pending_epoch_validation = self.current_epoch
                 should_do_epoch_validation = True
 
-        should_validate = (should_do_step_validation or should_do_epoch_validation) and (
-            self.accelerator.is_main_process or self.deepspeed
-        )
-        return should_validate
+        should_validate = should_do_step_validation or should_do_epoch_validation
+        if not (self.deepspeed or self._use_distributed_validation()):
+            should_validate = should_validate and self.accelerator.is_main_process
+        return bool(should_validate)
 
     def setup_scheduler(self):
         if self.distiller is not None:
