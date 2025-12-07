@@ -18,7 +18,8 @@ from simpletuner.helpers.models.sanavideo.pipeline import SanaVideoPipeline
 from simpletuner.helpers.models.sanavideo.transformer import SanaVideoTransformer3DModel
 from simpletuner.helpers.training.multi_process import should_log
 
-logger = logging.getLogger(logging.getLogger(__name__))
+# Use a standard named logger so it inherits the project logging handlers/formatting.
+logger = logging.getLogger(__name__)
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 
