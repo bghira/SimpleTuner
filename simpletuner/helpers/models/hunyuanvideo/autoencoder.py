@@ -582,6 +582,129 @@ class Downsample(nn.Module):
     def forward(self, x: Tensor, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
         return self._forward_fast(x, conv_carry_in, conv_carry_out)
 
+    def forward_stream(
+        self,
+        x: Tensor,
+        conv_carry_in: Optional[list],
+        conv_carry_out: Optional[list],
+        h_carry: Optional[Tensor],
+        x_carry: Optional[Tensor],
+        is_first_chunk: bool,
+        is_last_chunk: bool,
+    ):
+        """
+        Streaming variant that keeps temporal groupings aligned across chunks.
+        h_carry/x_carry hold leftover frames (not yet consumed into r1 groups) from the prior chunk.
+        """
+        r1 = 2 if self.add_temporal_downsample else 1
+        h = conv_carry_causal_3d([x], self.conv, conv_carry_in, conv_carry_out)
+
+        if not self.add_temporal_downsample:
+            return self._forward_fast(x, conv_carry_in, conv_carry_out), None, None
+
+        # Split out the very first frame only on the first chunk.
+        if is_first_chunk:
+            h_first = h[:, :, :1, :, :]
+            x_first = x[:, :, :1, :, :]
+            h_rem = h[:, :, 1:, :, :]
+            x_rem = x[:, :, 1:, :, :]
+        else:
+            h_first = None
+            x_first = None
+            h_rem = h
+            x_rem = x
+
+        if h_carry is not None and h_carry.numel() > 0:
+            h_rem = torch.cat([h_carry, h_rem], dim=2)
+        if x_carry is not None and x_carry.numel() > 0:
+            x_rem = torch.cat([x_carry, x_rem], dim=2)
+
+        rem_len = h_rem.shape[2]
+        if rem_len != x_rem.shape[2]:
+            raise RuntimeError("Mismatched temporal dims for streaming downsample.")
+        rem_extra = rem_len % r1
+
+        if is_last_chunk:
+            pad_t = (r1 - rem_extra) % r1
+            if pad_t:
+                pad_mode = "replicate" if rem_len > 0 else "constant"
+                h_rem = F.pad(h_rem, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
+                x_rem = F.pad(x_rem, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
+            next_h_carry = None
+            next_x_carry = None
+        else:
+            if rem_extra:
+                next_h_carry = h_rem[:, :, -rem_extra:, :, :].contiguous()
+                next_x_carry = x_rem[:, :, -rem_extra:, :, :].contiguous()
+                h_rem = h_rem[:, :, : rem_len - rem_extra, :, :]
+                x_rem = x_rem[:, :, : rem_len - rem_extra, :, :]
+            else:
+                next_h_carry = None
+                next_x_carry = None
+
+        parts = []
+        if h_first is not None:
+            h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
+            h_first = torch.cat([h_first, h_first], dim=1)
+            parts.append(h_first)
+        if h_rem.shape[2] > 0:
+            h_rem = rearrange(h_rem, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            parts.append(h_rem)
+        h_out = h_rem if len(parts) == 0 else torch_cat_if_needed(parts, dim=2)
+
+        shortcut_parts = []
+        if x_first is not None:
+            x_first = rearrange(x_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
+            B, C, T, H, W = x_first.shape
+            x_first = x_first.view(B, h_out.shape[1], self.group_size // 2, T, H, W)
+            if self.group_size <= 2:
+                x_first = x_first[:, :, 0]
+            elif self.group_size == 4:
+                x_first = x_first[:, :, 0].add_(x_first[:, :, 1]).mul_(0.5)
+            elif self.group_size == 8:
+                x_first = x_first[:, :, 0].add_(x_first[:, :, 1]).add_(x_first[:, :, 2]).add_(x_first[:, :, 3]).mul_(0.25)
+            else:
+                raise AssertionError(f"Unsupported group_size: {self.group_size}")
+            shortcut_parts.append(x_first)
+        if x_rem.shape[2] > 0:
+            x_next = rearrange(x_rem, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            B, C, T, H, W = x_next.shape
+            x_next = x_next.view(B, h_out.shape[1], self.group_size, T, H, W)
+            if self.group_size == 1:
+                x_next = x_next[:, :, 0]
+            elif self.group_size == 2:
+                x_next = x_next[:, :, 0].add_(x_next[:, :, 1]).mul_(0.5)
+            elif self.group_size == 4:
+                x_next = x_next[:, :, 0].add_(x_next[:, :, 1]).add_(x_next[:, :, 2]).add_(x_next[:, :, 3]).mul_(0.25)
+            elif self.group_size == 8:
+                x_next = (
+                    x_next[:, :, 0]
+                    .add_(x_next[:, :, 1])
+                    .add_(x_next[:, :, 2])
+                    .add_(x_next[:, :, 3])
+                    .add_(x_next[:, :, 4])
+                    .add_(x_next[:, :, 5])
+                    .add_(x_next[:, :, 6])
+                    .add_(x_next[:, :, 7])
+                    .mul_(0.125)
+                )
+            else:
+                raise AssertionError(f"Unsupported group_size: {self.group_size}")
+            shortcut_parts.append(x_next)
+
+        if shortcut_parts:
+            shortcut = torch_cat_if_needed(shortcut_parts, dim=2)
+            if shortcut.shape[2] != h_out.shape[2]:
+                if shortcut.shape[2] < h_out.shape[2]:
+                    pad_len = h_out.shape[2] - shortcut.shape[2]
+                    shortcut = F.pad(shortcut, (0, 0, 0, 0, 0, pad_len), mode="replicate")
+                else:
+                    shortcut = shortcut[:, :, : h_out.shape[2], ...]
+        else:
+            shortcut = torch.zeros_like(h_out)
+
+        return h_out + shortcut, next_h_carry, next_x_carry
+
 
 class Upsample(nn.Module):
     """Hierarchical upsampling with temporal/ spatial support."""
@@ -717,7 +840,7 @@ class Encoder(nn.Module):
         use_checkpointing = bool(self.training and self.gradient_checkpointing)
 
         # downsampling
-        h = self.conv_in(x)
+        h = conv_carry_causal_3d([x], self.conv_in)
         for i_level in range(len(self.block_out_channels)):
             for i_block in range(self.num_res_blocks):
                 h = forward_with_checkpointing(self.down[i_level].block[i_block], h, use_checkpointing=use_checkpointing)
@@ -734,7 +857,7 @@ class Encoder(nn.Module):
         shortcut = rearrange(h, "b (c r) f h w -> b c r f h w", r=group_size).mean(dim=2)
         h = self.norm_out(h)
         h = swish(h, inplace=True)
-        h = self.conv_out(h)
+        h = conv_carry_causal_3d([h], self.conv_out)
         h += shortcut
         return h
 
@@ -742,38 +865,24 @@ class Encoder(nn.Module):
         """
         Stream the VAE encoder over time, carrying the last frames between chunks to reduce VRAM.
         """
-        segments = [x[:, :, :1, :, :]]
-        if x.shape[2] > self.time_compress:
-            tail = x[:, :, 1 : 1 + ((x.shape[2] - 1) // self.time_compress) * self.time_compress, :, :]
-            segments.extend(torch.split(tail, self.time_compress * 2, dim=2))
-        elif x.shape[2] > 1:
-            segments.append(x[:, :, 1:, :, :])
+        use_checkpointing = bool(self.training and self.gradient_checkpointing)
 
-        out = []
-        conv_carry_in: Optional[list] = None
+        h = conv_carry_causal_3d([x], self.conv_in)
+        for i_level in range(len(self.block_out_channels)):
+            for i_block in range(self.num_res_blocks):
+                h = forward_with_checkpointing(self.down[i_level].block[i_block], h, use_checkpointing=use_checkpointing)
+            if hasattr(self.down[i_level], "downsample"):
+                h = forward_with_checkpointing(self.down[i_level].downsample, h, use_checkpointing=use_checkpointing)
 
-        for idx, seg in enumerate(segments):
-            conv_carry_out: Optional[list] = [] if idx < len(segments) - 1 else None
-            h = conv_carry_causal_3d([seg], self.conv_in, conv_carry_in, conv_carry_out)
-            for i_level in range(len(self.block_out_channels)):
-                for i_block in range(self.num_res_blocks):
-                    h = self.down[i_level].block[i_block](h, conv_carry_in, conv_carry_out)
-                if hasattr(self.down[i_level], "downsample"):
-                    h = self.down[i_level].downsample(h, conv_carry_in, conv_carry_out)
-            out.append(h)
-            conv_carry_in = conv_carry_out
-
-        h = torch_cat_if_needed(out, dim=2)
-
-        h = self.mid.block_1(h)
-        h = self.mid.attn_1(h)
-        h = self.mid.block_2(h)
+        h = forward_with_checkpointing(self.mid.block_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.attn_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.block_2, h, use_checkpointing=use_checkpointing)
 
         group_size = self.block_out_channels[-1] // (2 * self.z_channels)
         shortcut = rearrange(h, "b (c r) f h w -> b c r f h w", r=group_size).mean(dim=2)
         h = self.norm_out(h)
         h = swish(h, inplace=True)
-        h = self.conv_out(h)
+        h = conv_carry_causal_3d([h], self.conv_out)
         h += shortcut
         return h
 
@@ -864,7 +973,7 @@ class Decoder(nn.Module):
 
         # z to block_in
         repeats = self.block_out_channels[0] // (self.z_channels)
-        h = self.conv_in(z) + z.repeat_interleave(repeats=repeats, dim=1)
+        h = conv_carry_causal_3d([z], self.conv_in) + z.repeat_interleave(repeats=repeats, dim=1)
 
         # middle
         h = forward_with_checkpointing(self.mid.block_1, h, use_checkpointing=use_checkpointing)
@@ -881,39 +990,29 @@ class Decoder(nn.Module):
         # end
         h = self.norm_out(h)
         h = swish(h, inplace=True)
-        h = self.conv_out(h)
+        h = conv_carry_causal_3d([h], self.conv_out)
         return h
 
     def _forward_temporal_roll(self, z: Tensor) -> Tensor:
+        use_checkpointing = bool(self.training and self.gradient_checkpointing)
+
         repeats = self.block_out_channels[0] // (self.z_channels)
-        h = conv_carry_causal_3d([z], self.conv_in)
-        h = h + z.repeat_interleave(repeats=repeats, dim=1)
+        h = conv_carry_causal_3d([z], self.conv_in) + z.repeat_interleave(repeats=repeats, dim=1)
 
-        segments = torch.split(h, 2, dim=2) if h.shape[2] > 1 else (h,)
-        out = []
-        conv_carry_in: Optional[list] = None
+        h = forward_with_checkpointing(self.mid.block_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.attn_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.block_2, h, use_checkpointing=use_checkpointing)
 
-        for idx, seg in enumerate(segments):
-            conv_carry_out: Optional[list] = [] if idx < len(segments) - 1 else None
+        for i_level in range(len(self.block_out_channels)):
+            for i_block in range(self.num_res_blocks + 1):
+                h = forward_with_checkpointing(self.up[i_level].block[i_block], h, use_checkpointing=use_checkpointing)
+            if hasattr(self.up[i_level], "upsample"):
+                h = forward_with_checkpointing(self.up[i_level].upsample, h, use_checkpointing=use_checkpointing)
 
-            h_seg = self.mid.block_1(seg, conv_carry_in, conv_carry_out)
-            h_seg = self.mid.attn_1(h_seg)
-            h_seg = self.mid.block_2(h_seg, conv_carry_in, conv_carry_out)
-
-            for i_level in range(len(self.block_out_channels) - 1, -1, -1):
-                for i_block in range(self.num_res_blocks + 1):
-                    h_seg = self.up[i_level].block[i_block](h_seg, conv_carry_in, conv_carry_out)
-                if hasattr(self.up[i_level], "upsample"):
-                    h_seg = self.up[i_level].upsample(h_seg, conv_carry_in, conv_carry_out)
-
-            h_seg = self.norm_out(h_seg)
-            h_seg = swish(h_seg, inplace=True)
-            h_seg = conv_carry_causal_3d([h_seg], self.conv_out, conv_carry_in, conv_carry_out)
-            out.append(h_seg)
-
-            conv_carry_in = conv_carry_out
-
-        return torch_cat_if_needed(list(out), dim=2)
+        h = self.norm_out(h)
+        h = swish(h, inplace=True)
+        h = conv_carry_causal_3d([h], self.conv_out)
+        return h
 
 
 class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
