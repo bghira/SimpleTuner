@@ -5087,6 +5087,34 @@ class Trainer:
         self._emit_event(event)
 
 
+def _terminate_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    return
+                except Exception:
+                    pass
+            process.terminate()
+    except Exception as exc:
+        logging.getLogger("SimpleTuner").warning("Failed to terminate accelerate process cleanly: %s", exc)
+
+
+def _kill_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    return
+                except Exception:
+                    pass
+            process.kill()
+    except Exception as exc:
+        logging.getLogger("SimpleTuner").warning("Failed to kill accelerate process: %s", exc)
+
+
 def run_trainer_job(config):
     """Create a Trainer from the provided config and execute the full run loop."""
 
@@ -5275,12 +5303,11 @@ def run_trainer_job(config):
 
         launch_env = os.environ.copy()
 
-        # Force colors to be enabled in subprocess (stdout is piped so TTY detection fails)
-        # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
-        launch_env.pop("SIMPLETUNER_WEB_MODE", None)
-        launch_env.pop("SIMPLETUNER_DISABLE_COLORS", None)
-        launch_env["FORCE_COLOR"] = "1"
-        launch_env["CLICOLOR_FORCE"] = "1"
+        # Don't force colors in subprocess - stdout is piped so colorized output
+        # would leak escape codes into debug.log and webhook messages.
+        # Preserve SIMPLETUNER_WEB_MODE/SIMPLETUNER_DISABLE_COLORS from parent env.
+        launch_env.pop("FORCE_COLOR", None)
+        launch_env.pop("CLICOLOR_FORCE", None)
 
         if job_id:
             launch_env["SIMPLETUNER_JOB_ID"] = job_id
@@ -5469,23 +5496,32 @@ def run_trainer_job(config):
         process = subprocess.Popen(cmd, **popen_kwargs)
 
         output_lock = threading.Lock()
+        import sys as _sys
         from collections import deque as _deque
+
+        from simpletuner.helpers.log_format import strip_ansi as _strip_ansi
 
         recent_lines = _deque(maxlen=400)
 
         def _forward_output():
             if not process.stdout:
                 return
-            for line in iter(process.stdout.readline, ""):
-                if not line:
-                    break
-                recent_lines.append(line.rstrip("\n"))
-                with output_lock:
-                    try:
-                        sys.stdout.write(line)
-                        sys.stdout.flush()
-                    except Exception:
-                        launch_logger.info(line.rstrip())
+            try:
+                for line in iter(process.stdout.readline, ""):
+                    if not line:
+                        break
+                    recent_lines.append(line.rstrip("\n"))
+                    with output_lock:
+                        try:
+                            _sys.stdout.write(line)
+                            _sys.stdout.flush()
+                        except Exception:
+                            # Fallback: print to stderr with ANSI codes stripped
+                            # to avoid double-formatting and escape codes in logs/webhooks
+                            print(_strip_ansi(line.rstrip()), file=_sys.stderr)
+            except ValueError:
+                # File handle was closed while the reader thread was still active
+                return
 
         reader_thread = threading.Thread(target=_forward_output, daemon=True)
         reader_thread.start()
@@ -5507,9 +5543,12 @@ def run_trainer_job(config):
             _terminate_accelerate_process(process)
             raise
         finally:
-            if process.stdout:
-                process.stdout.close()
             reader_thread.join(timeout=2)
+            if process.stdout:
+                try:
+                    process.stdout.close()
+                except Exception:
+                    pass
             if process.poll() is None:
                 _terminate_accelerate_process(process)
                 try:
@@ -5642,31 +5681,3 @@ def run_trainer_job(config):
 
     trainer.run()
     return {"status": "completed"}
-
-
-def _terminate_accelerate_process(process: subprocess.Popen) -> None:
-    try:
-        if process.poll() is None:
-            if os.name != "nt" and getattr(process, "pid", None):
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    return
-                except Exception:
-                    pass
-            process.terminate()
-    except Exception as exc:
-        logging.getLogger("SimpleTuner").warning("Failed to terminate accelerate process cleanly: %s", exc)
-
-
-def _kill_accelerate_process(process: subprocess.Popen) -> None:
-    try:
-        if process.poll() is None:
-            if os.name != "nt" and getattr(process, "pid", None):
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    return
-                except Exception:
-                    pass
-            process.kill()
-    except Exception as exc:
-        logging.getLogger("SimpleTuner").warning("Failed to kill accelerate process: %s", exc)

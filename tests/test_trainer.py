@@ -26,10 +26,6 @@ _OPTIONAL_MODULES = {
     "torchao.dtypes.uintx.uint4_layout",
     "torchao.dtypes.uintx.uintx_layout",
     "optimi",
-    "fastapi",
-    "fastapi.middleware",
-    "fastapi.middleware.cors",
-    "fastapi.responses",
 }
 
 
@@ -142,6 +138,14 @@ def _ensure_optimi_stub():
 
 
 def _ensure_fastapi_stub():
+    try:
+        import fastapi  # noqa: F401
+        import fastapi.middleware.cors  # noqa: F401
+        import fastapi.responses  # noqa: F401
+
+        return
+    except Exception:
+        pass
     if "fastapi" in sys.modules:
         return
 
@@ -506,6 +510,12 @@ except Exception:
 
 
 def _ensure_models_common_stub():
+    try:
+        import simpletuner.helpers.models.common  # noqa: F401
+
+        return
+    except Exception:
+        pass
     module_name = "simpletuner.helpers.models.common"
     if module_name in sys.modules:
         return
@@ -524,6 +534,9 @@ def _ensure_models_common_stub():
         pass
 
     class ModelFoundation(_BaseModelFoundation):
+        pass
+
+    class AudioModelFoundation(_BaseModelFoundation):
         pass
 
     class _PredictionTypes:
@@ -549,12 +562,18 @@ def _ensure_models_common_stub():
         VAE = "vae"
         TEXT_ENCODER = "text_encoder"
 
+    class _TextEmbedCacheKey:
+        CAPTION = "caption"
+        DATASET_AND_FILENAME = "dataset_and_filename"
+
     common_module.ImageModelFoundation = ImageModelFoundation
     common_module.VideoModelFoundation = VideoModelFoundation
     common_module.ModelFoundation = ModelFoundation
+    common_module.AudioModelFoundation = AudioModelFoundation
     common_module.PredictionTypes = _PredictionTypes
     common_module.PipelineTypes = _PipelineTypes
     common_module.ModelTypes = _ModelTypes
+    common_module.TextEmbedCacheKey = _TextEmbedCacheKey
 
     sys.modules[module_name] = common_module
 

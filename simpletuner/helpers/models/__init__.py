@@ -16,6 +16,6 @@ for subdir in model_dir.iterdir():
                 importlib.import_module(module_name)
             except Exception as exc:
                 logger.exception(
-                    "Failed to import required model '%s'; resolve the missing dependency to continue.", subdir.name
+                    "Failed to import model '%s'; continuing without it. Resolve the missing dependency if you need this model.",
+                    subdir.name,
                 )
-                raise
