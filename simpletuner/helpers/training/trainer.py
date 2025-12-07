@@ -5276,11 +5276,10 @@ def run_trainer_job(config):
         launch_env = os.environ.copy()
 
         # Don't force colors in subprocess - stdout is piped so colorized output
-        # would leak escape codes into debug.log and webhook messages
-        launch_env.pop("SIMPLETUNER_WEB_MODE", None)
-        launch_env.pop("SIMPLETUNER_DISABLE_COLORS", None)
-        # launch_env["FORCE_COLOR"] = "1"
-        # launch_env["CLICOLOR_FORCE"] = "1"
+        # would leak escape codes into debug.log and webhook messages.
+        # Preserve SIMPLETUNER_WEB_MODE/SIMPLETUNER_DISABLE_COLORS from parent env.
+        launch_env.pop("FORCE_COLOR", None)
+        launch_env.pop("CLICOLOR_FORCE", None)
 
         if job_id:
             launch_env["SIMPLETUNER_JOB_ID"] = job_id
