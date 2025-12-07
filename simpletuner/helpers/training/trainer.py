@@ -5506,18 +5506,22 @@ def run_trainer_job(config):
         def _forward_output():
             if not process.stdout:
                 return
-            for line in iter(process.stdout.readline, ""):
-                if not line:
-                    break
-                recent_lines.append(line.rstrip("\n"))
-                with output_lock:
-                    try:
-                        _sys.stdout.write(line)
-                        _sys.stdout.flush()
-                    except Exception:
-                        # Fallback: print to stderr with ANSI codes stripped
-                        # to avoid double-formatting and escape codes in logs/webhooks
-                        print(_strip_ansi(line.rstrip()), file=_sys.stderr)
+            try:
+                for line in iter(process.stdout.readline, ""):
+                    if not line:
+                        break
+                    recent_lines.append(line.rstrip("\n"))
+                    with output_lock:
+                        try:
+                            _sys.stdout.write(line)
+                            _sys.stdout.flush()
+                        except Exception:
+                            # Fallback: print to stderr with ANSI codes stripped
+                            # to avoid double-formatting and escape codes in logs/webhooks
+                            print(_strip_ansi(line.rstrip()), file=_sys.stderr)
+            except ValueError:
+                # File handle was closed while the reader thread was still active
+                return
 
         reader_thread = threading.Thread(target=_forward_output, daemon=True)
         reader_thread.start()
@@ -5539,9 +5543,12 @@ def run_trainer_job(config):
             _terminate_accelerate_process(process)
             raise
         finally:
-            if process.stdout:
-                process.stdout.close()
             reader_thread.join(timeout=2)
+            if process.stdout:
+                try:
+                    process.stdout.close()
+                except Exception:
+                    pass
             if process.poll() is None:
                 _terminate_accelerate_process(process)
                 try:
