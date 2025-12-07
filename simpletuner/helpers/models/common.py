@@ -1448,6 +1448,34 @@ class ModelFoundation(ABC):
                 for attr in [k.replace("text_encoder", "tokenizer") for k in self.TEXT_ENCODER_CONFIGURATION.keys()]:
                     if hasattr(pipeline, attr):
                         setattr(pipeline, attr, None)
+        # Also clear references held by text embedding caches in StateTracker.
+        try:
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            for backend in StateTracker.get_data_backends().values():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                encoders = getattr(cache, "text_encoders", None)
+                if encoders:
+                    for idx, encoder in enumerate(encoders):
+                        if encoder is None or not hasattr(encoder, "to"):
+                            continue
+                        try:
+                            encoder.to("meta")
+                        except Exception:
+                            encoder.to("cpu")
+                        if _has_cuda_tensors(encoder):
+                            logger.warning("Text embed cache encoder %s still on CUDA; forcing CPU move.", idx + 1)
+                            encoder.to("cpu")
+                    cache.text_encoders = None
+                if getattr(cache, "pipeline", None) is not None:
+                    for attr, _ in self.TEXT_ENCODER_CONFIGURATION.items():
+                        if hasattr(cache.pipeline, attr):
+                            setattr(cache.pipeline, attr, None)
+                    cache.pipeline = None
+        except Exception:
+            logger.debug("Failed to clear cached text encoders from StateTracker.", exc_info=True)
 
     def unload(self):
         """
