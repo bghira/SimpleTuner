@@ -1406,17 +1406,36 @@ class ModelFoundation(ABC):
             return self.text_encoders[index] if index in self.text_encoders else None
 
     def unload_text_encoder(self):
-        def _has_cuda_tensors(module: torch.nn.Module) -> bool:
+        def _cuda_tensor_stats(label: str, module: torch.nn.Module) -> tuple[int, int]:
+            """Return (count, bytes) of CUDA tensors attached to a module."""
+            count = 0
+            bytes_total = 0
             for tensor in list(module.parameters()) + list(module.buffers()):
                 if torch.is_tensor(tensor) and tensor.device.type == "cuda":
-                    return True
-            return False
+                    count += 1
+                    try:
+                        bytes_total += tensor.numel() * tensor.element_size()
+                    except Exception:
+                        pass
+            return count, bytes_total
+
+        def _has_cuda_tensors(module: torch.nn.Module) -> bool:
+            count, _ = _cuda_tensor_stats("module", module)
+            return count > 0
 
         if self.text_encoders is not None:
             for idx, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
                     logger.debug("Text encoder %s is already unloaded.", idx + 1)
                     continue
+                pre_count, pre_bytes = _cuda_tensor_stats(f"te{idx+1}", text_encoder)
+                if pre_count:
+                    logger.debug(
+                        "Before unload, text encoder %s has %s CUDA tensors (~%.2f MB).",
+                        idx + 1,
+                        pre_count,
+                        pre_bytes / (1024 * 1024),
+                    )
                 if hasattr(text_encoder, "to"):
                     # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
                     try:
@@ -1429,6 +1448,14 @@ class ModelFoundation(ABC):
                     if _has_cuda_tensors(text_encoder):
                         logger.warning("Text encoder %s still on CUDA after meta attempt; moving to CPU.", idx + 1)
                         text_encoder.to("cpu")
+                post_count, post_bytes = _cuda_tensor_stats(f"te{idx+1}", text_encoder)
+                if post_count:
+                    logger.warning(
+                        "After unload, text encoder %s still has %s CUDA tensors (~%.2f MB).",
+                        idx + 1,
+                        post_count,
+                        post_bytes / (1024 * 1024),
+                    )
                 setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
         if self.tokenizers is not None:
