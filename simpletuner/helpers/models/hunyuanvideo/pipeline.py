@@ -1380,15 +1380,25 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         else:
             transformer_init_device = device
 
-        supported_transformer_version = os.listdir(os.path.join(cached_folder, "transformer"))
-        if transformer_version not in supported_transformer_version:
-            raise ValueError(
-                f"Could not find {transformer_version} in {cached_folder}. Only {supported_transformer_version} are available."
+        transformer_root = os.path.join(cached_folder, "transformer")
+        version_path = os.path.join(transformer_root, transformer_version)
+        if os.path.isdir(version_path):
+            transformer_load_path = version_path
+        else:
+            # Some repos are single-flavour and only contain a bare `transformer/` folder (no nested variant dirs).
+            has_nested_variants = any(
+                os.path.isdir(os.path.join(transformer_root, entry)) for entry in os.listdir(transformer_root)
             )
+            if has_nested_variants:
+                supported_transformer_version = os.listdir(transformer_root)
+                raise ValueError(
+                    f"Could not find {transformer_version} in {cached_folder}. Only {supported_transformer_version} are available."
+                )
+            transformer_load_path = transformer_root
 
         vae_inference_config = cls.get_vae_inference_config()
         transformer = HunyuanVideo_1_5_DiffusionTransformer.from_pretrained(
-            os.path.join(cached_folder, "transformer", transformer_version),
+            transformer_load_path,
             torch_dtype=transformer_dtype,
             low_cpu_mem_usage=True,
         ).to(transformer_init_device)
