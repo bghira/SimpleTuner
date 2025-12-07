@@ -15,7 +15,8 @@ except Exception:  # pragma: no cover
             self.webhook_handler = webhook_handler
 
 
-logger = logging.getLogger(logging.getLogger("DistillationCache"))
+# Standard named logger so it inherits global handlers.
+logger = logging.getLogger("DistillationCache")
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 

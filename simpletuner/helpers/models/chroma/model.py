@@ -24,7 +24,8 @@ from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.tae.types import ImageTAESpec
 from simpletuner.helpers.training.multi_process import should_log
 
-logger = logging.getLogger(logging.getLogger(__name__))
+# Use a standard named logger so it inherits the global logging configuration.
+logger = logging.getLogger(__name__)
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 

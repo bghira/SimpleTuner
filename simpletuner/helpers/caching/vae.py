@@ -29,7 +29,8 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.webhooks.events import lifecycle_stage_event
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
 
-logger = logging.getLogger(logging.getLogger("VAECache"))
+# Standard named logger so it inherits global handlers.
+logger = logging.getLogger("VAECache")
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 

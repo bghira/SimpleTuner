@@ -17,7 +17,8 @@ from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.training import audio_file_extensions, image_file_extensions, video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 
-logger = logging.getLogger(logging.getLogger("CSVDataBackend"))
+# Standard named logger so it inherits global handlers.
+logger = logging.getLogger("CSVDataBackend")
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 

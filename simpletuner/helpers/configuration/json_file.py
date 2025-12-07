@@ -6,7 +6,8 @@ from pathlib import Path
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.training.multi_process import should_log
 
-logger = logging.getLogger(logging.getLogger("SimpleTuner"))
+# Standard named logger so it inherits global handlers.
+logger = logging.getLogger("SimpleTuner")
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 

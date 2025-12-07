@@ -22,7 +22,8 @@ from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
-logger = logging.getLogger(logging.getLogger("BaseMetadataBackend"))
+# Standard named logger so it flows through global handlers.
+logger = logging.getLogger("BaseMetadataBackend")
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
 DEFAULT_AUDIO_BUCKET_INTERVAL = 3.0
