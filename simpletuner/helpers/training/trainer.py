@@ -5267,6 +5267,9 @@ def run_trainer_job(config):
         if dyn_backend_normalized and dyn_backend_normalized not in {"no", "none", ""}:
             use_accelerate = True
 
+        if selected_device_ids:
+            use_accelerate = True
+
         if not use_accelerate:
             return None
 
@@ -5419,6 +5422,10 @@ def run_trainer_job(config):
                 "--accelerate_config",
                 "accelerate_extra_args",
                 "--accelerate_extra_args",
+                "accelerate_visible_devices",
+                "--accelerate_visible_devices",
+                "accelerate_strategy",
+                "--accelerate_strategy",
                 "main_process_ip",
                 "--main_process_ip",
                 "main_process_port",

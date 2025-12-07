@@ -712,6 +712,55 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(instance.abort_called)
         self.assertTrue(instance.should_abort)
 
+    def test_run_trainer_job_honours_single_device_selection(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        captured = {}
+
+        class DummyStdout:
+            def readline(self):
+                return ""
+
+            def close(self):
+                captured["stdout_closed"] = True
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = DummyStdout()
+                self.pid = 1234
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def terminate(self):
+                captured["terminated"] = True
+
+            def kill(self):
+                captured["killed"] = True
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env", {})
+            captured["kwargs"] = kwargs
+            return DummyProcess()
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            result = trainer_module.run_trainer_job(
+                {
+                    "accelerate_visible_devices": [1],
+                    "--num_processes": 1,
+                }
+            )
+
+            self.assertEqual(result, 0)
+        self.assertIn("cmd", captured)
+        self.assertEqual(captured["cmd"][0], "accelerate")
+        self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "1")
+        self.assertFalse(any("--accelerate_visible_devices" in arg for arg in captured["cmd"]))
+
     def test_accelerate_failure_summary_highlights_oom(self):
         from simpletuner.helpers.training import trainer as trainer_module
 
