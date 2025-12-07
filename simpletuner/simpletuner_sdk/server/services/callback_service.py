@@ -543,6 +543,12 @@ class CallbackService:
         if event.type not in {EventType.NOTIFICATION, EventType.ERROR, EventType.DEBUG}:
             return
 
+        # Skip log.message events - they're already displayed via the callback service
+        # and mirroring them would cause duplicates in the WebUI
+        raw_type = str(event.raw.get("type") or "").lower() if event.raw else ""
+        if raw_type == "log.message":
+            return
+
         message = event.message or event.title
         if not message:
             return
