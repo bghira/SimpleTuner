@@ -334,6 +334,7 @@ class ModelFoundation(ABC):
             peft_config=peft_config,
             assistant_adapter_name=self.assistant_adapter_name,
             assistant_weight=assistant_weight if assistant_weight != 0 else None,
+            include_default=bool(peft_config),
         )
 
         if not adapter_names:
@@ -374,6 +375,7 @@ class ModelFoundation(ABC):
             peft_config=peft_config,
             assistant_adapter_name=self.assistant_adapter_name,
             assistant_weight=inference_weight,
+            include_default=bool(peft_config),
         )
 
         if not adapter_names:

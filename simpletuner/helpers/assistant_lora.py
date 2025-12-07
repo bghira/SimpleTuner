@@ -133,7 +133,7 @@ def build_adapter_stack(
         adapter_weights.append(float(assistant_weight))
         freeze_names.append(assistant_adapter_name)
 
-    if include_default and isinstance(peft_config, dict) and "default" in peft_config:
+    if include_default:
         adapter_names.append("default")
         adapter_weights.append(default_weight)
 
