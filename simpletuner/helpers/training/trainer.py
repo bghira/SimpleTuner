@@ -5266,7 +5266,9 @@ def run_trainer_job(config):
         import logging
         import os
         import shlex
+        import shutil
         import subprocess
+        import tempfile
         import threading
         import time
         from pathlib import Path
@@ -5300,6 +5302,90 @@ def run_trainer_job(config):
 
         if not use_accelerate:
             return None
+
+        signal_dir: Optional[Path] = None
+        signal_file_path: Optional[Path] = None
+        signal_thread: Optional[threading.Thread] = None
+        signal_stop_event = threading.Event()
+        signal_counts = {"manual_validation": 0, "manual_checkpoint": 0}
+        signal_lock = threading.Lock()
+        relay_error_logged = False
+
+        def _persist_signal_counts() -> None:
+            if not signal_file_path:
+                return
+            payload: dict[str, int] = {}
+            with signal_lock:
+                if signal_counts["manual_validation"]:
+                    payload["manual_validation"] = signal_counts["manual_validation"]
+                if signal_counts["manual_checkpoint"]:
+                    payload["manual_checkpoint"] = signal_counts["manual_checkpoint"]
+            try:
+                target_path = signal_file_path
+                tmp_path = signal_file_path.with_suffix(".tmp")
+                with tmp_path.open("w", encoding="utf-8") as handle:
+                    json.dump(payload, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_path, target_path)
+            except Exception as exc:
+                launch_logger.debug("Failed to write accelerate trigger file: %s", exc)
+
+        def _prepare_signal_file() -> None:
+            nonlocal signal_dir, signal_file_path
+            if not (callable(manual_validation_consumer) or callable(manual_checkpoint_consumer)):
+                return
+            try:
+                signal_dir = Path(tempfile.mkdtemp(prefix="simpletuner_accel_signals_"))
+                signal_file_path = signal_dir / "triggers.json"
+                with signal_file_path.open("w", encoding="utf-8") as handle:
+                    json.dump({}, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except Exception as exc:
+                launch_logger.warning("Could not set up manual trigger relay for accelerate: %s", exc)
+                signal_dir = None
+                signal_file_path = None
+
+        def _start_signal_relay() -> None:
+            nonlocal signal_thread, relay_error_logged  # noqa: F824
+            if not signal_file_path:
+                return
+
+            def _relay_triggers() -> None:
+                nonlocal relay_error_logged
+                while not signal_stop_event.is_set():
+                    triggered = False
+                    try:
+                        if callable(manual_validation_consumer) and manual_validation_consumer():
+                            with signal_lock:
+                                signal_counts["manual_validation"] += 1
+                            triggered = True
+                        if callable(manual_checkpoint_consumer) and manual_checkpoint_consumer():
+                            with signal_lock:
+                                signal_counts["manual_checkpoint"] += 1
+                            triggered = True
+                        relay_error_logged = False
+                    except Exception as exc:
+                        if not relay_error_logged:
+                            launch_logger.warning("Manual trigger relay failed: %s", exc)
+                            relay_error_logged = True
+                    if triggered:
+                        _persist_signal_counts()
+                    signal_stop_event.wait(0.25)
+
+            signal_thread = threading.Thread(target=_relay_triggers, daemon=True)
+            signal_thread.start()
+
+        def _cleanup_signal_relay() -> None:
+            signal_stop_event.set()
+            if signal_thread is not None:
+                signal_thread.join(timeout=1.5)
+            if signal_dir is not None:
+                try:
+                    shutil.rmtree(signal_dir, ignore_errors=True)
+                except Exception:
+                    pass
 
         launch_env = os.environ.copy()
 
@@ -5403,6 +5489,10 @@ def run_trainer_job(config):
             main_process_port_value = main_process_port_int
             machine_rank_value = machine_rank_int
 
+        _prepare_signal_file()
+        if signal_file_path:
+            launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
+
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
@@ -5493,7 +5583,13 @@ def run_trainer_job(config):
         }
         if os.name != "nt":
             popen_kwargs["preexec_fn"] = os.setsid
-        process = subprocess.Popen(cmd, **popen_kwargs)
+        try:
+            process = subprocess.Popen(cmd, **popen_kwargs)
+        except Exception:
+            _cleanup_signal_relay()
+            raise
+
+        _start_signal_relay()
 
         output_lock = threading.Lock()
         import sys as _sys
@@ -5558,6 +5654,7 @@ def run_trainer_job(config):
                     _kill_accelerate_process(process)
 
         returncode = process.wait()
+        _cleanup_signal_relay()
         if returncode != 0:
             helper = globals().get("_summarize_accelerate_failure")
             if helper is None:
