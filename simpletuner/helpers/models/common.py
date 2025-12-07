@@ -330,11 +330,12 @@ class ModelFoundation(ABC):
             assistant_weight = 1.0
 
         peft_config = getattr(trained_component, "peft_config", {}) or {}
+        include_default = isinstance(peft_config, dict) and "default" in peft_config
         adapter_names, weight_arg, freeze_names = build_adapter_stack(
             peft_config=peft_config,
             assistant_adapter_name=self.assistant_adapter_name,
             assistant_weight=assistant_weight if assistant_weight != 0 else None,
-            include_default=bool(peft_config),
+            include_default=include_default,
         )
 
         if not adapter_names:
@@ -367,15 +368,28 @@ class ModelFoundation(ABC):
             inference_weight = float(getattr(self.config, "assistant_lora_inference_strength", 0.0))
         except Exception:
             inference_weight = 0.0
-        if inference_weight == 0:
-            return
 
         peft_config = getattr(trained_component, "peft_config", {}) or {}
+        include_default = isinstance(peft_config, dict) and "default" in peft_config
+
+        if inference_weight == 0:
+            adapter_names, weight_arg, freeze_names = build_adapter_stack(
+                peft_config=peft_config,
+                assistant_adapter_name=self.assistant_adapter_name,
+                assistant_weight=None,
+                include_default=include_default,
+            )
+            if not adapter_names:
+                return
+            logger.info("Configuring assistant LoRA for inference with weights: default=1.0")
+            set_adapter_stack(trained_component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
+            return
+
         adapter_names, weight_arg, freeze_names = build_adapter_stack(
             peft_config=peft_config,
             assistant_adapter_name=self.assistant_adapter_name,
             assistant_weight=inference_weight,
-            include_default=bool(peft_config),
+            include_default=include_default,
         )
 
         if not adapter_names:
