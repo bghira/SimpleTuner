@@ -5484,7 +5484,9 @@ def run_trainer_job(config):
                         sys.stdout.write(line)
                         sys.stdout.flush()
                     except Exception:
-                        launch_logger.info(line.rstrip())
+                        # Fallback: print to stderr with ANSI codes stripped
+                        # to avoid double-formatting and escape codes in logs/webhooks
+                        print(log_format.strip_ansi(line.rstrip()), file=sys.stderr)
 
         reader_thread = threading.Thread(target=_forward_output, daemon=True)
         reader_thread.start()

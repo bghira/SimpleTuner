@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 import warnings
 
@@ -27,6 +28,15 @@ if not DISABLE_COLORS:
         DISABLE_COLORS = True
 else:
     COLORAMA_AVAILABLE = False
+
+
+# Pattern for stripping ANSI escape codes from text
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    return _ANSI_ESCAPE_PATTERN.sub("", text)
 
 
 class ColorizedFormatter(logging.Formatter):

@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+from simpletuner.helpers.log_format import strip_ansi
+
 try:  # Optional dependency; used for robust process tree termination
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - psutil is optional
@@ -773,7 +775,7 @@ logger.info("Subprocess exiting")
                     break
                 if log_handle is not None:
                     try:
-                        log_handle.write(line)
+                        log_handle.write(strip_ansi(line))
                         log_handle.flush()
                     except Exception as log_exc:
                         logger.debug(f"Failed to persist stdout for {self.job_id}: {log_exc}")
@@ -800,8 +802,9 @@ logger.info("Subprocess exiting")
                         sys.stdout.write(line)
                         sys.stdout.flush()
                 except Exception:
-                    # If stdout is unavailable just log the line
-                    logger.info(line.rstrip())
+                    # If stdout is unavailable, print to stderr with ANSI codes stripped
+                    # to avoid double-formatting and escape codes in logs/webhooks
+                    print(strip_ansi(line.rstrip()), file=sys.stderr)
         except Exception as exc:
             if not self.stop_event.is_set():
                 logger.debug(f"stdout streaming error for {self.job_id}: {exc}")
