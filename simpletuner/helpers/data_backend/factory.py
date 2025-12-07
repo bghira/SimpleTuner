@@ -761,6 +761,7 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
     """Move text encoders to the target device."""
     if text_encoders is None or (not args.offload_during_startup and not force_move):
         return
+    target_dtype = getattr(args, "weight_dtype", None)
     # we'll move text encoder only if their precision arg is no_change
     # otherwise, we assume the user has already moved them to the correct device due to quantisation.
     te_idx = -1  # these are 0-indexed, and we increment it immediately to 0.
@@ -777,8 +778,14 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
         if text_encoder.device == target_device:
             logger.info(f"Text encoder {te_idx + 1} already on target device")
             continue
-        logger.info(f"Moving text encoder {te_idx + 1} to {target_device} from {text_encoder.device}")
-        text_encoder.to(target_device)
+        logger.info(
+            f"Moving text encoder {te_idx + 1} to {target_device} from {text_encoder.device}"
+            + (f" with dtype={target_dtype}" if target_dtype is not None else "")
+        )
+        if target_dtype is not None:
+            text_encoder.to(target_device, dtype=target_dtype)
+        else:
+            text_encoder.to(target_device)
 
     return text_encoders
 

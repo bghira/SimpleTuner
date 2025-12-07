@@ -1456,6 +1456,8 @@ class ModelFoundation(ABC):
                         post_count,
                         post_bytes / (1024 * 1024),
                     )
+                else:
+                    logger.debug("After unload, text encoder %s has no CUDA tensors.", idx + 1)
                 setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
         if self.tokenizers is not None:
