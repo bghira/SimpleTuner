@@ -2355,7 +2355,9 @@ class Trainer:
         except Exception:
             rank_prefix = ""
         memory_before_unload = self.stats_memory_used()
-        logger.info(f"{rank_prefix}Unloading text encoders, as they are not being trained.")
+        pre_msg = f"{rank_prefix}Unloading text encoders, as they are not being trained."
+        logger.info(pre_msg)
+        logger.debug(pre_msg)
         self.model.unload_text_encoder()
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
@@ -2364,9 +2366,9 @@ class Trainer:
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
-        logger.info(
-            f"{rank_prefix}After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-        )
+        post_msg = f"{rank_prefix}After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
+        logger.info(post_msg)
+        logger.debug(post_msg)
 
     def init_precision(self, preprocessing_models_only: bool = False, ema_only: bool = False):
         self.config.enable_adamw_bf16 = True if self.config.weight_dtype == torch.bfloat16 else False
