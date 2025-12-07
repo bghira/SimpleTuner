@@ -1334,6 +1334,15 @@ class ModelFoundation(ABC):
             return
         self.load_text_tokenizer()
 
+        # Only move text encoders to the accelerator when needed (training or main rank).
+        allow_device_move = move_to_device
+        try:
+            is_main = getattr(self.accelerator, "is_main_process", True)
+        except Exception:
+            is_main = True
+        if not getattr(self.config, "train_text_encoder", False) and not is_main:
+            allow_device_move = False
+
         text_encoder_idx = 0
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             for (
@@ -1382,11 +1391,13 @@ class ModelFoundation(ABC):
                 if self._ramtorch_text_encoders_requested():
                     self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
 
-                if move_to_device and text_encoder_precision in ["no_change", None]:
+                if allow_device_move and text_encoder_precision in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
                     )
+                elif not allow_device_move:
+                    logger.debug("Keeping text encoder %s on CPU for non-training rank.", text_encoder_idx)
                 setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
                 self.text_encoders.append(text_encoder)
 
@@ -1395,6 +1406,12 @@ class ModelFoundation(ABC):
             return self.text_encoders[index] if index in self.text_encoders else None
 
     def unload_text_encoder(self):
+        def _has_cuda_tensors(module: torch.nn.Module) -> bool:
+            for tensor in list(module.parameters()) + list(module.buffers()):
+                if torch.is_tensor(tensor) and tensor.device.type == "cuda":
+                    return True
+            return False
+
         if self.text_encoders is not None:
             for idx, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
@@ -1407,6 +1424,10 @@ class ModelFoundation(ABC):
                         text_encoder.to("meta")
                     except Exception as exc:
                         logger.debug("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
+                        text_encoder.to("cpu")
+                    # If any params remain on CUDA (some modules can ignore .to("meta")), force a CPU move.
+                    if _has_cuda_tensors(text_encoder):
+                        logger.warning("Text encoder %s still on CUDA after meta attempt; moving to CPU.", idx + 1)
                         text_encoder.to("cpu")
                 setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
