@@ -5267,6 +5267,9 @@ def run_trainer_job(config):
         if dyn_backend_normalized and dyn_backend_normalized not in {"no", "none", ""}:
             use_accelerate = True
 
+        if selected_device_ids:
+            use_accelerate = True
+
         if not use_accelerate:
             return None
 
