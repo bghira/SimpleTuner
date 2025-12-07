@@ -51,6 +51,74 @@ class TestHunyuanVideoVaePatchConv(unittest.TestCase):
 
         self.assertEqual(decoded.shape, (1, 3, 2, 8, 8))
 
+    def test_encoder_temporal_roll_matches_base_outputs(self):
+        """Temporal rolling path should be numerically identical when weights match."""
+        base = ae.Encoder(
+            in_channels=3,
+            z_channels=4,
+            block_out_channels=(8, 16),
+            num_res_blocks=1,
+            ffactor_spatial=2,
+            ffactor_temporal=2,
+            downsample_match_channel=True,
+            enable_patch_conv=False,
+            temporal_roll=False,
+        )
+        rolled = ae.Encoder(
+            in_channels=3,
+            z_channels=4,
+            block_out_channels=(8, 16),
+            num_res_blocks=1,
+            ffactor_spatial=2,
+            ffactor_temporal=2,
+            downsample_match_channel=True,
+            enable_patch_conv=False,
+            temporal_roll=True,
+        )
+        rolled.load_state_dict(base.state_dict(), strict=False)
+
+        sample = torch.randn(1, 3, 5, 8, 8)
+        with torch.no_grad():
+            out_base = base(sample)
+            out_roll = rolled(sample)
+
+        self.assertEqual(out_base.shape, out_roll.shape)
+        self.assertTrue(torch.allclose(out_base, out_roll, atol=0, rtol=0))
+
+    def test_decoder_temporal_roll_matches_base_outputs(self):
+        """Decoder streaming toggle should not change outputs when parameters align."""
+        base = ae.Decoder(
+            z_channels=4,
+            out_channels=3,
+            block_out_channels=(16, 8),
+            num_res_blocks=1,
+            ffactor_spatial=2,
+            ffactor_temporal=2,
+            upsample_match_channel=True,
+            enable_patch_conv=False,
+            temporal_roll=False,
+        )
+        rolled = ae.Decoder(
+            z_channels=4,
+            out_channels=3,
+            block_out_channels=(16, 8),
+            num_res_blocks=1,
+            ffactor_spatial=2,
+            ffactor_temporal=2,
+            upsample_match_channel=True,
+            enable_patch_conv=False,
+            temporal_roll=True,
+        )
+        rolled.load_state_dict(base.state_dict(), strict=False)
+
+        latent = torch.randn(1, 4, 3, 4, 4)
+        with torch.no_grad():
+            out_base = base(latent)
+            out_roll = rolled(latent)
+
+        self.assertEqual(out_base.shape, out_roll.shape)
+        self.assertTrue(torch.allclose(out_base, out_roll, atol=0, rtol=0))
+
 
 if __name__ == "__main__":
     unittest.main()
