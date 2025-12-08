@@ -1481,6 +1481,21 @@ class ModelFoundation(ABC):
                     devices,
                 )
 
+        def _nuke_module_storage(module: torch.nn.Module):
+            """Forcibly release all CUDA tensor storage, regardless of external references."""
+            for param in module.parameters():
+                if param.device.type == "cuda":
+                    try:
+                        param.data.storage().resize_(0)
+                    except Exception:
+                        pass
+            for buf in module.buffers():
+                if buf.device.type == "cuda":
+                    try:
+                        buf.storage().resize_(0)
+                    except Exception:
+                        pass
+
         if self.text_encoders is not None:
             for idx, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
@@ -1497,7 +1512,10 @@ class ModelFoundation(ABC):
                     )
                     logger.debug("Text encoder %s device distribution: %s", idx + 1, device_summary)
                 if hasattr(text_encoder, "to"):
-                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
+                    # Nuke CUDA storage first to force-release memory regardless of external references.
+                    logger.debug("Nuking text encoder %s CUDA storage.", idx + 1)
+                    _nuke_module_storage(text_encoder)
+                    # Then move to meta device to clean up the module state.
                     try:
                         logger.debug("Moving text encoder %s to meta device.", idx + 1)
                         text_encoder.to("meta")
