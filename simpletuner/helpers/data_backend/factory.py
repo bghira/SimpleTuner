@@ -1740,7 +1740,7 @@ class FactoryRegistry:
                     else nullcontext()
                 )
                 with main_process_context:
-                    self.model.get_pipeline()
+                    self.model.get_pipeline(load_base_model=False)
                     logger.debug(f"rank {get_rank()} is computing the null embed")
                     init_backend["text_embed_cache"].encode_dropout_caption()
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
@@ -2699,7 +2699,7 @@ class FactoryRegistry:
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
-            self.model.get_pipeline()
+            self.model.get_pipeline(load_base_model=False)
             prompt_records = []
             key_type = self.model.text_embed_cache_key()
             dataset_id = init_backend["id"]
