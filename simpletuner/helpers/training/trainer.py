@@ -1770,6 +1770,14 @@ class Trainer:
         for initializer in initializers:
             initializer()
             self._exit_on_signal()
+            # Memory checkpoint after each init step
+            if torch.cuda.is_available():
+                try:
+                    device = getattr(self.accelerator, "device", None)
+                    alloc = torch.cuda.memory_allocated(device=device) / 1024**3
+                    logger.debug(f"[Memory] After {initializer.__name__}: {alloc:.2f} GB on {device}")
+                except Exception:
+                    pass
 
     def _get_noise_schedule(self):
         self.config, scheduler = self.model.setup_training_noise_schedule()
