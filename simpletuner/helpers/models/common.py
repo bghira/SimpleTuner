@@ -1450,12 +1450,29 @@ class ModelFoundation(ABC):
                     devices = _summarise_devices(encoder)
                     logger.warning("%s encoder %s device distribution: %s", cache_label, idx + 1, devices)
 
-        def _log_cuda_owners(label: str, module: torch.nn.Module):
+        def _log_cuda_owners(label: str, module: object):
             if module is None:
                 return
-            count, bytes_total = _cuda_tensor_stats(label, module)
+            try:
+                params = list(module.parameters()) if hasattr(module, "parameters") else []
+                buffers = list(module.buffers()) if hasattr(module, "buffers") else []
+            except Exception:
+                params, buffers = [], []
+            tensors = params + buffers
+            count = 0
+            bytes_total = 0
+            devices: dict[str, int] = {}
+            for tensor in tensors:
+                if not torch.is_tensor(tensor) or tensor.device.type != "cuda":
+                    continue
+                count += 1
+                try:
+                    bytes_total += tensor.numel() * tensor.element_size()
+                except Exception:
+                    pass
+                key = str(tensor.device)
+                devices[key] = devices.get(key, 0) + 1
             if count:
-                devices = _summarise_devices(module)
                 logger.warning(
                     "%s still holds %s CUDA tensors (~%.2f MB). Devices: %s",
                     label,
