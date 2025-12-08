@@ -2347,6 +2347,26 @@ class Trainer:
 
         return curent_memory_allocated
 
+    def _clear_pipeline_caches(self):
+        """Drop cached pipelines and cache-held pipelines to release VRAM before training."""
+        try:
+            if hasattr(self.model, "pipelines") and getattr(self.model, "pipelines"):
+                self.model.pipelines.clear()
+            if hasattr(self.model, "pipeline"):
+                self.model.pipeline = None
+        except Exception:
+            logger.debug("Failed to clear model pipeline caches.", exc_info=True)
+
+        try:
+            for backend in StateTracker.get_data_backends().values():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                if hasattr(cache, "pipeline"):
+                    cache.pipeline = None
+        except Exception:
+            logger.debug("Failed to clear text embed cache pipelines.", exc_info=True)
+
     def init_unload_text_encoder(self):
         if self.config.model_type != "full" and self.config.train_text_encoder:
             return
@@ -2358,6 +2378,7 @@ class Trainer:
             if "text_embed_cache" in backend:
                 backend["text_embed_cache"].text_encoders = None
                 backend["text_embed_cache"].pipeline = None
+        self._clear_pipeline_caches()
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
