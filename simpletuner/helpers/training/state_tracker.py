@@ -564,6 +564,7 @@ class StateTracker:
         cls,
         _type: object = DatasetType.IMAGE,
         _types: object = (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CAPTION, DatasetType.AUDIO),
+        raw: bool = False,
     ):
         target_type = ensure_dataset_type(_type, default=DatasetType.IMAGE)
         allowed_types = set()
@@ -572,7 +573,7 @@ class StateTracker:
         elif _types is not None:
             allowed_types = {ensure_dataset_type(_types, default=DatasetType.IMAGE)}
 
-        output = {}
+        output = {} if not raw else {}
         for backend_id, backend in dict(cls.data_backends).items():
             backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
             if backend_type == target_type or (allowed_types and backend_type in allowed_types):

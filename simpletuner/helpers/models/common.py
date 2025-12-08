@@ -1423,6 +1423,22 @@ class ModelFoundation(ABC):
             count, _ = _cuda_tensor_stats("module", module)
             return count > 0
 
+        def _log_cache_encoder_stats(cache_label: str, encoders: list | None):
+            if not encoders:
+                return
+            for idx, encoder in enumerate(encoders):
+                if encoder is None:
+                    continue
+                count, bytes_total = _cuda_tensor_stats(f"{cache_label}_te{idx+1}", encoder)
+                if count:
+                    logger.warning(
+                        "%s encoder %s has %s CUDA tensors (~%.2f MB).",
+                        cache_label,
+                        idx + 1,
+                        count,
+                        bytes_total / (1024 * 1024),
+                    )
+
         if self.text_encoders is not None:
             for idx, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
@@ -1481,10 +1497,11 @@ class ModelFoundation(ABC):
         try:
             from simpletuner.helpers.training.state_tracker import StateTracker
 
-            for backend in StateTracker.get_data_backends().values():
+            for backend_id, backend in StateTracker.get_data_backends().items():
                 cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
                 if cache is None:
                     continue
+                _log_cache_encoder_stats(f"text_embed_cache[{backend_id}]", getattr(cache, "text_encoders", None))
                 encoders = getattr(cache, "text_encoders", None)
                 if encoders:
                     for idx, encoder in enumerate(encoders):
@@ -1502,6 +1519,9 @@ class ModelFoundation(ABC):
                     for attr, _ in self.TEXT_ENCODER_CONFIGURATION.items():
                         if hasattr(cache.pipeline, attr):
                             setattr(cache.pipeline, attr, None)
+                    cache.pipeline = None
+                # Also drop any cached pipeline held on the cache to avoid lazy loads.
+                if hasattr(cache, "pipeline"):
                     cache.pipeline = None
         except Exception:
             logger.debug("Failed to clear cached text encoders from StateTracker.", exc_info=True)
