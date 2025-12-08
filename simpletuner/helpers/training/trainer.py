@@ -2338,7 +2338,11 @@ class Trainer:
     def stats_memory_used(self):
         # Grab GPU memory used:
         if torch.cuda.is_available():
-            curent_memory_allocated = torch.cuda.memory_allocated() / 1024**3
+            device = getattr(self.accelerator, "device", None)
+            try:
+                curent_memory_allocated = torch.cuda.memory_allocated(device=device) / 1024**3
+            except Exception:
+                curent_memory_allocated = torch.cuda.memory_allocated() / 1024**3
         elif torch.backends.mps.is_available():
             curent_memory_allocated = torch.mps.current_allocated_memory() / 1024**3
         else:
