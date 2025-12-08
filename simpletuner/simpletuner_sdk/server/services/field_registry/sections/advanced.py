@@ -319,6 +319,42 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="flow_acrf_schedule",
+            arg_name="--flow_acrf_schedule",
+            ui_label="Flow ACRF Schedule",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Use anchor-coupled rectified flow sampling aligned with the inference scheduler.",
+            tooltip="Samples flow-matching sigmas from scheduler anchors (Turbo-style) with light jitter.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=19,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="flow_acrf_timesteps",
+            arg_name="--flow_acrf_timesteps",
+            ui_label="Flow ACRF Timesteps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=10,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be >= 1")],
+            help_text="Number of inference-style anchors to sample when flow_acrf_schedule is enabled.",
+            tooltip="Matches the Turbo schedule length (e.g., 10 for Flux Schnell or Z-Image Turbo).",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=19.1,
+            dependencies=[FieldDependency(field="flow_acrf_schedule", operator="equals", value=True, action="show")],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="flux_fast_schedule",
             arg_name="--flux_fast_schedule",
             ui_label="Flow Fast Schedule",

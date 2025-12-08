@@ -287,6 +287,8 @@ class WebInterface:
             "input_perturbation": 0.0,
             "flow_sigmoid_scale": 1.0,
             "flow_schedule_shift": 3.0,
+            "flow_acrf_schedule": False,
+            "flow_acrf_timesteps": 10,
             "flux_guidance_value": 1.0,
             "ema_decay": 0.995,
         }

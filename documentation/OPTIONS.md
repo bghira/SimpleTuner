@@ -858,6 +858,8 @@ usage: train.py [-h] --model_family
                 [--validation_torch_compile_mode {default,reduce-overhead,max-autotune}]
                 [--i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]]
                 [--flow_sigmoid_scale FLOW_SIGMOID_SCALE]
+                [--flow_acrf_schedule [FLOW_ACRF_SCHEDULE]]
+                [--flow_acrf_timesteps FLOW_ACRF_TIMESTEPS]
                 [--flux_fast_schedule [FLUX_FAST_SCHEDULE]]
                 [--flow_use_uniform_schedule [FLOW_USE_UNIFORM_SCHEDULE]]
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
@@ -1294,6 +1296,12 @@ options:
   --flow_sigmoid_scale FLOW_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models.
+  --flow_acrf_schedule [FLOW_ACRF_SCHEDULE]
+                        Use anchor-coupled rectified flow sampling aligned
+                        with the inference scheduler for flow-matching models.
+  --flow_acrf_timesteps FLOW_ACRF_TIMESTEPS
+                        Number of inference-style anchors to sample when
+                        flow_acrf_schedule is enabled (default: 10).
   --flux_fast_schedule [FLUX_FAST_SCHEDULE]
                         Use experimental fast schedule for Flux training
   --flow_use_uniform_schedule [FLOW_USE_UNIFORM_SCHEDULE]

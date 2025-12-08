@@ -1775,7 +1775,7 @@ class Trainer:
                 try:
                     device = getattr(self.accelerator, "device", None)
                     alloc = torch.cuda.memory_allocated(device=device) / 1024**3
-                    logger.debug(f"[Memory] After {initializer.__name__}: {alloc:.2f} GB on {device}")
+                    logging.getLogger().info(f"[Memory] After {initializer.__name__}: {alloc:.2f} GB on {device}")
                 except Exception:
                     pass
 

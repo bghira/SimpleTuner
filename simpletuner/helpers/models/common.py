@@ -1,3 +1,4 @@
+import copy
 import inspect
 import json
 import logging
@@ -249,6 +250,8 @@ class ModelFoundation(ABC):
         self._qkv_projections_fused = False
         self._validation_preview_decoder = None
         self._validation_preview_decoder_failed = False
+        self._flow_acrf_anchor_cache = None
+        self._flow_acrf_dynamic_shift_warned = False
         self.setup_model_flavour()
         self.setup_training_noise_schedule()
         self.diff2flow_bridge = None
@@ -2512,6 +2515,103 @@ class ModelFoundation(ABC):
             scheduler_config.max_shift,
         )
 
+    def _resolve_acrf_shift(self, latents: torch.Tensor | None):
+        """
+        Determine the shift to apply when generating anchor-coupled sigmas.
+        """
+        shift_override = None
+        if getattr(self.config, "flow_schedule_auto_shift", False):
+            try:
+                mu = self.calculate_dynamic_shift_mu(self.noise_schedule, latents)
+                if mu is not None:
+                    shift_override = math.exp(mu)
+            except Exception as error:
+                if not self._flow_acrf_dynamic_shift_warned:
+                    logger.warning(
+                        "flow_schedule_auto_shift is enabled but dynamic shift failed for flow_acrf_schedule: %s", error
+                    )
+                    self._flow_acrf_dynamic_shift_warned = True
+        if shift_override is None and getattr(self.config, "flow_schedule_shift", None) is not None:
+            shift_override = self.config.flow_schedule_shift
+        return shift_override
+
+    def _clone_flow_scheduler_for_acrf(self, shift_override: float | None):
+        if self.noise_schedule is None:
+            raise RuntimeError("flow_acrf_schedule requires a flow-matching noise scheduler to be initialized.")
+        scheduler_cls = self.noise_schedule.__class__
+        scheduler_config = getattr(self.noise_schedule, "config", None)
+        if scheduler_config is None:
+            raise RuntimeError("flow_acrf_schedule requires a scheduler with a config to derive anchors.")
+
+        scheduler = None
+        if hasattr(scheduler_cls, "from_config"):
+            try:
+                scheduler = scheduler_cls.from_config(scheduler_config)
+            except Exception:
+                scheduler = None
+        if scheduler is None:
+            try:
+                scheduler = copy.deepcopy(self.noise_schedule)
+            except Exception:
+                scheduler = self.noise_schedule
+
+        if shift_override is not None:
+            if hasattr(scheduler, "config") and hasattr(scheduler.config, "shift"):
+                scheduler.config.shift = shift_override
+            if hasattr(scheduler, "shift"):
+                scheduler.shift = shift_override
+        return scheduler
+
+    def _get_acrf_anchor_sigmas(self, batch: dict, num_anchors: int) -> torch.Tensor:
+        if num_anchors <= 0:
+            raise ValueError("flow_acrf_timesteps must be >= 1 for flow_acrf_schedule.")
+
+        shift_override = self._resolve_acrf_shift(batch.get("latents"))
+        cache_key = (num_anchors, shift_override)
+        anchors = None
+
+        if isinstance(self._flow_acrf_anchor_cache, dict) and self._flow_acrf_anchor_cache.get("key") == cache_key:
+            anchors = self._flow_acrf_anchor_cache.get("anchors")
+
+        if anchors is None:
+            scheduler = self._clone_flow_scheduler_for_acrf(shift_override)
+            scheduler.set_timesteps(num_anchors)
+            anchors = scheduler.sigmas
+            if anchors.shape[0] == num_anchors + 1:
+                anchors = anchors[:-1]
+            anchors = anchors.detach().float().cpu()
+            self._flow_acrf_anchor_cache = {"key": cache_key, "anchors": anchors}
+
+        target_device = getattr(self.accelerator, "device", "cpu")
+        latents = batch.get("latents")
+        target_dtype = anchors.dtype if latents is None else latents.dtype
+        return anchors.to(device=target_device, dtype=target_dtype)
+
+    def _sample_acrf_sigmas(self, batch: dict, bsz: int) -> torch.Tensor:
+        raw_timesteps = getattr(self.config, "flow_acrf_timesteps", 10)
+        try:
+            num_anchors = int(raw_timesteps)
+        except Exception:
+            num_anchors = 10
+        num_anchors = max(1, num_anchors)
+        anchors = self._get_acrf_anchor_sigmas(batch=batch, num_anchors=num_anchors)
+        anchor_count = anchors.shape[0]
+        if anchor_count == 0:
+            raise RuntimeError("flow_acrf_schedule requested but no anchors were produced by the scheduler.")
+
+        device = anchors.device
+        if bsz >= anchor_count:
+            indices = (torch.arange(bsz, device=device) * anchor_count) // bsz
+        else:
+            indices = torch.randperm(anchor_count, device=device)[:bsz]
+
+        sigmas = anchors[indices]
+        jitter = float(getattr(self.config, "flow_acrf_jitter", 0.02) or 0.0)
+        if jitter != 0:
+            sigmas = sigmas + torch.randn_like(sigmas) * jitter
+        sigmas = sigmas.clamp(1e-3, 0.999)
+        return sigmas
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
@@ -2519,7 +2619,9 @@ class ModelFoundation(ABC):
         Subclasses can override to implement model-specific sampling strategies.
         """
         bsz = batch["latents"].shape[0]
-        if not self.config.flux_fast_schedule and not any(
+        if getattr(self.config, "flow_acrf_schedule", False):
+            sigmas = self._sample_acrf_sigmas(batch=batch, bsz=bsz)
+        elif not self.config.flux_fast_schedule and not any(
             [
                 self.config.flow_use_beta_schedule,
                 self.config.flow_use_uniform_schedule,

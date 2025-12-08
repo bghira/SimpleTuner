@@ -941,6 +941,9 @@ class ACEStep(AudioModelFoundation):
         ACE-Step mirrors the upstream trainer: sample timesteps via a logit-normal,
         then look up sigmas from FlowMatchEulerDiscreteScheduler.
         """
+        if getattr(self.config, "flow_acrf_schedule", False):
+            return super().sample_flow_sigmas(batch=batch, state=state)
+
         bsz = batch["latents"].shape[0]
         timesteps_tensor = self.noise_schedule.timesteps.to(self.accelerator.device)
         sigmas_tensor = self.noise_schedule.sigmas.to(self.accelerator.device)

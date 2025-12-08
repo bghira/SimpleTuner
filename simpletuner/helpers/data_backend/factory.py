@@ -1744,9 +1744,24 @@ class FactoryRegistry:
                 )
                 with main_process_context:
                     # Avoid loading the full base model during text-embed setup; we only need tokenization.
+                    if torch.cuda.is_available():
+                        _mem_before = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
+                        logger.info(
+                            f"rank {get_rank()} BEFORE get_pipeline: {_mem_before:.2f} GB on {self.accelerator.device}"
+                        )
                     self.model.get_pipeline(load_base_model=False)
+                    if torch.cuda.is_available():
+                        _mem_after = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
+                        logger.info(
+                            f"rank {get_rank()} AFTER get_pipeline: {_mem_after:.2f} GB on {self.accelerator.device}"
+                        )
                     logger.debug(f"rank {get_rank()} is computing the null embed")
                     init_backend["text_embed_cache"].encode_dropout_caption()
+                    if torch.cuda.is_available():
+                        _mem_after_encode = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
+                        logger.info(
+                            f"rank {get_rank()} AFTER encode_dropout_caption: {_mem_after_encode:.2f} GB on {self.accelerator.device}"
+                        )
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
@@ -2685,7 +2700,17 @@ class FactoryRegistry:
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
             # Avoid loading base model weights during cache precomputation; only tokenizer/encoders are needed.
+            if torch.cuda.is_available():
+                _mem_before = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
+                logger.info(
+                    f"rank {get_rank()} BEFORE get_pipeline (precompute): {_mem_before:.2f} GB on {self.accelerator.device}"
+                )
             self.model.get_pipeline(load_base_model=False)
+            if torch.cuda.is_available():
+                _mem_after = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
+                logger.info(
+                    f"rank {get_rank()} AFTER get_pipeline (precompute): {_mem_after:.2f} GB on {self.accelerator.device}"
+                )
             prompt_records = []
             key_type = self.model.text_embed_cache_key()
             dataset_id = init_backend["id"]

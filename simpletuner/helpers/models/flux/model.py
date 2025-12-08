@@ -744,8 +744,11 @@ class Flux(ImageModelFoundation):
                 self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
                 if getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None"):
                     self.config.assistant_lora_weight_name = getattr(self, "ASSISTANT_LORA_WEIGHT_NAME", None)
-            if not self.config.flux_fast_schedule and not self.config.i_know_what_i_am_doing:
-                logger.error("Schnell requires --flux_fast_schedule (or --i_know_what_i_am_doing).")
+            if (
+                not (self.config.flux_fast_schedule or getattr(self.config, "flow_acrf_schedule", False))
+                and not self.config.i_know_what_i_am_doing
+            ):
+                logger.error("Schnell requires --flux_fast_schedule or --flow_acrf_schedule (or --i_know_what_i_am_doing).")
                 import sys
 
                 sys.exit(1)
@@ -977,6 +980,8 @@ class Flux(ImageModelFoundation):
         output_args = []
         if self.config.flux_fast_schedule:
             output_args.append("flux_fast_schedule")
+        if getattr(self.config, "flow_acrf_schedule", False):
+            output_args.append(f"flow_acrf_timesteps={getattr(self.config, 'flow_acrf_timesteps', None) or 'default'}")
         if self.config.flow_schedule_auto_shift:
             output_args.append("flow_schedule_auto_shift")
         if self.config.flow_schedule_shift is not None:

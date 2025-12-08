@@ -542,6 +542,7 @@ class Chroma(ImageModelFoundation):
             and "sigmas" in batch
             and batch["sigmas"] is not None
             and not getattr(self.config, "flux_fast_schedule", False)
+            and not getattr(self.config, "flow_acrf_schedule", False)
             and not getattr(self.config, "flow_use_beta_schedule", False)
             and not getattr(self.config, "flow_use_uniform_schedule", False)
         ):
@@ -565,6 +566,8 @@ class Chroma(ImageModelFoundation):
         output_args = []
         if getattr(self.config, "flux_fast_schedule", False):
             output_args.append("flux_fast_schedule")
+        if getattr(self.config, "flow_acrf_schedule", False):
+            output_args.append(f"flow_acrf_timesteps={getattr(self.config, 'flow_acrf_timesteps', None) or 'default'}")
         if getattr(self.config, "flow_schedule_auto_shift", False):
             output_args.append("flow_schedule_auto_shift")
         if getattr(self.config, "flow_schedule_shift", None) is not None:
