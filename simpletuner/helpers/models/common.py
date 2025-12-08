@@ -1423,6 +1423,15 @@ class ModelFoundation(ABC):
             count, _ = _cuda_tensor_stats("module", module)
             return count > 0
 
+        def _summarise_devices(module: torch.nn.Module) -> dict[str, int]:
+            devices: dict[str, int] = {}
+            for tensor in list(module.parameters()) + list(module.buffers()):
+                if not torch.is_tensor(tensor):
+                    continue
+                key = str(tensor.device)
+                devices[key] = devices.get(key, 0) + 1
+            return devices
+
         def _log_cache_encoder_stats(cache_label: str, encoders: list | None):
             if not encoders:
                 return
@@ -1438,6 +1447,22 @@ class ModelFoundation(ABC):
                         count,
                         bytes_total / (1024 * 1024),
                     )
+                    devices = _summarise_devices(encoder)
+                    logger.warning("%s encoder %s device distribution: %s", cache_label, idx + 1, devices)
+
+        def _log_cuda_owners(label: str, module: torch.nn.Module):
+            if module is None:
+                return
+            count, bytes_total = _cuda_tensor_stats(label, module)
+            if count:
+                devices = _summarise_devices(module)
+                logger.warning(
+                    "%s still holds %s CUDA tensors (~%.2f MB). Devices: %s",
+                    label,
+                    count,
+                    bytes_total / (1024 * 1024),
+                    devices,
+                )
 
         if self.text_encoders is not None:
             for idx, text_encoder in enumerate(self.text_encoders):
@@ -1445,6 +1470,7 @@ class ModelFoundation(ABC):
                     logger.debug("Text encoder %s is already unloaded.", idx + 1)
                     continue
                 pre_count, pre_bytes = _cuda_tensor_stats(f"te{idx+1}", text_encoder)
+                device_summary = _summarise_devices(text_encoder)
                 if pre_count:
                     logger.debug(
                         "Before unload, text encoder %s has %s CUDA tensors (~%.2f MB).",
@@ -1452,6 +1478,7 @@ class ModelFoundation(ABC):
                         pre_count,
                         pre_bytes / (1024 * 1024),
                     )
+                    logger.debug("Text encoder %s device distribution: %s", idx + 1, device_summary)
                 if hasattr(text_encoder, "to"):
                     # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
                     try:
@@ -1525,6 +1552,18 @@ class ModelFoundation(ABC):
                     cache.pipeline = None
         except Exception:
             logger.debug("Failed to clear cached text encoders from StateTracker.", exc_info=True)
+
+        # Snapshot any remaining CUDA owners after unload for diagnostics.
+        try:
+            _log_cuda_owners("model", getattr(self, "model", None))
+            _log_cuda_owners("controlnet", getattr(self, "controlnet", None))
+            _log_cuda_owners("vae", getattr(self, "vae", None))
+            _log_cuda_owners("active_pipeline", getattr(self, "pipeline", None))
+            if hasattr(self, "pipelines") and isinstance(self.pipelines, dict):
+                for pipe_key, pipe_val in self.pipelines.items():
+                    _log_cuda_owners(f"cached_pipeline[{pipe_key}]", pipe_val)
+        except Exception:
+            logger.debug("Failed to log CUDA owners after text encoder unload.", exc_info=True)
 
     def unload(self):
         """

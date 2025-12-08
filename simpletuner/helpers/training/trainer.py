@@ -2340,10 +2340,21 @@ class Trainer:
         if torch.cuda.is_available():
             device = getattr(self.accelerator, "device", None)
             try:
+                torch.cuda.synchronize(device=device)
+            except Exception:
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+            try:
                 curent_memory_allocated = torch.cuda.memory_allocated(device=device) / 1024**3
             except Exception:
                 curent_memory_allocated = torch.cuda.memory_allocated() / 1024**3
         elif torch.backends.mps.is_available():
+            try:
+                torch.mps.synchronize()
+            except Exception:
+                pass
             curent_memory_allocated = torch.mps.current_allocated_memory() / 1024**3
         else:
             logger.warning("CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions.")
