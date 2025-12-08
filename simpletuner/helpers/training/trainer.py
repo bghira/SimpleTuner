@@ -2370,6 +2370,14 @@ class Trainer:
         except Exception:
             rank_prefix = ""
         memory_before_unload = self.stats_memory_used()
+        if torch.cuda.is_available():
+            try:
+                device = getattr(self.accelerator, "device", None)
+                alloc = torch.cuda.memory_allocated(device=device) / 1024**3
+                reserved = torch.cuda.memory_reserved(device=device) / 1024**3
+                logger.debug(f"{rank_prefix}Pre-unload CUDA memory: allocated={alloc:.2f} GB, reserved={reserved:.2f} GB")
+            except Exception:
+                logger.debug(f"{rank_prefix}Pre-unload CUDA memory stats unavailable.", exc_info=True)
         pre_msg = f"{rank_prefix}Unloading text encoders, as they are not being trained."
         logger.info(pre_msg)
         logger.debug(pre_msg)
@@ -2381,6 +2389,14 @@ class Trainer:
                 backend["text_embed_cache"].pipeline = None
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
+        if torch.cuda.is_available():
+            try:
+                device = getattr(self.accelerator, "device", None)
+                alloc = torch.cuda.memory_allocated(device=device) / 1024**3
+                reserved = torch.cuda.memory_reserved(device=device) / 1024**3
+                logger.debug(f"{rank_prefix}Post-unload CUDA memory: allocated={alloc:.2f} GB, reserved={reserved:.2f} GB")
+            except Exception:
+                logger.debug(f"{rank_prefix}Post-unload CUDA memory stats unavailable.", exc_info=True)
         memory_saved = memory_after_unload - memory_before_unload
         post_msg = f"{rank_prefix}After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
         logger.info(post_msg)
