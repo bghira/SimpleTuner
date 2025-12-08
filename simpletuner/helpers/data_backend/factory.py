@@ -1730,21 +1730,20 @@ class FactoryRegistry:
 
                 info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
-            main_process_context = (
-                self.accelerator.main_process_first()
-                if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
-                else nullcontext()
-            )
-            with main_process_context:
-                self.model.get_pipeline(load_base_model=False)
-                logger.debug(f"rank {get_rank()} is computing the null embed")
-                init_backend["text_embed_cache"].encode_dropout_caption()
-                logger.debug(f"rank {get_rank()} has completed computing the null embed")
+                main_process_context = (
+                    self.accelerator.main_process_first()
+                    if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
+                    else nullcontext()
+                )
+                with main_process_context:
+                    logger.debug(f"rank {get_rank()} is computing the null embed")
+                    init_backend["text_embed_cache"].encode_dropout_caption()
+                    logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
-                logger.debug(f"rank {get_rank()} is waiting for other processes")
-                if self._is_multi_process():
-                    self.accelerator.wait_for_everyone()
-                logger.debug(f"rank {get_rank()} is continuing")
+                    logger.debug(f"rank {get_rank()} is waiting for other processes")
+                    if self._is_multi_process():
+                        self.accelerator.wait_for_everyone()
+                    logger.debug(f"rank {get_rank()} is continuing")
 
             if self.args.caption_dropout_probability == 0.0:
                 warning_log(
@@ -2676,7 +2675,6 @@ class FactoryRegistry:
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
-            self.model.get_pipeline(load_base_model=False)
             prompt_records = []
             key_type = self.model.text_embed_cache_key()
             dataset_id = init_backend["id"]
