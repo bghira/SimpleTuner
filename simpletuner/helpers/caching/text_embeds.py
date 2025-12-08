@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from threading import Thread
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
+from weakref import WeakSet
 
 import torch
 from tqdm import tqdm
@@ -38,6 +39,7 @@ class PromptCacheRecord(TypedDict, total=False):
 
 class TextEmbeddingCache(WebhookMixin):
     prompt_records: List[PromptCacheRecord] = []
+    _instances: "WeakSet[TextEmbeddingCache]" = WeakSet()
 
     def __init__(
         self,
@@ -96,6 +98,11 @@ class TextEmbeddingCache(WebhookMixin):
         self.batch_write_thread.start()
         self.webhook_progress_interval = webhook_progress_interval
         self.disabled = False  # whether to skip or not at training time.
+        TextEmbeddingCache._instances.add(self)
+
+    @classmethod
+    def active_caches(cls) -> list["TextEmbeddingCache"]:
+        return [cache for cache in cls._instances if cache is not None]
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
