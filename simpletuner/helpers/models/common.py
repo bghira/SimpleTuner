@@ -53,7 +53,6 @@ from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
-from simpletuner.helpers.training.multi_process import should_log
 
 logger.setLevel(logging._nameToLevel.get(str(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO")).upper(), logging.INFO))
 
@@ -1337,15 +1336,6 @@ class ModelFoundation(ABC):
             return
         self.load_text_tokenizer()
 
-        # Only move text encoders to the accelerator when needed (training or main rank).
-        allow_device_move = move_to_device
-        try:
-            is_main = getattr(self.accelerator, "is_main_process", True)
-        except Exception:
-            is_main = True
-        if not getattr(self.config, "train_text_encoder", False) and not is_main:
-            allow_device_move = False
-
         text_encoder_idx = 0
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             for (
@@ -1394,13 +1384,11 @@ class ModelFoundation(ABC):
                 if self._ramtorch_text_encoders_requested():
                     self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
 
-                if allow_device_move and text_encoder_precision in ["no_change", None]:
+                if move_to_device and text_encoder_precision in ["no_change", None]:
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
                     )
-                elif not allow_device_move:
-                    logger.debug("Keeping text encoder %s on CPU for non-training rank.", text_encoder_idx)
                 setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
                 self.text_encoders.append(text_encoder)
 
@@ -1409,199 +1397,26 @@ class ModelFoundation(ABC):
             return self.text_encoders[index] if index in self.text_encoders else None
 
     def unload_text_encoder(self):
-        def _cuda_tensor_stats(label: str, module: torch.nn.Module) -> tuple[int, int]:
-            """Return (count, bytes) of CUDA tensors attached to a module."""
-            count = 0
-            bytes_total = 0
-            for tensor in list(module.parameters()) + list(module.buffers()):
-                if torch.is_tensor(tensor) and tensor.device.type == "cuda":
-                    count += 1
-                    try:
-                        bytes_total += tensor.numel() * tensor.element_size()
-                    except Exception:
-                        pass
-            return count, bytes_total
-
-        def _has_cuda_tensors(module: torch.nn.Module) -> bool:
-            count, _ = _cuda_tensor_stats("module", module)
-            return count > 0
-
-        def _summarise_devices(module: torch.nn.Module) -> dict[str, int]:
-            devices: dict[str, int] = {}
-            for tensor in list(module.parameters()) + list(module.buffers()):
-                if not torch.is_tensor(tensor):
-                    continue
-                key = str(tensor.device)
-                devices[key] = devices.get(key, 0) + 1
-            return devices
-
-        def _log_cache_encoder_stats(cache_label: str, encoders: list | None):
-            if not encoders:
-                return
-            for idx, encoder in enumerate(encoders):
-                if encoder is None:
-                    continue
-                count, bytes_total = _cuda_tensor_stats(f"{cache_label}_te{idx+1}", encoder)
-                if count:
-                    logger.warning(
-                        "%s encoder %s has %s CUDA tensors (~%.2f MB).",
-                        cache_label,
-                        idx + 1,
-                        count,
-                        bytes_total / (1024 * 1024),
-                    )
-                    devices = _summarise_devices(encoder)
-                    logger.warning("%s encoder %s device distribution: %s", cache_label, idx + 1, devices)
-
-        def _log_cuda_owners(label: str, module: object):
-            if module is None:
-                return
-            try:
-                params = list(module.parameters()) if hasattr(module, "parameters") else []
-                buffers = list(module.buffers()) if hasattr(module, "buffers") else []
-            except Exception:
-                params, buffers = [], []
-            tensors = params + buffers
-            count = 0
-            bytes_total = 0
-            devices: dict[str, int] = {}
-            for tensor in tensors:
-                if not torch.is_tensor(tensor) or tensor.device.type != "cuda":
-                    continue
-                count += 1
-                try:
-                    bytes_total += tensor.numel() * tensor.element_size()
-                except Exception:
-                    pass
-                key = str(tensor.device)
-                devices[key] = devices.get(key, 0) + 1
-            if count:
-                logger.warning(
-                    "%s still holds %s CUDA tensors (~%.2f MB). Devices: %s",
-                    label,
-                    count,
-                    bytes_total / (1024 * 1024),
-                    devices,
-                )
-
-        def _nuke_module_storage(module: torch.nn.Module):
-            """Forcibly release all CUDA tensor storage, regardless of external references."""
-            for param in module.parameters():
-                if param.device.type == "cuda":
-                    try:
-                        param.data.storage().resize_(0)
-                    except Exception:
-                        pass
-            for buf in module.buffers():
-                if buf.device.type == "cuda":
-                    try:
-                        buf.storage().resize_(0)
-                    except Exception:
-                        pass
-
         if self.text_encoders is not None:
             for idx, text_encoder in enumerate(self.text_encoders):
                 if text_encoder is None:
-                    logger.debug("Text encoder %s is already unloaded.", idx + 1)
                     continue
-                pre_count, pre_bytes = _cuda_tensor_stats(f"te{idx+1}", text_encoder)
-                device_summary = _summarise_devices(text_encoder)
-                if pre_count:
-                    logger.debug(
-                        "Before unload, text encoder %s has %s CUDA tensors (~%.2f MB).",
-                        idx + 1,
-                        pre_count,
-                        pre_bytes / (1024 * 1024),
-                    )
-                    logger.debug("Text encoder %s device distribution: %s", idx + 1, device_summary)
                 if hasattr(text_encoder, "to"):
-                    # Nuke CUDA storage first to force-release memory regardless of external references.
-                    logger.debug("Nuking text encoder %s CUDA storage.", idx + 1)
-                    _nuke_module_storage(text_encoder)
-                    # Then move to meta device to clean up the module state.
+                    # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
                     try:
-                        logger.debug("Moving text encoder %s to meta device.", idx + 1)
                         text_encoder.to("meta")
                     except Exception as exc:
                         logger.debug("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
                         text_encoder.to("cpu")
-                    # If any params remain on CUDA (some modules can ignore .to("meta")), force a CPU move.
-                    if _has_cuda_tensors(text_encoder):
-                        logger.warning("Text encoder %s still on CUDA after meta attempt; moving to CPU.", idx + 1)
-                        text_encoder.to("cpu")
-                post_count, post_bytes = _cuda_tensor_stats(f"te{idx+1}", text_encoder)
-                if post_count:
-                    logger.warning(
-                        "After unload, text encoder %s still has %s CUDA tensors (~%.2f MB).",
-                        idx + 1,
-                        post_count,
-                        post_bytes / (1024 * 1024),
-                    )
-                else:
-                    logger.debug("After unload, text encoder %s has no CUDA tensors.", idx + 1)
                 setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
         if self.tokenizers is not None:
             self.tokenizers = None
-        # Drop references held by any pipeline instances to ensure full release.
-        pipeline_refs = []
-        if hasattr(self, "pipelines") and isinstance(self.pipelines, dict):
-            pipeline_refs.extend(self.pipelines.values())
-        if hasattr(self, "pipeline") and self.pipeline is not None:
-            pipeline_refs.append(self.pipeline)
-        if pipeline_refs:
-            for pipeline in pipeline_refs:
-                for attr, _ in self.TEXT_ENCODER_CONFIGURATION.items():
-                    if hasattr(pipeline, attr):
-                        setattr(pipeline, attr, None)
-                # Clear tokenizers on the pipeline if present
-                for attr in [k.replace("text_encoder", "tokenizer") for k in self.TEXT_ENCODER_CONFIGURATION.keys()]:
-                    if hasattr(pipeline, attr):
-                        setattr(pipeline, attr, None)
-        # Also clear references held by text embedding caches in StateTracker.
-        try:
-            from simpletuner.helpers.training.state_tracker import StateTracker
-
-            for backend_id, backend in StateTracker.get_data_backends().items():
-                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
-                if cache is None:
-                    continue
-                _log_cache_encoder_stats(f"text_embed_cache[{backend_id}]", getattr(cache, "text_encoders", None))
-                encoders = getattr(cache, "text_encoders", None)
-                if encoders:
-                    for idx, encoder in enumerate(encoders):
-                        if encoder is None or not hasattr(encoder, "to"):
-                            continue
-                        try:
-                            encoder.to("meta")
-                        except Exception:
-                            encoder.to("cpu")
-                        if _has_cuda_tensors(encoder):
-                            logger.warning("Text embed cache encoder %s still on CUDA; forcing CPU move.", idx + 1)
-                            encoder.to("cpu")
-                    cache.text_encoders = None
-                if getattr(cache, "pipeline", None) is not None:
-                    for attr, _ in self.TEXT_ENCODER_CONFIGURATION.items():
-                        if hasattr(cache.pipeline, attr):
-                            setattr(cache.pipeline, attr, None)
-                    cache.pipeline = None
-                # Also drop any cached pipeline held on the cache to avoid lazy loads.
-                if hasattr(cache, "pipeline"):
-                    cache.pipeline = None
-        except Exception:
-            logger.debug("Failed to clear cached text encoders from StateTracker.", exc_info=True)
-
-        # Snapshot any remaining CUDA owners after unload for diagnostics.
-        try:
-            _log_cuda_owners("model", getattr(self, "model", None))
-            _log_cuda_owners("controlnet", getattr(self, "controlnet", None))
-            _log_cuda_owners("vae", getattr(self, "vae", None))
-            _log_cuda_owners("active_pipeline", getattr(self, "pipeline", None))
-            if hasattr(self, "pipelines") and isinstance(self.pipelines, dict):
-                for pipe_key, pipe_val in self.pipelines.items():
-                    _log_cuda_owners(f"cached_pipeline[{pipe_key}]", pipe_val)
-        except Exception:
-            logger.debug("Failed to log CUDA owners after text encoder unload.", exc_info=True)
+        # Drop cached pipelines that may still hold text encoder references.
+        if hasattr(self, "pipelines") and getattr(self, "pipelines"):
+            self.pipelines.clear()
+        if hasattr(self, "pipeline"):
+            self.pipeline = None
 
     def unload(self):
         """
@@ -1850,32 +1665,11 @@ class ModelFoundation(ABC):
             return self.unwrap_model(model=self.model if base_model else None)
         return self.controlnet if self.config.controlnet and not base_model else self.model
 
-    def _should_cache_pipeline(self) -> bool:
-        """
-        Determine whether this process should retain pipeline instances.
-
-        Only the primary rank caches pipelines to avoid long-lived references
-        to heavyweight components (e.g., text encoder, VAE) on secondary ranks.
-        """
-        try:
-            if hasattr(self.accelerator, "is_main_process"):
-                return bool(self.accelerator.is_main_process)
-        except Exception:
-            pass
-        try:
-            return should_log()
-        except Exception:
-            return True
-
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
         """
-        cache_pipeline = self._should_cache_pipeline()
-        if not cache_pipeline and getattr(self, "pipelines", None):
-            # Clear stale cached pipelines on non-primary ranks to free memory.
-            self.pipelines.clear()
-        active_pipelines = getattr(self, "pipelines", {}) if cache_pipeline else {}
+        active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
             pipeline_instance = active_pipelines[pipeline_type]
             setattr(
@@ -2087,8 +1881,7 @@ class ModelFoundation(ABC):
                 pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
             else:
                 raise
-        if cache_pipeline:
-            self.pipelines[pipeline_type] = pipeline_instance
+        self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
 

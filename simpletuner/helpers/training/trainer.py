@@ -1770,14 +1770,6 @@ class Trainer:
         for initializer in initializers:
             initializer()
             self._exit_on_signal()
-            # Memory checkpoint after each init step
-            if torch.cuda.is_available():
-                try:
-                    device = getattr(self.accelerator, "device", None)
-                    alloc = torch.cuda.memory_allocated(device=device) / 1024**3
-                    logging.getLogger().info(f"[Memory] After {initializer.__name__}: {alloc:.2f} GB on {device}")
-                except Exception:
-                    pass
 
     def _get_noise_schedule(self):
         self.config, scheduler = self.model.setup_training_noise_schedule()
@@ -2346,23 +2338,8 @@ class Trainer:
     def stats_memory_used(self):
         # Grab GPU memory used:
         if torch.cuda.is_available():
-            device = getattr(self.accelerator, "device", None)
-            try:
-                torch.cuda.synchronize(device=device)
-            except Exception:
-                try:
-                    torch.cuda.synchronize()
-                except Exception:
-                    pass
-            try:
-                curent_memory_allocated = torch.cuda.memory_allocated(device=device) / 1024**3
-            except Exception:
-                curent_memory_allocated = torch.cuda.memory_allocated() / 1024**3
+            curent_memory_allocated = torch.cuda.memory_allocated() / 1024**3
         elif torch.backends.mps.is_available():
-            try:
-                torch.mps.synchronize()
-            except Exception:
-                pass
             curent_memory_allocated = torch.mps.current_allocated_memory() / 1024**3
         else:
             logger.warning("CUDA, ROCm, or Apple MPS not detected here. We cannot report VRAM reductions.")
@@ -2373,23 +2350,9 @@ class Trainer:
     def init_unload_text_encoder(self):
         if self.config.model_type != "full" and self.config.train_text_encoder:
             return
-        try:
-            rank_prefix = f"(Rank: {get_rank()}) "
-        except Exception:
-            rank_prefix = ""
         memory_before_unload = self.stats_memory_used()
-        if torch.cuda.is_available():
-            try:
-                device = getattr(self.accelerator, "device", None)
-                alloc = torch.cuda.memory_allocated(device=device) / 1024**3
-                reserved = torch.cuda.memory_reserved(device=device) / 1024**3
-                logger.debug(f"{rank_prefix}Pre-unload CUDA memory: allocated={alloc:.2f} GB, reserved={reserved:.2f} GB")
-            except Exception:
-                logger.debug(f"{rank_prefix}Pre-unload CUDA memory stats unavailable.", exc_info=True)
-        pre_msg = f"{rank_prefix}Unloading text encoders, as they are not being trained."
-        logger.info(pre_msg)
-        logger.debug(pre_msg)
-        logging.getLogger().info(pre_msg)
+        if self.accelerator.is_main_process:
+            logger.info("Unloading text encoders, as they are not being trained.")
         self.model.unload_text_encoder()
         for backend_id, backend in StateTracker.get_data_backends().items():
             if "text_embed_cache" in backend:
@@ -2397,19 +2360,8 @@ class Trainer:
                 backend["text_embed_cache"].pipeline = None
         reclaim_memory()
         memory_after_unload = self.stats_memory_used()
-        if torch.cuda.is_available():
-            try:
-                device = getattr(self.accelerator, "device", None)
-                alloc = torch.cuda.memory_allocated(device=device) / 1024**3
-                reserved = torch.cuda.memory_reserved(device=device) / 1024**3
-                logger.debug(f"{rank_prefix}Post-unload CUDA memory: allocated={alloc:.2f} GB, reserved={reserved:.2f} GB")
-            except Exception:
-                logger.debug(f"{rank_prefix}Post-unload CUDA memory stats unavailable.", exc_info=True)
         memory_saved = memory_after_unload - memory_before_unload
-        post_msg = f"{rank_prefix}After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM."
-        logger.info(post_msg)
-        logger.debug(post_msg)
-        logging.getLogger().info(post_msg)
+        logger.info(f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM.")
 
     def init_precision(self, preprocessing_models_only: bool = False, ema_only: bool = False):
         self.config.enable_adamw_bf16 = True if self.config.weight_dtype == torch.bfloat16 else False

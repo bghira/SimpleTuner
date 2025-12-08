@@ -1916,12 +1916,6 @@ class Validation:
         if self.model.pipeline is not None:
             del self.model.pipeline
             self.model.pipeline = None
-        # Ensure validation pipelines don't retain text encoders on non-main ranks.
-        if hasattr(self.model, "unload_text_encoder"):
-            try:
-                self.model.unload_text_encoder()
-            except Exception:
-                logger.debug("Validation cleanup failed to unload text encoders.", exc_info=True)
         self._active_pipeline_type = None
 
     def _has_adapter_variants(self) -> bool:

@@ -201,7 +201,8 @@ class PixartSigma(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        prompt_embeds, prompt_attention_mask, _, _ = pipeline.encode_prompt(
             prompt=prompts,
             prompt_2=prompts,
             device=self.accelerator.device,

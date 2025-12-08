@@ -761,7 +761,6 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
     """Move text encoders to the target device."""
     if text_encoders is None or (not args.offload_during_startup and not force_move):
         return
-    target_dtype = getattr(args, "weight_dtype", None)
     # we'll move text encoder only if their precision arg is no_change
     # otherwise, we assume the user has already moved them to the correct device due to quantisation.
     te_idx = -1  # these are 0-indexed, and we increment it immediately to 0.
@@ -778,14 +777,8 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
         if text_encoder.device == target_device:
             logger.info(f"Text encoder {te_idx + 1} already on target device")
             continue
-        logger.info(
-            f"Moving text encoder {te_idx + 1} to {target_device} from {text_encoder.device}"
-            + (f" with dtype={target_dtype}" if target_dtype is not None else "")
-        )
-        if target_dtype is not None:
-            text_encoder.to(target_device, dtype=target_dtype)
-        else:
-            text_encoder.to(target_device)
+        logger.info(f"Moving text encoder {te_idx + 1} to {target_device} from {text_encoder.device}")
+        text_encoder.to(target_device)
 
     return text_encoders
 
@@ -1737,32 +1730,16 @@ class FactoryRegistry:
 
                 info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
-                main_process_context = (
-                    self.accelerator.main_process_first()
-                    if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
-                    else nullcontext()
-                )
-                with main_process_context:
-                    # Avoid loading the full base model during text-embed setup; we only need tokenization.
-                    if torch.cuda.is_available():
-                        _mem_before = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
-                        logger.info(
-                            f"rank {get_rank()} BEFORE get_pipeline: {_mem_before:.2f} GB on {self.accelerator.device}"
-                        )
-                    self.model.get_pipeline(load_base_model=False)
-                    if torch.cuda.is_available():
-                        _mem_after = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
-                        logger.info(
-                            f"rank {get_rank()} AFTER get_pipeline: {_mem_after:.2f} GB on {self.accelerator.device}"
-                        )
-                    logger.debug(f"rank {get_rank()} is computing the null embed")
-                    init_backend["text_embed_cache"].encode_dropout_caption()
-                    if torch.cuda.is_available():
-                        _mem_after_encode = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
-                        logger.info(
-                            f"rank {get_rank()} AFTER encode_dropout_caption: {_mem_after_encode:.2f} GB on {self.accelerator.device}"
-                        )
-                    logger.debug(f"rank {get_rank()} has completed computing the null embed")
+            main_process_context = (
+                self.accelerator.main_process_first()
+                if self._is_multi_process() and hasattr(self.accelerator, "main_process_first")
+                else nullcontext()
+            )
+            with main_process_context:
+                self.model.get_pipeline(load_base_model=False)
+                logger.debug(f"rank {get_rank()} is computing the null embed")
+                init_backend["text_embed_cache"].encode_dropout_caption()
+                logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
                 if self._is_multi_process():
@@ -2699,18 +2676,7 @@ class FactoryRegistry:
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
-            # Avoid loading base model weights during cache precomputation; only tokenizer/encoders are needed.
-            if torch.cuda.is_available():
-                _mem_before = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
-                logger.info(
-                    f"rank {get_rank()} BEFORE get_pipeline (precompute): {_mem_before:.2f} GB on {self.accelerator.device}"
-                )
             self.model.get_pipeline(load_base_model=False)
-            if torch.cuda.is_available():
-                _mem_after = torch.cuda.memory_allocated(self.accelerator.device) / 1024**3
-                logger.info(
-                    f"rank {get_rank()} AFTER get_pipeline (precompute): {_mem_after:.2f} GB on {self.accelerator.device}"
-                )
             prompt_records = []
             key_type = self.model.text_embed_cache_key()
             dataset_id = init_backend["id"]
