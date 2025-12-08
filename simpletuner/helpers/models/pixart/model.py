@@ -201,18 +201,31 @@ class PixartSigma(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
-        prompt_embeds, prompt_attention_mask, _, _ = pipeline.encode_prompt(
-            prompt=prompts,
-            prompt_2=prompts,
-            device=self.accelerator.device,
-            max_sequence_length=min(self.config.tokenizer_max_length, 300),
-            num_images_per_prompt=1,
-            do_classifier_free_guidance=False,
-            clean_caption=True,
+        tokenizer = self.tokenizers[0]
+        text_encoder = self.text_encoders[0]
+        max_length = min(self.config.tokenizer_max_length, 300)
+
+        # Clean captions similarly to the pipeline encode flow.
+        processed_prompts = (
+            tokenizer._text_preprocessing(prompts, clean_caption=True)
+            if hasattr(tokenizer, "_text_preprocessing")
+            else prompts
         )
+
+        text_inputs = tokenizer(
+            processed_prompts,
+            padding="max_length",
+            max_length=max_length,
+            truncation=True,
+            add_special_tokens=True,
+            return_tensors="pt",
+        )
+        input_ids = text_inputs.input_ids.to(self.accelerator.device)
+        prompt_attention_mask = text_inputs.attention_mask.to(self.accelerator.device)
+
+        prompt_embeds = text_encoder(input_ids=input_ids, attention_mask=prompt_attention_mask)[0]
+
         if self.config.t5_padding == "zero":
-            # we can zero the padding tokens if we're just going to mask them later anyway.
             prompt_embeds = prompt_embeds * prompt_attention_mask.to(device=prompt_embeds.device).unsqueeze(-1).expand(
                 prompt_embeds.shape
             )

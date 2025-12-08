@@ -1864,7 +1864,7 @@ class Validation:
         )
         self.model.pipeline = self.model.get_pipeline(
             pipeline_type=pipeline_type,
-            load_base_model=False,
+            load_base_model=True,
         )
         self._active_pipeline_type = pipeline_type
 
