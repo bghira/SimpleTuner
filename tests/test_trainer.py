@@ -1631,6 +1631,7 @@ class TestTrainer(unittest.TestCase):
         trainer.init_trackers = Mock()
         trainer._train_initial_msg = Mock()
         trainer._get_trainable_parameters = Mock(return_value=[])
+        trainer.iteration_tracker = Mock()
 
         received_accumulate_args = []
         accumulate_call_count = 0

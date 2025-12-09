@@ -30,6 +30,16 @@
                     <div data-progress-lr>N/A</div>
                 </div>
             </div>
+            <div class="row mt-3 text-muted small">
+                <div class="col-6 col-md-3">
+                    <div class="fw-semibold text-dark">Step Speed</div>
+                    <div data-progress-step-speed>N/A</div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="fw-semibold text-dark">Samples/sec</div>
+                    <div data-progress-samples-per-sec>N/A</div>
+                </div>
+            </div>
         </div>
     </div>
 </template>
@@ -608,6 +618,8 @@
                 totalEpochs: progressCard.querySelector('[data-progress-total-epochs]'),
                 loss: progressCard.querySelector('[data-progress-loss]'),
                 lr: progressCard.querySelector('[data-progress-lr]'),
+                stepSpeed: progressCard.querySelector('[data-progress-step-speed]'),
+                samplesPerSec: progressCard.querySelector('[data-progress-samples-per-sec]'),
             };
             return progressCard;
         }
@@ -636,6 +648,8 @@
             totalEpochs: progressCard.querySelector('[data-progress-total-epochs]'),
             loss: progressCard.querySelector('[data-progress-loss]'),
             lr: progressCard.querySelector('[data-progress-lr]'),
+            stepSpeed: progressCard.querySelector('[data-progress-step-speed]'),
+            samplesPerSec: progressCard.querySelector('[data-progress-samples-per-sec]'),
         };
 
         return progressCard;
@@ -711,6 +725,37 @@
         return Number.isFinite(num) ? num : null;
     }
 
+    function firstNumber(...candidates) {
+        for (const candidate of candidates) {
+            const numeric = toNumber(candidate);
+            if (numeric !== null) {
+                return numeric;
+            }
+        }
+        return null;
+    }
+
+    function formatStepSpeed(seconds) {
+        const value = toNumber(seconds);
+        if (value === null || value <= 0) {
+            return 'N/A';
+        }
+        const precision = value >= 10 ? 1 : 2;
+        return `${value.toFixed(precision)} s/step`;
+    }
+
+    function formatSamplesPerSecond(samples) {
+        const value = toNumber(samples);
+        if (value === null || value <= 0) {
+            return 'N/A';
+        }
+        if (value >= 1000) {
+            return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
+        }
+        const precision = value >= 10 ? 1 : 2;
+        return value.toFixed(precision);
+    }
+
     function normalizeProgressPayload(payload) {
         if (payload && payload.reset) {
             return { reset: true, status: payload.status, job_id: payload.job_id };
@@ -757,48 +802,87 @@
             };
         }
 
-        let currentStep = toNumber(progress.current);
-        if (currentStep === null) {
-            currentStep = toNumber(metrics.current_step || metrics.global_step || metrics.step);
-        }
-        if (currentStep === null && payload.current_step !== undefined) {
-            currentStep = toNumber(payload.current_step);
-        }
+        // Use firstNumber to handle 0 values correctly (|| treats 0 as falsy)
+        let currentStep = firstNumber(
+            progress.current,
+            metrics.current_step, metrics.global_step, metrics.step,
+            payload.step, payload.current_step, payload.current
+        );
 
-        let totalSteps = toNumber(progress.total);
-        if (totalSteps === null) {
-            totalSteps = toNumber(metrics.total_steps || metrics.total_num_steps || metrics.max_steps);
-        }
-        if (totalSteps === null && payload.total_num_steps !== undefined) {
-            totalSteps = toNumber(payload.total_num_steps);
-        }
+        let totalSteps = firstNumber(
+            progress.total,
+            metrics.total_steps, metrics.total_num_steps, metrics.max_steps,
+            payload.total_steps, payload.total_num_steps, payload.total
+        );
 
-        let percent = toNumber(progress.percent);
-        if (percent === null) {
-            percent = toNumber(metrics.percent);
-        }
+        let percent = firstNumber(
+            progress.percent,
+            metrics.percent,
+            payload.percent
+        );
         if (percent === null && currentStep !== null && totalSteps) {
             percent = (currentStep / totalSteps) * 100;
         }
 
-        let epoch = toNumber(metrics.epoch || metrics.current_epoch);
-        if (epoch === null && payload.current_epoch !== undefined) {
-            epoch = toNumber(payload.current_epoch);
-        }
+        let epoch = firstNumber(
+            metrics.epoch, metrics.current_epoch,
+            payload.epoch, payload.current_epoch
+        );
 
-        let totalEpochs = toNumber(metrics.total_epochs || metrics.total_num_epochs || metrics.final_epoch);
-        if (totalEpochs === null && payload.total_num_epochs !== undefined) {
-            totalEpochs = toNumber(payload.total_num_epochs);
-        }
+        let totalEpochs = firstNumber(
+            metrics.total_epochs, metrics.total_num_epochs, metrics.final_epoch,
+            payload.total_epochs, payload.total_num_epochs
+        );
 
-        let loss = metrics.loss !== undefined ? toNumber(metrics.loss) : null;
-        if (loss === null && metrics.train_loss !== undefined) {
-            loss = toNumber(metrics.train_loss);
-        }
+        let loss = firstNumber(
+            metrics.loss, metrics.train_loss,
+            payload.loss
+        );
 
-        let learningRate = metrics.learning_rate !== undefined ? toNumber(metrics.learning_rate) : null;
-        if (learningRate === null && metrics.lr !== undefined) {
-            learningRate = toNumber(metrics.lr);
+        let learningRate = firstNumber(
+            metrics.learning_rate, metrics.lr,
+            payload.learning_rate, payload.lr
+        );
+
+        const stepSpeedSeconds = firstNumber(
+            progress.step_speed_seconds,
+            progress.step_time_seconds,
+            metrics.iteration_step_time_seconds,
+            metrics.step_speed_seconds,
+            metrics.step_time_seconds,
+            metrics.seconds_per_step,
+            payload.step_speed_seconds
+        );
+        let stepsPerSecond = firstNumber(
+            progress.steps_per_second,
+            metrics.steps_per_second,
+            metrics.iterations_per_second,
+            payload.steps_per_second
+        );
+        if (stepsPerSecond === null && stepSpeedSeconds && stepSpeedSeconds > 0) {
+            stepsPerSecond = 1 / stepSpeedSeconds;
+        }
+        const effectiveBatchSize = firstNumber(
+            metrics.effective_batch_size,
+            metrics.total_batch_size,
+            metrics.total_batch,
+            metrics.batch_size,
+            payload.effective_batch_size,
+            payload.total_batch_size
+        );
+        let samplesPerSecond = firstNumber(
+            progress.samples_per_second,
+            metrics.samples_per_second,
+            payload.samples_per_second
+        );
+        if (
+            samplesPerSecond === null &&
+            stepsPerSecond &&
+            stepsPerSecond > 0 &&
+            effectiveBatchSize &&
+            effectiveBatchSize > 0
+        ) {
+            samplesPerSecond = stepsPerSecond * effectiveBatchSize;
         }
 
         const messageType = String(payload.message_type || payload.type || '').toLowerCase();
@@ -817,6 +901,10 @@
             lr: learningRate,
             label: progress.label || payload.title || payload.message || payload.headline || '',
             raw: payload,
+            step_speed_seconds: stepSpeedSeconds,
+            steps_per_second: stepsPerSecond,
+            samples_per_second: samplesPerSecond,
+            effective_batch_size: effectiveBatchSize,
         };
     }
 
@@ -1006,6 +1094,10 @@
             epoch: progress.epoch ?? previous.epoch ?? 0,
             loss: progress.loss ?? previous.loss ?? 'N/A',
             learning_rate: progress.lr ?? previous.learning_rate ?? 'N/A',
+            step_speed_seconds: progress.step_speed_seconds ?? previous.step_speed_seconds ?? null,
+            steps_per_second: progress.steps_per_second ?? previous.steps_per_second ?? null,
+            samples_per_second: progress.samples_per_second ?? previous.samples_per_second ?? null,
+            effective_batch_size: progress.effective_batch_size ?? previous.effective_batch_size ?? null,
         };
 
         // Debug logging removed to prevent console spam
@@ -1064,14 +1156,17 @@
         }
         lastCardUpdate = now;
 
-        const messageType = String(progress.raw?.message_type || '').toLowerCase();
-        const normalizedType = messageType.replace(/\./g, '_');
+        // Check progress.type first (from normalizeProgressPayload), then fall back to raw payload
+        const eventType = String(progress.type || progress.raw?.type || progress.raw?.message_type || '').toLowerCase();
         const progressType = resolveProgressTypeFromPayload(progress.raw);
         const isStartupProgress = false;
         const startupContext = startupStatusActive || hasActiveStartupStages();
         const percent = clampPercent(progress.percentage);
 
-        if (isStartupProgress || (startupContext && normalizedType !== 'training.progress')) {
+        // Only hide card during startup if this is NOT a training.progress event
+        // training.progress events should always reveal the card (they indicate actual training)
+        const isTrainingProgressEvent = eventType === 'training.progress';
+        if (isStartupProgress || (startupContext && !isTrainingProgressEvent)) {
             syncTrainerProgress(progress, jobId, { revealCard: false, forceStartup: true });
             setStatus('Initialising', progress.raw?.severity);
             return;
@@ -1131,6 +1226,21 @@
         const lrText = typeof progress.lr === 'number' ? progress.lr.toExponential(2) : 'N/A';
         if (elements.lr && elements.lr.textContent !== lrText) {
             elements.lr.textContent = lrText;
+        }
+
+        const stepSpeedText = formatStepSpeed(
+            progress.step_speed_seconds ??
+                (progress.steps_per_second && progress.steps_per_second > 0
+                    ? 1 / progress.steps_per_second
+                    : null)
+        );
+        if (elements.stepSpeed && elements.stepSpeed.textContent !== stepSpeedText) {
+            elements.stepSpeed.textContent = stepSpeedText;
+        }
+
+        const samplesPerSecText = formatSamplesPerSecond(progress.samples_per_second);
+        if (elements.samplesPerSec && elements.samplesPerSec.textContent !== samplesPerSecText) {
+            elements.samplesPerSec.textContent = samplesPerSecText;
         }
 
         setStatus('Running', progress.raw?.severity);
@@ -1677,6 +1787,16 @@
 
                         // Process progress data - the API returns it with 'step' instead of 'current_step'
                         if (progressPayload) {
+                            // Extract nested metrics (rate statistics are stored under progressPayload.metrics)
+                            const nestedMetrics = progressPayload.metrics || {};
+                            // Extract rate statistics
+                            const stepsPerSec = nestedMetrics.steps_per_second;
+                            const effBatchSize = nestedMetrics.effective_batch_size || nestedMetrics.total_batch_size;
+                            // Calculate samples_per_second if not provided
+                            let samplesPerSec = nestedMetrics.samples_per_second;
+                            if (samplesPerSec == null && stepsPerSec != null && effBatchSize != null) {
+                                samplesPerSec = stepsPerSec * effBatchSize;
+                            }
                             // Convert backend format to frontend format
                             const progressData = {
                                 percentage: progressPayload.percent || 0,
@@ -1686,6 +1806,10 @@
                                 total_epochs: progressPayload.total_epochs || 0,
                                 loss: progressPayload.loss,
                                 lr: progressPayload.learning_rate,
+                                step_speed_seconds: nestedMetrics.step_speed_seconds || nestedMetrics.seconds_per_step || nestedMetrics.iteration_step_time_seconds,
+                                steps_per_second: stepsPerSec,
+                                samples_per_second: samplesPerSec,
+                                effective_batch_size: effBatchSize,
                                 raw: { job_id: data.job_id }
                             };
                             console.log('[SSE-DEBUG] Converted progress data:', progressData);

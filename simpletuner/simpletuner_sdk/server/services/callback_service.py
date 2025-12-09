@@ -223,7 +223,11 @@ class CallbackService:
         else:
             merged.setdefault("loss", None)
 
-        lr = _maybe_float(metrics.pop("learning_rate", None) or metrics.pop("lr", None))
+        # Pop both values to prevent lr from being included in merged["metrics"]
+        # Using separate pops instead of `or` to ensure both are removed regardless of values
+        learning_rate_val = _maybe_float(metrics.pop("learning_rate", None))
+        lr_val = _maybe_float(metrics.pop("lr", None))
+        lr = learning_rate_val if learning_rate_val is not None else lr_val
         if lr is not None:
             merged["learning_rate"] = lr
         else:
@@ -399,6 +403,9 @@ class CallbackService:
 
         if event.type == EventType.TRAINING_STATUS:
             self._handle_status_event(event, job_id)
+            # Also process progress data if present (e.g., rate statistics)
+            if event.progress:
+                self._handle_progress_event(event, job_id, job_changed)
             return
 
         if event.type == EventType.TRAINING_SUMMARY:

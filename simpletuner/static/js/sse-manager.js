@@ -164,25 +164,56 @@
 
             var jobId = payload.job_id || extras.job_id || null;
 
+            // Check multiple locations for step: progress.current, extras, then top-level payload
             var currentStep = toNumber(progress.current);
             if (currentStep === null) {
-                currentStep = toNumber(extras.current_step || extras.global_step || extras.step);
+                currentStep = toNumber(extras.current_step);
             }
-            if (currentStep === null && payload.current_step !== undefined) {
+            if (currentStep === null) {
+                currentStep = toNumber(extras.global_step);
+            }
+            if (currentStep === null) {
+                currentStep = toNumber(extras.step);
+            }
+            // Backend sends 'step' at top level, not 'current_step'
+            if (currentStep === null) {
+                currentStep = toNumber(payload.step);
+            }
+            if (currentStep === null) {
                 currentStep = toNumber(payload.current_step);
             }
+            if (currentStep === null) {
+                currentStep = toNumber(payload.current);
+            }
 
+            // Check multiple locations for total_steps
             var totalSteps = toNumber(progress.total);
             if (totalSteps === null) {
-                totalSteps = toNumber(extras.total_steps || extras.total_num_steps || extras.max_steps);
+                totalSteps = toNumber(extras.total_steps);
             }
-            if (totalSteps === null && payload.total_num_steps !== undefined) {
+            if (totalSteps === null) {
+                totalSteps = toNumber(extras.total_num_steps);
+            }
+            if (totalSteps === null) {
+                totalSteps = toNumber(extras.max_steps);
+            }
+            // Backend sends 'total_steps' at top level
+            if (totalSteps === null) {
+                totalSteps = toNumber(payload.total_steps);
+            }
+            if (totalSteps === null) {
                 totalSteps = toNumber(payload.total_num_steps);
+            }
+            if (totalSteps === null) {
+                totalSteps = toNumber(payload.total);
             }
 
             var percent = toNumber(progress.percent);
             if (percent === null) {
                 percent = toNumber(extras.percent);
+            }
+            if (percent === null) {
+                percent = toNumber(payload.percent);
             }
             if (percent === null && currentStep !== null && totalSteps) {
                 percent = (currentStep / totalSteps) * 100;
@@ -193,38 +224,103 @@
             var clampedPercent = Math.max(0, Math.min(100, percent));
             var roundedPercent = Math.round(clampedPercent * 100) / 100;
 
-            var epoch = toNumber(extras.epoch || extras.current_epoch);
-            if (epoch === null && payload.current_epoch !== undefined) {
+            // Check multiple locations for epoch
+            var epoch = toNumber(extras.epoch);
+            if (epoch === null) {
+                epoch = toNumber(extras.current_epoch);
+            }
+            // Backend sends 'epoch' at top level, not 'current_epoch'
+            if (epoch === null) {
+                epoch = toNumber(payload.epoch);
+            }
+            if (epoch === null) {
                 epoch = toNumber(payload.current_epoch);
             }
 
-            var totalEpochs = toNumber(extras.total_epochs || extras.total_num_epochs || extras.final_epoch);
-            if (totalEpochs === null && payload.total_num_epochs !== undefined) {
+            // Check multiple locations for total_epochs
+            var totalEpochs = toNumber(extras.total_epochs);
+            if (totalEpochs === null) {
+                totalEpochs = toNumber(extras.total_num_epochs);
+            }
+            if (totalEpochs === null) {
+                totalEpochs = toNumber(extras.final_epoch);
+            }
+            // Backend sends 'total_epochs' at top level
+            if (totalEpochs === null) {
+                totalEpochs = toNumber(payload.total_epochs);
+            }
+            if (totalEpochs === null) {
                 totalEpochs = toNumber(payload.total_num_epochs);
             }
 
-            var loss = extras.loss !== undefined ? toNumber(extras.loss) : null;
-            if (loss === null && extras.train_loss !== undefined) {
+            // Check multiple locations for loss
+            var loss = toNumber(extras.loss);
+            if (loss === null) {
                 loss = toNumber(extras.train_loss);
             }
+            // Backend sends 'loss' at top level
+            if (loss === null) {
+                loss = toNumber(payload.loss);
+            }
 
-            var learningRate = extras.learning_rate !== undefined ? toNumber(extras.learning_rate) : null;
-            if (learningRate === null && extras.lr !== undefined) {
+            // Check multiple locations for learning_rate
+            var learningRate = toNumber(extras.learning_rate);
+            if (learningRate === null) {
                 learningRate = toNumber(extras.lr);
+            }
+            // Backend sends 'learning_rate' at top level
+            if (learningRate === null) {
+                learningRate = toNumber(payload.learning_rate);
+            }
+            if (learningRate === null) {
+                learningRate = toNumber(payload.lr);
+            }
+
+            // Extract rate statistics from extras (which includes payload.metrics)
+            var stepSpeedSeconds = toNumber(extras.step_speed_seconds);
+            if (stepSpeedSeconds === null) {
+                stepSpeedSeconds = toNumber(extras.iteration_step_time_seconds);
+            }
+            if (stepSpeedSeconds === null) {
+                stepSpeedSeconds = toNumber(extras.seconds_per_step);
+            }
+            if (stepSpeedSeconds === null) {
+                stepSpeedSeconds = toNumber(extras.step_time_seconds);
+            }
+
+            var stepsPerSecond = toNumber(extras.steps_per_second);
+            if (stepsPerSecond === null) {
+                stepsPerSecond = toNumber(extras.iterations_per_second);
+            }
+
+            var effectiveBatchSize = toNumber(extras.effective_batch_size);
+            if (effectiveBatchSize === null) {
+                effectiveBatchSize = toNumber(extras.total_batch_size);
+            }
+
+            var samplesPerSecond = toNumber(extras.samples_per_second);
+            // Calculate samples_per_second if not provided but we have the components
+            if (samplesPerSecond === null && stepsPerSecond !== null && effectiveBatchSize !== null) {
+                samplesPerSecond = stepsPerSecond * effectiveBatchSize;
             }
 
             var label = progress.label || payload.title || payload.message || payload.headline || payload.readable_type || '';
 
+            // Use nullish coalescing (??) to handle 0 values correctly
             return {
                 type: 'training.progress',
                 job_id: jobId,
                 percentage: roundedPercent,
-                current_step: currentStep || 0,
-                total_steps: totalSteps || 0,
-                epoch: epoch || 0,
-                total_epochs: totalEpochs || 0,
+                current_step: currentStep ?? 0,
+                total_steps: totalSteps ?? 0,
+                epoch: epoch ?? 0,
+                total_epochs: totalEpochs ?? 0,
                 loss: loss !== null ? loss : undefined,
                 lr: learningRate !== null ? learningRate : undefined,
+                step_speed_seconds: stepSpeedSeconds !== null ? stepSpeedSeconds : undefined,
+                steps_per_second: stepsPerSecond !== null ? stepsPerSecond : undefined,
+                samples_per_second: samplesPerSecond !== null ? samplesPerSecond : undefined,
+                effective_batch_size: effectiveBatchSize !== null ? effectiveBatchSize : undefined,
                 label: label,
                 raw: payload
             };
