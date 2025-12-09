@@ -204,13 +204,8 @@ def _fallback_webhook_config() -> Optional[Any]:
     if env_config:
         return env_config
 
-    try:
-        from simpletuner.simpletuner_sdk.server.services.webhook_defaults import get_default_webhook_config
-
-        return get_default_webhook_config()
-    except Exception:
-        logging.getLogger(INTERNAL_LOGGER_NAME).debug("Unable to load default webhook configuration.", exc_info=True)
-        return None
+    logging.getLogger(INTERNAL_LOGGER_NAME).debug("No webhook configuration provided; webhook forwarding disabled.")
+    return None
 
 
 def _build_project_name(args: Any) -> str:
