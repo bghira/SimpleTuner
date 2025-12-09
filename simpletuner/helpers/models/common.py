@@ -1,3 +1,4 @@
+import copy
 import inspect
 import json
 import logging
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from torch.distributions import Beta
@@ -258,6 +260,7 @@ class ModelFoundation(ABC):
         self.setup_diff2flow_bridge()
         self.assistant_adapter_name = "assistant"
         self.assistant_lora_loaded = False
+        self._pipeline_component_placeholders: dict[str, nn.Module] = {}
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -269,6 +272,23 @@ class ModelFoundation(ABC):
     def enable_muon_clip_logging(self) -> None:
         """Override in subclasses to wire attention logit publishers when MuonClip is in use."""
         return
+
+    def _get_pipeline_component_placeholder(self, component_name: str) -> nn.Module:
+        placeholder = self._pipeline_component_placeholders.get(component_name)
+        if placeholder is not None:
+            return placeholder
+
+        class _PipelineComponentPlaceholder(nn.Module):
+            def __init__(self, name: str):
+                super().__init__()
+                self._name = name
+
+            def forward(self, *args, **kwargs):  # pragma: no cover - safety net
+                raise RuntimeError(f"Pipeline component '{self._name}' is unavailable in this context.")
+
+        placeholder = _PipelineComponentPlaceholder(component_name)
+        self._pipeline_component_placeholders[component_name] = placeholder
+        return placeholder
 
     def unpack_text_embeddings_from_cache(self, embeddings):
         """
@@ -1390,6 +1410,8 @@ class ModelFoundation(ABC):
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
                     )
+                if hasattr(text_encoder, "eval"):
+                    text_encoder.eval()
                 setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
                 self.text_encoders.append(text_encoder)
 
@@ -1695,7 +1717,7 @@ class ModelFoundation(ABC):
         if load_base_model:
             pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
-            pipeline_kwargs[self.MODEL_TYPE.value] = None
+            pipeline_kwargs[self.MODEL_TYPE.value] = self._get_pipeline_component_placeholder(self.MODEL_TYPE.value)
 
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = self.unwrap_model(self.vae)
@@ -1859,24 +1881,39 @@ class ModelFoundation(ABC):
             else:
                 pipeline_kwargs["image_processor"] = image_processor
 
+        base_scheduler = getattr(self, "noise_schedule", None)
+        if "scheduler" not in pipeline_kwargs and base_scheduler is not None:
+            try:
+                pipeline_kwargs["scheduler"] = base_scheduler.__class__.from_config(base_scheduler.config)
+            except Exception:
+                pipeline_kwargs["scheduler"] = copy.deepcopy(base_scheduler)
+
         logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
-        try:
-            pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
-        except (OSError, EnvironmentError, ValueError) as exc:
-            alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
-            current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
-            if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
-                logger.warning(
-                    "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
-                    current_repo,
-                    exc,
-                    alt_repo,
-                )
-                alt_kwargs = dict(pipeline_kwargs)
-                alt_kwargs["pretrained_model_name_or_path"] = alt_repo
-                pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
-            else:
-                raise
+        if load_base_model:
+            try:
+                pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
+            except (OSError, EnvironmentError, ValueError) as exc:
+                alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
+                current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
+                if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
+                    logger.warning(
+                        "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
+                        current_repo,
+                        exc,
+                        alt_repo,
+                    )
+                    alt_kwargs = dict(pipeline_kwargs)
+                    alt_kwargs["pretrained_model_name_or_path"] = alt_repo
+                    pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
+                else:
+                    raise
+        else:
+            init_kwargs = {
+                key: value
+                for key, value in pipeline_kwargs.items()
+                if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
+            }
+            pipeline_instance = pipeline_class(**init_kwargs)
         self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
@@ -2552,6 +2589,7 @@ class ModelFoundation(ABC):
         """
         return self._encode_prompts([negative_prompt], is_negative_prompt=True)
 
+    @torch.no_grad()
     def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
         """
         Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
