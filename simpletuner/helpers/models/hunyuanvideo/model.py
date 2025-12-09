@@ -118,6 +118,21 @@ class HunyuanVideo(VideoModelFoundation):
             )
         return self.TRANSFORMER_VERSIONS[flavour]
 
+    def _is_i2v_like_flavour(self) -> bool:
+        flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
+        if not flavour:
+            return False
+        try:
+            return str(flavour).strip().lower().startswith("i2v")
+        except Exception:
+            return False
+
+    def requires_conditioning_dataset(self) -> bool:
+        return self._is_i2v_like_flavour() or super().requires_conditioning_dataset()
+
+    def requires_conditioning_latents(self) -> bool:
+        return self._is_i2v_like_flavour()
+
     def setup_training_noise_schedule(self):
         self.noise_schedule = FlowMatchEulerDiscreteScheduler(
             num_train_timesteps=1000,
@@ -383,7 +398,7 @@ class HunyuanVideo(VideoModelFoundation):
             attention_mask_2 = attention_mask_2.to(device=latents.device)
 
         timesteps = prepared_batch["timesteps"]
-        task_type = "i2v" if prepared_batch.get("is_i2v_data", False) else "t2v"
+        task_type = "i2v" if (prepared_batch.get("is_i2v_data", False) or self._is_i2v_like_flavour()) else "t2v"
 
         cond_latents = prepared_batch.get("conditioning_latents")
         if task_type == "i2v" and cond_latents is None:
