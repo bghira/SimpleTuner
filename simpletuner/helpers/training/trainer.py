@@ -4024,6 +4024,8 @@ class Trainer:
             metrics.setdefault("effective_batch_size", batch_size_value)
             metrics.setdefault("total_batch_size", batch_size_value)
         metrics.update(self.iteration_tracker.iteration_metrics())
+        # Add gradient metrics (same logic as _update_grad_metrics but for webhook payload)
+        self._update_grad_metrics(metrics, clone_norm_value=True)
         if extra_metrics:
             for key, value in extra_metrics.items():
                 if value is None:

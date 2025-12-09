@@ -304,6 +304,17 @@
                 samplesPerSecond = stepsPerSecond * effectiveBatchSize;
             }
 
+            var gradAbsmax = toNumber(extras.grad_absmax);
+            if (gradAbsmax === null) {
+                gradAbsmax = toNumber(extras.grad_norm);
+            }
+            if (gradAbsmax === null) {
+                gradAbsmax = toNumber(payload.grad_absmax);
+            }
+            if (gradAbsmax === null) {
+                gradAbsmax = toNumber(payload.grad_norm);
+            }
+
             var label = progress.label || payload.title || payload.message || payload.headline || payload.readable_type || '';
 
             // Use nullish coalescing (??) to handle 0 values correctly
@@ -321,6 +332,7 @@
                 steps_per_second: stepsPerSecond !== null ? stepsPerSecond : undefined,
                 samples_per_second: samplesPerSecond !== null ? samplesPerSecond : undefined,
                 effective_batch_size: effectiveBatchSize !== null ? effectiveBatchSize : undefined,
+                grad_absmax: gradAbsmax !== null ? gradAbsmax : undefined,
                 label: label,
                 raw: payload
             };
