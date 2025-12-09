@@ -549,6 +549,7 @@ class Wan(VideoModelFoundation):
         patched = patched.view(batch, expected_channels, frames, height // patch_size, width // patch_size)
         return patched, True
 
+    @torch.no_grad()
     def _wan_encode_without_internal_patchify(self, vae, samples: torch.Tensor, original_patch_size):
         config = getattr(vae, "config", None)
         if config is None or original_patch_size is None:
@@ -559,6 +560,7 @@ class Wan(VideoModelFoundation):
         finally:
             config.patch_size = original_patch_size
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         patched_samples, disable_internal_patch = self._wan_prepare_vae_encode_inputs(vae, samples)
         if disable_internal_patch:
@@ -570,6 +572,7 @@ class Wan(VideoModelFoundation):
             return self._wan_encode_without_internal_patchify(vae, patched_samples, original_patch_size)
         return super().encode_with_vae(vae, patched_samples)
 
+    @torch.no_grad()
     def _apply_i2v_conditioning_to_kwargs(self, prepared_batch, transformer_kwargs):
         is_i2v_batch = bool(prepared_batch.get("is_i2v_data", False))
         if not (self._is_i2v_like_flavour() or is_i2v_batch):

@@ -152,6 +152,7 @@ class VAEWrapper:
             raise AttributeError("VAE does not implement `decode`.")
         return self.vae.decode(latents)
 
+    @torch.no_grad()
     def encode(self, pixels: torch.Tensor) -> torch.Tensor:
         if not hasattr(self.vae, "encode"):
             raise AttributeError("VAE does not implement `encode`.")

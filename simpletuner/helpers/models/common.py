@@ -1291,6 +1291,7 @@ class ModelFoundation(ABC):
         """
         return sample
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         """
         Hook for models to customize VAE encoding behaviour (e.g. applying flavour-specific patches).
@@ -3071,6 +3072,7 @@ class AudioModelFoundation(ModelFoundation):
             return _audio_transform
         return super().get_transforms(dataset_type=dataset_type)
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         """
         Music-focused autoencoders often return both latents and accompanying

@@ -2000,6 +2000,7 @@ class FluxKontextPipeline(DiffusionPipeline, FluxLoraLoaderMixin):
 
         return latent_image_ids.to(device=device, dtype=torch.float32)
 
+    @torch.no_grad()
     def _encode_conditioning_image(self, pil_images: list[Image.Image], device, dtype):  # -> (seq_latents, seq_ids)
         packed_latents = []
         packed_ids = []

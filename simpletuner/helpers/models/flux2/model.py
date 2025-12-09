@@ -462,6 +462,7 @@ class Flux2(ImageModelFoundation):
 
         return {"model_prediction": unpacked}
 
+    @torch.no_grad()
     def encode_images(self, images: List[Tensor]) -> Tensor:
         """Encode images using FLUX.2 VAE."""
         device = self.vae.device
