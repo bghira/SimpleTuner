@@ -1066,6 +1066,45 @@ class ModelFoundation(ABC):
             return None
         return unwrap_model(self.accelerator, model or self.model)
 
+    @staticmethod
+    def _module_has_meta_tensors(module: Optional[torch.nn.Module]) -> bool:
+        if module is None:
+            return False
+        try:
+            for tensor in module.parameters(recurse=True):
+                if tensor is not None and getattr(tensor, "device", None) is not None and tensor.device.type == "meta":
+                    return True
+            for tensor in module.buffers(recurse=True):
+                if tensor is not None and getattr(tensor, "device", None) is not None and tensor.device.type == "meta":
+                    return True
+        except Exception:
+            logger.debug("Meta tensor detection failed for %s", module.__class__.__name__, exc_info=True)
+        return False
+
+    @staticmethod
+    def _sample_meta_tensor_names(module: Optional[torch.nn.Module], limit: int = 3) -> list[str]:
+        names: list[str] = []
+        if module is None:
+            return names
+
+        def _collect(iterator):
+            for name, tensor in iterator:
+                if tensor is None or getattr(tensor, "device", None) is None:
+                    continue
+                if tensor.device.type == "meta":
+                    names.append(name)
+                    if len(names) >= limit:
+                        return True
+            return False
+
+        try:
+            if _collect(module.named_parameters(recurse=True)):
+                return names
+            _collect(module.named_buffers(recurse=True))
+        except Exception:
+            logger.debug("Meta tensor name sampling failed for %s", module.__class__.__name__, exc_info=True)
+        return names
+
     def move_extra_models(self, target_device):
         """
         Move any extra models in the child class.
@@ -1510,12 +1549,35 @@ class ModelFoundation(ABC):
         from transformers.utils import ContextManagers
 
         logger.info(f"Loading diffusion model from {model_path}")
-        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            self.model = loader_fn(
-                model_path,
-                subfolder=model_subfolder,
-                **pretrained_load_args,
-            )
+
+        def _load_model(load_kwargs: dict):
+            with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+                return loader_fn(
+                    model_path,
+                    subfolder=model_subfolder,
+                    **load_kwargs,
+                )
+
+        load_kwargs = dict(pretrained_load_args)
+        self.model = _load_model(load_kwargs)
+        unwrapped_model = self.unwrap_model(model=self.model)
+
+        if self._module_has_meta_tensors(unwrapped_model):
+            if load_kwargs.get("low_cpu_mem_usage", True):
+                sample_meta = ", ".join(self._sample_meta_tensor_names(unwrapped_model)) or "(unknown tensors)"
+                logger.warning(
+                    "Detected meta tensors after loading %s (e.g. %s); disabling low_cpu_mem_usage and retrying.",
+                    model_path,
+                    sample_meta,
+                )
+                load_kwargs["low_cpu_mem_usage"] = False
+                self.model = _load_model(load_kwargs)
+                unwrapped_model = self.unwrap_model(model=self.model)
+            if self._module_has_meta_tensors(unwrapped_model):
+                raise RuntimeError(
+                    f"{self.__class__.__name__} failed to materialize weights for {model_path}. "
+                    "All model parameters remain on the meta device after reload."
+                )
         if self._ramtorch_enabled() and self.model is not None:
             self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
         if move_to_device and self.model is not None:
