@@ -507,7 +507,6 @@ class HunyuanVideo(VideoModelFoundation):
                 "Received an i2v-labelled batch for a t2v flavour; ignoring the flag and continuing with t2v training."
             )
             self._warned_spurious_i2v_batch = True
-            wants_i2v_batch = False
 
         if is_i2v_model and prepared_batch.get("conditioning_latents") is None:
             raise ValueError("HunyuanVideo i2v training requires conditioning_latents in the batch.")
@@ -564,7 +563,6 @@ class HunyuanVideo(VideoModelFoundation):
                 dtype=torch.bool,
             )
         else:
-            encoder_hidden_states_2 = encoder_hidden_states_2
             if encoder_attention_mask_2 is None:
                 encoder_attention_mask_2 = torch.zeros(
                     encoder_hidden_states_2.shape[0],

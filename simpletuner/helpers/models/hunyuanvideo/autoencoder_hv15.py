@@ -589,7 +589,6 @@ class HunyuanVideoDecoder3D(nn.Module):
             )
 
             self.up_blocks.append(up_block)
-            prev_output_channel = output_channel
 
         # out
         self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[0], num_groups=norm_num_groups, eps=1e-6)
