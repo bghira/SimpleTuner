@@ -585,9 +585,6 @@ class HunyuanVideo(VideoModelFoundation):
         kwargs.pop("text_encoder_2_lora_adapter_metadata", None)
         if transformer_layers is not None:
             kwargs["unet_lora_layers"] = transformer_layers
-        if transformer_adapter_metadata is not None:
-            # Base mixin only accepts adapter_name; drop other metadata keys.
-            kwargs["adapter_name"] = transformer_adapter_metadata.get("adapter_name")
 
         return self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
             save_directory=save_directory,
