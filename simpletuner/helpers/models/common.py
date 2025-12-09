@@ -1507,12 +1507,15 @@ class ModelFoundation(ABC):
             else:
                 model_subfolder = self.config.pretrained_unet_subfolder
 
+        from transformers.utils import ContextManagers
+
         logger.info(f"Loading diffusion model from {model_path}")
-        self.model = loader_fn(
-            model_path,
-            subfolder=model_subfolder,
-            **pretrained_load_args,
-        )
+        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+            self.model = loader_fn(
+                model_path,
+                subfolder=model_subfolder,
+                **pretrained_load_args,
+            )
         if self._ramtorch_enabled() and self.model is not None:
             self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
         if move_to_device and self.model is not None:
