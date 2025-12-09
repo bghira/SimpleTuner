@@ -20,7 +20,7 @@ import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
@@ -54,6 +54,7 @@ from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER 
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
 from simpletuner.helpers.training.evaluation import ModelEvaluator
+from simpletuner.helpers.training.iteration_tracker import IterationTracker
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main
@@ -2066,6 +2067,7 @@ class Trainer:
         self.bf = None
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
+        self.iteration_tracker = IterationTracker()
         StateTracker.set_global_step(self.state["global_step"])
         self._init_publishing_manager()
         self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = prepare_model_for_deepspeed(
@@ -3908,29 +3910,18 @@ class Trainer:
                 message_level="info",
             )
         # Also send structured progress update at checkpoint time
-        current_state = self.state.copy()
-        current_state.pop("args", None)
-        capped_step = min(
-            current_state.get("global_step", 0),
-            current_state.get("total_num_steps", float("inf")),
+        progress_kwargs, current_state = self._prepare_training_progress_payload(
+            epoch=epoch,
+            parent_loss=parent_loss,
         )
         event = training_status_event(
             status="running",
             job_id=self.job_id,
-            progress={
-                "current": capped_step,
-                "total": current_state.get("total_num_steps"),
-                "metrics": {
-                    "loss": self.train_loss,
-                    "parent_loss": parent_loss,
-                    "learning_rate": float(self.lr),
-                    "epoch": epoch,
-                },
-            },
             extra={
                 "final_epoch": self.config.num_train_epochs,
                 **current_state,
             },
+            **progress_kwargs,
         )
         self._emit_event(event)
         if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
@@ -3992,6 +3983,96 @@ class Trainer:
         self.webhook_handler.send_raw(event, message_level=message_level, job_id=self.job_id)
         return True
 
+    @staticmethod
+    def _normalize_metric_value(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if hasattr(value, "item"):
+            try:
+                return float(value.item())
+            except Exception:
+                return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _compose_training_progress_metrics(
+        self,
+        *,
+        epoch: int | None = None,
+        parent_loss: Any = None,
+        extra_metrics: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        metrics: dict[str, Any] = {}
+        if self.state.get("global_step", 0) > 0:
+            loss_value = self._normalize_metric_value(getattr(self, "train_loss", None))
+            if loss_value is not None:
+                metrics["loss"] = loss_value
+            parent_loss_value = self._normalize_metric_value(parent_loss)
+            if parent_loss_value is not None:
+                metrics["parent_loss"] = parent_loss_value
+            learning_rate_value = self._normalize_metric_value(getattr(self, "lr", None))
+            if learning_rate_value is not None:
+                metrics["learning_rate"] = learning_rate_value
+        if epoch is not None:
+            metrics["epoch"] = epoch
+        metrics.update(self.iteration_tracker.iteration_metrics())
+        if extra_metrics:
+            for key, value in extra_metrics.items():
+                if value is None:
+                    continue
+                metrics[key] = value
+        return metrics
+
+    def _prepare_training_progress_payload(
+        self,
+        *,
+        label: str | None = None,
+        epoch: int | None = None,
+        parent_loss: Any = None,
+        extra_metrics: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        current_state = self.state.copy()
+        current_state.pop("args", None)
+        try:
+            current_step = float(current_state.get("global_step", 0))
+        except (TypeError, ValueError):
+            current_step = 0.0
+        total_value = current_state.get("total_num_steps")
+        if total_value in (None, "", "None"):
+            total_value = getattr(self.config, "max_train_steps", None)
+        total_numeric = self._normalize_metric_value(total_value)
+        capped_step = current_step
+        if total_numeric is not None:
+            capped_step = min(current_step, total_numeric)
+        percent = None
+        if total_numeric and total_numeric > 0:
+            percent = (capped_step / total_numeric) * 100
+        eta_seconds = self.iteration_tracker.estimate_eta(capped_step, total_numeric)
+        metrics = self._compose_training_progress_metrics(
+            epoch=epoch,
+            parent_loss=parent_loss,
+            extra_metrics=extra_metrics,
+        )
+        current_display = capped_step
+        if isinstance(current_display, float) and current_display.is_integer():
+            current_display = int(current_display)
+        total_display = total_numeric
+        if isinstance(total_display, float) and total_display.is_integer():
+            total_display = int(total_display)
+        progress_kwargs = {
+            "label": label,
+            "current": current_display,
+            "total": total_display,
+            "percent": percent,
+            "eta_seconds": eta_seconds,
+            "metrics": metrics if metrics else None,
+        }
+        return progress_kwargs, current_state
+
     def _train_initial_msg(self):
         initial_msg = "\n***** Running training *****"
         initial_msg += f"\n-  Trainable parameters: {trainable_parameter_count(self._get_trainable_parameters())}"
@@ -4017,26 +4098,16 @@ class Trainer:
         if self.webhook_handler is not None:
             self.webhook_handler.send(message=initial_msg, message_level="info")
         # Cap global_step to max_train_steps in case of resume on already-completed environment
-        capped_global_step = min(self.state["global_step"], self.config.max_train_steps)
-        progress_percent = 0.0
-        if self.config.max_train_steps:
-            progress_percent = (capped_global_step / self.config.max_train_steps) * 100
-        progress_payload = {
-            "label": "Training initialisation",
-            "current": capped_global_step,
-            "total": self.config.max_train_steps,
-            "percent": progress_percent,
-            "metrics": {
-                "epoch": self.state["first_epoch"],
-                "total_epochs": self.config.num_train_epochs,
-            },
-        }
+        progress_kwargs, current_state = self._prepare_training_progress_payload(
+            label="Training initialisation",
+            epoch=self.state["first_epoch"],
+            extra_metrics={"total_epochs": self.config.num_train_epochs},
+        )
         status_event = training_status_event(
             status="running",  # Changed from "starting" - all initialization is complete
             message=initial_msg,
             job_id=self.job_id,
             severity="info",
-            progress=progress_payload,
             extra={
                 "total_num_batches": self.config.total_num_batches,
                 "total_num_epochs": self.config.num_train_epochs,
@@ -4046,7 +4117,9 @@ class Trainer:
                 "micro_batch_size": self.config.train_batch_size,
                 "global_step": self.state["global_step"],
                 "remaining_num_steps": steps_remaining_at_start,
+                **current_state,
             },
+            **progress_kwargs,
         )
         self._emit_event(status_event)
 
@@ -4451,6 +4524,7 @@ class Trainer:
             ncols=125,
         )
         self.accelerator.wait_for_everyone()
+        self.iteration_tracker.mark_start()
 
         # Some values that are required to be initialised later.
         step = self.state["global_step"]
@@ -4831,6 +4905,7 @@ class Trainer:
                     self.state["global_step"] += 1
                     current_epoch_step += 1
                     StateTracker.set_global_step(self.state["global_step"])
+                    self.iteration_tracker.record_step(self.state["global_step"])
 
                     ema_decay_value = "None (EMA not in use)"
                     if self.config.use_ema:
@@ -4876,30 +4951,18 @@ class Trainer:
                     webhook_pending_msg = f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {round(loss.item(), 4)}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {round(self.train_loss, 4)}"
 
                     if self.webhook_handler is not None:
-                        current_state = self.state.copy()
-                        current_state.pop("args")  # we don't need to send the config every time.
-                        # Cap global_step to prevent exceeding total when resuming completed runs
-                        capped_step = min(
-                            current_state.get("global_step", 0),
-                            current_state.get("total_num_steps", float("inf")),
+                        progress_kwargs, current_state = self._prepare_training_progress_payload(
+                            epoch=epoch,
+                            parent_loss=parent_loss,
                         )
                         event = training_status_event(
                             status="running",
                             job_id=self.job_id,
-                            progress={
-                                "current": capped_step,
-                                "total": current_state.get("total_num_steps"),
-                                "metrics": {
-                                    "loss": self.train_loss,
-                                    "parent_loss": parent_loss,
-                                    "learning_rate": float(self.lr),
-                                    "epoch": epoch,
-                                },
-                            },
                             extra={
                                 "final_epoch": self.config.num_train_epochs,
                                 **current_state,
                             },
+                            **progress_kwargs,
                         )
                         self._emit_event(event)
 
@@ -4935,30 +4998,18 @@ class Trainer:
                             message_level="info",
                         )
                         # Also send structured progress update at checkpoint time
-                        current_state = self.state.copy()
-                        current_state.pop("args", None)
-                        # Cap global_step to prevent exceeding total when resuming completed runs
-                        capped_step = min(
-                            current_state.get("global_step", 0),
-                            current_state.get("total_num_steps", float("inf")),
+                        progress_kwargs, current_state = self._prepare_training_progress_payload(
+                            epoch=epoch,
+                            parent_loss=parent_loss,
                         )
                         event = training_status_event(
                             status="running",
                             job_id=self.job_id,
-                            progress={
-                                "current": capped_step,
-                                "total": current_state.get("total_num_steps"),
-                                "metrics": {
-                                    "loss": self.train_loss,
-                                    "parent_loss": parent_loss,
-                                    "learning_rate": float(self.lr),
-                                    "epoch": epoch,
-                                },
-                            },
                             extra={
                                 "final_epoch": self.config.num_train_epochs,
                                 **current_state,
                             },
+                            **progress_kwargs,
                         )
                         self._emit_event(event)
                         if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
