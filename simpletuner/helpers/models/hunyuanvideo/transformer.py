@@ -340,6 +340,22 @@ class HunyuanVideo15TokenRefiner(nn.Module):
         if attention_mask is None:
             pooled_projections = hidden_states.mean(dim=1)
         else:
+            # Guard against malformed masks (e.g., wrong shape from cached batches).
+            if attention_mask.dim() > 2:
+                attention_mask = attention_mask.view(attention_mask.shape[0], -1)
+            if attention_mask.shape[-1] != hidden_states.shape[1]:
+                if not hasattr(self, "_warned_mask_shape"):
+                    logger.warning(
+                        "TokenRefiner received attention mask with shape %s; expected seq_len %s. Defaulting to an all-ones mask.",
+                        tuple(attention_mask.shape),
+                        hidden_states.shape[1],
+                    )
+                    self._warned_mask_shape = True
+                attention_mask = torch.ones(
+                    hidden_states.shape[:2],
+                    device=hidden_states.device,
+                    dtype=hidden_states.dtype,
+                )
             original_dtype = hidden_states.dtype
             mask_float = attention_mask.float().unsqueeze(-1)
             pooled_projections = (hidden_states * mask_float).sum(dim=1) / mask_float.sum(dim=1)
@@ -697,6 +713,14 @@ class HunyuanVideo15Transformer3DModel(
         encoder_hidden_states_3 = encoder_hidden_states_3 + encoder_hidden_states_3_cond_emb
 
         # reorder and combine text tokens: combine valid tokens first, then padding
+        # Flatten any extra dims in masks to match sequence length expectations.
+        if encoder_attention_mask.dim() > 2:
+            encoder_attention_mask = encoder_attention_mask.view(encoder_attention_mask.shape[0], -1)
+        if encoder_attention_mask_2.dim() > 2:
+            encoder_attention_mask_2 = encoder_attention_mask_2.view(encoder_attention_mask_2.shape[0], -1)
+        if encoder_attention_mask_3.dim() > 2:
+            encoder_attention_mask_3 = encoder_attention_mask_3.view(encoder_attention_mask_3.shape[0], -1)
+
         encoder_attention_mask = encoder_attention_mask.bool()
         encoder_attention_mask_2 = encoder_attention_mask_2.bool()
         encoder_attention_mask_3 = encoder_attention_mask_3.bool()

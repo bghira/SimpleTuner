@@ -33,7 +33,7 @@ from transformers import (
     T5EncoderModel,
 )
 
-from .autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
+from .autoencoder import AutoencoderKLConv3D
 from .pipeline import HunyuanVideo15ImageProcessor, HunyuanVideo15PipelineOutput
 from .transformer import HunyuanVideo15Transformer3DModel
 
@@ -199,7 +199,7 @@ class HunyuanVideo15ImageToVideoPipeline(DiffusionPipeline):
             Conditional Transformer (MMDiT) architecture to denoise the encoded video latents.
         scheduler ([`FlowMatchEulerDiscreteScheduler`]):
             A scheduler to be used in combination with `transformer` to denoise the encoded video latents.
-        vae ([`AutoencoderKLHunyuanVideo15`]):
+        vae ([`AutoencoderKLConv3D`]):
             Variational Auto-Encoder (VAE) Model to encode and decode videos to and from latent representations.
         text_encoder ([`Qwen2.5-VL-7B-Instruct`]):
             [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct), specifically the
@@ -226,7 +226,7 @@ class HunyuanVideo15ImageToVideoPipeline(DiffusionPipeline):
         text_encoder: Qwen2_5_VLTextModel,
         tokenizer: Qwen2Tokenizer,
         transformer: HunyuanVideo15Transformer3DModel,
-        vae: AutoencoderKLHunyuanVideo15,
+        vae: AutoencoderKLConv3D,
         scheduler: FlowMatchEulerDiscreteScheduler,
         text_encoder_2: T5EncoderModel,
         tokenizer_2: ByT5Tokenizer,
@@ -249,14 +249,15 @@ class HunyuanVideo15ImageToVideoPipeline(DiffusionPipeline):
             feature_extractor=feature_extractor,
         )
 
-        self.vae_scale_factor_temporal = self.vae.temporal_compression_ratio if getattr(self, "vae", None) else 4
-        self.vae_scale_factor_spatial = self.vae.spatial_compression_ratio if getattr(self, "vae", None) else 16
+        vae = getattr(self, "vae", None)
+        self.vae_scale_factor_temporal = vae.temporal_compression_ratio if vae is not None else 4
+        self.vae_scale_factor_spatial = vae.spatial_compression_ratio if vae is not None else 16
         self.video_processor = HunyuanVideo15ImageProcessor(
             vae_scale_factor=self.vae_scale_factor_spatial, do_resize=False, do_convert_rgb=True
         )
         self.target_size = self.transformer.config.target_size if getattr(self, "transformer", None) else 640
         self.vision_states_dim = self.transformer.config.image_embed_dim if getattr(self, "transformer", None) else 1152
-        self.num_channels_latents = self.vae.config.latent_channels if hasattr(self, "vae") else 32
+        self.num_channels_latents = vae.config.latent_channels if vae is not None else 32
         # fmt: off
         self.system_message = "You are a helpful assistant. Describe the video by detailing the following aspects: \
         1. The main content and theme of the video. \
@@ -368,7 +369,7 @@ class HunyuanVideo15ImageToVideoPipeline(DiffusionPipeline):
 
     @staticmethod
     def _get_image_latents(
-        vae: AutoencoderKLHunyuanVideo15,
+        vae: AutoencoderKLConv3D,
         image_processor: HunyuanVideo15ImageProcessor,
         image: PIL.Image.Image,
         height: int,

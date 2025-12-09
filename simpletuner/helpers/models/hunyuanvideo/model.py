@@ -7,6 +7,7 @@ from typing import Dict, Optional
 import torch
 from diffusers.guiders import ClassifierFreeGuidance
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from huggingface_hub import hf_hub_download
 from transformers import (
     ByT5Tokenizer,
     Qwen2_5_VLTextModel,
@@ -18,7 +19,7 @@ from transformers import (
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
-from simpletuner.helpers.models.hunyuanvideo.autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
+from simpletuner.helpers.models.hunyuanvideo.autoencoder import AutoencoderKLConv3D
 from simpletuner.helpers.models.hunyuanvideo.commons import PIPELINE_CONFIGS, TRANSFORMER_VERSION_TO_SR_VERSION
 from simpletuner.helpers.models.hunyuanvideo.pipeline import HunyuanVideo15Pipeline
 from simpletuner.helpers.models.hunyuanvideo.pipeline_i2v import HunyuanVideo15ImageToVideoPipeline
@@ -43,7 +44,7 @@ class HunyuanVideo(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
-    AUTOENCODER_CLASS = AutoencoderKLHunyuanVideo15
+    AUTOENCODER_CLASS = AutoencoderKLConv3D
     LATENT_CHANNEL_COUNT = 32
     DEFAULT_NOISE_SCHEDULER = "flow_match_euler"
     MODEL_CLASS = HunyuanVideo15Transformer3DModel
@@ -85,19 +86,16 @@ class HunyuanVideo(VideoModelFoundation):
 
     # Only required to satisfy encode_text_batch checks; loading is handled manually.
     TEXT_ENCODER_CONFIGURATION = {"text_encoder": {"name": "Hunyuan LLM"}}
+    # Align LoRA target modules with the actual attention layers used by the transformer blocks.
     DEFAULT_LORA_TARGET = [
-        "img_attn_q",
-        "img_attn_k",
-        "img_attn_v",
-        "img_attn_proj",
-        "txt_attn_q",
-        "txt_attn_k",
-        "txt_attn_v",
-        "txt_attn_proj",
-        "linear1_q",
-        "linear1_k",
-        "linear1_v",
-        "linear1_mlp",
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "add_q_proj",
+        "add_k_proj",
+        "add_v_proj",
+        "to_add_out",
     ]
 
     def __init__(self, config: dict, accelerator):
@@ -158,9 +156,42 @@ class HunyuanVideo(VideoModelFoundation):
         if move_to_device:
             text_encoder = text_encoder.to(device)
 
-        logger.info(f"Loading Glyph ByT5 encoder from {self.GLYPH_BYT5_REPO}")
-        byt5_tokenizer = ByT5Tokenizer.from_pretrained(self.GLYPH_BYT5_REPO)
-        byt5_model = T5EncoderModel.from_pretrained(self.GLYPH_BYT5_REPO, torch_dtype=torch.bfloat16)
+        glyph_repo = getattr(self.config, "glyph_byt5_repo", self.GLYPH_BYT5_REPO)
+        fallback_glyph_repo = getattr(self.config, "glyph_byt5_fallback_repo", "google/byt5-small")
+        logger.info(f"Loading Glyph ByT5 encoder from {glyph_repo}")
+        try:
+            byt5_tokenizer = ByT5Tokenizer.from_pretrained(glyph_repo)
+            byt5_model = T5EncoderModel.from_pretrained(glyph_repo, torch_dtype=torch.bfloat16)
+        except OSError as e:
+            logger.warning("Failed to load Glyph ByT5 from %s (%s). Falling back to %s.", glyph_repo, e, fallback_glyph_repo)
+            byt5_tokenizer = ByT5Tokenizer.from_pretrained(fallback_glyph_repo)
+            byt5_model = T5EncoderModel.from_pretrained(fallback_glyph_repo, torch_dtype=torch.bfloat16)
+        try:
+            ckpt_path = hf_hub_download(glyph_repo, filename="checkpoints/byt5_model.pt", repo_type="model")
+            glyph_state = torch.load(ckpt_path, map_location="cpu")
+            if isinstance(glyph_state, dict) and "model" in glyph_state:
+                glyph_state = glyph_state["model"]
+            model_state = byt5_model.state_dict()
+            mapped_state = {}
+            for key, value in glyph_state.items():
+                if key == "embed_tokens.weight":
+                    continue  # Token embeddings would require a matching tokenizer; skip to avoid shape mismatches.
+                new_key = key
+                if key.startswith("block.") or key.startswith("final_layer_norm"):
+                    new_key = f"encoder.{key}"
+                if new_key in model_state and model_state[new_key].shape == value.shape:
+                    mapped_state[new_key] = value
+            load_result = byt5_model.load_state_dict(mapped_state, strict=False)
+            missing, unexpected = load_result.missing_keys, load_result.unexpected_keys
+            logger.info(
+                "Loaded Glyph ByT5 finetuned weights from %s (applied=%d, missing=%d, unexpected=%d).",
+                ckpt_path,
+                len(mapped_state),
+                len(missing),
+                len(unexpected),
+            )
+        except Exception as glyph_load_error:
+            logger.debug("No Glyph ByT5 finetuned weights applied (%s).", glyph_load_error)
         byt5_model.requires_grad_(False)
         if move_to_device:
             byt5_model = byt5_model.to(device)
@@ -256,6 +287,12 @@ class HunyuanVideo(VideoModelFoundation):
                 pipeline.transformer = self.unwrap_model(self.model)
             return pipeline
 
+        # Ensure required components are resident before constructing the pipeline (validation may reload after meta-offload).
+        if self.text_encoder is None or getattr(self.text_encoder, "device", None) == "meta":
+            self.load_text_encoder(move_to_device=True)
+        if self.vae is None or getattr(self.vae, "device", None) == "meta":
+            self.load_vae(move_to_device=True)
+
         device = self.accelerator.device
         flow_shift = getattr(self.config, "flow_schedule_shift", 7.0)
         guidance_scale = getattr(self.config, "validation_guidance", 6.0)
@@ -266,14 +303,26 @@ class HunyuanVideo(VideoModelFoundation):
         transformer = self.unwrap_model(self.model) if load_base_model and self.model is not None else None
         vae = self.unwrap_model(self.vae) if self.vae is not None else None
 
+        # Respect memory-offload: text encoders may be offloaded to meta/None when not training.
+        txt_encoder = (
+            None if self.text_encoder is None or getattr(self.text_encoder, "device", None) == "meta" else self.text_encoder
+        )
+        byt5_encoder = (
+            None
+            if self.text_encoder_2 is None or getattr(self.text_encoder_2, "device", None) == "meta"
+            else self.text_encoder_2
+        )
+        tokenizer = None if txt_encoder is None else self.tokenizer
+        tokenizer_2 = None if byt5_encoder is None else self.tokenizer_2
+
         pipeline_kwargs = {
-            "text_encoder": self.text_encoder,
-            "tokenizer": self.tokenizer,
+            "text_encoder": txt_encoder,
+            "tokenizer": tokenizer,
             "transformer": transformer,
             "vae": vae,
             "scheduler": scheduler,
-            "text_encoder_2": self.text_encoder_2,
-            "tokenizer_2": self.tokenizer_2,
+            "text_encoder_2": byt5_encoder,
+            "tokenizer_2": tokenizer_2,
             "guider": guider,
         }
 
@@ -372,19 +421,27 @@ class HunyuanVideo(VideoModelFoundation):
         batch = super().prepare_batch_conditions(batch=batch, state=state)
         text_output = batch.get("text_encoder_output") or {}
 
-        prompt_embeds = batch.get("prompt_embeds") or text_output.get("prompt_embeds")
+        prompt_embeds = batch.get("prompt_embeds")
+        if prompt_embeds is None:
+            prompt_embeds = text_output.get("prompt_embeds")
         if prompt_embeds is not None:
             batch["encoder_hidden_states"] = prompt_embeds
 
-        attention_masks = batch.get("attention_masks") or text_output.get("attention_masks")
+        attention_masks = batch.get("attention_masks")
+        if attention_masks is None:
+            attention_masks = text_output.get("attention_masks")
         if attention_masks is not None:
             batch["encoder_attention_mask"] = attention_masks
 
-        prompt_embeds_2 = batch.get("prompt_embeds_2") or text_output.get("prompt_embeds_2")
+        prompt_embeds_2 = batch.get("prompt_embeds_2")
+        if prompt_embeds_2 is None:
+            prompt_embeds_2 = text_output.get("prompt_embeds_2")
         if prompt_embeds_2 is not None:
             batch["encoder_hidden_states_2"] = prompt_embeds_2
 
-        attention_masks_2 = batch.get("attention_masks_2") or text_output.get("attention_masks_2")
+        attention_masks_2 = batch.get("attention_masks_2")
+        if attention_masks_2 is None:
+            attention_masks_2 = text_output.get("attention_masks_2")
         if attention_masks_2 is not None:
             batch["encoder_attention_mask_2"] = attention_masks_2
         return batch
@@ -413,25 +470,10 @@ class HunyuanVideo(VideoModelFoundation):
         encoder_hidden_states_2 = prepared_batch.get("encoder_hidden_states_2")
         if encoder_hidden_states_2 is not None:
             encoder_hidden_states_2 = encoder_hidden_states_2.to(self.config.weight_dtype)
-        else:
-            encoder_hidden_states_2 = torch.zeros(
-                encoder_hidden_states.shape[0],
-                1,
-                self.model.config.hidden_size,
-                device=latents.device,
-                dtype=self.config.weight_dtype,
-            )
 
         encoder_attention_mask_2 = prepared_batch.get("encoder_attention_mask_2")
         if encoder_attention_mask_2 is not None:
             encoder_attention_mask_2 = encoder_attention_mask_2.to(device=latents.device, dtype=torch.bool)
-        else:
-            encoder_attention_mask_2 = torch.zeros(
-                encoder_hidden_states_2.shape[0],
-                encoder_hidden_states_2.shape[1],
-                device=latents.device,
-                dtype=torch.bool,
-            )
 
         timesteps = prepared_batch["timesteps"]
         wants_i2v_batch = bool(prepared_batch.get("is_i2v_data", False))
@@ -442,6 +484,7 @@ class HunyuanVideo(VideoModelFoundation):
                 "Received an i2v-labelled batch for a t2v flavour; ignoring the flag and continuing with t2v training."
             )
             self._warned_spurious_i2v_batch = True
+            wants_i2v_batch = False
 
         if is_i2v_model and prepared_batch.get("conditioning_latents") is None:
             raise ValueError("HunyuanVideo i2v training requires conditioning_latents in the batch.")
@@ -451,13 +494,28 @@ class HunyuanVideo(VideoModelFoundation):
         latent_model_input = torch.cat([latents, cond_latents, cond_mask], dim=1)
 
         batch_size = latents.shape[0]
-        model_config = getattr(self.model, "config", None)
-        vision_tokens = getattr(self.config, "vision_num_semantic_tokens", 729)
-        if model_config is not None:
-            vision_tokens = getattr(model_config, "vision_num_semantic_tokens", vision_tokens)
-        vision_dim = getattr(self.config, "vision_states_dim", 1152)
-        if model_config is not None:
-            vision_dim = getattr(model_config, "image_embed_dim", vision_dim)
+        base_model = self.unwrap_model(self.model)
+        model_config = getattr(base_model, "config", None)
+
+        def _cfg(attr: str, default):
+            if model_config is None:
+                return default
+            if hasattr(model_config, attr):
+                try:
+                    return getattr(model_config, attr)
+                except Exception:
+                    pass
+            if isinstance(model_config, dict):
+                return model_config.get(attr, default)
+            try:
+                return model_config[attr]
+            except Exception:
+                return default
+
+        vision_tokens = _cfg("vision_num_semantic_tokens", getattr(self.config, "vision_num_semantic_tokens", 729))
+        vision_dim = _cfg("image_embed_dim", getattr(self.config, "vision_states_dim", 1152))
+        text_embed_2_dim = _cfg("text_embed_2_dim", getattr(self.config, "text_embed_2_dim", 1472))
+
         image_embeds = prepared_batch.get("vision_states")
         if image_embeds is None:
             image_embeds = torch.zeros(
@@ -467,6 +525,30 @@ class HunyuanVideo(VideoModelFoundation):
                 device=latents.device,
                 dtype=latents.dtype,
             )
+
+        if encoder_hidden_states_2 is None:
+            encoder_hidden_states_2 = torch.zeros(
+                encoder_hidden_states.shape[0],
+                1,
+                text_embed_2_dim,
+                device=latents.device,
+                dtype=self.config.weight_dtype,
+            )
+            encoder_attention_mask_2 = torch.zeros(
+                encoder_hidden_states_2.shape[0],
+                encoder_hidden_states_2.shape[1],
+                device=latents.device,
+                dtype=torch.bool,
+            )
+        else:
+            encoder_hidden_states_2 = encoder_hidden_states_2
+            if encoder_attention_mask_2 is None:
+                encoder_attention_mask_2 = torch.zeros(
+                    encoder_hidden_states_2.shape[0],
+                    encoder_hidden_states_2.shape[1],
+                    device=latents.device,
+                    dtype=torch.bool,
+                )
 
         model_pred = self.model(
             hidden_states=latent_model_input,

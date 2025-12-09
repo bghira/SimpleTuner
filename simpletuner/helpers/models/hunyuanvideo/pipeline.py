@@ -25,7 +25,7 @@ from diffusers.utils import is_torch_xla_available, logging, replace_example_doc
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import ByT5Tokenizer, Qwen2_5_VLTextModel, Qwen2Tokenizer, T5EncoderModel
 
-from .autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
+from .autoencoder import AutoencoderKLConv3D
 from .transformer import HunyuanVideo15Transformer3DModel
 
 if is_torch_xla_available():
@@ -295,7 +295,7 @@ class HunyuanVideo15Pipeline(DiffusionPipeline):
             Conditional Transformer (MMDiT) architecture to denoise the encoded video latents.
         scheduler ([`FlowMatchEulerDiscreteScheduler`]):
             A scheduler to be used in combination with `transformer` to denoise the encoded video latents.
-        vae ([`AutoencoderKLHunyuanVideo15`]):
+        vae ([`AutoencoderKLConv3D`]):
             Variational Auto-Encoder (VAE) Model to encode and decode videos to and from latent representations.
         text_encoder ([`Qwen2.5-VL-7B-Instruct`]):
             [Qwen2.5-VL-7B-Instruct](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct), specifically the
@@ -316,7 +316,7 @@ class HunyuanVideo15Pipeline(DiffusionPipeline):
         text_encoder: Qwen2_5_VLTextModel,
         tokenizer: Qwen2Tokenizer,
         transformer: HunyuanVideo15Transformer3DModel,
-        vae: AutoencoderKLHunyuanVideo15,
+        vae: AutoencoderKLConv3D,
         scheduler: FlowMatchEulerDiscreteScheduler,
         text_encoder_2: T5EncoderModel,
         tokenizer_2: ByT5Tokenizer,
@@ -335,12 +335,13 @@ class HunyuanVideo15Pipeline(DiffusionPipeline):
             guider=guider,
         )
 
-        self.vae_scale_factor_temporal = self.vae.temporal_compression_ratio if getattr(self, "vae", None) else 4
-        self.vae_scale_factor_spatial = self.vae.spatial_compression_ratio if getattr(self, "vae", None) else 16
+        vae = getattr(self, "vae", None)
+        self.vae_scale_factor_temporal = vae.temporal_compression_ratio if vae is not None else 4
+        self.vae_scale_factor_spatial = vae.spatial_compression_ratio if vae is not None else 16
         self.video_processor = HunyuanVideo15ImageProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
         self.target_size = self.transformer.config.target_size if getattr(self, "transformer", None) else 640
         self.vision_states_dim = self.transformer.config.image_embed_dim if getattr(self, "transformer", None) else 1152
-        self.num_channels_latents = self.vae.config.latent_channels if hasattr(self, "vae") else 32
+        self.num_channels_latents = vae.config.latent_channels if vae is not None else 32
         # fmt: off
         self.system_message = "You are a helpful assistant. Describe the video by detailing the following aspects: \
         1. The main content and theme of the video. \
@@ -493,6 +494,11 @@ class HunyuanVideo15Pipeline(DiffusionPipeline):
         prompt = [prompt] if isinstance(prompt, str) else prompt
 
         if prompt_embeds is None:
+            if self.text_encoder is None or self.tokenizer is None:
+                raise ValueError(
+                    "prompt_embeds were not provided, but text_encoder/tokenizer are not available (offloaded or unset). "
+                    "Provide precomputed prompt_embeds and prompt_embeds_mask or keep text encoders loaded for validation."
+                )
             prompt_embeds, prompt_embeds_mask = self._get_mllm_prompt_embeds(
                 tokenizer=self.tokenizer,
                 text_encoder=self.text_encoder,
@@ -504,6 +510,11 @@ class HunyuanVideo15Pipeline(DiffusionPipeline):
             )
 
         if prompt_embeds_2 is None:
+            if self.text_encoder_2 is None or self.tokenizer_2 is None:
+                raise ValueError(
+                    "prompt_embeds_2 were not provided, but glyph text_encoder/tokenizer are not available (offloaded or unset). "
+                    "Provide precomputed prompt_embeds_2 and prompt_embeds_mask_2 or keep text encoders loaded for validation."
+                )
             prompt_embeds_2, prompt_embeds_mask_2 = self._get_byt5_prompt_embeds(
                 tokenizer=self.tokenizer_2,
                 text_encoder=self.text_encoder_2,
