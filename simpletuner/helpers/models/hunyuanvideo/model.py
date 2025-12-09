@@ -402,18 +402,16 @@ class HunyuanVideo(VideoModelFoundation):
         is_i2v_model = self._is_i2v_like_flavour()
         cond_latents = prepared_batch.get("conditioning_latents")
 
-        use_i2v = is_i2v_model or wants_i2v_batch
+        if wants_i2v_batch and not is_i2v_model and should_log() and not getattr(self, "_warned_spurious_i2v_batch", False):
+            logger.warning(
+                "Received an i2v-labelled batch for a t2v flavour; ignoring the flag and continuing with t2v training."
+            )
+            self._warned_spurious_i2v_batch = True
+
         if is_i2v_model and cond_latents is None:
             raise ValueError("HunyuanVideo i2v training requires conditioning_latents in the batch.")
-        if wants_i2v_batch and not is_i2v_model and cond_latents is None:
-            if should_log() and not getattr(self, "_warned_missing_i2v_conditioning", False):
-                logger.warning(
-                    "Batch was marked as i2v but no conditioning latents were provided; falling back to t2v for this batch."
-                )
-                self._warned_missing_i2v_conditioning = True
-            use_i2v = False
 
-        task_type = "i2v" if use_i2v else "t2v"
+        task_type = "i2v" if is_i2v_model else "t2v"
 
         cond_latents = prepared_batch.get("conditioning_latents")
         cond_latents = self._prepare_cond_latents(cond_latents, latents, task_type)

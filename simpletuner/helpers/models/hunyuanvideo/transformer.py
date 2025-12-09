@@ -14,6 +14,7 @@ from loguru import logger
 
 from simpletuner.helpers.training.tread import TREADRouter
 
+from .commons import to_3tuple
 from .commons.parallel_states import get_parallel_state
 from .modules.activation_layers import get_activation_layer
 from .modules.attention import parallel_attention
@@ -385,7 +386,10 @@ class HunyuanVideo_1_5_DiffusionTransformer(ModelMixin, ConfigMixin, PeftAdapter
         self._tread_router: Optional[TREADRouter] = None
         self._tread_routes: Optional[List[Dict[str, Any]]] = None
 
-        self.patch_size = patch_size
+        normalized_patch_size = list(to_3tuple(patch_size))
+        self.patch_size = normalized_patch_size
+        if hasattr(self, "config"):
+            self.config.patch_size = normalized_patch_size
         self.in_channels = in_channels
         self.out_channels = in_channels if out_channels is None else out_channels
         self.unpatchify_channels = self.out_channels
