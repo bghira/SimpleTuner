@@ -183,6 +183,7 @@ import transformers
 from accelerate import Accelerator, DeepSpeedPlugin, FullyShardedDataParallelPlugin
 from accelerate.tracking import GeneralTracker
 from accelerate.utils import (
+    DistributedDataParallelKwargs,
     DistributedType,
     DynamoBackend,
     ParallelismConfig,
@@ -822,6 +823,14 @@ class Trainer:
                 project_config=self.config.accelerator_project_config,
                 kwargs_handlers=accelerator_custom_config,
             )
+
+            # Enable unused parameter detection for models that may skip params (e.g., multimodal heads),
+            # or when explicitly requested via config.
+            find_unused_cfg = getattr(self.config, "find_unused_parameters", None)
+            if find_unused_cfg is not None:
+                accelerator_custom_config.append(DistributedDataParallelKwargs(find_unused_parameters=bool(find_unused_cfg)))
+            elif str(getattr(self.config, "model_family", "")).lower() == "hunyuanvideo":
+                accelerator_custom_config.append(DistributedDataParallelKwargs(find_unused_parameters=True))
 
             if not will_create_dynamo_plugin and dynamo_backend_env:
                 accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
@@ -5034,7 +5043,8 @@ class Trainer:
                         )
                     except Exception as error:
                         # let's not crash training because of a validation error.
-                        logger.error(f"Validation run failed at step {step}: {error}", exc_info=True)
+                        logger.error(f"Validation run failed at step {step}: {error}")
+                        logger.debug(traceback.format_exc())
 
                     if should_validate:
                         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
