@@ -19,6 +19,7 @@ from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import BaseOutput, logging
 from PIL import Image
 from torch import distributed as dist
+from transformers import AutoTokenizer, T5EncoderModel
 
 from simpletuner.helpers.models.hunyuanvideo.commons import (
     PIPELINE_CONFIGS,
@@ -50,6 +51,15 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 class HunyuanVideoPipelineOutput(BaseOutput):
     videos: Union[torch.Tensor, np.ndarray]
     sr_videos: Optional[Union[torch.Tensor, np.ndarray]] = None
+
+
+class _FallbackPromptFormat:
+    """Lightweight formatter when the Glyph prompt assets are unavailable."""
+
+    def format_prompt(self, glyph_texts: List[str], _styles: List[Dict[str, Any]]) -> str:
+        if not glyph_texts:
+            return ""
+        return ". ".join(f'Text "{txt}"' for txt in glyph_texts) + ". "
 
 
 class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
@@ -157,16 +167,26 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
 
     @classmethod
     def _load_byt5(cls, cached_folder, glyph_byT5_v2, byt5_max_length, device):
-        """Load ByT5 glyph encoder from dedicated repo."""
+        """Load ByT5 glyph encoder, preferring a locally bundled text_encoder_2 if present."""
         if not glyph_byT5_v2:
             return None, None
+
+        # 1) Prefer a locally packaged text_encoder_2 (e.g., from Diffusers-style checkpoints)
+        local_byt5_path = os.path.join(cached_folder, "text_encoder_2")
+        if os.path.isdir(local_byt5_path):
+            tokenizer = AutoTokenizer.from_pretrained(local_byt5_path)
+            model = T5EncoderModel.from_pretrained(local_byt5_path, torch_dtype=torch.bfloat16).to(device)
+            prompt_format = _FallbackPromptFormat()
+            return (
+                {"byt5_model": model, "byt5_tokenizer": tokenizer, "byt5_max_length": byt5_max_length},
+                prompt_format,
+            )
+
+        # 2) Fallback to the standalone Glyph ByT5 repo
         try:
             from huggingface_hub import snapshot_download
 
-            # Download from dedicated ByT5 repo
             glyph_root = snapshot_download(repo_id=cls.GLYPH_BYT5_REPO)
-
-            # Assets should be at root level in the dedicated repo
             multilingual_prompt_format_color_path = os.path.join(glyph_root, "assets/color_idx.json")
             multilingual_prompt_format_font_path = os.path.join(glyph_root, "assets/multilingual_10-lang_idx.json")
             byt5_ckpt_path = os.path.join(glyph_root, "checkpoints/byt5_model.pt")
@@ -1360,15 +1380,25 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         else:
             transformer_init_device = device
 
-        supported_transformer_version = os.listdir(os.path.join(cached_folder, "transformer"))
-        if transformer_version not in supported_transformer_version:
-            raise ValueError(
-                f"Could not find {transformer_version} in {cached_folder}. Only {supported_transformer_version} are available."
+        transformer_root = os.path.join(cached_folder, "transformer")
+        version_path = os.path.join(transformer_root, transformer_version)
+        if os.path.isdir(version_path):
+            transformer_load_path = version_path
+        else:
+            # Some repos are single-flavour and only contain a bare `transformer/` folder (no nested variant dirs).
+            has_nested_variants = any(
+                os.path.isdir(os.path.join(transformer_root, entry)) for entry in os.listdir(transformer_root)
             )
+            if has_nested_variants:
+                supported_transformer_version = os.listdir(transformer_root)
+                raise ValueError(
+                    f"Could not find {transformer_version} in {cached_folder}. Only {supported_transformer_version} are available."
+                )
+            transformer_load_path = transformer_root
 
         vae_inference_config = cls.get_vae_inference_config()
         transformer = HunyuanVideo_1_5_DiffusionTransformer.from_pretrained(
-            os.path.join(cached_folder, "transformer", transformer_version),
+            transformer_load_path,
             torch_dtype=transformer_dtype,
             low_cpu_mem_usage=True,
         ).to(transformer_init_device)
@@ -1476,15 +1506,10 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         if memory_limitation is None:
             memory_limitation = get_gpu_memory()
         GB = 1024 * 1024 * 1024
-        if memory_limitation < 28 * GB:
-            sample_size = 128
-            tile_overlap_factor = 0.25
-            dtype = torch.float16
-        else:
-            sample_size = 256
-            tile_overlap_factor = 0.25
-            dtype = torch.float32
-        return {"sample_size": sample_size, "tile_overlap_factor": tile_overlap_factor, "dtype": dtype}
+        sample_size = 256 if memory_limitation >= 28 * GB else 128
+        tile_overlap_factor = 0.25
+
+        return {"sample_size": sample_size, "tile_overlap_factor": tile_overlap_factor, "dtype": torch.bfloat16}
 
     # Component repositories for direct loading
     TEXT_ENCODER_REPO = "Qwen/Qwen2.5-VL-7B-Instruct"
