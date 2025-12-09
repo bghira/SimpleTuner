@@ -2,6 +2,8 @@
 
 import importlib.machinery as machinery
 import importlib.util as _importlib_util
+import json
+import shutil
 import sys
 import time
 import types
@@ -26,10 +28,6 @@ _OPTIONAL_MODULES = {
     "torchao.dtypes.uintx.uint4_layout",
     "torchao.dtypes.uintx.uintx_layout",
     "optimi",
-    "fastapi",
-    "fastapi.middleware",
-    "fastapi.middleware.cors",
-    "fastapi.responses",
 }
 
 
@@ -142,6 +140,14 @@ def _ensure_optimi_stub():
 
 
 def _ensure_fastapi_stub():
+    try:
+        import fastapi  # noqa: F401
+        import fastapi.middleware.cors  # noqa: F401
+        import fastapi.responses  # noqa: F401
+
+        return
+    except Exception:
+        pass
     if "fastapi" in sys.modules:
         return
 
@@ -506,6 +512,12 @@ except Exception:
 
 
 def _ensure_models_common_stub():
+    try:
+        import simpletuner.helpers.models.common  # noqa: F401
+
+        return
+    except Exception:
+        pass
     module_name = "simpletuner.helpers.models.common"
     if module_name in sys.modules:
         return
@@ -524,6 +536,9 @@ def _ensure_models_common_stub():
         pass
 
     class ModelFoundation(_BaseModelFoundation):
+        pass
+
+    class AudioModelFoundation(_BaseModelFoundation):
         pass
 
     class _PredictionTypes:
@@ -549,12 +564,18 @@ def _ensure_models_common_stub():
         VAE = "vae"
         TEXT_ENCODER = "text_encoder"
 
+    class _TextEmbedCacheKey:
+        CAPTION = "caption"
+        DATASET_AND_FILENAME = "dataset_and_filename"
+
     common_module.ImageModelFoundation = ImageModelFoundation
     common_module.VideoModelFoundation = VideoModelFoundation
     common_module.ModelFoundation = ModelFoundation
+    common_module.AudioModelFoundation = AudioModelFoundation
     common_module.PredictionTypes = _PredictionTypes
     common_module.PipelineTypes = _PipelineTypes
     common_module.ModelTypes = _ModelTypes
+    common_module.TextEmbedCacheKey = _TextEmbedCacheKey
 
     sys.modules[module_name] = common_module
 
@@ -711,6 +732,122 @@ class TestTrainer(unittest.TestCase):
         self.assertIsNotNone(instance)
         self.assertTrue(instance.abort_called)
         self.assertTrue(instance.should_abort)
+
+    def test_run_trainer_job_honours_single_device_selection(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        captured = {}
+
+        class DummyStdout:
+            def readline(self):
+                return ""
+
+            def close(self):
+                captured["stdout_closed"] = True
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = DummyStdout()
+                self.pid = 1234
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def terminate(self):
+                captured["terminated"] = True
+
+            def kill(self):
+                captured["killed"] = True
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env", {})
+            captured["kwargs"] = kwargs
+            return DummyProcess()
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            result = trainer_module.run_trainer_job(
+                {
+                    "accelerate_visible_devices": [1],
+                    "--num_processes": 1,
+                }
+            )
+
+            self.assertEqual(result, 0)
+        self.assertIn("cmd", captured)
+        self.assertEqual(captured["cmd"][0], "accelerate")
+        self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "1")
+        self.assertFalse(any("--accelerate_visible_devices" in arg for arg in captured["cmd"]))
+
+    def test_accelerate_manual_triggers_are_relayed(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        captured = {}
+        trigger_calls = {"count": 0}
+
+        def manual_validation_consumer():
+            trigger_calls["count"] += 1
+            return trigger_calls["count"] == 1
+
+        class DummyStdout:
+            def readline(self):
+                return ""
+
+            def close(self):
+                captured["stdout_closed"] = True
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = DummyStdout()
+                self.pid = 4321
+                self._poll_calls = 0
+
+            def poll(self):
+                self._poll_calls += 1
+                return None if self._poll_calls < 2 else 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def terminate(self):
+                captured["terminated"] = True
+
+            def kill(self):
+                captured["killed"] = True
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env", {})
+            return DummyProcess()
+
+        removed_paths = []
+
+        def fake_rmtree(path, ignore_errors=True):
+            removed_paths.append(path)
+
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch("simpletuner.helpers.training.trainer.shutil.rmtree", side_effect=fake_rmtree),
+        ):
+            result = trainer_module.run_trainer_job(
+                {
+                    "accelerate_visible_devices": [0],
+                    "consume_manual_validation_request": manual_validation_consumer,
+                }
+            )
+
+        self.assertEqual(result, 0)
+        signal_file = captured.get("env", {}).get("SIMPLETUNER_ACCELERATE_SIGNAL_FILE")
+        self.assertIsNotNone(signal_file)
+        with open(signal_file, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertGreaterEqual(payload.get("manual_validation", 0), 1)
+        self.assertTrue(removed_paths)
+        for path in removed_paths:
+            shutil.rmtree(path, ignore_errors=True)
 
     def test_accelerate_failure_summary_highlights_oom(self):
         from simpletuner.helpers.training import trainer as trainer_module

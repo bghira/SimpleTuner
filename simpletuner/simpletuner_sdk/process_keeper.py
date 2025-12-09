@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+from simpletuner.helpers.log_format import strip_ansi
+
 try:  # Optional dependency; used for robust process tree termination
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - psutil is optional
@@ -444,6 +446,39 @@ signal.signal(signal.SIGTERM, handle_sigterm)
 command_check_thread = threading.Thread(target=check_commands, daemon=True)
 command_check_thread.start()
 
+# Detect parent exit and abort if this process is orphaned
+parent_pid_env = os.environ.get("SIMPLETUNER_PARENT_PID")
+try:
+    _parent_pid = int(parent_pid_env) if parent_pid_env else None
+except Exception:
+    _parent_pid = None
+
+def _monitor_parent():
+    global should_abort
+    if _parent_pid is None or _parent_pid <= 1:
+        return
+    while not should_abort:
+        try:
+            current_ppid = os.getppid()
+            if current_ppid != _parent_pid:
+                logger.info("Parent process disappeared; aborting trainer subprocess")
+                should_abort = True
+                send_event("state", {{"status": "aborting", "reason": "parent_exit"}})
+                try:
+                    if hasattr(os, "getpgid") and hasattr(os, "killpg"):
+                        os.killpg(os.getpgid(0), signal.SIGTERM)
+                    else:
+                        os.kill(os.getpid(), signal.SIGTERM)
+                except Exception:
+                    pass
+                break
+        except Exception:
+            break
+        time.sleep(1.0)
+
+parent_monitor_thread = threading.Thread(target=_monitor_parent, daemon=True)
+parent_monitor_thread.start()
+
 # Send starting event
 send_event("state", {{"status": "running"}})
 
@@ -527,6 +562,7 @@ logger.info("Subprocess exiting")
         env.setdefault("WANDB_DISABLE_SERVICE", "true")
         env.setdefault("WANDB_STDOUT_CAPTURE", "off")
         env.setdefault("WANDB_STDERR_CAPTURE", "off")
+        env.setdefault("SIMPLETUNER_PARENT_PID", str(os.getpid()))
 
         # Start the subprocess
         popen_kwargs = {
@@ -739,7 +775,7 @@ logger.info("Subprocess exiting")
                     break
                 if log_handle is not None:
                     try:
-                        log_handle.write(line)
+                        log_handle.write(strip_ansi(line))
                         log_handle.flush()
                     except Exception as log_exc:
                         logger.debug(f"Failed to persist stdout for {self.job_id}: {log_exc}")
@@ -766,8 +802,9 @@ logger.info("Subprocess exiting")
                         sys.stdout.write(line)
                         sys.stdout.flush()
                 except Exception:
-                    # If stdout is unavailable just log the line
-                    logger.info(line.rstrip())
+                    # If stdout is unavailable, print to stderr with ANSI codes stripped
+                    # to avoid double-formatting and escape codes in logs/webhooks
+                    print(strip_ansi(line.rstrip()), file=sys.stderr)
         except Exception as exc:
             if not self.stop_event.is_set():
                 logger.debug(f"stdout streaming error for {self.job_id}: {exc}")

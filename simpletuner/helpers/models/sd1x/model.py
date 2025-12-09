@@ -116,7 +116,10 @@ class StableDiffusion1(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        prompt_embeds, _ = pipeline.encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
             num_images_per_prompt=1,

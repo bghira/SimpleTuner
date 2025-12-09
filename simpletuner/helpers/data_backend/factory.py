@@ -1740,7 +1740,6 @@ class FactoryRegistry:
                     else nullcontext()
                 )
                 with main_process_context:
-                    self.model.get_pipeline()
                     logger.debug(f"rank {get_rank()} is computing the null embed")
                     init_backend["text_embed_cache"].encode_dropout_caption()
                     logger.debug(f"rank {get_rank()} has completed computing the null embed")
@@ -2310,6 +2309,25 @@ class FactoryRegistry:
 
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
+
+        # When the main process rebuilds buckets (e.g., after cache deletion), ensure
+        # other ranks reload the freshly written cache before splitting buckets.
+        if (
+            self._is_multi_process()
+            and not self.accelerator.is_main_process
+            and not backend.get("auto_generated", False)
+            and "aspect" not in self.args.skip_file_discovery
+            and "aspect" not in backend.get("skip_file_discovery", "")
+            and conditioning_type
+            not in [
+                "mask",
+                "controlnet" if not self.model.requires_conditioning_latents() else -1,
+                "reference_strict",
+            ]
+        ):
+            info_log(f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses after refresh.")
+            init_backend["metadata_backend"].reload_cache()
+
         if (
             not backend.get("auto_generated", False)
             and backend.get("conditioning_type", None) is not None
@@ -2680,7 +2698,6 @@ class FactoryRegistry:
                 f"(id={init_backend['id']}) Initialise text embed pre-computation using the {caption_strategy} caption strategy. We have {len(captions)} captions to process."
             )
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
-            self.model.get_pipeline()
             prompt_records = []
             key_type = self.model.text_embed_cache_key()
             dataset_id = init_backend["id"]

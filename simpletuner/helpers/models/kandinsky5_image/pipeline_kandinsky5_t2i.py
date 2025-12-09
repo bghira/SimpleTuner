@@ -98,9 +98,35 @@ class Kandinsky5T2IPipeline(DiffusionPipeline, KandinskyLoraLoaderMixin):
     @property
     def vae_scale_factor_spatial(self):
         vae = getattr(self, "vae", None)
-        if vae is None or getattr(vae, "config", None) is None:
-            return 1.0
-        return getattr(vae.config, "scaling_factor", 1.0)
+        config = getattr(vae, "config", None) if vae is not None else None
+        if config is None:
+            return 8
+
+        def _sanitize_scale(value):
+            if value is None:
+                return None
+            if torch.is_tensor(value):
+                if value.numel() != 1:
+                    return None
+                value = value.item()
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float) and value.is_integer():
+                return int(value)
+            return None
+
+        for attr in ("scale_factor_spatial", "spatial_compression_ratio"):
+            scale = _sanitize_scale(getattr(config, attr, None))
+            if scale is not None and scale > 0:
+                return scale
+
+        block_out_channels = getattr(config, "block_out_channels", None)
+        if block_out_channels:
+            # Downsampling happens on every block except the last one.
+            downsample_blocks = max(len(block_out_channels) - 1, 0)
+            return max(1, 2**downsample_blocks)
+
+        return 1
 
     @property
     def guidance_scale(self):
@@ -109,6 +135,14 @@ class Kandinsky5T2IPipeline(DiffusionPipeline, KandinskyLoraLoaderMixin):
     @property
     def do_classifier_free_guidance(self):
         return self.guidance_scale > 1.0
+
+    @property
+    def interrupt(self):
+        return getattr(self, "_interrupt", False)
+
+    @interrupt.setter
+    def interrupt(self, value: bool):
+        self._interrupt = bool(value)
 
     def encode_prompt(
         self,

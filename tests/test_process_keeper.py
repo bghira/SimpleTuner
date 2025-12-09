@@ -313,6 +313,27 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
             process2 = submit_job(job_id, slow_task, config)
         self.assertIn("already running", str(context.exception))
 
+    @patch("simpletuner.simpletuner_sdk.process_keeper.subprocess.Popen")
+    def test_subprocess_env_includes_parent_pid(self, mock_popen):
+        job_id = "test_parent_pid_env"
+        self.test_jobs.append(job_id)
+
+        dummy_proc = MagicMock()
+        dummy_proc.stdout = None
+        dummy_proc.stderr = None
+        dummy_proc.stdin = None
+        dummy_proc.pid = 12345
+        dummy_proc.poll.return_value = 0
+        dummy_proc.returncode = 0
+        mock_popen.return_value = dummy_proc
+
+        process = TrainerProcess(job_id)
+        self.addCleanup(process._cleanup_resources)
+        process.start(simple_task, {})
+
+        called_env = mock_popen.call_args.kwargs.get("env") or {}
+        self.assertEqual(called_env.get("SIMPLETUNER_PARENT_PID"), str(os.getpid()))
+
 
 class TestProcessCommunication(ProcessKeeperTestCase):
 

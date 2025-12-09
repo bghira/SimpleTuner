@@ -1,3 +1,4 @@
+import copy
 import inspect
 import json
 import logging
@@ -27,6 +28,7 @@ except ImportError:
     FSDP_AVAILABLE = False
 
 from simpletuner.diff2flow import DiffusionToFlowBridge
+from simpletuner.helpers.assistant_lora import build_adapter_stack, set_adapter_stack
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
@@ -328,34 +330,45 @@ class ModelFoundation(ABC):
         except Exception:
             assistant_weight = 1.0
 
-        adapter_names = []
-        adapter_weights = []
-
-        if assistant_weight != 0:
-            adapter_names.append(self.assistant_adapter_name)
-            adapter_weights.append(assistant_weight)
-
-        peft_config = getattr(trained_component, "peft_config", {}) or {}
-        if "default" in peft_config:
-            adapter_names.append("default")
-            adapter_weights.append(1.0)
+        target_component = self.unwrap_model(trained_component)
+        peft_config = getattr(target_component, "peft_config", {}) or {}
+        has_default_adapter = isinstance(peft_config, dict) and "default" in peft_config
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        require_default = lora_type == "standard"
+        include_default = has_default_adapter or require_default
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name=self.assistant_adapter_name,
+            assistant_weight=assistant_weight if assistant_weight != 0 else None,
+            include_default=include_default,
+            require_default=require_default,
+        )
 
         if not adapter_names:
             return
 
-        weight_arg = None
-        if len(adapter_weights) == 1:
-            weight_arg = adapter_weights[0]
-        else:
-            weight_arg = adapter_weights
+        def _weight_for(idx: int) -> object:
+            if isinstance(weight_arg, list):
+                return weight_arg[idx]
+            return weight_arg
 
-        logger.info(f"Configuring assistant LoRA for training with weights: {self.assistant_adapter_name}={weight_arg}")
-        set_adapter_stack(
-            trained_component,
-            adapter_names,
-            weights=weight_arg,
-            freeze_names=[self.assistant_adapter_name],
-        )
+        weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
+        logger.info(f"Configuring assistant LoRA for training with weights: {weight_summary}")
+        components = [
+            target_component,
+            trained_component if trained_component is not target_component else None,
+        ]
+        pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+        if pipeline_component is not None:
+            components.append(pipeline_component)
+        seen: set[int] = set()
+        for component in components:
+            if component is None:
+                continue
+            if id(component) in seen:
+                continue
+            seen.add(id(component))
+            set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     def configure_assistant_lora_for_inference(self):
         """
@@ -369,36 +382,79 @@ class ModelFoundation(ABC):
         if trained_component is None:
             return
 
-        from simpletuner.helpers.assistant_lora import set_adapter_stack
-
-        inference_weight = getattr(self.config, "assistant_lora_inference_strength", 0.0)
         try:
-            inference_weight = float(inference_weight)
+            inference_weight = float(getattr(self.config, "assistant_lora_inference_strength", 0.0))
         except Exception:
             inference_weight = 0.0
 
-        adapter_names = []
-        adapter_weights = []
-        if inference_weight != 0:
-            adapter_names.append(self.assistant_adapter_name)
-            adapter_weights.append(inference_weight)
+        target_component = self.unwrap_model(trained_component)
+        peft_config = getattr(target_component, "peft_config", {}) or {}
+        has_default_adapter = isinstance(peft_config, dict) and "default" in peft_config
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        require_default = lora_type == "standard"
+        include_default = has_default_adapter or require_default
 
-        peft_config = getattr(trained_component, "peft_config", {}) or {}
-        if "default" in peft_config:
-            adapter_names.append("default")
-            adapter_weights.append(1.0)
+        if inference_weight == 0:
+            adapter_names, weight_arg, freeze_names = build_adapter_stack(
+                peft_config=peft_config,
+                assistant_adapter_name=self.assistant_adapter_name,
+                assistant_weight=None,
+                include_default=include_default,
+                require_default=require_default,
+            )
+            if not adapter_names:
+                return
+            logger.info("Configuring assistant LoRA for inference with weights: default=1.0")
+            components = [
+                target_component,
+                trained_component if trained_component is not target_component else None,
+            ]
+            pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+            if pipeline_component is not None:
+                components.append(pipeline_component)
+            seen: set[int] = set()
+            for component in components:
+                if component is None:
+                    continue
+                if id(component) in seen:
+                    continue
+                seen.add(id(component))
+                set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
+            return
+
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name=self.assistant_adapter_name,
+            assistant_weight=inference_weight,
+            include_default=include_default,
+            require_default=require_default,
+        )
 
         if not adapter_names:
             return
 
-        weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
-        logger.info(f"Configuring assistant LoRA for inference with weights: {self.assistant_adapter_name}={weight_arg}")
-        set_adapter_stack(
-            trained_component,
-            adapter_names,
-            weights=weight_arg,
-            freeze_names=[self.assistant_adapter_name],
-        )
+        def _weight_for(idx: int) -> object:
+            if isinstance(weight_arg, list):
+                return weight_arg[idx]
+            return weight_arg
+
+        weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
+        logger.info(f"Configuring assistant LoRA for inference with weights: {weight_summary}")
+        components = [
+            target_component,
+            trained_component if trained_component is not target_component else None,
+        ]
+        pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+        if pipeline_component is not None:
+            components.append(pipeline_component)
+        seen: set[int] = set()
+        for component in components:
+            if component is None:
+                continue
+            if id(component) in seen:
+                continue
+            seen.add(id(component))
+            set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     @classmethod
     def supports_lora(cls) -> bool:
@@ -1216,6 +1272,7 @@ class ModelFoundation(ABC):
         """
         return sample
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         """
         Hook for models to customize VAE encoding behaviour (e.g. applying flavour-specific patches).
@@ -1335,6 +1392,8 @@ class ModelFoundation(ABC):
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
                     )
+                if hasattr(text_encoder, "eval"):
+                    text_encoder.eval()
                 setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
                 self.text_encoders.append(text_encoder)
 
@@ -1637,10 +1696,7 @@ class ModelFoundation(ABC):
             pipeline_kwargs["watermarker"] = None
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
-        if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
-        else:
-            pipeline_kwargs[self.MODEL_TYPE.value] = None
+        pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
 
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = self.unwrap_model(self.vae)
@@ -1804,24 +1860,39 @@ class ModelFoundation(ABC):
             else:
                 pipeline_kwargs["image_processor"] = image_processor
 
+        base_scheduler = getattr(self, "noise_schedule", None)
+        if "scheduler" not in pipeline_kwargs and base_scheduler is not None:
+            try:
+                pipeline_kwargs["scheduler"] = base_scheduler.__class__.from_config(base_scheduler.config)
+            except Exception:
+                pipeline_kwargs["scheduler"] = copy.deepcopy(base_scheduler)
+
         logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
-        try:
-            pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
-        except (OSError, EnvironmentError, ValueError) as exc:
-            alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
-            current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
-            if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
-                logger.warning(
-                    "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
-                    current_repo,
-                    exc,
-                    alt_repo,
-                )
-                alt_kwargs = dict(pipeline_kwargs)
-                alt_kwargs["pretrained_model_name_or_path"] = alt_repo
-                pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
-            else:
-                raise
+        if load_base_model:
+            try:
+                pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
+            except (OSError, EnvironmentError, ValueError) as exc:
+                alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
+                current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
+                if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
+                    logger.warning(
+                        "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
+                        current_repo,
+                        exc,
+                        alt_repo,
+                    )
+                    alt_kwargs = dict(pipeline_kwargs)
+                    alt_kwargs["pretrained_model_name_or_path"] = alt_repo
+                    pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
+                else:
+                    raise
+        else:
+            init_kwargs = {
+                key: value
+                for key, value in pipeline_kwargs.items()
+                if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
+            }
+            pipeline_instance = pipeline_class(**init_kwargs)
         self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
@@ -2497,6 +2568,7 @@ class ModelFoundation(ABC):
         """
         return self._encode_prompts([negative_prompt], is_negative_prompt=True)
 
+    @torch.no_grad()
     def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
         """
         Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
@@ -2978,6 +3050,7 @@ class AudioModelFoundation(ModelFoundation):
             return _audio_transform
         return super().get_transforms(dataset_type=dataset_type)
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         """
         Music-focused autoencoders often return both latents and accompanying

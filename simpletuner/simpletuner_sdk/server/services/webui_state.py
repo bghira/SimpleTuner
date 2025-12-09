@@ -351,7 +351,7 @@ class WebUIStateStore:
         root_dir = self.base_dir.parent
         root_dir.mkdir(parents=True, exist_ok=True)
         return {
-            "configs_dir": str(root_dir / "configs"),
+            "configs_dir": str(root_dir / "config"),
             "output_dir": str(root_dir / "output"),
             "datasets_dir": str(root_dir / "datasets"),
         }

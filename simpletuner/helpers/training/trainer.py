@@ -30,6 +30,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
+from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
@@ -2347,18 +2348,146 @@ class Trainer:
 
         return curent_memory_allocated
 
+    def _report_cuda_usage(self, label: str):
+        """Report which components still hold CUDA tensors to pinpoint leaks."""
+        if not torch.cuda.is_available():
+            return
+
+        def _bytes_and_devices(obj) -> tuple[int, dict[str, int]]:
+            total = 0
+            devices: dict[str, int] = {}
+            if obj is None:
+                return total, devices
+            tensors = []
+            try:
+                if hasattr(obj, "parameters"):
+                    tensors.extend(list(obj.parameters()))
+                if hasattr(obj, "buffers"):
+                    tensors.extend(list(obj.buffers()))
+            except Exception:
+                return total, devices
+            for t in tensors:
+                if not torch.is_tensor(t) or t.device.type != "cuda":
+                    continue
+                size = t.numel() * t.element_size()
+                total += size
+                devices[str(t.device)] = devices.get(str(t.device), 0) + 1
+            return total, devices
+
+        components: list[tuple[str, object]] = []
+        components.append(("model", getattr(self.model, "model", None)))
+        components.append(("vae", getattr(self.model, "vae", None)))
+        components.append(("controlnet", getattr(self.model, "controlnet", None)))
+        components.append(("text_encoders", getattr(self.model, "text_encoders", None)))
+        components.append(("active_pipeline", getattr(self.model, "pipeline", None)))
+        if hasattr(self.model, "pipelines") and isinstance(getattr(self.model, "pipelines"), dict):
+            for k, v in getattr(self.model, "pipelines").items():
+                components.append((f"cached_pipeline[{k}]", v))
+        seen_caches: set[int] = set()
+        try:
+            for backend_id, backend in StateTracker.get_data_backends().items():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                seen_caches.add(id(cache))
+                components.append((f"text_embed_cache[{backend_id}].pipeline", getattr(cache, "pipeline", None)))
+                encs = getattr(cache, "text_encoders", None)
+                if encs:
+                    for idx, enc in enumerate(encs):
+                        components.append((f"text_embed_cache[{backend_id}].te{idx+1}", enc))
+        except Exception:
+            pass
+        try:
+            for idx, cache in enumerate(TextEmbeddingCache.active_caches()):
+                if cache is None or id(cache) in seen_caches:
+                    continue
+                seen_caches.add(id(cache))
+                components.append((f"text_embed_cache[registry-{idx}].pipeline", getattr(cache, "pipeline", None)))
+                encs = getattr(cache, "text_encoders", None)
+                if encs:
+                    for enc_idx, enc in enumerate(encs):
+                        components.append((f"text_embed_cache[registry-{idx}].te{enc_idx+1}", enc))
+        except Exception:
+            pass
+
+        for name, obj in components:
+            # Handle lists of encoders explicitly
+            if isinstance(obj, (list, tuple)):
+                for idx, item in enumerate(obj):
+                    total, devices = _bytes_and_devices(item)
+                    if total > 0:
+                        gb = total / (1024**3)
+                        logger.warning("[%s] %s[%s] holds %.2f GB on %s", label, name, idx, gb, devices)
+                continue
+
+            total, devices = _bytes_and_devices(obj)
+            if total > 0:
+                gb = total / (1024**3)
+                logger.warning("[%s] %s holds %.2f GB on %s", label, name, gb, devices)
+
+    def _clear_pipeline_caches(self):
+        """Drop cached pipelines and cache-held pipelines to release VRAM before training."""
+        try:
+            if hasattr(self.model, "pipelines") and getattr(self.model, "pipelines"):
+                self.model.pipelines.clear()
+            if hasattr(self.model, "pipeline"):
+                self.model.pipeline = None
+        except Exception:
+            logger.debug("Failed to clear model pipeline caches.", exc_info=True)
+
+        try:
+            for backend in StateTracker.get_data_backends().values():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                if hasattr(cache, "pipeline"):
+                    cache.pipeline = None
+        except Exception:
+            logger.debug("Failed to clear text embed cache pipelines.", exc_info=True)
+
     def init_unload_text_encoder(self):
         if self.config.model_type != "full" and self.config.train_text_encoder:
             return
         memory_before_unload = self.stats_memory_used()
         if self.accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")
+        self._report_cuda_usage("pre_text_encoder_unload")
         self.model.unload_text_encoder()
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            if "text_embed_cache" in backend:
-                backend["text_embed_cache"].text_encoders = None
-                backend["text_embed_cache"].pipeline = None
+        caches_seen: set[int] = set()
+        caches_to_clear: list[object] = []
+        try:
+            for backend in StateTracker.get_data_backends().values():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                cache_id = id(cache)
+                if cache_id in caches_seen:
+                    continue
+                caches_seen.add(cache_id)
+                caches_to_clear.append(cache)
+        except Exception:
+            logger.debug("Failed to collect text embed caches from StateTracker during unload.", exc_info=True)
+
+        try:
+            for cache in TextEmbeddingCache.active_caches():
+                if cache is None:
+                    continue
+                cache_id = id(cache)
+                if cache_id in caches_seen:
+                    continue
+                caches_seen.add(cache_id)
+                caches_to_clear.append(cache)
+        except Exception:
+            logger.debug("Failed to collect text embed caches from registry during unload.", exc_info=True)
+
+        for cache in caches_to_clear:
+            if hasattr(cache, "text_encoders"):
+                cache.text_encoders = None
+            if hasattr(cache, "pipeline"):
+                cache.pipeline = None
+        self._clear_pipeline_caches()
         reclaim_memory()
+        self._report_cuda_usage("post_text_encoder_unload")
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM.")
@@ -5087,6 +5216,34 @@ class Trainer:
         self._emit_event(event)
 
 
+def _terminate_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                    return
+                except Exception:
+                    pass
+            process.terminate()
+    except Exception as exc:
+        logging.getLogger("SimpleTuner").warning("Failed to terminate accelerate process cleanly: %s", exc)
+
+
+def _kill_accelerate_process(process: subprocess.Popen) -> None:
+    try:
+        if process.poll() is None:
+            if os.name != "nt" and getattr(process, "pid", None):
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    return
+                except Exception:
+                    pass
+            process.kill()
+    except Exception as exc:
+        logging.getLogger("SimpleTuner").warning("Failed to kill accelerate process: %s", exc)
+
+
 def run_trainer_job(config):
     """Create a Trainer from the provided config and execute the full run loop."""
 
@@ -5238,7 +5395,9 @@ def run_trainer_job(config):
         import logging
         import os
         import shlex
+        import shutil
         import subprocess
+        import tempfile
         import threading
         import time
         from pathlib import Path
@@ -5247,6 +5406,36 @@ def run_trainer_job(config):
 
         launch_logger = logging.getLogger("SimpleTuner")
         use_accelerate = False
+
+        def _terminate_process(proc: subprocess.Popen) -> None:
+            """
+            Local terminate helper so we don't depend on outer-scope bindings when used in subprocess contexts.
+            """
+            try:
+                if proc.poll() is None:
+                    if os.name != "nt" and getattr(proc, "pid", None):
+                        try:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                            return
+                        except Exception:
+                            pass
+                    proc.terminate()
+            except Exception as exc:
+                launch_logger.warning("Failed to terminate accelerate process cleanly: %s", exc)
+
+        def _kill_process(proc: subprocess.Popen) -> None:
+            """Force-kill helper paired with _terminate_process."""
+            try:
+                if proc.poll() is None:
+                    if os.name != "nt" and getattr(proc, "pid", None):
+                        try:
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                            return
+                        except Exception:
+                            pass
+                    proc.kill()
+            except Exception as exc:
+                launch_logger.warning("Failed to kill accelerate process: %s", exc)
 
         nonlocal accelerate_config_path, main_process_port_value, machine_rank_value
 
@@ -5267,17 +5456,103 @@ def run_trainer_job(config):
         if dyn_backend_normalized and dyn_backend_normalized not in {"no", "none", ""}:
             use_accelerate = True
 
+        if selected_device_ids:
+            use_accelerate = True
+
         if not use_accelerate:
             return None
 
+        signal_dir: Optional[Path] = None
+        signal_file_path: Optional[Path] = None
+        signal_thread: Optional[threading.Thread] = None
+        signal_stop_event = threading.Event()
+        signal_counts = {"manual_validation": 0, "manual_checkpoint": 0}
+        signal_lock = threading.Lock()
+        relay_error_logged = False
+
+        def _persist_signal_counts() -> None:
+            if not signal_file_path:
+                return
+            payload: dict[str, int] = {}
+            with signal_lock:
+                if signal_counts["manual_validation"]:
+                    payload["manual_validation"] = signal_counts["manual_validation"]
+                if signal_counts["manual_checkpoint"]:
+                    payload["manual_checkpoint"] = signal_counts["manual_checkpoint"]
+            try:
+                target_path = signal_file_path
+                tmp_path = signal_file_path.with_suffix(".tmp")
+                with tmp_path.open("w", encoding="utf-8") as handle:
+                    json.dump(payload, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(tmp_path, target_path)
+            except Exception as exc:
+                launch_logger.debug("Failed to write accelerate trigger file: %s", exc)
+
+        def _prepare_signal_file() -> None:
+            nonlocal signal_dir, signal_file_path
+            if not (callable(manual_validation_consumer) or callable(manual_checkpoint_consumer)):
+                return
+            try:
+                signal_dir = Path(tempfile.mkdtemp(prefix="simpletuner_accel_signals_"))
+                signal_file_path = signal_dir / "triggers.json"
+                with signal_file_path.open("w", encoding="utf-8") as handle:
+                    json.dump({}, handle)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except Exception as exc:
+                launch_logger.warning("Could not set up manual trigger relay for accelerate: %s", exc)
+                signal_dir = None
+                signal_file_path = None
+
+        def _start_signal_relay() -> None:
+            nonlocal signal_thread, relay_error_logged  # noqa: F824
+            if not signal_file_path:
+                return
+
+            def _relay_triggers() -> None:
+                nonlocal relay_error_logged
+                while not signal_stop_event.is_set():
+                    triggered = False
+                    try:
+                        if callable(manual_validation_consumer) and manual_validation_consumer():
+                            with signal_lock:
+                                signal_counts["manual_validation"] += 1
+                            triggered = True
+                        if callable(manual_checkpoint_consumer) and manual_checkpoint_consumer():
+                            with signal_lock:
+                                signal_counts["manual_checkpoint"] += 1
+                            triggered = True
+                        relay_error_logged = False
+                    except Exception as exc:
+                        if not relay_error_logged:
+                            launch_logger.warning("Manual trigger relay failed: %s", exc)
+                            relay_error_logged = True
+                    if triggered:
+                        _persist_signal_counts()
+                    signal_stop_event.wait(0.25)
+
+            signal_thread = threading.Thread(target=_relay_triggers, daemon=True)
+            signal_thread.start()
+
+        def _cleanup_signal_relay() -> None:
+            signal_stop_event.set()
+            if signal_thread is not None:
+                signal_thread.join(timeout=1.5)
+            if signal_dir is not None:
+                try:
+                    shutil.rmtree(signal_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
         launch_env = os.environ.copy()
 
-        # Force colors to be enabled in subprocess (stdout is piped so TTY detection fails)
-        # Remove SIMPLETUNER_WEB_MODE so subprocess can use colors even when launched from web UI
-        launch_env.pop("SIMPLETUNER_WEB_MODE", None)
-        launch_env.pop("SIMPLETUNER_DISABLE_COLORS", None)
-        launch_env["FORCE_COLOR"] = "1"
-        launch_env["CLICOLOR_FORCE"] = "1"
+        # Don't force colors in subprocess - stdout is piped so colorized output
+        # would leak escape codes into debug.log and webhook messages.
+        # Preserve SIMPLETUNER_WEB_MODE/SIMPLETUNER_DISABLE_COLORS from parent env.
+        launch_env.pop("FORCE_COLOR", None)
+        launch_env.pop("CLICOLOR_FORCE", None)
 
         if job_id:
             launch_env["SIMPLETUNER_JOB_ID"] = job_id
@@ -5373,6 +5648,10 @@ def run_trainer_job(config):
             main_process_port_value = main_process_port_int
             machine_rank_value = machine_rank_int
 
+        _prepare_signal_file()
+        if signal_file_path:
+            launch_env["SIMPLETUNER_ACCELERATE_SIGNAL_FILE"] = str(signal_file_path)
+
         cmd = ["accelerate", "launch"]
 
         if config_file_arg:
@@ -5419,6 +5698,10 @@ def run_trainer_job(config):
                 "--accelerate_config",
                 "accelerate_extra_args",
                 "--accelerate_extra_args",
+                "accelerate_visible_devices",
+                "--accelerate_visible_devices",
+                "accelerate_strategy",
+                "--accelerate_strategy",
                 "main_process_ip",
                 "--main_process_ip",
                 "main_process_port",
@@ -5459,26 +5742,41 @@ def run_trainer_job(config):
         }
         if os.name != "nt":
             popen_kwargs["preexec_fn"] = os.setsid
-        process = subprocess.Popen(cmd, **popen_kwargs)
+        try:
+            process = subprocess.Popen(cmd, **popen_kwargs)
+        except Exception:
+            _cleanup_signal_relay()
+            raise
+
+        _start_signal_relay()
 
         output_lock = threading.Lock()
+        import sys as _sys
         from collections import deque as _deque
+
+        from simpletuner.helpers.log_format import strip_ansi as _strip_ansi
 
         recent_lines = _deque(maxlen=400)
 
         def _forward_output():
             if not process.stdout:
                 return
-            for line in iter(process.stdout.readline, ""):
-                if not line:
-                    break
-                recent_lines.append(line.rstrip("\n"))
-                with output_lock:
-                    try:
-                        sys.stdout.write(line)
-                        sys.stdout.flush()
-                    except Exception:
-                        launch_logger.info(line.rstrip())
+            try:
+                for line in iter(process.stdout.readline, ""):
+                    if not line:
+                        break
+                    recent_lines.append(line.rstrip("\n"))
+                    with output_lock:
+                        try:
+                            _sys.stdout.write(line)
+                            _sys.stdout.flush()
+                        except Exception:
+                            # Fallback: print to stderr with ANSI codes stripped
+                            # to avoid double-formatting and escape codes in logs/webhooks
+                            print(_strip_ansi(line.rstrip()), file=_sys.stderr)
+            except ValueError:
+                # File handle was closed while the reader thread was still active
+                return
 
         reader_thread = threading.Thread(target=_forward_output, daemon=True)
         reader_thread.start()
@@ -5487,31 +5785,35 @@ def run_trainer_job(config):
             while process.poll() is None:
                 if callable(should_abort_callable) and should_abort_callable():
                     launch_logger.info("Abort requested; terminating accelerate launcher")
-                    _terminate_accelerate_process(process)
+                    _terminate_process(process)
                     try:
                         process.wait(timeout=15)
                     except subprocess.TimeoutExpired:
                         launch_logger.warning("Accelerate process unresponsive; forcing kill")
-                        _kill_accelerate_process(process)
+                        _kill_process(process)
                     break
                 time.sleep(0.5)
         except KeyboardInterrupt:
             launch_logger.info("Keyboard interrupt received; terminating accelerate launcher")
-            _terminate_accelerate_process(process)
+            _terminate_process(process)
             raise
         finally:
-            if process.stdout:
-                process.stdout.close()
             reader_thread.join(timeout=2)
+            if process.stdout:
+                try:
+                    process.stdout.close()
+                except Exception:
+                    pass
             if process.poll() is None:
-                _terminate_accelerate_process(process)
+                _terminate_process(process)
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     launch_logger.warning("Accelerate process still alive; forcing kill")
-                    _kill_accelerate_process(process)
+                    _kill_process(process)
 
         returncode = process.wait()
+        _cleanup_signal_relay()
         if returncode != 0:
             helper = globals().get("_summarize_accelerate_failure")
             if helper is None:
@@ -5635,31 +5937,3 @@ def run_trainer_job(config):
 
     trainer.run()
     return {"status": "completed"}
-
-
-def _terminate_accelerate_process(process: subprocess.Popen) -> None:
-    try:
-        if process.poll() is None:
-            if os.name != "nt" and getattr(process, "pid", None):
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                    return
-                except Exception:
-                    pass
-            process.terminate()
-    except Exception as exc:
-        logging.getLogger("SimpleTuner").warning("Failed to terminate accelerate process cleanly: %s", exc)
-
-
-def _kill_accelerate_process(process: subprocess.Popen) -> None:
-    try:
-        if process.poll() is None:
-            if os.name != "nt" and getattr(process, "pid", None):
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    return
-                except Exception:
-                    pass
-            process.kill()
-    except Exception as exc:
-        logging.getLogger("SimpleTuner").warning("Failed to kill accelerate process: %s", exc)
