@@ -21,9 +21,9 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.activations import get_activation
 from diffusers.models.attention_processor import Attention
+from diffusers.models.autoencoders.vae import AutoencoderMixin, DecoderOutput, DiagonalGaussianDistribution
 from diffusers.models.modeling_outputs import AutoencoderKLOutput
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.vae import AutoencoderMixin, DecoderOutput, DiagonalGaussianDistribution
 from diffusers.utils import logging
 from diffusers.utils.accelerate_utils import apply_forward_hook
 
