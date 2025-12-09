@@ -30,6 +30,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
+from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
@@ -2347,18 +2348,146 @@ class Trainer:
 
         return curent_memory_allocated
 
+    def _report_cuda_usage(self, label: str):
+        """Report which components still hold CUDA tensors to pinpoint leaks."""
+        if not torch.cuda.is_available():
+            return
+
+        def _bytes_and_devices(obj) -> tuple[int, dict[str, int]]:
+            total = 0
+            devices: dict[str, int] = {}
+            if obj is None:
+                return total, devices
+            tensors = []
+            try:
+                if hasattr(obj, "parameters"):
+                    tensors.extend(list(obj.parameters()))
+                if hasattr(obj, "buffers"):
+                    tensors.extend(list(obj.buffers()))
+            except Exception:
+                return total, devices
+            for t in tensors:
+                if not torch.is_tensor(t) or t.device.type != "cuda":
+                    continue
+                size = t.numel() * t.element_size()
+                total += size
+                devices[str(t.device)] = devices.get(str(t.device), 0) + 1
+            return total, devices
+
+        components: list[tuple[str, object]] = []
+        components.append(("model", getattr(self.model, "model", None)))
+        components.append(("vae", getattr(self.model, "vae", None)))
+        components.append(("controlnet", getattr(self.model, "controlnet", None)))
+        components.append(("text_encoders", getattr(self.model, "text_encoders", None)))
+        components.append(("active_pipeline", getattr(self.model, "pipeline", None)))
+        if hasattr(self.model, "pipelines") and isinstance(getattr(self.model, "pipelines"), dict):
+            for k, v in getattr(self.model, "pipelines").items():
+                components.append((f"cached_pipeline[{k}]", v))
+        seen_caches: set[int] = set()
+        try:
+            for backend_id, backend in StateTracker.get_data_backends().items():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                seen_caches.add(id(cache))
+                components.append((f"text_embed_cache[{backend_id}].pipeline", getattr(cache, "pipeline", None)))
+                encs = getattr(cache, "text_encoders", None)
+                if encs:
+                    for idx, enc in enumerate(encs):
+                        components.append((f"text_embed_cache[{backend_id}].te{idx+1}", enc))
+        except Exception:
+            pass
+        try:
+            for idx, cache in enumerate(TextEmbeddingCache.active_caches()):
+                if cache is None or id(cache) in seen_caches:
+                    continue
+                seen_caches.add(id(cache))
+                components.append((f"text_embed_cache[registry-{idx}].pipeline", getattr(cache, "pipeline", None)))
+                encs = getattr(cache, "text_encoders", None)
+                if encs:
+                    for enc_idx, enc in enumerate(encs):
+                        components.append((f"text_embed_cache[registry-{idx}].te{enc_idx+1}", enc))
+        except Exception:
+            pass
+
+        for name, obj in components:
+            # Handle lists of encoders explicitly
+            if isinstance(obj, (list, tuple)):
+                for idx, item in enumerate(obj):
+                    total, devices = _bytes_and_devices(item)
+                    if total > 0:
+                        gb = total / (1024**3)
+                        logger.warning("[%s] %s[%s] holds %.2f GB on %s", label, name, idx, gb, devices)
+                continue
+
+            total, devices = _bytes_and_devices(obj)
+            if total > 0:
+                gb = total / (1024**3)
+                logger.warning("[%s] %s holds %.2f GB on %s", label, name, gb, devices)
+
+    def _clear_pipeline_caches(self):
+        """Drop cached pipelines and cache-held pipelines to release VRAM before training."""
+        try:
+            if hasattr(self.model, "pipelines") and getattr(self.model, "pipelines"):
+                self.model.pipelines.clear()
+            if hasattr(self.model, "pipeline"):
+                self.model.pipeline = None
+        except Exception:
+            logger.debug("Failed to clear model pipeline caches.", exc_info=True)
+
+        try:
+            for backend in StateTracker.get_data_backends().values():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                if hasattr(cache, "pipeline"):
+                    cache.pipeline = None
+        except Exception:
+            logger.debug("Failed to clear text embed cache pipelines.", exc_info=True)
+
     def init_unload_text_encoder(self):
         if self.config.model_type != "full" and self.config.train_text_encoder:
             return
         memory_before_unload = self.stats_memory_used()
         if self.accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")
+        self._report_cuda_usage("pre_text_encoder_unload")
         self.model.unload_text_encoder()
-        for backend_id, backend in StateTracker.get_data_backends().items():
-            if "text_embed_cache" in backend:
-                backend["text_embed_cache"].text_encoders = None
-                backend["text_embed_cache"].pipeline = None
+        caches_seen: set[int] = set()
+        caches_to_clear: list[object] = []
+        try:
+            for backend in StateTracker.get_data_backends().values():
+                cache = backend.get("text_embed_cache") if isinstance(backend, dict) else None
+                if cache is None:
+                    continue
+                cache_id = id(cache)
+                if cache_id in caches_seen:
+                    continue
+                caches_seen.add(cache_id)
+                caches_to_clear.append(cache)
+        except Exception:
+            logger.debug("Failed to collect text embed caches from StateTracker during unload.", exc_info=True)
+
+        try:
+            for cache in TextEmbeddingCache.active_caches():
+                if cache is None:
+                    continue
+                cache_id = id(cache)
+                if cache_id in caches_seen:
+                    continue
+                caches_seen.add(cache_id)
+                caches_to_clear.append(cache)
+        except Exception:
+            logger.debug("Failed to collect text embed caches from registry during unload.", exc_info=True)
+
+        for cache in caches_to_clear:
+            if hasattr(cache, "text_encoders"):
+                cache.text_encoders = None
+            if hasattr(cache, "pipeline"):
+                cache.pipeline = None
+        self._clear_pipeline_caches()
         reclaim_memory()
+        self._report_cuda_usage("post_text_encoder_unload")
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM.")

@@ -128,7 +128,10 @@ class Chroma(ImageModelFoundation):
         return False
 
     def _encode_prompts(self, prompts: List[str], is_negative_prompt: bool = False):
-        prompt_embeds, _, prompt_attention_mask, *_ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        prompt_embeds, _, prompt_attention_mask, *_ = pipeline.encode_prompt(
             prompt=prompts,
             negative_prompt=None,
             device=self.accelerator.device,

@@ -8,12 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from threading import Thread
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
+from weakref import WeakSet
 
 import torch
 from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
-from simpletuner.helpers.models.common import ModelFoundation, TextEmbedCacheKey
+from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes, TextEmbedCacheKey
 from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.multi_process import rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -38,6 +39,7 @@ class PromptCacheRecord(TypedDict, total=False):
 
 class TextEmbeddingCache(WebhookMixin):
     prompt_records: List[PromptCacheRecord] = []
+    _instances: "WeakSet[TextEmbeddingCache]" = WeakSet()
 
     def __init__(
         self,
@@ -96,6 +98,11 @@ class TextEmbeddingCache(WebhookMixin):
         self.batch_write_thread.start()
         self.webhook_progress_interval = webhook_progress_interval
         self.disabled = False  # whether to skip or not at training time.
+        TextEmbeddingCache._instances.add(self)
+
+    @classmethod
+    def active_caches(cls) -> list["TextEmbeddingCache"]:
+        return [cache for cache in cls._instances if cache is not None]
 
     def debug_log(self, msg: str):
         logger.debug(f"{self.rank_info}(id={self.id}) {msg}")
@@ -337,17 +344,14 @@ class TextEmbeddingCache(WebhookMixin):
         Returns:
             Tuple of (prompt_embeds, pooled_prompt_embeds).
         """
-        from diffusers import WanPipeline
-
-        pipe = WanPipeline(
-            scheduler=self.pipeline.scheduler,
-            vae=self.pipeline.vae,
-            text_encoder=self.pipeline.text_encoder,
-            tokenizer=self.pipeline.tokenizer,
-            transformer=self.pipeline.transformer,
+        if self.model is None:
+            raise ValueError("Wan prompt encoding requires an attached model.")
+        pipeline = self.model.get_pipeline(
+            PipelineTypes.TEXT2IMG,
+            load_base_model=False,
+            cache_pipeline=False,
         )
-
-        prompt_embeds, masks = pipe.encode_prompt(
+        prompt_embeds, masks = pipeline.encode_prompt(
             prompt=prompt,
             device=self.accelerator.device,
             # max_sequence_length=StateTracker.get_args().tokenizer_max_length,

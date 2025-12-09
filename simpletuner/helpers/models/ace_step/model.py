@@ -274,7 +274,12 @@ class ACEStep(AudioModelFoundation):
         encoded_text = self._encode_prompts([""], is_negative_prompt=False)
         return self._format_text_embedding(encoded_text)
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2AUDIO, load_base_model: bool = True):
+    def get_pipeline(
+        self,
+        pipeline_type: str = PipelineTypes.TEXT2AUDIO,
+        load_base_model: bool = True,
+        cache_pipeline: bool = True,
+    ):
         """
         Return the ACE-Step inference pipeline wired to the already-loaded components when available.
         """

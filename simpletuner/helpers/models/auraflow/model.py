@@ -121,7 +121,10 @@ class Auraflow(ImageModelFoundation):
         }
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
-        prompt_embeds, prompt_attention_mask, _, _ = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        prompt_embeds, prompt_attention_mask, _, _ = pipeline.encode_prompt(
             prompt=prompts,
             negative_prompt=None,
             do_classifier_free_guidance=False,

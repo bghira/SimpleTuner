@@ -167,9 +167,9 @@ class Kandinsky5Video(VideoModelFoundation):
         """
         Encode prompts using the pipeline's dual encoders (Qwen2.5-VL + CLIP).
         """
-        if self.pipelines.get(PipelineTypes.TEXT2IMG) is None:
-            self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
-        pipeline = self.pipelines[PipelineTypes.TEXT2IMG]
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
 
         prompt_embeds_qwen, prompt_embeds_clip, prompt_cu_seqlens = pipeline.encode_prompt(
             prompt=prompts,

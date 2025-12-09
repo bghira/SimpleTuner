@@ -425,6 +425,7 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         return latents
 
+    @torch.no_grad()
     def _prepare_i2v_latents(
         self,
         image: PipelineImageInput,
