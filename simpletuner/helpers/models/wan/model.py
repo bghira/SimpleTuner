@@ -756,17 +756,8 @@ class Wan(VideoModelFoundation):
             self._apply_time_embedding_override(self.model)
             self._patch_condition_embedder(self.model)
 
-    def get_pipeline(
-        self,
-        pipeline_type: str = PipelineTypes.TEXT2IMG,
-        load_base_model: bool = True,
-        cache_pipeline: bool = True,
-    ):
-        pipeline = super().get_pipeline(
-            pipeline_type,
-            load_base_model,
-            cache_pipeline=cache_pipeline,
-        )
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        pipeline = super().get_pipeline(pipeline_type, load_base_model)
         if hasattr(pipeline, "config"):
             pipeline.config.expand_timesteps = bool(self._wan_expand_timesteps)
         stage_info = self._wan_stage_info()

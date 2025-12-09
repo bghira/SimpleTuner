@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from torch.distributions import Beta
@@ -260,7 +259,6 @@ class ModelFoundation(ABC):
         self.setup_diff2flow_bridge()
         self.assistant_adapter_name = "assistant"
         self.assistant_lora_loaded = False
-        self._pipeline_component_placeholders: dict[str, nn.Module] = {}
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -272,45 +270,6 @@ class ModelFoundation(ABC):
     def enable_muon_clip_logging(self) -> None:
         """Override in subclasses to wire attention logit publishers when MuonClip is in use."""
         return
-
-    def _get_pipeline_component_placeholder(self, component_name: str) -> nn.Module:
-        placeholder = self._pipeline_component_placeholders.get(component_name)
-        if placeholder is not None:
-            return placeholder
-
-        class _PipelineComponentPlaceholder(nn.Module):
-            def __init__(self, name: str):
-                super().__init__()
-                self._name = name
-
-            def forward(self, *args, **kwargs):  # pragma: no cover - safety net
-                raise RuntimeError(f"Pipeline component '{self._name}' is unavailable in this context.")
-
-        placeholder = _PipelineComponentPlaceholder(component_name)
-        self._pipeline_component_placeholders[component_name] = placeholder
-        return placeholder
-
-    def _detach_pipeline_component(self, pipeline_instance, component_name: str) -> None:
-        if pipeline_instance is None or not component_name:
-            return
-        try:
-            component = getattr(pipeline_instance, component_name, None)
-        except Exception:
-            component = None
-        if component is None:
-            return
-        try:
-            if hasattr(component, "to"):
-                try:
-                    component.to("meta")
-                except Exception:
-                    component.to("cpu")
-        except Exception:
-            logger.debug("Failed to move pipeline component %s off device.", component_name, exc_info=True)
-        try:
-            setattr(pipeline_instance, component_name, None)
-        except Exception:
-            logger.debug("Failed to clear pipeline component %s reference.", component_name, exc_info=True)
 
     def unpack_text_embeddings_from_cache(self, embeddings):
         """
@@ -1706,17 +1665,12 @@ class ModelFoundation(ABC):
             return self.unwrap_model(model=self.model if base_model else None)
         return self.controlnet if self.config.controlnet and not base_model else self.model
 
-    def _load_pipeline(
-        self,
-        pipeline_type: str = PipelineTypes.TEXT2IMG,
-        load_base_model: bool = True,
-        cache_pipeline: bool = True,
-    ):
+    def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
         """
-        active_pipelines = getattr(self, "pipelines", {}) if cache_pipeline else {}
-        if cache_pipeline and pipeline_type in active_pipelines:
+        active_pipelines = getattr(self, "pipelines", {})
+        if pipeline_type in active_pipelines:
             pipeline_instance = active_pipelines[pipeline_type]
             setattr(
                 pipeline_instance,
@@ -1742,10 +1696,7 @@ class ModelFoundation(ABC):
             pipeline_kwargs["watermarker"] = None
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
-        if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
-        else:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
+        pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
 
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = self.unwrap_model(self.vae)
@@ -1943,8 +1894,7 @@ class ModelFoundation(ABC):
             }
             pipeline_instance = pipeline_class(**init_kwargs)
             self._detach_pipeline_component(pipeline_instance, self.MODEL_TYPE.value)
-        if cache_pipeline:
-            self.pipelines[pipeline_type] = pipeline_instance
+        self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
 
@@ -2167,17 +2117,8 @@ class ModelFoundation(ABC):
             ),
         )
 
-    def get_pipeline(
-        self,
-        pipeline_type: str = PipelineTypes.TEXT2IMG,
-        load_base_model: bool = True,
-        cache_pipeline: bool = True,
-    ) -> "DiffusionPipeline":
-        possibly_cached_pipeline = self._load_pipeline(
-            pipeline_type,
-            load_base_model,
-            cache_pipeline=cache_pipeline,
-        )
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> "DiffusionPipeline":
+        possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
         if self.model is not None and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None:
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
             # For FSDP models, we should NOT unwrap them - FSDP implements __call__ transparently

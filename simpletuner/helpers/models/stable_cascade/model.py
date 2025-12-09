@@ -215,21 +215,12 @@ class StableCascadeStageC(ImageModelFoundation):
         self.vae.eval()
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
 
-    def get_pipeline(
-        self,
-        pipeline_type: str = PipelineTypes.TEXT2IMG,
-        load_base_model: bool = True,
-        cache_pipeline: bool = True,
-    ):
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         if pipeline_type is PipelineTypes.TEXT2IMG and not load_base_model and self._use_combined_pipeline():
             if self._combined_validation_pipeline is None:
                 self._combined_validation_pipeline = self._build_combined_validation_pipeline()
             return self._combined_validation_pipeline
-        return super().get_pipeline(
-            pipeline_type=pipeline_type,
-            load_base_model=load_base_model,
-            cache_pipeline=cache_pipeline,
-        )
+        return super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
 
     def unload_model(self):
         self._combined_validation_pipeline = None
