@@ -157,7 +157,8 @@ class SanaVideo(VideoModelFoundation):
         if is_negative_prompt:
             chi_prompt = None
 
-        return self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        return pipeline.encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
             do_classifier_free_guidance=False,  # We just want embeddings for now

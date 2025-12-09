@@ -352,7 +352,8 @@ class Flux(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, pooled_prompt_embeds, time_ids, masks = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        prompt_embeds, pooled_prompt_embeds, time_ids, masks = pipeline.encode_prompt(
             prompt=prompts,
             prompt_2=prompts,
             device=self.accelerator.device,

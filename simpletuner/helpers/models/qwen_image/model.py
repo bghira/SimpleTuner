@@ -114,8 +114,17 @@ class QwenImage(ImageModelFoundation):
             if patched:
                 transformer._untokenize_hidden_states = original_untokenize
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
-        pipeline = super().get_pipeline(pipeline_type=pipeline_type, load_base_model=load_base_model)
+    def get_pipeline(
+        self,
+        pipeline_type: str = PipelineTypes.TEXT2IMG,
+        load_base_model: bool = True,
+        cache_pipeline: bool = True,
+    ):
+        pipeline = super().get_pipeline(
+            pipeline_type=pipeline_type,
+            load_base_model=load_base_model,
+            cache_pipeline=cache_pipeline,
+        )
         if pipeline is None:
             return None
 

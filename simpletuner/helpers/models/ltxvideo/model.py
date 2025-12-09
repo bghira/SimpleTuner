@@ -161,12 +161,13 @@ class LTXVideo(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
         (
             prompt_embeds,
             prompt_attention_mask,
             negative_prompt_embeds,
             negative_prompt_attention_mask,
-        ) = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        ) = pipeline.encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
         )

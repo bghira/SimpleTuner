@@ -307,7 +307,8 @@ class HiDream(ImageModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        t5_embeds, llama_embeds, pooled_prompt_embeds = self.pipelines[PipelineTypes.TEXT2IMG]._encode_prompt(
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        t5_embeds, llama_embeds, pooled_prompt_embeds = pipeline._encode_prompt(
             prompt=prompts,
             prompt_2=prompts,
             prompt_3=prompts,

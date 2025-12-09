@@ -756,8 +756,17 @@ class Wan(VideoModelFoundation):
             self._apply_time_embedding_override(self.model)
             self._patch_condition_embedder(self.model)
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
-        pipeline = super().get_pipeline(pipeline_type, load_base_model)
+    def get_pipeline(
+        self,
+        pipeline_type: str = PipelineTypes.TEXT2IMG,
+        load_base_model: bool = True,
+        cache_pipeline: bool = True,
+    ):
+        pipeline = super().get_pipeline(
+            pipeline_type,
+            load_base_model,
+            cache_pipeline=cache_pipeline,
+        )
         if hasattr(pipeline, "config"):
             pipeline.config.expand_timesteps = bool(self._wan_expand_timesteps)
         stage_info = self._wan_stage_info()
@@ -1037,7 +1046,8 @@ class Wan(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, masks = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        prompt_embeds, masks = pipeline.encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
         )

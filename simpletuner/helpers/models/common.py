@@ -1684,12 +1684,17 @@ class ModelFoundation(ABC):
             return self.unwrap_model(model=self.model if base_model else None)
         return self.controlnet if self.config.controlnet and not base_model else self.model
 
-    def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+    def _load_pipeline(
+        self,
+        pipeline_type: str = PipelineTypes.TEXT2IMG,
+        load_base_model: bool = True,
+        cache_pipeline: bool = True,
+    ):
         """
         Loads the pipeline class for the model.
         """
-        active_pipelines = getattr(self, "pipelines", {})
-        if pipeline_type in active_pipelines:
+        active_pipelines = getattr(self, "pipelines", {}) if cache_pipeline else {}
+        if cache_pipeline and pipeline_type in active_pipelines:
             pipeline_instance = active_pipelines[pipeline_type]
             setattr(
                 pipeline_instance,
@@ -1915,7 +1920,8 @@ class ModelFoundation(ABC):
                 if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
             }
             pipeline_instance = pipeline_class(**init_kwargs)
-        self.pipelines[pipeline_type] = pipeline_instance
+        if cache_pipeline:
+            self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
 
@@ -2138,8 +2144,17 @@ class ModelFoundation(ABC):
             ),
         )
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True) -> "DiffusionPipeline":
-        possibly_cached_pipeline = self._load_pipeline(pipeline_type, load_base_model)
+    def get_pipeline(
+        self,
+        pipeline_type: str = PipelineTypes.TEXT2IMG,
+        load_base_model: bool = True,
+        cache_pipeline: bool = True,
+    ) -> "DiffusionPipeline":
+        possibly_cached_pipeline = self._load_pipeline(
+            pipeline_type,
+            load_base_model,
+            cache_pipeline=cache_pipeline,
+        )
         if self.model is not None and getattr(possibly_cached_pipeline, self.MODEL_TYPE.value, None) is None:
             # if the transformer or unet aren't in the cached pipeline, we'll add it.
             # For FSDP models, we should NOT unwrap them - FSDP implements __call__ transparently

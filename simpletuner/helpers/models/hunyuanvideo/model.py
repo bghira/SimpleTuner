@@ -198,7 +198,12 @@ class HunyuanVideo(VideoModelFoundation):
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
 
-    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+    def get_pipeline(
+        self,
+        pipeline_type: str = PipelineTypes.TEXT2IMG,
+        load_base_model: bool = True,
+        cache_pipeline: bool = True,
+    ):
         """
         Return the HunyuanVideo inference pipeline with pre-loaded components.
 
@@ -206,8 +211,8 @@ class HunyuanVideo(VideoModelFoundation):
         we instantiate the pipeline directly since our transformer repos
         don't contain model_index.json.
         """
-        active_pipelines = getattr(self, "pipelines", {})
-        if pipeline_type in active_pipelines:
+        active_pipelines = getattr(self, "pipelines", {}) if cache_pipeline else {}
+        if cache_pipeline and pipeline_type in active_pipelines:
             pipeline = active_pipelines[pipeline_type]
             if load_base_model and self.model is not None:
                 pipeline.transformer = self.unwrap_model(self.model)
@@ -252,9 +257,10 @@ class HunyuanVideo(VideoModelFoundation):
             enable_offloading=False,
         )
 
-        if not hasattr(self, "pipelines"):
-            self.pipelines = {}
-        self.pipelines[pipeline_type] = pipeline
+        if cache_pipeline:
+            if not hasattr(self, "pipelines"):
+                self.pipelines = {}
+            self.pipelines[pipeline_type] = pipeline
         return pipeline
 
     def _prepare_cond_latents(self, cond_latents: Optional[torch.Tensor], latents: torch.Tensor, task_type: str):
