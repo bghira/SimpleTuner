@@ -83,6 +83,7 @@ else:
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
+    "flow_match_euler": FlowMatchEulerDiscreteScheduler,
     "flow_matching": FlowMatchEulerDiscreteScheduler,
     "unipc": UniPCMultistepScheduler,
     "flow_unipc": FlowUniPCMultistepScheduler,
@@ -1802,7 +1803,7 @@ class Validation:
             self.config.validation_noise_scheduler = self.model.DEFAULT_NOISE_SCHEDULER
         if self.model.PREDICTION_TYPE.value == "flow_matching":
             # some flow-matching adjustments should be made for euler and unipc video model generations.
-            if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
+            if self.config.validation_noise_scheduler in ["flow_matching", "flow_match_euler", "euler"]:
                 if self.config.validation_noise_scheduler == "euler":
                     self.config.validation_noise_scheduler = "flow_matching"
                 # The Beta schedule looks WAY better...
@@ -1872,6 +1873,14 @@ class Validation:
         self._active_pipeline_type = pipeline_type
 
         self.model.move_models(self.accelerator.device)
+
+        # Ensure the pipeline has an attached base model; some model-specific get_pipeline
+        # implementations skip binding the transformer/unet when load_base_model=False.
+        pipeline_model = getattr(self.model.pipeline, self.model.MODEL_TYPE.value, None)
+        if pipeline_model is None and getattr(self.model, "model", None) is not None:
+            # Prefer unwrapped module so pipeline APIs that expect .dtype work even with DDP/FSDP/compile.
+            setattr(self.model.pipeline, self.model.MODEL_TYPE.value, self.model.unwrap_model())
+
         # Remove text encoders on 'meta' device to avoid move errors
         for attr in [
             "text_encoder",

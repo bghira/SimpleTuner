@@ -280,6 +280,36 @@ class HunyuanVideo(VideoModelFoundation):
         we instantiate the pipeline directly since our transformer repos
         don't contain model_index.json.
         """
+
+        def _is_meta(module: Optional[torch.nn.Module]) -> bool:
+            if module is None or not isinstance(module, torch.nn.Module):
+                return False
+            device = getattr(module, "device", None)
+            if device == "meta" or getattr(device, "type", None) == "meta":
+                return True
+            return self._module_has_meta_tensors(module)
+
+        def _prune_meta_components(pipeline_obj):
+            """
+            Drop any meta-resident modules from the pipeline so .to() won't try to move empty tensors.
+            """
+            try:
+                component_names = []
+                if hasattr(pipeline_obj, "components") and isinstance(pipeline_obj.components, dict):
+                    component_names.extend(list(pipeline_obj.components.keys()))
+                if hasattr(pipeline_obj, "_modules"):
+                    component_names.extend(list(pipeline_obj._modules.keys()))
+                seen = set()
+                for name in component_names:
+                    if name in seen:
+                        continue
+                    seen.add(name)
+                    module = getattr(pipeline_obj, name, None)
+                    if _is_meta(module):
+                        setattr(pipeline_obj, name, None)
+            except Exception:
+                logger.debug("Failed to prune meta components from HunyuanVideo pipeline.", exc_info=True)
+
         active_pipelines = getattr(self, "pipelines", {})
         if pipeline_type in active_pipelines:
             pipeline = active_pipelines[pipeline_type]
@@ -288,9 +318,7 @@ class HunyuanVideo(VideoModelFoundation):
             return pipeline
 
         # Ensure required components are resident before constructing the pipeline (validation may reload after meta-offload).
-        if self.text_encoder is None or getattr(self.text_encoder, "device", None) == "meta":
-            self.load_text_encoder(move_to_device=True)
-        if self.vae is None or getattr(self.vae, "device", None) == "meta":
+        if self.vae is None or _is_meta(self.vae):
             self.load_vae(move_to_device=True)
 
         device = self.accelerator.device
@@ -304,14 +332,8 @@ class HunyuanVideo(VideoModelFoundation):
         vae = self.unwrap_model(self.vae) if self.vae is not None else None
 
         # Respect memory-offload: text encoders may be offloaded to meta/None when not training.
-        txt_encoder = (
-            None if self.text_encoder is None or getattr(self.text_encoder, "device", None) == "meta" else self.text_encoder
-        )
-        byt5_encoder = (
-            None
-            if self.text_encoder_2 is None or getattr(self.text_encoder_2, "device", None) == "meta"
-            else self.text_encoder_2
-        )
+        txt_encoder = None if _is_meta(self.text_encoder) else self.text_encoder
+        byt5_encoder = None if _is_meta(self.text_encoder_2) else self.text_encoder_2
         tokenizer = None if txt_encoder is None else self.tokenizer
         tokenizer_2 = None if byt5_encoder is None else self.tokenizer_2
 
@@ -336,6 +358,7 @@ class HunyuanVideo(VideoModelFoundation):
         else:
             pipeline = HunyuanVideo15Pipeline(**pipeline_kwargs)
 
+        _prune_meta_components(pipeline)
         pipeline.to(device)
 
         if not hasattr(self, "pipelines"):
@@ -580,11 +603,17 @@ class HunyuanVideo(VideoModelFoundation):
         model_key = kwargs.pop(f"{self.MODEL_SUBFOLDER}_lora_layers", None)
         transformer_layers = transformer_key if transformer_key is not None else model_key
         transformer_adapter_metadata = kwargs.pop("transformer_lora_adapter_metadata", None)
-        # Drop other adapter metadata keys that the base mixin does not accept.
+        # Drop extra text encoder adapter metadata and unsupported adapter names.
         kwargs.pop("text_encoder_lora_adapter_metadata", None)
         kwargs.pop("text_encoder_2_lora_adapter_metadata", None)
+        kwargs.pop("adapter_name", None)
+        # Drop any secondary text encoder LoRA payloads (the mixin only supports one).
+        kwargs.pop("text_encoder_2_lora_layers", None)
+
         if transformer_layers is not None:
             kwargs["unet_lora_layers"] = transformer_layers
+        if transformer_adapter_metadata is not None:
+            kwargs["unet_lora_adapter_metadata"] = transformer_adapter_metadata
 
         return self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
             save_directory=save_directory,

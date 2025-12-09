@@ -20,6 +20,7 @@ import numpy as np
 import PIL
 import torch
 from diffusers.guiders import ClassifierFreeGuidance
+from diffusers.loaders import LoraLoaderMixin
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
@@ -187,7 +188,7 @@ def retrieve_timesteps(
     return timesteps, num_inference_steps
 
 
-class HunyuanVideo15ImageToVideoPipeline(DiffusionPipeline):
+class HunyuanVideo15ImageToVideoPipeline(DiffusionPipeline, LoraLoaderMixin):
     r"""
     Pipeline for image-to-video generation using HunyuanVideo1.5.
 

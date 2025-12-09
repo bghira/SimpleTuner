@@ -5044,6 +5044,8 @@ class Trainer:
                     except Exception as error:
                         # let's not crash training because of a validation error.
                         logger.error(f"Validation run failed at step {step}: {error}")
+                        import traceback
+
                         logger.debug(traceback.format_exc())
 
                     if should_validate:
