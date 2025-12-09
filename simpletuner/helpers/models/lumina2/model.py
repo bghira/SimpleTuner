@@ -166,7 +166,9 @@ class Lumina2(ImageModelFoundation):
             prompts = [self.SYSTEM_PROMPT + " <Prompt Start> " + p for p in prompts]
 
         # Use the pipeline's encode method
-        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
         prompt_embeds, prompt_attention_mask = pipeline._get_gemma_prompt_embeds(
             prompt=prompts,
             device=self.accelerator.device,

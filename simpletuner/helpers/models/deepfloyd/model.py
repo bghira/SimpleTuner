@@ -118,7 +118,9 @@ class DeepFloydIF(ImageModelFoundation):
             Text encoder output (raw)
         """
 
-        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
         positive_embed, negative_embed = pipeline.encode_prompt(
             prompt=prompts,
             do_classifier_free_guidance=False,
