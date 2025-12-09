@@ -290,6 +290,28 @@ class ModelFoundation(ABC):
         self._pipeline_component_placeholders[component_name] = placeholder
         return placeholder
 
+    def _detach_pipeline_component(self, pipeline_instance, component_name: str) -> None:
+        if pipeline_instance is None or not component_name:
+            return
+        try:
+            component = getattr(pipeline_instance, component_name, None)
+        except Exception:
+            component = None
+        if component is None:
+            return
+        try:
+            if hasattr(component, "to"):
+                try:
+                    component.to("meta")
+                except Exception:
+                    component.to("cpu")
+        except Exception:
+            logger.debug("Failed to move pipeline component %s off device.", component_name, exc_info=True)
+        try:
+            setattr(pipeline_instance, component_name, None)
+        except Exception:
+            logger.debug("Failed to clear pipeline component %s reference.", component_name, exc_info=True)
+
     def unpack_text_embeddings_from_cache(self, embeddings):
         """
         Optional hook for models to restore cached text embeds to training format.
@@ -1723,7 +1745,7 @@ class ModelFoundation(ABC):
         if load_base_model:
             pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
         else:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self._get_pipeline_component_placeholder(self.MODEL_TYPE.value)
+            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
 
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = self.unwrap_model(self.vae)
@@ -1920,6 +1942,7 @@ class ModelFoundation(ABC):
                 if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
             }
             pipeline_instance = pipeline_class(**init_kwargs)
+            self._detach_pipeline_component(pipeline_instance, self.MODEL_TYPE.value)
         if cache_pipeline:
             self.pipelines[pipeline_type] = pipeline_instance
 
