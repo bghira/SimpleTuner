@@ -172,15 +172,16 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
             return None, None
 
         # 1) Prefer a locally packaged text_encoder_2 (e.g., from Diffusers-style checkpoints)
-        local_byt5_path = os.path.join(cached_folder, "text_encoder_2")
-        if os.path.isdir(local_byt5_path):
-            tokenizer = AutoTokenizer.from_pretrained(local_byt5_path)
-            model = T5EncoderModel.from_pretrained(local_byt5_path, torch_dtype=torch.bfloat16).to(device)
-            prompt_format = _FallbackPromptFormat()
-            return (
-                {"byt5_model": model, "byt5_tokenizer": tokenizer, "byt5_max_length": byt5_max_length},
-                prompt_format,
-            )
+        if cached_folder:
+            local_byt5_path = os.path.join(cached_folder, "text_encoder_2")
+            if os.path.isdir(local_byt5_path):
+                tokenizer = AutoTokenizer.from_pretrained(local_byt5_path)
+                model = T5EncoderModel.from_pretrained(local_byt5_path, torch_dtype=torch.bfloat16).to(device)
+                prompt_format = _FallbackPromptFormat()
+                return (
+                    {"byt5_model": model, "byt5_tokenizer": tokenizer, "byt5_max_length": byt5_max_length},
+                    prompt_format,
+                )
 
         # 2) Fallback to the standalone Glyph ByT5 repo
         try:
