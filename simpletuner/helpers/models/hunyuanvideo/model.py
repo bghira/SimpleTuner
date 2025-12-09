@@ -564,6 +564,37 @@ class HunyuanVideo(VideoModelFoundation):
             "model_prediction": model_pred,
         }
 
+    def save_lora_weights(self, *args, **kwargs):
+        """
+        Map transformer LoRA weights to Diffusers' expected naming before delegating to the pipeline mixin.
+        """
+        if args:
+            save_directory, *remaining = args
+        else:
+            save_directory = kwargs.pop("save_directory", None)
+            remaining = []
+        if save_directory is None:
+            raise ValueError("save_directory is required to save LoRA weights.")
+
+        transformer_key = kwargs.pop("transformer_lora_layers", None)
+        model_key = kwargs.pop(f"{self.MODEL_SUBFOLDER}_lora_layers", None)
+        transformer_layers = transformer_key if transformer_key is not None else model_key
+        transformer_adapter_metadata = kwargs.pop("transformer_lora_adapter_metadata", None)
+        # Drop other adapter metadata keys that the base mixin does not accept.
+        kwargs.pop("text_encoder_lora_adapter_metadata", None)
+        kwargs.pop("text_encoder_2_lora_adapter_metadata", None)
+        if transformer_layers is not None:
+            kwargs["unet_lora_layers"] = transformer_layers
+        if transformer_adapter_metadata is not None:
+            # Base mixin only accepts adapter_name; drop other metadata keys.
+            kwargs["adapter_name"] = transformer_adapter_metadata.get("adapter_name")
+
+        return self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG].save_lora_weights(
+            save_directory=save_directory,
+            *remaining,
+            **kwargs,
+        )
+
     def tread_init(self):
         raise NotImplementedError("TREAD routing is not supported for the diffusers HunyuanVideo 1.5 transformer.")
 
