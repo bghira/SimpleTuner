@@ -22,9 +22,7 @@ from simpletuner.helpers.models.hunyuanvideo.autoencoder_hv15 import Autoencoder
 from simpletuner.helpers.models.hunyuanvideo.commons import PIPELINE_CONFIGS, TRANSFORMER_VERSION_TO_SR_VERSION
 from simpletuner.helpers.models.hunyuanvideo.pipeline import HunyuanVideo15Pipeline
 from simpletuner.helpers.models.hunyuanvideo.pipeline_i2v import HunyuanVideo15ImageToVideoPipeline
-from simpletuner.helpers.models.hunyuanvideo.transformer import (
-    HunyuanVideoTransformer3DModel as HunyuanVideo15Transformer3DModel,
-)
+from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo15Transformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.multi_process import should_log
 
@@ -230,8 +228,7 @@ class HunyuanVideo(VideoModelFoundation):
         if getattr(self.config, "vae_enable_temporal_roll", False):
             logger.info("Enabling temporal rolling for HunyuanVideo VAE to reduce VRAM.")
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
-            self.vae = vae if move_to_device else vae.to_empty(device=self.accelerator.device)
+            self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
         if self.vae is None:
             raise ValueError(f"Could not load VAE from {self.VAE_REPO}.")
         if self.config.vae_enable_tiling and hasattr(self.vae, "enable_tiling"):

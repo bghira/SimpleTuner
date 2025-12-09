@@ -26,7 +26,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from transformers import ByT5Tokenizer, Qwen2_5_VLTextModel, Qwen2Tokenizer, T5EncoderModel
 
 from .autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
-from .transformer import HunyuanVideoTransformer3DModel as HunyuanVideo15Transformer3DModel
+from .transformer import HunyuanVideo15Transformer3DModel
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm

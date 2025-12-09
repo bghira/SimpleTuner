@@ -35,7 +35,7 @@ from transformers import (
 
 from .autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
 from .pipeline import HunyuanVideo15ImageProcessor, HunyuanVideo15PipelineOutput
-from .transformer import HunyuanVideoTransformer3DModel as HunyuanVideo15Transformer3DModel
+from .transformer import HunyuanVideo15Transformer3DModel
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
