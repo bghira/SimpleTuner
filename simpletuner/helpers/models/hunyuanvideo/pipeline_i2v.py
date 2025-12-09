@@ -19,6 +19,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import PIL
 import torch
+from diffusers.guiders import ClassifierFreeGuidance
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
+from diffusers.utils.torch_utils import randn_tensor
 from transformers import (
     ByT5Tokenizer,
     Qwen2_5_VLTextModel,
@@ -28,14 +33,10 @@ from transformers import (
     T5EncoderModel,
 )
 
-from ...guiders import ClassifierFreeGuidance
-from ...models import AutoencoderKLHunyuanVideo15, HunyuanVideo15Transformer3DModel
-from ...schedulers import FlowMatchEulerDiscreteScheduler
-from ...utils import is_torch_xla_available, logging, replace_example_docstring
-from ...utils.torch_utils import randn_tensor
-from ..pipeline_utils import DiffusionPipeline
+from .autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
 from .image_processor import HunyuanVideo15ImageProcessor
 from .pipeline_output import HunyuanVideo15PipelineOutput
+from .transformer import HunyuanVideoTransformer3DModel as HunyuanVideo15Transformer3DModel
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm

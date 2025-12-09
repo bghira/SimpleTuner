@@ -6,7 +6,6 @@ from typing import Dict, Optional
 
 import torch
 from diffusers.guiders import ClassifierFreeGuidance
-from diffusers.models import AutoencoderKLHunyuanVideo15
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from transformers import (
     ByT5Tokenizer,
@@ -19,10 +18,13 @@ from transformers import (
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
+from simpletuner.helpers.models.hunyuanvideo.autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
 from simpletuner.helpers.models.hunyuanvideo.commons import PIPELINE_CONFIGS, TRANSFORMER_VERSION_TO_SR_VERSION
 from simpletuner.helpers.models.hunyuanvideo.pipeline import HunyuanVideo15Pipeline
 from simpletuner.helpers.models.hunyuanvideo.pipeline_i2v import HunyuanVideo15ImageToVideoPipeline
-from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo15Transformer3DModel
+from simpletuner.helpers.models.hunyuanvideo.transformer import (
+    HunyuanVideoTransformer3DModel as HunyuanVideo15Transformer3DModel,
+)
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.multi_process import should_log
 

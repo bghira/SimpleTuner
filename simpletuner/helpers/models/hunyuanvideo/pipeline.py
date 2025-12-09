@@ -19,12 +19,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
 from diffusers.guiders import ClassifierFreeGuidance
-from diffusers.models import AutoencoderKLHunyuanVideo15, HunyuanVideo15Transformer3DModel
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import ByT5Tokenizer, Qwen2_5_VLTextModel, Qwen2Tokenizer, T5EncoderModel
+
+from .autoencoder_hv15 import AutoencoderKLHunyuanVideo as AutoencoderKLHunyuanVideo15
+from .transformer import HunyuanVideoTransformer3DModel as HunyuanVideo15Transformer3DModel
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -60,10 +62,9 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+from diffusers.configuration_utils import register_to_config
 from diffusers.utils import BaseOutput
-
-from ...configuration_utils import register_to_config
-from ...video_processor import VideoProcessor
+from diffusers.video_processor import VideoProcessor
 
 # Copyright 2025 The HunyuanVideo Team and The HuggingFace Team. All rights reserved.
 #
