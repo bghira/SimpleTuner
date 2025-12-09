@@ -541,6 +541,9 @@ class HunyuanVideo_1_5_DiffusionTransformer(ModelMixin, ConfigMixin, PeftAdapter
         else:
             self.cond_type_embedding = None
 
+        self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval: Optional[int] = None
+
     def load_hunyuan_state_dict(self, model_path):
         load_key = "module"
         bare_model = "unknown"
@@ -681,6 +684,16 @@ class HunyuanVideo_1_5_DiffusionTransformer(ModelMixin, ConfigMixin, PeftAdapter
             reorder_mask = torch.concat([byt5_text_mask, text_mask], dim=1).to(dtype=torch.int64)
 
         return reorder_txt, reorder_mask
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def _should_checkpoint_layer(self, layer_idx: int) -> bool:
+        if not (torch.is_grad_enabled() and self.gradient_checkpointing):
+            return False
+        if not self.gradient_checkpointing_interval or self.gradient_checkpointing_interval <= 1:
+            return True
+        return layer_idx % self.gradient_checkpointing_interval == 0
 
     def forward(
         self,
@@ -841,16 +854,12 @@ class HunyuanVideo_1_5_DiffusionTransformer(ModelMixin, ConfigMixin, PeftAdapter
                 and ((index + 1) % self.attn_param["win_ratio"] == 0 or (index + 1) == len(self.double_blocks))
             )
             self.attn_param["layer-name"] = f"double_block_{index+1}"
-            img, txt = block(
-                img=img,
-                txt=txt,
-                vec=vec,
-                freqs_cis=freqs_cis,
-                text_mask=text_mask,
-                attn_param=self.attn_param,
-                is_flash=force_full_attn,
-                block_idx=index,
-            )
+            layer_attn_param = dict(self.attn_param)
+            block_args = (img, txt, vec, freqs_cis, text_mask, layer_attn_param, force_full_attn, index)
+            if self._should_checkpoint_layer(index):
+                img, txt = self._gradient_checkpointing_func(block, *block_args)
+            else:
+                img, txt = block(*block_args)
 
         txt_seq_len = txt.shape[1]
         img_seq_len = img.shape[1]
@@ -907,15 +916,12 @@ class HunyuanVideo_1_5_DiffusionTransformer(ModelMixin, ConfigMixin, PeftAdapter
                     x = torch.cat([routed_video, text_tokens], dim=1)
                     routing_now = True
 
-                x = block(
-                    x=x,
-                    vec=vec,
-                    txt_len=txt_seq_len,
-                    freqs_cis=current_freqs,
-                    text_mask=text_mask,
-                    attn_param=self.attn_param,
-                    is_flash=force_full_attn,
-                )
+                layer_attn_param = dict(self.attn_param)
+                block_args = (x, vec, txt_seq_len, current_freqs, text_mask, layer_attn_param, force_full_attn)
+                if self._should_checkpoint_layer(index):
+                    x = self._gradient_checkpointing_func(block, *block_args)
+                else:
+                    x = block(*block_args)
 
                 if (
                     routing_now
