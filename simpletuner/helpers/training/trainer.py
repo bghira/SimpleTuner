@@ -5841,8 +5841,6 @@ def run_trainer_job(config):
     except Exception as exc:
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
-            from simpletuner.simpletuner_sdk.api_state import APIState
-
             webhook_handler.send(
                 message=f"Training job failed to start: {exc}",
                 message_level="error",
@@ -5891,8 +5889,6 @@ def run_trainer_job(config):
     except Exception as e:
         webhook_handler = StateTracker.get_webhook_handler()
         if webhook_handler is not None:
-            from simpletuner.simpletuner_sdk.api_state import APIState
-
             webhook_handler.send(
                 message=f"Training job failed to start: {e}",
                 message_level="error",
