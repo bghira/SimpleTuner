@@ -39,6 +39,10 @@
                     <div class="fw-semibold text-dark">Samples/sec</div>
                     <div data-progress-samples-per-sec>N/A</div>
                 </div>
+                <div class="col-6 col-md-3 mt-3 mt-md-0">
+                    <div class="fw-semibold text-dark">Grad Norm</div>
+                    <div data-progress-grad-absmax>N/A</div>
+                </div>
             </div>
         </div>
     </div>
@@ -620,6 +624,7 @@
                 lr: progressCard.querySelector('[data-progress-lr]'),
                 stepSpeed: progressCard.querySelector('[data-progress-step-speed]'),
                 samplesPerSec: progressCard.querySelector('[data-progress-samples-per-sec]'),
+                gradAbsmax: progressCard.querySelector('[data-progress-grad-absmax]'),
             };
             return progressCard;
         }
@@ -650,6 +655,7 @@
             lr: progressCard.querySelector('[data-progress-lr]'),
             stepSpeed: progressCard.querySelector('[data-progress-step-speed]'),
             samplesPerSec: progressCard.querySelector('[data-progress-samples-per-sec]'),
+            gradAbsmax: progressCard.querySelector('[data-progress-grad-absmax]'),
         };
 
         return progressCard;
@@ -885,6 +891,13 @@
             samplesPerSecond = stepsPerSecond * effectiveBatchSize;
         }
 
+        const gradAbsmax = firstNumber(
+            metrics.grad_absmax,
+            metrics.grad_norm,
+            payload.grad_absmax,
+            payload.grad_norm
+        );
+
         const messageType = String(payload.message_type || payload.type || '').toLowerCase();
         const normalizedType = messageType.replace(/\./g, '_');
         const progressType = resolveProgressTypeFromPayload(payload);
@@ -905,6 +918,7 @@
             steps_per_second: stepsPerSecond,
             samples_per_second: samplesPerSecond,
             effective_batch_size: effectiveBatchSize,
+            grad_absmax: gradAbsmax,
         };
     }
 
@@ -1241,6 +1255,11 @@
         const samplesPerSecText = formatSamplesPerSecond(progress.samples_per_second);
         if (elements.samplesPerSec && elements.samplesPerSec.textContent !== samplesPerSecText) {
             elements.samplesPerSec.textContent = samplesPerSecText;
+        }
+
+        const gradAbsmaxText = typeof progress.grad_absmax === 'number' ? progress.grad_absmax.toFixed(4) : 'N/A';
+        if (elements.gradAbsmax && elements.gradAbsmax.textContent !== gradAbsmaxText) {
+            elements.gradAbsmax.textContent = gradAbsmaxText;
         }
 
         setStatus('Running', progress.raw?.severity);
@@ -1797,6 +1816,8 @@
                             if (samplesPerSec == null && stepsPerSec != null && effBatchSize != null) {
                                 samplesPerSec = stepsPerSec * effBatchSize;
                             }
+                            // Extract grad_absmax (or grad_norm depending on config)
+                            const gradAbsmax = nestedMetrics.grad_absmax || nestedMetrics.grad_norm || progressPayload.grad_absmax || progressPayload.grad_norm;
                             // Convert backend format to frontend format
                             const progressData = {
                                 percentage: progressPayload.percent || 0,
@@ -1810,6 +1831,7 @@
                                 steps_per_second: stepsPerSec,
                                 samples_per_second: samplesPerSec,
                                 effective_batch_size: effBatchSize,
+                                grad_absmax: gradAbsmax,
                                 raw: { job_id: data.job_id }
                             };
                             console.log('[SSE-DEBUG] Converted progress data:', progressData);
