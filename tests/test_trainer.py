@@ -931,6 +931,70 @@ class TestTrainer(unittest.TestCase):
         trainer._update_grad_metrics(logs, require_value_method=True)
         self.assertNotIn("grad_absmax", logs)
 
+    def _build_trainer_for_progress_metrics(self, grad_clip_method: str, use_deepspeed: bool, grad_value):
+        """Build a minimal trainer for testing _compose_training_progress_metrics."""
+        from simpletuner.helpers.training.iteration_tracker import IterationTracker
+
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            grad_clip_method=grad_clip_method,
+            use_deepspeed_optimizer=use_deepspeed,
+            total_batch_size=4,
+        )
+        trainer.grad_norm = grad_value
+        trainer.state = {"global_step": 10}
+        trainer.train_loss = 0.5
+        trainer.lr = 0.0001
+        trainer.iteration_tracker = IterationTracker()
+        trainer.iteration_tracker.mark_start()
+        return trainer
+
+    def test_compose_training_progress_metrics_includes_grad_norm(self):
+        """Test that _compose_training_progress_metrics includes grad_norm when using norm clipping."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="norm",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.5),
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertIn("grad_norm", metrics)
+        self.assertEqual(metrics["grad_norm"], float(trainer.grad_norm.clone().detach()))
+        self.assertNotIn("grad_absmax", metrics)
+
+    def test_compose_training_progress_metrics_includes_grad_absmax(self):
+        """Test that _compose_training_progress_metrics includes grad_absmax when using value clipping."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="value",
+            use_deepspeed=False,
+            grad_value=torch.tensor(2.3),
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertIn("grad_absmax", metrics)
+        self.assertIs(metrics["grad_absmax"], trainer.grad_norm)
+        self.assertNotIn("grad_norm", metrics)
+
+    def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
+        """Test that _compose_training_progress_metrics excludes grad_absmax when deepspeed is enabled."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="value",
+            use_deepspeed=True,
+            grad_value=torch.tensor(1.8),
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertNotIn("grad_absmax", metrics)
+        self.assertNotIn("grad_norm", metrics)
+
+    def test_compose_training_progress_metrics_no_grad_when_none(self):
+        """Test that _compose_training_progress_metrics excludes grad metrics when grad_norm is None."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="norm",
+            use_deepspeed=False,
+            grad_value=None,
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertNotIn("grad_norm", metrics)
+        self.assertNotIn("grad_absmax", metrics)
+
     def test_load_fsdp_plugin_maps_options(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(
