@@ -398,11 +398,24 @@ class HunyuanVideo(VideoModelFoundation):
             attention_mask_2 = attention_mask_2.to(device=latents.device)
 
         timesteps = prepared_batch["timesteps"]
-        task_type = "i2v" if (prepared_batch.get("is_i2v_data", False) or self._is_i2v_like_flavour()) else "t2v"
+        wants_i2v_batch = bool(prepared_batch.get("is_i2v_data", False))
+        is_i2v_model = self._is_i2v_like_flavour()
+        cond_latents = prepared_batch.get("conditioning_latents")
+
+        use_i2v = is_i2v_model or wants_i2v_batch
+        if is_i2v_model and cond_latents is None:
+            raise ValueError("HunyuanVideo i2v training requires conditioning_latents in the batch.")
+        if wants_i2v_batch and not is_i2v_model and cond_latents is None:
+            if should_log() and not getattr(self, "_warned_missing_i2v_conditioning", False):
+                logger.warning(
+                    "Batch was marked as i2v but no conditioning latents were provided; falling back to t2v for this batch."
+                )
+                self._warned_missing_i2v_conditioning = True
+            use_i2v = False
+
+        task_type = "i2v" if use_i2v else "t2v"
 
         cond_latents = prepared_batch.get("conditioning_latents")
-        if task_type == "i2v" and cond_latents is None:
-            raise ValueError("HunyuanVideo i2v training requires conditioning_latents in the batch.")
         cond_latents = self._prepare_cond_latents(cond_latents, latents, task_type)
         latent_model_input = torch.cat([latents, cond_latents], dim=1)
 
