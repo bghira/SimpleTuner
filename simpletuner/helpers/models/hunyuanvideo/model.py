@@ -230,7 +230,8 @@ class HunyuanVideo(VideoModelFoundation):
         if getattr(self.config, "vae_enable_temporal_roll", False):
             logger.info("Enabling temporal rolling for HunyuanVideo VAE to reduce VRAM.")
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-            self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+            vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)
+            self.vae = vae if move_to_device else vae.to_empty(device=self.accelerator.device)
         if self.vae is None:
             raise ValueError(f"Could not load VAE from {self.VAE_REPO}.")
         if self.config.vae_enable_tiling and hasattr(self.vae, "enable_tiling"):
