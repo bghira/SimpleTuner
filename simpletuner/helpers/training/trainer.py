@@ -5043,10 +5043,11 @@ class Trainer:
                         )
                     except Exception as error:
                         # let's not crash training because of a validation error.
-                        logger.error(f"Validation run failed at step {step}: {error}")
+                        root_logger = logging.getLogger()
+                        root_logger.error(f"Validation run failed at step {step}: {error}")
                         import traceback
 
-                        logger.debug(traceback.format_exc())
+                        root_logger.debug(traceback.format_exc())
 
                     if should_validate:
                         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
