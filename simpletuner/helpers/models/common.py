@@ -1893,7 +1893,6 @@ class ModelFoundation(ABC):
                 if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
             }
             pipeline_instance = pipeline_class(**init_kwargs)
-            self._detach_pipeline_component(pipeline_instance, self.MODEL_TYPE.value)
         self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
