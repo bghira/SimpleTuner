@@ -196,7 +196,7 @@ def _collect_package_files(*directories: str):
 
 # Base dependencies (minimal, works on all platforms)
 base_deps = [
-    "diffusers>=0.35.1",
+    "diffusers>=0.36.0",
     "transformers>=4.55.0",
     "hf_transfer>=0.1.0",
     "datasets>=3.0.1",
