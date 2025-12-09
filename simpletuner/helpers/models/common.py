@@ -1128,15 +1128,18 @@ class ModelFoundation(ABC):
         skip_moving_trained_component = should_configure_offload and self.group_offload_configured
 
         if self.model is not None and not skip_moving_trained_component:
-            self.unwrap_model(model=self.model).to(target_device)
+            model_ref = self.unwrap_model(model=self.model)
+            if getattr(model_ref, "device", None) != "meta":
+                model_ref.to(target_device)
         if self.controlnet is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
             self.vae.to(target_device)
         if self.text_encoders is not None:
             for text_encoder in self.text_encoders:
-                if text_encoder.device != "meta":
-                    text_encoder.to(target_device)
+                if text_encoder is None or getattr(text_encoder, "device", None) == "meta":
+                    continue
+                text_encoder.to(target_device)
         self.move_extra_models(target_device)
 
         if should_configure_offload:
