@@ -4019,6 +4019,10 @@ class Trainer:
                 metrics["learning_rate"] = learning_rate_value
         if epoch is not None:
             metrics["epoch"] = epoch
+        batch_size_value = self._normalize_metric_value(getattr(self.config, "total_batch_size", None))
+        if batch_size_value is not None:
+            metrics.setdefault("effective_batch_size", batch_size_value)
+            metrics.setdefault("total_batch_size", batch_size_value)
         metrics.update(self.iteration_tracker.iteration_metrics())
         if extra_metrics:
             for key, value in extra_metrics.items():

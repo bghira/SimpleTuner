@@ -4510,6 +4510,38 @@ function trainerComponent() {
                 return;
             }
 
+            const parseNumeric = (value) => {
+                if (typeof value === 'number') {
+                    return Number.isFinite(value) ? value : null;
+                }
+                if (typeof value === 'string' && value.trim() !== '') {
+                    const parsed = Number(value);
+                    return Number.isFinite(parsed) ? parsed : null;
+                }
+                return null;
+            };
+
+            const formatStepSpeedLabel = (seconds) => {
+                const value = parseNumeric(seconds);
+                if (!value || value <= 0) {
+                    return 'N/A';
+                }
+                const precision = value >= 10 ? 1 : 2;
+                return `${value.toFixed(precision)} s/step`;
+            };
+
+            const formatSamplesPerSecondLabel = (samples) => {
+                const value = parseNumeric(samples);
+                if (!value || value <= 0) {
+                    return 'N/A';
+                }
+                if (value >= 1000) {
+                    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
+                }
+                const precision = value >= 10 ? 1 : 2;
+                return value.toFixed(precision);
+            };
+
             const loss = detail.loss;
             const formattedLoss = (typeof loss === 'number' && !isNaN(loss))
                 ? loss.toFixed(4)
@@ -4525,6 +4557,26 @@ function trainerComponent() {
             const normalizedPercent = Math.max(0, Math.min(100, safePercent));
             const roundedPercent = Math.round(normalizedPercent * 100) / 100;
 
+            let stepSpeedSeconds = parseNumeric(detail.step_speed_seconds ?? detail.iteration_step_time_seconds);
+            let stepsPerSecond = parseNumeric(detail.steps_per_second);
+            if (!stepsPerSecond && stepSpeedSeconds && stepSpeedSeconds > 0) {
+                stepsPerSecond = 1 / stepSpeedSeconds;
+            }
+            if (!stepSpeedSeconds && stepsPerSecond && stepsPerSecond > 0) {
+                stepSpeedSeconds = 1 / stepsPerSecond;
+            }
+            const effectiveBatchSize = parseNumeric(detail.effective_batch_size ?? detail.total_batch_size);
+            let samplesPerSecond = parseNumeric(detail.samples_per_second);
+            if (
+                !samplesPerSecond &&
+                stepsPerSecond &&
+                stepsPerSecond > 0 &&
+                effectiveBatchSize &&
+                effectiveBatchSize > 0
+            ) {
+                samplesPerSecond = stepsPerSecond * effectiveBatchSize;
+            }
+
             $data.trainingProgress = {
                 percent: roundedPercent,
                 step: detail.step || detail.current_step || 0,
@@ -4532,6 +4584,10 @@ function trainerComponent() {
                 epoch: detail.epoch || 0,
                 loss: formattedLoss,
                 learning_rate: formattedLr,
+                step_speed_seconds: stepSpeedSeconds,
+                step_speed_label: formatStepSpeedLabel(stepSpeedSeconds),
+                samples_per_second: samplesPerSecond,
+                samples_per_second_label: formatSamplesPerSecondLabel(samplesPerSecond),
             };
             $data.isTraining = true;
             $data.showTrainingProgress = true;
@@ -5419,6 +5475,16 @@ function trainerComponent() {
                         <div class="col-md-3">
                             <strong>LR:</strong>
                             <span x-text="trainingProgress.learning_rate || 'N/A'"></span>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-3">
+                            <strong>Step Speed:</strong>
+                            <span x-text="trainingProgress.step_speed_label || 'N/A'"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Samples/sec:</strong>
+                            <span x-text="trainingProgress.samples_per_second_label || 'N/A'"></span>
                         </div>
                     </div>
                 </div>
