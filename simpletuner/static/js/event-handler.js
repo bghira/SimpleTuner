@@ -1228,6 +1228,9 @@ class EventHandler {
             return Number.isFinite(parsed) ? parsed : null;
         };
 
+        // Extract nested metrics (rate statistics are stored under progress.metrics)
+        const metrics = progress.metrics || {};
+
         const detail = {
             percentage: toNumber(progress.percent ?? progress.percentage) ?? 0,
             percent: toNumber(progress.percent ?? progress.percentage) ?? 0,
@@ -1235,8 +1238,12 @@ class EventHandler {
             total_steps: toNumber(progress.total_steps ?? progress.total ?? progress.max_steps) ?? 0,
             epoch: toNumber(progress.epoch ?? progress.current_epoch) ?? 0,
             total_epochs: toNumber(progress.total_epochs ?? progress.final_epoch ?? progress.total_epoch) ?? 0,
-            loss: toNumber(progress.loss),
-            learning_rate: toNumber(progress.learning_rate ?? progress.lr),
+            loss: toNumber(progress.loss ?? metrics.loss),
+            learning_rate: toNumber(progress.learning_rate ?? progress.lr ?? metrics.learning_rate ?? metrics.lr),
+            step_speed_seconds: toNumber(metrics.step_speed_seconds ?? metrics.seconds_per_step ?? metrics.iteration_step_time_seconds),
+            steps_per_second: toNumber(metrics.steps_per_second),
+            samples_per_second: toNumber(metrics.samples_per_second),
+            effective_batch_size: toNumber(metrics.effective_batch_size ?? metrics.total_batch_size),
             job_id: jobId || this.lastKnownJobId || null,
         };
 

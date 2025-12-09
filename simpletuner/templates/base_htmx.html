@@ -419,12 +419,10 @@
                 maxRetryDelay: 30000
             });
 
-            // Add custom event listeners
-            window.sseManager.addEventListener('training_progress', function(data) {
-                // Progress is handled by the trainer page directly
-                // Just dispatch the event for other listeners
-                window.dispatchEvent(new CustomEvent('training-progress', { detail: data }));
-            });
+            // Note: training_progress events are handled by training_events_sse.html
+            // which properly extracts and normalizes metrics before dispatching
+            // training-progress custom events. Do NOT dispatch here to avoid
+            // overwriting properly processed data with raw SSE payloads.
 
             window.sseManager.addEventListener('validation_complete', function(data) {
                 showToast('Validation completed', 'success');

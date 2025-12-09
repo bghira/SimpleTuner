@@ -90,11 +90,16 @@ class IterationTracker:
         metrics: dict[str, float] = {}
         if self._latest_step_duration is not None:
             metrics["iteration_step_time_seconds"] = self._latest_step_duration
+            # Aliases expected by the webUI
+            metrics["step_speed_seconds"] = self._latest_step_duration
+            metrics["seconds_per_step"] = self._latest_step_duration
         for window_minutes, rate in self._compute_window_rates().items():
             metrics[f"iterations_per_minute_{window_minutes}m"] = rate
         overall_rate = self._overall_rate()
         if overall_rate is not None:
             metrics["iterations_per_minute_overall"] = overall_rate
+            # Alias expected by the webUI (convert iterations/minute to iterations/second)
+            metrics["steps_per_second"] = overall_rate / 60.0
         return metrics
 
     def estimate_eta(self, current_step: float | None, total_steps: float | None) -> float | None:
