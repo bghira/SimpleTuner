@@ -5,7 +5,7 @@
         <h6 class="modal-section-title">Frame Configuration</h6>
         <div class="row g-2">
             <div class="col-md-4">
-                <label class="form-label small">Frames per Clip</label>
+                <label class="form-label small">Frames per Clip <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#video-dataset" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="1"
@@ -15,7 +15,7 @@
                 <div class="form-text small">Target frames per video</div>
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Min Frames</label>
+                <label class="form-label small">Min Frames <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#video-dataset" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="1"
@@ -25,7 +25,7 @@
                 <div class="form-text small">Exclude shorter videos</div>
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Max Frames</label>
+                <label class="form-label small">Max Frames <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#video-dataset" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"
                        min="1"
@@ -46,10 +46,12 @@
                    :id="'video-i2v-' + editingDataset.id"
                    x-model="editingDataset.video.is_i2v"
                    @change="markAsUnsaved()">
-            <label class="form-check-label" :for="'video-i2v-' + editingDataset.id">
-                Enable I2V augmentation
+            <label class="form-check-label small" :for="'video-i2v-' + editingDataset.id">
+                Enable I2V augmentation <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#video-dataset" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
             </label>
-            <div class="form-text small">Image-to-video augmentation mode for training</div>
+        </div>
+        <div class="form-text small text-muted ps-4">
+            Image-to-video augmentation mode for training
         </div>
     </div>
 </div>

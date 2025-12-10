@@ -47,6 +47,12 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 - **Description:** Unique identifier for the dataset. It should remain constant once set, as it links the dataset to its state tracking entries.
 
+### `disabled`
+
+- **Values:** `true` | `false`
+- **Description:** When set to `true`, this dataset is skipped entirely during training. Useful for temporarily excluding a dataset without removing its configuration.
+- **Note:** Also accepts the spelling `disable`.
+
 ### `dataset_type`
 
 - **Values:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
@@ -58,6 +64,18 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 - **Only applies to `dataset_type=text_embeds`**
 - If set `true`, this text embed dataset will be where SimpleTuner stores the text embed cache for eg. validation prompt embeds. As they do not pair to image data, there needs to be a specific location for them to end up.
+
+### `cache_dir`
+
+- **Only applies to `dataset_type=text_embeds` and `dataset_type=image_embeds`**
+- **Description:** Specifies where embed cache files are stored for this dataset. For `text_embeds`, this is where text encoder outputs are written. For `image_embeds`, this is where VAE latents are stored.
+- **Note:** Different from `cache_dir_vae` which is set on primary image/video datasets to specify where their VAE cache goes.
+
+### `write_batch_size`
+
+- **Only applies to `dataset_type=text_embeds`**
+- **Description:** Number of text embeds to write in a single batch operation. Higher values can improve write throughput but use more memory.
+- **Default:** Falls back to the trainer's `--write_batch_size` argument (typically 128).
 
 ### `text_embeds`
 
@@ -125,8 +143,18 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 
 ### `conditioning_type`
 
-- **Values:** `controlnet` | `mask`
-- **Description:** A dataset may contain ControlNet conditioning inputs or masks to use during loss calculations. Only one or the other may be used.
+- **Values:** `controlnet` | `mask` | `reference_strict` | `reference_loose`
+- **Description:** Specifies the type of conditioning for a `conditioning` dataset.
+  - **controlnet**: ControlNet conditioning inputs for control signal training.
+  - **mask**: Binary masks for inpainting training.
+  - **reference_strict**: Reference images with strict pixel alignment (for edit models like Qwen Edit).
+  - **reference_loose**: Reference images with loose alignment.
+
+### `source_dataset_id`
+
+- **Only applies to `dataset_type=conditioning`** with `conditioning_type` of `reference_strict`, `reference_loose`, or `mask`
+- **Description:** Links a conditioning dataset to its source image/video dataset for pixel alignment. When set, SimpleTuner duplicates metadata from the source dataset to ensure conditioning images align with their targets.
+- **Note:** Required for strict alignment modes; optional for loose alignment.
 
 ### `conditioning_data`
 
@@ -149,6 +177,21 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 Both `textfile` and `parquet` support multi-captions:
 - textfiles are split by newlines. Each new line will be its own separate caption.
 - parquet tables can have an iterable type in the field.
+
+### `metadata_backend`
+
+- **Values:** `discovery` | `parquet` | `huggingface`
+- **Description:** Controls how SimpleTuner discovers image dimensions and other metadata during dataset preparation.
+  - **discovery** (default): Scans actual image files to read dimensions. Works with any storage backend but can be slow for large datasets.
+  - **parquet**: Reads dimensions from `width_column` and `height_column` in a parquet/JSONL file, skipping file access. See [Parquet caption strategy](#parquet-caption-strategy--json-lines-datasets).
+  - **huggingface**: Uses metadata from Hugging Face datasets. See [Hugging Face Datasets Support](#hugging-face-datasets-support).
+- **Note:** When using `parquet`, you must also configure the `parquet` block with `width_column` and `height_column`. This dramatically speeds up startup for large datasets.
+
+### `metadata_update_interval`
+
+- **Values:** Integer (seconds)
+- **Description:** How often (in seconds) to refresh dataset metadata during training. Useful for datasets that may change during a long training run.
+- **Default:** Falls back to the trainer's `--metadata_update_interval` argument.
 
 ### Cropping Options
 
@@ -476,6 +519,30 @@ This is particularly useful when:
 - Also may be spelt `is_regularization_data`
 - Enables parent-teacher training for LyCORIS adapters so that the prediction target prefers the base model's result for a given dataset.
   - Standard LoRA are not currently supported.
+
+### `delete_unwanted_images`
+
+- **Values:** `true` | `false`
+- **Description:** When enabled, images that fail size or aspect ratio filters (e.g., below `minimum_image_size` or outside `minimum_aspect_ratio`/`maximum_aspect_ratio`) are permanently deleted from the dataset directory.
+- **Warning:** This is destructive and cannot be undone. Use with caution.
+- **Default:** Falls back to the trainer's `--delete_unwanted_images` argument (default: `false`).
+
+### `delete_problematic_images`
+
+- **Values:** `true` | `false`
+- **Description:** When enabled, images that fail during VAE encoding (corrupted files, unsupported formats, etc.) are permanently deleted from the dataset directory.
+- **Warning:** This is destructive and cannot be undone. Use with caution.
+- **Default:** Falls back to the trainer's `--delete_problematic_images` argument (default: `false`).
+
+### `slider_strength`
+
+- **Values:** Any float value (positive, negative, or zero)
+- **Description:** Marks a dataset for slider LoRA training, which learns contrastive "opposites" to create controllable concept adapters.
+  - **Positive values** (e.g., `0.5`): "More of the concept" — brighter eyes, stronger smile, etc.
+  - **Negative values** (e.g., `-0.5`): "Less of the concept" — dimmer eyes, neutral expression, etc.
+  - **Zero or omitted**: Neutral examples that don't push the concept in either direction.
+- **Note:** When datasets have `slider_strength` values, SimpleTuner rotates batches in a fixed cycle: positive → negative → neutral. Within each group, standard backend probabilities still apply.
+- **See also:** [SLIDER_LORA.md](/documentation/SLIDER_LORA.md) for a complete guide on setting up slider LoRA training.
 
 ### `vae_cache_clear_each_epoch`
 

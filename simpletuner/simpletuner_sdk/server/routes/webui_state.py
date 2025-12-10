@@ -340,6 +340,7 @@ class DefaultsUpdate(BaseModel):
     event_stream_enabled: Optional[bool] = None
     auto_preserve_defaults: Optional[bool] = None
     allow_dataset_paths_outside_dir: Optional[bool] = None
+    show_documentation_links: Optional[bool] = None
     accelerate_overrides: Optional[Dict[str, object]] = None
 
 
@@ -381,6 +382,8 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
             defaults.auto_preserve_defaults = bool(payload.auto_preserve_defaults)
         if payload.allow_dataset_paths_outside_dir is not None:
             defaults.allow_dataset_paths_outside_dir = bool(payload.allow_dataset_paths_outside_dir)
+        if payload.show_documentation_links is not None:
+            defaults.show_documentation_links = bool(payload.show_documentation_links)
         if payload.accelerate_overrides is not None:
             defaults.accelerate_overrides = _normalise_accelerate_overrides(payload.accelerate_overrides)
 
