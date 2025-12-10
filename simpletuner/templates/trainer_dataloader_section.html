@@ -269,14 +269,14 @@
 
             <!-- List View -->
             <div class="dataset-list-view" x-show="viewMode === 'list'">
-                <template x-for="dataset in filteredDatasets" :key="dataset.id">
+                <template x-for="(dataset, index) in filteredDatasets" :key="dataset._uiKey || dataset.id || index">
                     {% include 'components/dataloader/dataset_list_item.html' %}
                 </template>
             </div>
 
             <!-- Grid/Card View -->
             <div class="dataset-grid-view" x-show="viewMode === 'cards'">
-                <template x-for="dataset in filteredDatasets" :key="dataset.id">
+                <template x-for="(dataset, index) in filteredDatasets" :key="dataset._uiKey || dataset.id || index">
                     {% include 'components/dataloader/dataset_grid_card.html' %}
                 </template>
             </div>

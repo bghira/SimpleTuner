@@ -64,6 +64,8 @@ const DATASET_COLLAPSE_SECTION_MAP = {
 
 const COLLAPSED_SECTIONS_ENDPOINT = '/api/webui/ui-state/collapsed-sections/datasets';
 
+let _datasetKeyCounter = 0;
+
 function dataloaderSectionComponent() {
     return {
     storeReady: false,
@@ -293,6 +295,9 @@ function dataloaderSectionComponent() {
 
     // Filtered datasets for search
     get filteredDatasets() {
+        if (Array.isArray(this.datasets)) {
+            this.datasets.forEach((dataset) => this.ensureDatasetRuntimeState(dataset));
+        }
         if (!this.datasetSearchQuery.trim()) {
             return this.datasets;
         }
@@ -373,6 +378,10 @@ function dataloaderSectionComponent() {
     ensureDatasetRuntimeState(dataset) {
         if (!dataset || typeof dataset !== 'object') {
             return;
+        }
+        if (!dataset._uiKey) {
+            const fallback = dataset.instance_data_dir || dataset.dataset_type || dataset.type || 'dataset';
+            dataset._uiKey = dataset.id || `${fallback}-${Date.now()}-${_datasetKeyCounter++}`;
         }
         if (dataset._connectionStatus === undefined) {
             dataset._connectionStatus = null;
