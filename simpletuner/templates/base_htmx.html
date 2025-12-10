@@ -13,6 +13,19 @@
 
     <!-- Critical CSS (inline for performance) -->
     <script>var cssTimestamp = Date.now();</script>
+    <!-- Global WebUI defaults -->
+    {% set show_docs_default = webui_defaults.show_documentation_links if webui_defaults is defined and webui_defaults.show_documentation_links is defined else true %}
+    <script>
+    window.webuiDefaults = {
+        show_documentation_links: {{ 'true' if show_docs_default else 'false' }}
+    };
+    window.addEventListener('webui-defaults-updated', function(event) {
+        var payload = event && event.detail && (event.detail.resolved_defaults || event.detail.defaults);
+        if (payload && typeof payload.show_documentation_links !== 'undefined') {
+            window.webuiDefaults.show_documentation_links = Boolean(payload.show_documentation_links);
+        }
+    });
+    </script>
     <link href="/static/css/critical.css" rel="stylesheet" id="css-critical">
     <script>document.getElementById('css-critical').href = '/static/css/critical.css?t=' + cssTimestamp;</script>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">

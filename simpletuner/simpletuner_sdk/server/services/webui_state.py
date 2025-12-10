@@ -161,6 +161,7 @@ class WebUIDefaults:
     event_stream_enabled: bool = True
     auto_preserve_defaults: bool = True
     allow_dataset_paths_outside_dir: bool = False
+    show_documentation_links: bool = True
     accelerate_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -316,6 +317,18 @@ class WebUIStateStore:
             defaults.allow_dataset_paths_outside_dir = False
         else:
             defaults.allow_dataset_paths_outside_dir = bool(allow_paths_value)
+
+        # Normalise show_documentation_links toggle
+        sentinel = object()
+        show_docs_value = payload.get("show_documentation_links", sentinel)
+        if show_docs_value is sentinel:
+            defaults.show_documentation_links = True
+        elif isinstance(show_docs_value, str):
+            defaults.show_documentation_links = show_docs_value.strip().lower() not in {"0", "false", "no", "off"}
+        elif show_docs_value is None:
+            defaults.show_documentation_links = True
+        else:
+            defaults.show_documentation_links = bool(show_docs_value)
 
         defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults

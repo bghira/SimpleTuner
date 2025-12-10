@@ -1227,6 +1227,7 @@ function trainerComponent() {
             if (dataset.dataset_type === 'conditioning') {
                 dataset.conditioning_type = dataset.conditioning_type || 'controlnet';
                 dataset.default = this.normalizeBoolean(dataset.default);
+                dataset.source_dataset_id = this._coerceString(dataset.source_dataset_id);
             }
 
             if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {
@@ -1321,6 +1322,17 @@ function trainerComponent() {
             dataset.prepend_instance_prompt = this.normalizeBoolean(dataset.prepend_instance_prompt);
             dataset.only_instance_prompt = this.normalizeBoolean(dataset.only_instance_prompt);
             dataset.disabled = this.normalizeBoolean(dataset.disabled);
+            dataset.vae_cache_clear_each_epoch = this.normalizeBoolean(dataset.vae_cache_clear_each_epoch);
+
+            // max_upscale_threshold (nullable float)
+            if (dataset.max_upscale_threshold !== undefined && dataset.max_upscale_threshold !== null && dataset.max_upscale_threshold !== '') {
+                dataset.max_upscale_threshold = parseFloat(dataset.max_upscale_threshold);
+                if (isNaN(dataset.max_upscale_threshold)) {
+                    dataset.max_upscale_threshold = null;
+                }
+            } else {
+                dataset.max_upscale_threshold = null;
+            }
 
             dataset.instance_prompt = this._coerceString(dataset.instance_prompt);
             dataset.cache_dir_vae = this._coerceString(dataset.cache_dir_vae);
@@ -1334,9 +1346,15 @@ function trainerComponent() {
 
             dataset.text_embeds = this._coerceString(dataset.text_embeds);
             dataset.image_embeds = this._coerceString(dataset.image_embeds);
+            dataset.conditioning_image_embeds = this._coerceString(dataset.conditioning_image_embeds);
+            dataset.cache_dir_conditioning_image_embeds = this._coerceString(dataset.cache_dir_conditioning_image_embeds);
             if (!['image', 'video'].includes(dataset.dataset_type)) {
                 dataset.text_embeds = '';
                 dataset.image_embeds = '';
+            }
+            if (!['image', 'video', 'conditioning'].includes(dataset.dataset_type)) {
+                dataset.conditioning_image_embeds = '';
+                dataset.cache_dir_conditioning_image_embeds = '';
             }
 
             dataset.aws_bucket_name = this._coerceString(dataset.aws_bucket_name);
@@ -1767,10 +1785,26 @@ function trainerComponent() {
 
                 if (cleaned.dataset_type === 'conditioning') {
                     cleaned.default = this.normalizeBoolean(cleaned.default);
+                    // conditioning_type for conditioning datasets
+                    const conditioningType = this._coerceString(dataset.conditioning_type) || 'controlnet';
+                    if (['controlnet', 'mask', 'reference_strict', 'reference_loose'].includes(conditioningType)) {
+                        cleaned.conditioning_type = conditioningType;
+                    } else {
+                        cleaned.conditioning_type = 'controlnet';
+                    }
+                    // source_dataset_id for reference/mask conditioning types
+                    const sourceDatasetId = this._coerceString(dataset.source_dataset_id);
+                    if (sourceDatasetId && ['reference_strict', 'reference_loose', 'mask'].includes(cleaned.conditioning_type)) {
+                        cleaned.source_dataset_id = sourceDatasetId;
+                    } else {
+                        delete cleaned.source_dataset_id;
+                    }
                     if (!Array.isArray(cleaned.conditioning_data)) {
                         cleaned.conditioning_data = [];
                     }
                 } else {
+                    delete cleaned.source_dataset_id;
+                    delete cleaned.conditioning_type;
                     const links = Array.isArray(cleaned.conditioning_data) ? cleaned.conditioning_data : [];
                     cleaned.conditioning_data = links;
                     const invalid = links.filter((id) => !conditioningIds.has(id));
@@ -1893,6 +1927,24 @@ function trainerComponent() {
                     delete cleaned.only_instance_prompt;
                 }
 
+                if (this.normalizeBoolean(dataset.vae_cache_clear_each_epoch)) {
+                    cleaned.vae_cache_clear_each_epoch = true;
+                } else {
+                    delete cleaned.vae_cache_clear_each_epoch;
+                }
+
+                // max_upscale_threshold (nullable float)
+                if (dataset.max_upscale_threshold !== null && dataset.max_upscale_threshold !== undefined && dataset.max_upscale_threshold !== '') {
+                    const threshold = parseFloat(dataset.max_upscale_threshold);
+                    if (!isNaN(threshold)) {
+                        cleaned.max_upscale_threshold = threshold;
+                    } else {
+                        delete cleaned.max_upscale_threshold;
+                    }
+                } else {
+                    delete cleaned.max_upscale_threshold;
+                }
+
                 const instancePrompt = this._coerceString(dataset.instance_prompt);
                 if (instancePrompt) {
                     cleaned.instance_prompt = instancePrompt;
@@ -1954,6 +2006,25 @@ function trainerComponent() {
                 } else {
                     delete cleaned.text_embeds;
                     delete cleaned.image_embeds;
+                }
+
+                // conditioning_image_embeds (for I2V models)
+                if (['image', 'video', 'conditioning'].includes(cleaned.dataset_type)) {
+                    const conditioningImageEmbedRef = this._coerceString(dataset.conditioning_image_embeds);
+                    if (conditioningImageEmbedRef) {
+                        cleaned.conditioning_image_embeds = conditioningImageEmbedRef;
+                    } else {
+                        delete cleaned.conditioning_image_embeds;
+                    }
+                    const cacheDirConditioningImageEmbeds = this._coerceString(dataset.cache_dir_conditioning_image_embeds);
+                    if (cacheDirConditioningImageEmbeds) {
+                        cleaned.cache_dir_conditioning_image_embeds = cacheDirConditioningImageEmbeds;
+                    } else {
+                        delete cleaned.cache_dir_conditioning_image_embeds;
+                    }
+                } else {
+                    delete cleaned.conditioning_image_embeds;
+                    delete cleaned.cache_dir_conditioning_image_embeds;
                 }
 
                 if (cleaned.type === 'aws') {

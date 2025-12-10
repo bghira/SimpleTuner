@@ -140,6 +140,10 @@ function dataloaderSectionComponent() {
         }
     },
 
+    get showDocLinks() {
+        return window.webuiDefaults?.show_documentation_links !== false;
+    },
+
     get trainer() {
         if (!this._trainerCache) {
             this._trainerCache = Alpine.store('trainer') || {};
@@ -212,6 +216,15 @@ function dataloaderSectionComponent() {
             console.debug('[DatasetBuilder] strict I2V active for current model flavour', context);
         }
         return active;
+    },
+    get requiresConditioningImageEmbeds() {
+        const context = this.modelContext || {};
+        // Check if model capabilities indicate conditioning image embeds are needed
+        // This is true for Wan I2V models and Qwen Edit models
+        const capabilities = context.capabilities || {};
+        return this.normalizeBoolean(capabilities.requires_conditioning_image_embeds) ||
+               this.normalizeBoolean(context.requiresConditioningImageEmbeds) ||
+               this.normalizeBoolean(context.strictI2VActive);
     },
     get imageDatasetCount() {
         if (!Array.isArray(this.datasets)) {
@@ -595,6 +608,19 @@ function dataloaderSectionComponent() {
             .map((entry) => ({
                 id: entry.id,
                 label: `${entry.id}${entry.dataset_type ? ` (${entry.dataset_type})` : ''}`
+            }));
+    },
+    sourceDatasetOptions(dataset) {
+        // For conditioning datasets, list available image/video datasets as potential sources
+        const trainer = Alpine.store('trainer');
+        if (!trainer || !Array.isArray(trainer.datasets)) {
+            return [];
+        }
+        return trainer.datasets
+            .filter((entry) => entry && entry.id && ['image', 'video'].includes(entry.dataset_type) && entry.id !== dataset?.id)
+            .map((entry) => ({
+                id: entry.id,
+                label: `${entry.id} (${entry.dataset_type})`
             }));
     },
     renderDatasetOptions(dataset, type, emptyLabel) {

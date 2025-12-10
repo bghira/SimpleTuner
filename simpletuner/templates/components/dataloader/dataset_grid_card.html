@@ -26,14 +26,25 @@
 
     <!-- Card Body -->
     <div class="grid-card-body">
-        <!-- Type Badge -->
-        <span class="badge grid-card-type-badge" :class="{
-            'bg-primary': dataset.dataset_type === 'image',
-            'bg-info': dataset.dataset_type === 'video',
-            'bg-success': dataset.dataset_type === 'audio',
-            'bg-secondary': dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds',
-            'bg-warning text-dark': dataset.dataset_type === 'conditioning'
-        }" x-text="dataset.dataset_type"></span>
+        <!-- Type & Status Badges -->
+        <div class="d-flex align-items-center gap-1 mb-1">
+            <span class="badge grid-card-type-badge" :class="{
+                'bg-primary': dataset.dataset_type === 'image',
+                'bg-info': dataset.dataset_type === 'video',
+                'bg-success': dataset.dataset_type === 'audio',
+                'bg-secondary': dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds',
+                'bg-warning text-dark': dataset.dataset_type === 'conditioning'
+            }" x-text="dataset.dataset_type"></span>
+            <span class="badge grid-card-type-badge bg-warning text-dark"
+                  x-show="dataset.is_regularisation_data"
+                  title="Regularisation/prior preservation data to prevent model drift">REG</span>
+        </div>
+
+        <!-- Repeats -->
+        <div class="grid-card-stat" x-show="dataset.repeats && dataset.repeats > 0">
+            <span class="grid-card-stat-label">Repeats</span>
+            <span class="grid-card-stat-value" x-text="'×' + dataset.repeats"></span>
+        </div>
 
         <!-- Resolution Info -->
         <div class="grid-card-stat" x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video' || dataset.dataset_type === 'conditioning'">

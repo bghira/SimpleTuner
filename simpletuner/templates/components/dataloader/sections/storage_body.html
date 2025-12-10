@@ -3,6 +3,7 @@
     <!-- Backend Selection -->
     <div class="section-group" x-show="matchesParamFilter('storage', 'backend', 'local', 'aws', 's3', 'csv', 'huggingface')">
         <h6 class="modal-section-title">Storage Backend</h6>
+        <label class="form-label small">Backend Type <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#type" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
         <select class="form-select form-select-sm"
                 x-model="editingDataset.type"
                 @change="onStorageBackendChange(editingDataset)">
@@ -18,7 +19,7 @@
         <h6 class="modal-section-title">Local Paths</h6>
         <div class="row g-2">
             <div class="col-md-6" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
-                <label class="form-label small">Instance Data Directory</label>
+                <label class="form-label small">Instance Data Directory <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#instance_data_dir--aws_data_prefix" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <div class="input-group input-group-sm">
                     <input type="text"
                            class="form-control form-control-sm"
@@ -65,7 +66,7 @@
         <h6 class="modal-section-title">AWS S3 Configuration</h6>
         <div class="row g-2">
             <div class="col-md-4">
-                <label class="form-label small">Bucket Name</label>
+                <label class="form-label small">Bucket Name <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#type" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.aws_bucket_name"
@@ -73,7 +74,7 @@
                        placeholder="my-bucket">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Object Prefix</label>
+                <label class="form-label small">Object Prefix <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#instance_data_dir--aws_data_prefix" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.aws_data_prefix"
@@ -144,7 +145,7 @@
         <h6 class="modal-section-title">CSV Configuration</h6>
         <div class="row g-2">
             <div class="col-md-4">
-                <label class="form-label small">CSV File</label>
+                <label class="form-label small">CSV File <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#train-directly-from-csv-url-list" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.csv_file"
@@ -152,7 +153,7 @@
                        placeholder="/path/to/urls.csv">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Caption Column</label>
+                <label class="form-label small">Caption Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#train-directly-from-csv-url-list" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.csv_caption_column"
@@ -160,7 +161,7 @@
                        placeholder="caption">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Cache Directory</label>
+                <label class="form-label small">Cache Directory <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#train-directly-from-csv-url-list" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.csv_cache_dir"
@@ -175,7 +176,7 @@
         <h6 class="modal-section-title">Hugging Face Dataset</h6>
         <div class="row g-2">
             <div class="col-md-4">
-                <label class="form-label small">Dataset Name</label>
+                <label class="form-label small">Dataset Name <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hugging-face-datasets-support" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.dataset_name"
@@ -183,7 +184,7 @@
                        placeholder="username/dataset">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Config</label>
+                <label class="form-label small">Config <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hugging-face-datasets-support" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.dataset_config"
@@ -191,7 +192,7 @@
                        placeholder="default">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Split</label>
+                <label class="form-label small">Split <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hugging-face-datasets-support" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.split"
@@ -201,7 +202,7 @@
         </div>
         <div class="row g-2 mt-2">
             <div class="col-md-4">
-                <label class="form-label small">Image Column</label>
+                <label class="form-label small">Image Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hugging-face-datasets-support" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.image_column"
@@ -209,7 +210,7 @@
                        placeholder="image">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Caption Column</label>
+                <label class="form-label small">Caption Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hugging-face-datasets-support" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.caption_column"
@@ -217,7 +218,7 @@
                        placeholder="text">
             </div>
             <div class="col-md-4">
-                <label class="form-label small">Revision</label>
+                <label class="form-label small">Revision <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hugging-face-datasets-support" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="text"
                        class="form-control form-control-sm"
                        x-model="editingDataset.revision"
@@ -234,8 +235,11 @@
                            x-model="editingDataset.streaming"
                            @change="touchConnectionField(editingDataset)">
                     <label class="form-check-label small" :for="'hf-streaming-' + editingDataset.id">
-                        Enable streaming
+                        Enable streaming <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hugging-face-datasets-support" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
                     </label>
+                </div>
+                <div class="form-text small text-muted ps-4">
+                    Stream data instead of downloading
                 </div>
             </div>
             <div class="col-md-6">
@@ -245,6 +249,22 @@
                        x-model="editingDataset.auth_token"
                        @input="touchConnectionField(editingDataset)"
                        placeholder="hf_...">
+            </div>
+        </div>
+    </div>
+
+    <!-- VAE Cache Directory (for non-local backends) -->
+    <div class="section-group" x-show="editingDataset.type !== 'local' && !['text_embeds','image_embeds','audio'].includes(editingDataset.dataset_type) && matchesParamFilter('cache', 'vae', 'latent')">
+        <h6 class="modal-section-title">Cache Directory</h6>
+        <div class="row g-2">
+            <div class="col-md-12">
+                <label class="form-label small">VAE Cache Directory</label>
+                <input type="text"
+                       class="form-control form-control-sm"
+                       x-model.lazy="editingDataset.cache_dir_vae"
+                       @input="markAsUnsaved()"
+                       placeholder="cache/vae/{model_family}/{dataset_id}">
+                <div class="form-text small">Local path for storing VAE latent cache</div>
             </div>
         </div>
     </div>
@@ -271,8 +291,11 @@
                            x-model="editingDataset.preserve_data_backend_cache"
                            @change="markAsUnsaved()">
                     <label class="form-check-label small" :for="'preserve-cache-storage-' + editingDataset.id">
-                        Preserve backend cache
+                        Preserve backend cache <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#preserve_data_backend_cache" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
                     </label>
+                </div>
+                <div class="form-text small text-muted ps-4">
+                    Keep data backend cache between runs
                 </div>
             </div>
         </div>
