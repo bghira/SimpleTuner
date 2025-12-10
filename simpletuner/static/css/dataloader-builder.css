@@ -752,14 +752,14 @@
     min-height: calc(1.5rem + var(--spacing-sm) * 2 + 2px);
 }
 
-/* Legacy form check alignment - preserved for other sections */
+/* Legacy form check alignment - for dataloader modal checkboxes */
 .form-check:not(.checkbox-item .form-check) {
     display: block;
     min-height: var(--spacing-xl);
     padding-left: 0;
 }
 
-/* Legacy checkbox styling - preserved for other sections */
+/* Legacy checkbox styling - for dataloader modal checkboxes */
 .form-check:not(.checkbox-item .form-check) .form-check-input {
     float: left;
     margin-right: var(--spacing-sm);
@@ -776,6 +776,29 @@
     font-size: 0.8125rem;
     line-height: 1.4;
     color: var(--text-muted);
+}
+
+/* Reset form-check styling for UI Settings tab (restore Bootstrap defaults) */
+#ui-settings-tab-content .form-check {
+    display: flex;
+    min-height: 1.5rem;
+    padding-left: 1.5em;
+    margin-bottom: 0.125rem;
+}
+
+#ui-settings-tab-content .form-check .form-check-input {
+    float: none;
+    flex-shrink: 0;
+    width: 1em;
+    height: 1em;
+    margin-top: 0.25em;
+    margin-left: -1.5em;
+    margin-right: 0;
+}
+
+#ui-settings-tab-content .form-check .form-check-label {
+    display: inline;
+    margin-left: 0;
 }
 
 /* Standardized checkbox group component */
