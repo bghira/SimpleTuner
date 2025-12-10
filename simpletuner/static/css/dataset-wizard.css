@@ -309,13 +309,114 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.file-browser-backdrop .modal-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .file-browser-backdrop .modal-body {
     pointer-events: auto;
+    padding: 1.5rem;
+}
+
+.file-browser-backdrop .modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .file-browser-backdrop button,
 .file-browser-backdrop input,
 .file-browser-backdrop .list-group-item {
+    pointer-events: auto;
+}
+
+/* Upload modal - stacks above file browser */
+.dataset-wizard-backdrop.upload-modal-backdrop {
+    z-index: 10600;
+    background: rgba(0, 0, 0, 0.85);
+}
+
+.upload-modal-backdrop .modal-dialog {
+    background: #1c1f2e;
+    border-radius: 0.75rem;
+    width: 100%;
+    max-width: 600px;
+    max-height: 85vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 10601;
+    pointer-events: auto;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.upload-modal-backdrop .modal-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.upload-modal-backdrop .modal-body {
+    pointer-events: auto;
+    overflow-y: auto;
+    max-height: 60vh;
+}
+
+.upload-modal-backdrop .modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.upload-modal-backdrop button,
+.upload-modal-backdrop input,
+.upload-modal-backdrop .list-group-item {
+    pointer-events: auto;
+}
+
+/* Caption modal - stacks above upload modal */
+.dataset-wizard-backdrop.caption-modal-backdrop {
+    z-index: 10700;
+    background: rgba(0, 0, 0, 0.85);
+}
+
+.caption-modal-backdrop .modal-dialog {
+    background: #1c1f2e;
+    border-radius: 0.75rem;
+    width: 100%;
+    max-width: 1000px;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 10701;
+    pointer-events: auto;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.caption-modal-backdrop .modal-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.caption-modal-backdrop .modal-body {
+    pointer-events: auto;
+    overflow-y: auto;
+    max-height: 70vh;
+    padding: 1.5rem;
+}
+
+.caption-modal-backdrop .modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.caption-modal-backdrop button,
+.caption-modal-backdrop input,
+.caption-modal-backdrop textarea,
+.caption-modal-backdrop .card {
     pointer-events: auto;
 }
 
@@ -452,6 +553,49 @@
 
 .aspect-bucket-remove:hover {
     color: #ef4444;
+}
+
+/* Resizable path inputs - resize both directions for long paths */
+textarea.resizable-path {
+    resize: both;
+    min-height: 31px;
+    min-width: 100px;
+    overflow: auto;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: 0.875em;
+    white-space: nowrap;
+    line-height: 1.4;
+}
+
+textarea.resizable-path.form-control-sm {
+    min-height: 31px;
+    padding: 0.25rem 0.5rem;
+}
+
+/* Fix resize inside input-group - use CSS Grid instead of Flex
+   Flexbox prevents textarea resize; Grid allows it */
+.resizable-input-group {
+    display: grid !important;
+    grid-template-columns: minmax(100px, 1fr) auto;
+    gap: 0;
+    align-items: start !important;
+}
+
+.resizable-input-group textarea.resizable-path {
+    grid-column: 1;
+    width: 100%;
+    min-width: 150px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.resizable-input-group > .btn {
+    grid-column: 2;
+    height: auto;
+    align-self: start;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    margin-left: -1px;
 }
 
 /* Responsive adjustments */

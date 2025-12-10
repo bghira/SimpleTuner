@@ -1214,11 +1214,6 @@ class FieldService:
                 return not self._coerce_bool(legacy_value)
             return value
 
-        elif field_name == "lora_alpha":
-            if value in (None, ""):
-                return config_values.get("lora_rank", 16)
-            return value
-
         return value
 
     # Format converters
@@ -2127,10 +2122,23 @@ class FieldService:
                 if field.name == "i_know_what_i_am_doing":
                     value = self._coerce_bool(value)
                 elif field.name == "lora_alpha":
-                    if not danger_mode_enabled:
-                        value = lora_rank_value
-                    elif value in (None, ""):
-                        value = lora_rank_value
+                    alpha_in_config = self._config_has_field(config_data, field.name) or self._config_has_field(
+                        config_data, getattr(field, "arg_name", "")
+                    )
+                    if value in (None, "") and not alpha_in_config:
+                        value = None
+                        lora_type_value = (
+                            self._get_config_value(config_data, "lora_type")
+                            or self._get_config_value(config_values, "lora_type")
+                            or "standard"
+                        )
+                        lora_type_normalized = str(lora_type_value).strip().lower()
+                        if lora_type_normalized in {"", "standard"}:
+                            config_values[f"{field.name}__hint"] = (
+                                f"Defaults to the LoRA rank ({lora_rank_value}) for standard LoRA when left unset."
+                            )
+                        else:
+                            config_values[f"{field.name}__hint"] = "Defaults to the configured LoRA rank when left unset."
 
                 config_values[field.name] = value
                 arg_name = getattr(field, "arg_name", "")

@@ -20,12 +20,12 @@
         <div class="row g-2">
             <div class="col-md-6" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
                 <label class="form-label small">Instance Data Directory <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#instance_data_dir--aws_data_prefix" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
-                <div class="input-group input-group-sm">
-                    <input type="text"
-                           class="form-control form-control-sm"
-                           x-model.lazy="editingDataset.instance_data_dir"
-                           @input="markAsUnsaved()"
-                           placeholder="/path/to/data">
+                <div class="input-group input-group-sm resizable-input-group">
+                    <textarea rows="1"
+                              class="form-control form-control-sm resizable-path"
+                              x-model.lazy="editingDataset.instance_data_dir"
+                              @input="markAsUnsaved()"
+                              placeholder="/path/to/data"></textarea>
                     <button class="btn btn-outline-secondary"
                             type="button"
                             @click.prevent="openDatasetPathBrowser(editingDataset, 'instance_data_dir')"
@@ -36,27 +36,27 @@
             </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
                 <label class="form-label small">VAE Cache Directory</label>
-                <input type="text"
-                       class="form-control form-control-sm"
-                       x-model.lazy="editingDataset.cache_dir_vae"
-                       @input="markAsUnsaved()"
-                       placeholder="/path/to/cache/vae">
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model.lazy="editingDataset.cache_dir_vae"
+                          @input="markAsUnsaved()"
+                          placeholder="/path/to/cache/vae"></textarea>
             </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds'">
                 <label class="form-label small">Text Embed Cache</label>
-                <input type="text"
-                       class="form-control form-control-sm"
-                       x-model.lazy="editingDataset.cache_dir"
-                       @input="markAsUnsaved()"
-                       placeholder="/path/to/cache">
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model.lazy="editingDataset.cache_dir"
+                          @input="markAsUnsaved()"
+                          placeholder="/path/to/cache"></textarea>
             </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type === 'image_embeds'">
                 <label class="form-label small">Image Embed Cache</label>
-                <input type="text"
-                       class="form-control form-control-sm"
-                       x-model.lazy="editingDataset.cache_dir"
-                       @input="markAsUnsaved()"
-                       placeholder="/path/to/cache">
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model.lazy="editingDataset.cache_dir"
+                          @input="markAsUnsaved()"
+                          placeholder="/path/to/cache"></textarea>
             </div>
         </div>
     </div>
@@ -146,11 +146,11 @@
         <div class="row g-2">
             <div class="col-md-4">
                 <label class="form-label small">CSV File <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#train-directly-from-csv-url-list" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
-                <input type="text"
-                       class="form-control form-control-sm"
-                       x-model="editingDataset.csv_file"
-                       @input="touchConnectionField(editingDataset)"
-                       placeholder="/path/to/urls.csv">
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model="editingDataset.csv_file"
+                          @input="touchConnectionField(editingDataset)"
+                          placeholder="/path/to/urls.csv"></textarea>
             </div>
             <div class="col-md-4">
                 <label class="form-label small">Caption Column <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#train-directly-from-csv-url-list" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
@@ -162,11 +162,11 @@
             </div>
             <div class="col-md-4">
                 <label class="form-label small">Cache Directory <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#train-directly-from-csv-url-list" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
-                <input type="text"
-                       class="form-control form-control-sm"
-                       x-model="editingDataset.csv_cache_dir"
-                       @input="touchConnectionField(editingDataset)"
-                       placeholder="/path/to/cache">
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model="editingDataset.csv_cache_dir"
+                          @input="touchConnectionField(editingDataset)"
+                          placeholder="/path/to/cache"></textarea>
             </div>
         </div>
     </div>
@@ -259,11 +259,11 @@
         <div class="row g-2">
             <div class="col-md-12">
                 <label class="form-label small">VAE Cache Directory</label>
-                <input type="text"
-                       class="form-control form-control-sm"
-                       x-model.lazy="editingDataset.cache_dir_vae"
-                       @input="markAsUnsaved()"
-                       placeholder="cache/vae/{model_family}/{dataset_id}">
+                <textarea rows="1"
+                          class="form-control form-control-sm resizable-path"
+                          x-model.lazy="editingDataset.cache_dir_vae"
+                          @input="markAsUnsaved()"
+                          placeholder="cache/vae/{model_family}/{dataset_id}"></textarea>
                 <div class="form-text small">Local path for storing VAE latent cache</div>
             </div>
         </div>

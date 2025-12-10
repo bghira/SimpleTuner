@@ -924,5 +924,66 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_dataset_search", scenario)
 
 
+class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
+    """Lightweight UI check for dataset wizard Alpine state."""
+
+    MAX_BROWSERS = 1
+
+    def test_dataset_wizard_initializes_modal_state(self) -> None:
+        """Dataset wizard should expose new folder/upload state without Alpine errors."""
+        datasets_root = self.home_path / "datasets"
+        datasets_root.mkdir(parents=True, exist_ok=True)
+        self.seed_defaults(datasets_dir=datasets_root)
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            trainer_page.wait.until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Add a dataset to the current configuration']"))
+            ).click()
+
+            trainer_page.wait.until(lambda d: d.execute_script("return !!window.datasetWizardComponentInstance"))
+
+            state = driver.execute_script(
+                """
+                const comp = window.datasetWizardComponentInstance;
+                if (!comp) { return { ready: false }; }
+                try {
+                    comp.openNewFolderDialog();
+                    const showNewFolder = comp.showNewFolderInput === true;
+                    comp.cancelNewFolder();
+                    comp.openUploadModal();
+                    const uploadOpen = comp.uploadModalOpen === true;
+                    comp.closeUploadModal();
+                    const hasFields = ['showNewFolderInput','newFolderName','newFolderError','uploadModalOpen','selectedUploadFiles','captionModalOpen','captionStatus','pendingCaptions']
+                        .every(key => Object.prototype.hasOwnProperty.call(comp, key));
+                    return { ready: true, hasFields, showNewFolder, uploadOpen };
+                } catch (err) {
+                    return { ready: false, error: String(err) };
+                }
+                """
+            )
+
+            self.assertTrue(state.get("ready"), state)
+            self.assertTrue(state.get("hasFields"), state)
+            self.assertTrue(state.get("showNewFolder"), state)
+            self.assertTrue(state.get("uploadOpen"), state)
+
+            try:
+                logs = driver.get_log("browser")
+            except Exception:
+                logs = []
+            for entry in logs:
+                message = entry.get("message", "")
+                self.assertNotIn("Alpine Expression Error", message)
+                self.assertNotIn("is not defined", message)
+
+        self.for_each_browser("test_dataset_wizard_initializes_modal_state", scenario)
+
+
 if __name__ == "__main__":
     unittest.main()
