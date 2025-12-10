@@ -54,6 +54,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             tooltip="Pixel: resize shortest edge. Area: total pixel count. Pixel as Area: converts pixel to megapixels.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+            documentation="OPTIONS.md#--resolution_type",
         )
     )
 
@@ -74,6 +75,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ESSENTIAL,
             order=1,
             dynamic_choices=True,
+            documentation="OPTIONS.md#--data_backend_config",
         )
     )
 
@@ -97,6 +99,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             tooltip="Filename: use image name. Textfile: .txt files. Parquet: structured dataset files.",
             importance=ImportanceLevel.IMPORTANT,
             order=2,
+            documentation="OPTIONS.md#--caption_strategy",
         )
     )
 
@@ -132,7 +135,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             section="dataset_config",
             default_value=None,
             placeholder="a photo of sks",
-            help_text="Instance prompt for training",
+            help_text="Default caption for datasets using 'instance_prompt' caption strategy without their own prompt",
             tooltip="Used when caption_strategy is 'instance_prompt'. Defines the concept being trained.",
             importance=ImportanceLevel.ADVANCED,
             order=4,
@@ -211,6 +214,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             tooltip="'recreate': rebuild inconsistent cache entries. 'sync': adjust bucket metadata to match existing latents.",
             importance=ImportanceLevel.ADVANCED,
             order=20,
+            documentation="OPTIONS.md#--vae_cache_scan_behaviour",
         )
     )
 

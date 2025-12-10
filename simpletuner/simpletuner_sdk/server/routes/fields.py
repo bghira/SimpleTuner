@@ -123,6 +123,7 @@ async def get_tab_fields(
             "dependencies": [
                 {"field": d.field, "value": d.value, "values": d.values, "operator": d.operator} for d in field.dependencies
             ],
+            "documentation": field.documentation,
         }
 
         # If this is the resume_from_checkpoint field and we have an output_dir in context, load checkpoints
@@ -211,6 +212,7 @@ async def get_field_metadata(
         "warning": field.warning,
         "group": field.group,
         "order": field.order,
+        "documentation": field.documentation,
     }
 
     # Handle dynamic checkpoint loading for resume_from_checkpoint field

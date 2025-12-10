@@ -50,8 +50,8 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="model_type", value="lora"),
             ],
-            help_text="Scaling factor for LoRA updates",
-            tooltip="Usually set equal to rank. Controls the magnitude of LoRA's effect.",
+            help_text="Scales the LoRA effect (usually equal to rank). Note: Diffusers stores alpha in safetensors metadata rather than as a tensor, which may cause issues in some tools. Use --lora_format=comfyui for scalar alpha tensors if needed.",
+            tooltip="Controls the strength of LoRA's influence. Effective scale = alpha / rank. ComfyUI format stores alpha as a proper tensor for better compatibility.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
         )
@@ -73,8 +73,8 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
                 {"value": "lycoris", "label": "LyCORIS (LoKr/LoHa/etc)"},
             ],
             dependencies=[FieldDependency(field="model_type", value="lora")],
-            help_text="LoRA implementation type",
-            tooltip="Standard LoRA is most common. LyCORIS offers advanced decomposition methods.",
+            help_text="Standard (PEFT) has broad ecosystem compatibility. LyCORIS offers LoKr, LoHa, and other advanced methods that may train more easily but have less tool support.",
+            tooltip="Standard LoRA uses the PEFT library. LyCORIS provides alternative decomposition algorithms with different training characteristics.",
             importance=ImportanceLevel.ADVANCED,
             order=3,
         )
@@ -323,6 +323,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             tooltip="Choose 'comfyui' to read/write diffusion_model.* keys with lora_A/lora_B weights and .alpha tensors.",
             importance=ImportanceLevel.ADVANCED,
             order=8.9,
+            documentation="OPTIONS.md#--lora_format",
         )
     )
 
@@ -453,9 +454,9 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
                 FieldDependency(field="model_type", value="lora"),
                 FieldDependency(field="lora_type", value="standard"),
             ],
-            help_text="Enable DoRA (Weight-Decomposed LoRA)",
-            tooltip="Experimental feature that decomposes weights into magnitude and direction. May improve quality but slower.",
-            warning="Experimental feature - may slow down training",
+            help_text="Weight-Decomposed LoRA separates weight magnitude from direction for potentially better quality. Only works with Standard lora_type; for LyCORIS, enable DoRA in your lycoris_config.json instead.",
+            tooltip="DoRA can improve training results but adds computational overhead. Must use Standard LoRA; LyCORIS users should configure DoRA directly in their config file.",
+            warning="Only compatible with Standard lora_type - not LyCORIS",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=20,
         )

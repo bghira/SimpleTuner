@@ -27,8 +27,8 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
                 {"value": "huber", "label": "Huber"},
                 {"value": "smooth_l1", "label": "Smooth L1"},
             ],
-            help_text="Loss function for training",
-            tooltip="L2 is standard. Huber/Smooth L1 are more robust to outliers but may train differently.",
+            help_text="How the model measures prediction errors. L2 (MSE) squares errors so large mistakes are penalized heavily. Huber/Smooth L1 treat large errors more gently, which can help when your dataset has unusual images.",
+            tooltip="L2 is standard and works well for most cases. Huber/Smooth L1 reduce the influence of outliers (unusual samples) during training.",
             importance=ImportanceLevel.ADVANCED,
             order=1,
         )
@@ -90,6 +90,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="SNR weighting gamma value (0 = disabled). Try 5 when using epsilon/V-prediction models.",
             tooltip="Rebalances loss across timesteps. Recommended value: 5.0 for epsilon and V-Prediction models to curb overemphasis on easy timesteps.",
             importance=ImportanceLevel.ADVANCED,
+            documentation="OPTIONS.md#--snr_gamma",
         )
     )
 
