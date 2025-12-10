@@ -176,16 +176,39 @@ class SanaVideo(VideoModelFoundation):
         # noisy_latents shape: [B, C, F, H, W]
         # encoder_hidden_states: [B, Seq, Dim]
 
-        model_pred = self.model(
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        transformer_kwargs = {
+            "encoder_hidden_states": encoder_hidden_states,
+            "encoder_attention_mask": encoder_attention_mask,
+            "timestep": timesteps,
+            "return_dict": False,
+        }
+        if capture_hidden:
+            transformer_kwargs["output_hidden_states"] = True
+            transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+
+        model_output = self.model(
             noisy_latents,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            timestep=timesteps,
-            return_dict=False,
-        )[0]
+            **transformer_kwargs,
+        )
+        if capture_hidden:
+            if isinstance(model_output, tuple) and len(model_output) >= 2:
+                model_pred, crepa_hidden = model_output[0], model_output[1]
+            else:
+                model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+                crepa_hidden = None
+            if crepa_hidden is None:
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    "but none were returned. Check that crepa_block_index is within the model's block count."
+                )
+        else:
+            model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+            crepa_hidden = None
 
         return {
             "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
         }
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:

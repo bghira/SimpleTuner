@@ -689,6 +689,8 @@ class Kandinsky5Transformer3DModel(
         sparse_params: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
         force_keep_mask: Optional[torch.Tensor] = None,
+        output_hidden_states: bool = False,
+        hidden_state_layer: Optional[int] = None,
     ) -> Union[Transformer2DModelOutput, torch.FloatTensor]:
         """
         Forward pass of the Kandinsky5 3D Transformer.
@@ -713,6 +715,7 @@ class Kandinsky5Transformer3DModel(
         text_embed = encoder_hidden_states
         time = timestep
         pooled_text_embed = pooled_projections
+        batch_size = x.shape[0]
 
         text_embed = self.text_embeddings(text_embed)
         time_embed = self.time_embeddings(time)
@@ -771,6 +774,8 @@ class Kandinsky5Transformer3DModel(
                 )
             force_keep_mask = force_keep_mask.to(device=visual_embed.device, dtype=torch.bool)
 
+        captured_frame_hidden: Optional[torch.Tensor] = None
+
         for layer_idx, visual_transformer_block in enumerate(self.visual_transformer_blocks):
 
             if use_routing and route_ptr < len(routes) and layer_idx == routes[route_ptr]["start_layer_idx"]:
@@ -806,11 +811,30 @@ class Kandinsky5Transformer3DModel(
                 routing_now = False
                 route_ptr += 1
                 current_rope = visual_rope
+            if (
+                output_hidden_states
+                and not routing_now
+                and visual_embed.shape[1] == visual_shape[1] * visual_shape[2] * visual_shape[3]
+                and (hidden_state_layer is None or layer_idx == hidden_state_layer)
+            ):
+                captured_frame_hidden = visual_embed.reshape(
+                    batch_size,
+                    visual_shape[1],
+                    visual_shape[2] * visual_shape[3],
+                    -1,
+                )
+                if hidden_state_layer is not None and layer_idx == hidden_state_layer:
+                    output_hidden_states = False
 
         visual_embed = fractal_unflatten(visual_embed, visual_shape, block_mask=to_fractal)
         x = self.out_layer(visual_embed, text_embed, time_embed)
 
         if not return_dict:
-            return x
+            if captured_frame_hidden is None:
+                return x
+            return x, captured_frame_hidden
 
-        return Transformer2DModelOutput(sample=x)
+        result = Transformer2DModelOutput(sample=x)
+        if captured_frame_hidden is not None:
+            result.crepa_hidden_states = captured_frame_hidden
+        return result

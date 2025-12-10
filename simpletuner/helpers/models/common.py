@@ -33,6 +33,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
+from simpletuner.helpers.training.crepa import CrepaRegularizer
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
@@ -1272,6 +1273,12 @@ class ModelFoundation(ABC):
                 self.vae.enable_slicing()
             else:
                 logger.warning(f"VAE slicing is enabled, but not yet supported by {self.config.model_family}.")
+        if getattr(self.config, "crepa_drop_vae_encoder", False):
+            logger.info("CREPA decode-only mode enabled; dropping VAE encoder/quant_conv to save memory.")
+            if hasattr(self.vae, "encoder"):
+                self.vae.encoder = None
+            if hasattr(self.vae, "quant_conv"):
+                self.vae.quant_conv = None
         if self._ramtorch_vae_requested():
             mid_block = getattr(self.vae, "mid_block", None)
             if mid_block is None:
@@ -3059,6 +3066,7 @@ class VideoModelFoundation(ImageModelFoundation):
         """
         super().__init__(config, accelerator)
         self.config = config
+        self.crepa_regularizer: Optional[CrepaRegularizer] = None
 
     def get_transforms(self, dataset_type: str = "image"):
         return transforms.Compose(
@@ -3085,6 +3093,65 @@ class VideoModelFoundation(ImageModelFoundation):
         You can reshape or permute as needed for the underlying model.
         """
         return tensor
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        self._init_crepa_regularizer()
+
+    def _init_crepa_regularizer(self):
+        if not getattr(self.config, "crepa_enabled", False):
+            self.crepa_regularizer = None
+            return
+
+        hidden_size = self._infer_crepa_hidden_size()
+        if hidden_size is None:
+            raise ValueError("CREPA enabled but unable to infer transformer hidden size.")
+
+        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size)
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("CREPA requires an attached diffusion model to register its projector.")
+        self.crepa_regularizer.attach_to_model(model_component)
+
+    def _infer_crepa_hidden_size(self) -> Optional[int]:
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        unwrapped = self.unwrap_model(model=model)
+        config = getattr(unwrapped, "config", None)
+        if config is None:
+            return None
+        # Primary: num_attention_heads * attention_head_dim (most DiT models)
+        heads = getattr(config, "num_attention_heads", None)
+        head_dim = getattr(config, "attention_head_dim", None)
+        if heads is not None and head_dim is not None:
+            return int(heads * head_dim)
+        # Fallback: model_dim (Kandinsky5)
+        model_dim = getattr(config, "model_dim", None)
+        if model_dim is not None:
+            return int(model_dim)
+        # Fallback: hidden_size (some models expose this directly)
+        hidden_size = getattr(config, "hidden_size", None)
+        if hidden_size is not None:
+            return int(hidden_size)
+        return None
+
+    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+        loss, aux_logs = super().auxiliary_loss(model_output=model_output, prepared_batch=prepared_batch, loss=loss)
+
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled:
+            crepa_loss, crepa_logs = crepa.compute_loss(
+                hidden_states=model_output.get("crepa_hidden_states"),
+                latents=prepared_batch.get("latents"),
+                vae=self.get_vae(),
+            )
+            if crepa_loss is not None:
+                loss = loss + crepa_loss
+            if crepa_logs:
+                aux_logs = (aux_logs or {}) | crepa_logs
+
+        return loss, aux_logs
 
 
 class AudioModelFoundation(ModelFoundation):
