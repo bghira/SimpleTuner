@@ -31,7 +31,7 @@
                 x-model="editingDataset.source_dataset_id"
                 @change="markAsUnsaved()">
             <option value="">Select source dataset...</option>
-            <template x-for="option in sourceDatasetOptions(editingDataset)" :key="option.id">
+            <template x-for="(option, idx) in sourceDatasetOptions(editingDataset)" :key="`src-${idx}-${option.id}`">
                 <option :value="option.id" x-text="option.label"></option>
             </template>
         </select>

@@ -384,8 +384,9 @@ function dataloaderSectionComponent() {
             return;
         }
         if (!dataset._uiKey) {
-            const fallback = dataset.instance_data_dir || dataset.dataset_type || dataset.type || 'dataset';
-            dataset._uiKey = dataset.id || `${fallback}-${Date.now()}-${_datasetKeyCounter++}`;
+            // Always generate a stable unique key independent of dataset.id
+            // This prevents key changes when the user edits the dataset ID field
+            dataset._uiKey = `ds-${Date.now()}-${_datasetKeyCounter++}`;
         }
         if (dataset._connectionStatus === undefined) {
             dataset._connectionStatus = null;
