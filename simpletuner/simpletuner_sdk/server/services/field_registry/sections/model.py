@@ -56,10 +56,11 @@ def register_model_fields(registry: "FieldRegistry") -> None:
                 ValidationRule(ValidationRuleType.REQUIRED, message="Model family is required"),
                 ValidationRule(ValidationRuleType.CHOICES, value=ModelRegistry.model_families().keys()),
             ],
-            help_text="The base model architecture family to train",
+            help_text="The overall architecture to train: SD 1.5, SDXL, Flux, Cosmos, HunyuanVideo, etc. Each family has different capabilities, requirements, and compatible tools.",
             tooltip="Different model families have different capabilities and requirements",
             importance=ImportanceLevel.ESSENTIAL,
             order=2,
+            documentation="OPTIONS.md#--model_family",
         )
     )
 
@@ -116,6 +117,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Provide a custom Hugging Face model ID or local directory. If omitted, the selected model flavour determines the path.",
             importance=ImportanceLevel.IMPORTANT,
             order=4,
+            documentation="OPTIONS.md#--pretrained_model_name_or_path",
         )
     )
 
@@ -171,6 +173,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Training metrics and TensorBoard logs will be saved here",
             importance=ImportanceLevel.IMPORTANT,
             order=7,
+            documentation="OPTIONS.md#--logging_dir",
         )
     )
 
@@ -196,6 +199,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Full training updates all model weights. LoRA only trains small adapter matrices, using less memory and producing smaller files.",
             importance=ImportanceLevel.ESSENTIAL,
             order=1,
+            documentation="OPTIONS.md#--model_type",
         )
     )
 
@@ -250,6 +254,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
                     target_value=1024,
                 ),
             ],
+            documentation="OPTIONS.md#--resolution",
         )
     )
 
@@ -272,6 +277,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=11,
             dynamic_choices=True,  # Mark this field as having dynamic choices
+            documentation="OPTIONS.md#--resume_from_checkpoint",
         )
     )
 
@@ -433,6 +439,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=14,
             dependencies=[FieldDependency(field="model_type", operator="equals", value="lora", action="enable")],
+            documentation="OPTIONS.md#--base_model_precision",
         )
     )
 
@@ -471,6 +478,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Higher values save more memory but increase compute. Clear this field to turn off partial checkpointing (supported for Flux, Sana, SDXL, SD3, and Chroma).",
             importance=ImportanceLevel.ADVANCED,
             order=16,
+            documentation="OPTIONS.md#--gradient_checkpointing_interval",
         )
     )
 
@@ -488,6 +496,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Useful for large models that OOM during startup. May significantly increase startup time.",
             importance=ImportanceLevel.ADVANCED,
             order=17,
+            documentation="OPTIONS.md#--offload_during_startup",
         )
     )
 
@@ -512,6 +521,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="CPU is safer for 24GB cards with large models. GPU is faster but may OOM.",
             importance=ImportanceLevel.ADVANCED,
             order=18,
+            documentation="OPTIONS.md#--quantize_via",
         )
     )
 
@@ -550,6 +560,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             model_specific=["flux"],
             order=19,
             aliases=["--fused_qkv_projections"],
+            documentation="OPTIONS.md#--fuse_qkv_projections",
         )
     )
 
@@ -564,8 +575,8 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=False,
             model_specific=["sd15", "sd20", "sdxl", "deepfloyd"],
-            help_text="Rescale betas for zero terminal SNR.",
-            tooltip="Helps align schedulers for SDXL/Flux-style models with zero terminal SNR assumptions.",
+            help_text="Required for V-prediction models (SD 2.x, NoobAI, Terminus XL, etc.). Modifies the noise schedule so the model can produce true blacks and whites, based on the 2023 ByteDance 'Common Diffusion Noise Schedules are Flawed' paper.",
+            tooltip="Enable for V-prediction DDPM models to fix noise schedule issues that cause washed-out darks and blown-out highlights.",
             importance=ImportanceLevel.IMPORTANT,
             order=21,
         )
@@ -790,6 +801,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="HuggingFace model ID or local path for the T5 text encoder component (used by SD3/FLUX).",
             importance=ImportanceLevel.ADVANCED,
             order=28,
+            documentation="OPTIONS.md#--pretrained_t5_model_name_or_path",
         )
     )
 

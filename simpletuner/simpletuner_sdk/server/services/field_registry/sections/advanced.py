@@ -45,6 +45,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Keeps the underlying UNet the same but exposes flow targets for optional loss computation.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=27,
+            documentation="OPTIONS.md#--diff2flow_enabled",
         )
     )
 
@@ -63,6 +64,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=28,
             dependencies=[FieldDependency(field="diff2flow_enabled", operator="equals", value=True, action="enable")],
+            documentation="OPTIONS.md#--diff2flow_loss",
         )
     )
 
@@ -82,6 +84,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Set >0 to enable scheduled sampling rollout for DDPM-style models. Higher values increase compute.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=29,
+            documentation="OPTIONS.md#--scheduled_sampling_max_step_offset",
         )
     )
 
@@ -107,6 +110,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_strategy",
         )
     )
 
@@ -131,6 +135,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_probability",
         )
     )
 
@@ -155,6 +160,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_prob_start",
         )
     )
 
@@ -179,6 +185,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_prob_end",
         )
     )
 
@@ -200,6 +207,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_ramp_steps",
         )
     )
 
@@ -221,6 +229,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_start_step",
         )
     )
 
@@ -245,6 +254,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_ramp_shape",
         )
     )
 
@@ -271,6 +281,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_sampler",
         )
     )
 
@@ -295,6 +306,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_order",
         )
     )
 
@@ -2427,8 +2439,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
                 {"value": "range", "label": "Bias Range"},
                 {"value": "none", "label": "No Bias"},
             ],
-            help_text="Strategy for biasing timestep sampling",
-            tooltip="'earlier'/'later' emphasise different regions of the schedule, 'range' targets a custom window, 'none' disables the bias.",
+            help_text="Bias which noise levels are sampled during training. 'Earlier' focuses on high-noise (composition), 'later' on low-noise (details), 'range' targets a custom window. Only applies to epsilon/V-prediction models, not flow-matching.",
+            tooltip="'earlier'/'later' emphasise different regions of the schedule, 'range' targets a custom window, 'none' disables the bias. Not applicable to flow-matching models like Flux.",
             importance=ImportanceLevel.ADVANCED,
             order=41,
         )

@@ -1259,6 +1259,7 @@ class FieldService:
             "value": initial_value,
             "description": field.help_text,
             "order": getattr(field, "order", 0),
+            "documentation": getattr(field, "documentation", None),
         }
         # Preserve CLI arg name for downstream consumers that still need it
         field_dict["arg_name"] = getattr(field, "arg_name", field.name)

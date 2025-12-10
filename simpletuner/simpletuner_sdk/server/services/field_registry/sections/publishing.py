@@ -28,6 +28,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             tooltip="Requires a Hugging Face token. The model uploads when training completes (and optionally at checkpoints).",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+            documentation="OPTIONS.md#--push_to_hub",
         )
     )
 
@@ -46,6 +47,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             tooltip="Accepts inline JSON, file paths, or dict-like values from the CLI. Leave blank to disable non-Hugging Face publishing.",
             importance=ImportanceLevel.ADVANCED,
             order=4,
+            documentation="OPTIONS.md#--publishing_config",
         )
     )
 
@@ -63,6 +65,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             tooltip="Supports the same placeholders as validation hooks, such as {local_checkpoint_path}, {global_step}, {tracker_run_name}, {tracker_project_name}, {model_family}, {huggingface_path}. Runs asynchronously on the main process.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
+            documentation="OPTIONS.md#--post_checkpoint_script",
         )
     )
 
@@ -80,6 +83,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             tooltip="Supports placeholders like {remote_checkpoint_path}, {local_checkpoint_path}, {global_step}, {tracker_run_name}, {tracker_project_name}, {model_family}, {huggingface_path}. Runs asynchronously.",
             importance=ImportanceLevel.ADVANCED,
             order=6,
+            documentation="OPTIONS.md#--post_upload_script",
         )
     )
 
@@ -114,6 +118,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             tooltip="When enabled, checkpoint and final uploads run in a separate thread while training continues.",
             importance=ImportanceLevel.ADVANCED,
             order=3,
+            documentation="OPTIONS.md#--push_to_hub_background",
         )
     )
 
@@ -127,10 +132,11 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             section="repository",
             default_value=None,
             placeholder="username/model-name",
-            help_text=None,
+            help_text="The name your model will have on Hugging Face Hub (e.g., 'username/my-lora'). Can be set later when uploading.",
             tooltip="If left blank, SimpleTuner derives a name from the project settings when pushing to Hub.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+            documentation="OPTIONS.md#--hub_model_id",
         )
     )
 
