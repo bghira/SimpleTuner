@@ -5,9 +5,11 @@ import importlib.util as _importlib_util
 import json
 import shutil
 import sys
+import tempfile
 import time
 import types
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -1619,6 +1621,51 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(group["running_d_numerator"].device, group["params"][0].device)
             self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
             self.assertFalse(group["use_focus"])
+
+    def test_epoch_checkpoint_persists_next_epoch_without_state_mutation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir) / "checkpoint-10"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            training_state_path = checkpoint_dir / "training_state.json"
+            training_state_path.write_text(json.dumps({"epoch": 2, "global_step": 10}), encoding="utf-8")
+
+            trainer = object.__new__(Trainer)
+            trainer.job_id = None
+            trainer.hub_manager = None
+            trainer.webhook_handler = None
+            trainer.model_hooks = SimpleNamespace(training_state_path="training_state.json")
+            trainer._send_webhook_msg = Mock()
+            trainer._prepare_training_progress_payload = Mock(return_value=({}, {}))
+            trainer._emit_event = Mock()
+            trainer._run_post_upload_script = Mock()
+            trainer.checkpoint_state_cleanup = Mock()
+            trainer.state = {"global_step": 10, "global_resume_step": 0, "current_epoch": 2}
+            trainer.config = SimpleNamespace(
+                output_dir=str(tmpdir),
+                use_deepspeed_optimizer=False,
+                fsdp_enable=False,
+                checkpoints_total_limit=None,
+                num_train_epochs=5,
+            )
+            trainer.accelerator = SimpleNamespace(is_main_process=True)
+            trainer.checkpoint_state_save = Mock(return_value=str(checkpoint_dir))
+
+            checkpoint_path = trainer._run_standard_checkpoint(
+                webhook_message="Epoch checkpoint",
+                parent_loss=None,
+                epoch=2,
+                upload_to_hub=False,
+            )
+
+            self.assertEqual(str(checkpoint_dir), checkpoint_path)
+            trainer._write_checkpoint_epoch(checkpoint_path, 3)
+
+            persisted_state = json.loads(training_state_path.read_text())
+            self.assertEqual(3, persisted_state["epoch"])
+            self.assertEqual(10, persisted_state["global_step"])
+            self.assertEqual(2, trainer.state["current_epoch"])
+            trainer._run_post_upload_script.assert_called_once_with(local_path=str(checkpoint_dir), remote_path=None)
+            trainer.checkpoint_state_save.assert_called_once_with(str(tmpdir))
 
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     @patch("simpletuner.helpers.training.trainer.tqdm")
