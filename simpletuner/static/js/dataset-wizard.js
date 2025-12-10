@@ -257,7 +257,15 @@
 
             async init() {
                 console.log('[WIZARD] Component initializing...');
-                window.datasetWizardComponentInstance = this;
+                const exposeInstance = () => {
+                    // Expose a raw object so tests can inspect fields without Alpine proxies interfering
+                    const raw = (window.Alpine && typeof window.Alpine.raw === 'function') ? window.Alpine.raw(this) : this;
+                    window.datasetWizardComponentInstance = raw;
+                };
+                exposeInstance();
+                if (this.$nextTick) {
+                    this.$nextTick(() => exposeInstance());
+                }
                 this.currentDataset = this.getDefaultDataset();
                 await this.loadBlueprints();
             },
