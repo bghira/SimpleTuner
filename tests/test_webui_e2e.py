@@ -960,7 +960,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                     const uploadOpen = comp.uploadModalOpen === true;
                     comp.closeUploadModal();
                     const hasFields = ['showNewFolderInput','newFolderName','newFolderError','uploadModalOpen','selectedUploadFiles','captionModalOpen','captionStatus','pendingCaptions']
-                        .every(key => Object.prototype.hasOwnProperty.call(comp, key));
+                        .every(key => key in comp && typeof comp[key] !== 'undefined');
                     return { ready: true, hasFields, showNewFolder, uploadOpen };
                 } catch (err) {
                     return { ready: false, error: String(err) };

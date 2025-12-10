@@ -267,6 +267,25 @@
                 <button type="button" class="btn btn-link btn-sm p-0 ms-2" @click="clearParameterFilter()">Show all</button>
             </div>
 
+            <!-- Validation Error Banner -->
+            <div x-show="loadValidationErrors && loadValidationErrors.length > 0" class="alert alert-danger mb-3" x-cloak>
+                <div class="d-flex align-items-start">
+                    <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
+                    <div class="flex-grow-1">
+                        <strong>Configuration Issues Detected</strong>
+                        <p class="mb-2 small">The dataset configuration has validation errors that should be fixed:</p>
+                        <ul class="mb-0 small">
+                            <template x-for="(error, idx) in loadValidationErrors" :key="idx">
+                                <li>
+                                    <span class="badge" :class="error.level === 'error' ? 'bg-danger' : (error.level === 'warning' ? 'bg-warning text-dark' : 'bg-info')" x-text="error.level"></span>
+                                    <strong x-text="error.field"></strong>: <span x-text="error.message"></span>
+                                </li>
+                            </template>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <!-- List View -->
             <div class="dataset-list-view" x-show="viewMode === 'list'">
                 <template x-for="(dataset, index) in filteredDatasets" :key="dataset._uiKey || dataset.id || index">
