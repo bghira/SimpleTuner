@@ -3903,6 +3903,25 @@ class Trainer:
             return False
         return epoch > 0 and epoch % interval == 0
 
+    def _write_checkpoint_epoch(self, checkpoint_dir: str, epoch_value: int) -> None:
+        """
+        Update the persisted training_state.json inside the checkpoint with the provided epoch.
+        """
+        training_state_filename = getattr(self.model_hooks, "training_state_path", "training_state.json")
+        training_state_path = os.path.join(checkpoint_dir, training_state_filename)
+        try:
+            training_state = {}
+            if os.path.exists(training_state_path):
+                with open(training_state_path, "r") as f:
+                    training_state = json.load(f) or {}
+            else:
+                training_state = StateTracker.get_training_state()
+            training_state["epoch"] = epoch_value
+            with open(training_state_path, "w") as f:
+                json.dump(training_state, f)
+        except Exception as err:  # pragma: no cover - best-effort persistence
+            logger.warning(f"Failed to write epoch {epoch_value} to {training_state_path}: {err}")
+
     def _run_standard_checkpoint(self, webhook_message: str | None, parent_loss, epoch: int, *, upload_to_hub: bool = False):
         if webhook_message:
             self._send_webhook_msg(
@@ -3954,6 +3973,7 @@ class Trainer:
         else:
             if save_path:
                 self._run_post_upload_script(local_path=save_path, remote_path=None)
+        return save_path
 
     def _send_webhook_msg(
         self, message: str, message_level: str = "info", store_response: bool = False, emit_event: bool = True
@@ -5126,12 +5146,14 @@ class Trainer:
                 epoch_upload_to_hub = self.hub_manager is not None and (
                     self.state["global_step"] > self.state["global_resume_step"]
                 )
-                self._run_standard_checkpoint(
+                checkpoint_dir = self._run_standard_checkpoint(
                     webhook_message=epoch_message,
                     parent_loss=parent_loss,
                     epoch=epoch,
                     upload_to_hub=epoch_upload_to_hub,
                 )
+                if checkpoint_dir:
+                    self._write_checkpoint_epoch(checkpoint_dir, epoch + 1)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
