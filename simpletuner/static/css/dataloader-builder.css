@@ -1081,10 +1081,13 @@
     width: 100%;
 }
 
-.input-group-sm > .form-control,
-.input-group-sm > .btn {
-    padding: var(--spacing-xs-sm) var(--spacing-sm-md);
+/* Input groups - ensure buttons match small input height */
+#dataloaderSection .input-group-sm > .form-control,
+#dataloaderSection .input-group-sm > .btn {
+    padding: 0.25rem 0.5rem !important;
     font-size: 0.875rem;
+    line-height: 1.5;
+    min-height: 0;
 }
 
 /* Text formatting */
@@ -1799,18 +1802,6 @@
     font-size: 0.6875rem;
     margin-top: 0.125rem;
 }
-
-/* Input groups - fix button alignment */
-#dataloaderSection .dataset-list-item-expanded .input-group-sm > .btn,
-#dataloaderSection .modal-section-body .input-group-sm > .btn,
-#dataloaderSection .dataset-modal .input-group-sm > .btn {
-    padding: 0.25rem 0.5rem;
-    line-height: 1.5;
-    height: auto;
-    align-self: stretch;
-}
-
-/* Input groups inherit width from column */
 
 /* Note: Section spacing now handled by flex gap on .modal-section-body */
 /* Row spacing within sections handled by rule at line ~1591 */
