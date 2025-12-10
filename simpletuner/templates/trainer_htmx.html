@@ -1201,6 +1201,123 @@ function trainerComponent() {
             }
             return datasets.map((dataset, index) => this.normalizeDataset(dataset, index));
         },
+        detectDuplicateIds(datasets) {
+            // Comprehensive client-side validation for immediate feedback
+            const validations = [];
+            if (!Array.isArray(datasets)) {
+                return validations;
+            }
+
+            // Check for duplicate IDs
+            const idCounts = {};
+            datasets.forEach(dataset => {
+                const id = (dataset.id || '').trim();
+                if (id) {
+                    idCounts[id] = (idCounts[id] || 0) + 1;
+                }
+            });
+
+            for (const [id, count] of Object.entries(idCounts)) {
+                if (count > 1) {
+                    validations.push({
+                        field: id,
+                        message: `dataset id "${id}" appears ${count} times - IDs must be unique`,
+                        level: 'error'
+                    });
+                }
+            }
+
+            // Check required paths for each dataset
+            datasets.forEach(dataset => {
+                const id = dataset.id || 'unknown';
+                const type = (dataset.type || '').toLowerCase();
+                const datasetType = (dataset.dataset_type || '').toLowerCase();
+
+                // Skip disabled datasets
+                if (dataset.disabled) {
+                    return;
+                }
+
+                // Check instance_data_dir for local image/video/audio/conditioning datasets
+                if (type === 'local' && ['image', 'video', 'audio', 'conditioning'].includes(datasetType)) {
+                    if (!dataset.instance_data_dir || !dataset.instance_data_dir.trim()) {
+                        validations.push({
+                            field: `${id}.instance_data_dir`,
+                            message: 'instance data directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check cache_dir_vae for local datasets (except text_embeds/image_embeds)
+                if (type === 'local' && !['text_embeds', 'image_embeds'].includes(datasetType)) {
+                    if (!dataset.cache_dir_vae || !dataset.cache_dir_vae.trim()) {
+                        validations.push({
+                            field: `${id}.cache_dir_vae`,
+                            message: 'VAE cache directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check cache_dir for text_embeds datasets
+                if (datasetType === 'text_embeds') {
+                    if (!dataset.cache_dir || !dataset.cache_dir.trim()) {
+                        validations.push({
+                            field: `${id}.cache_dir`,
+                            message: 'text embed cache directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check cache_dir for image_embeds datasets
+                if (datasetType === 'image_embeds') {
+                    if (!dataset.cache_dir || !dataset.cache_dir.trim()) {
+                        validations.push({
+                            field: `${id}.cache_dir`,
+                            message: 'image embed cache directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check HuggingFace dataset path
+                if (type === 'huggingface') {
+                    if (!dataset.dataset_name || !dataset.dataset_name.trim()) {
+                        validations.push({
+                            field: `${id}.dataset_name`,
+                            message: 'HuggingFace dataset name is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check AWS bucket for aws type
+                if (type === 'aws') {
+                    if (!dataset.aws_bucket_name || !dataset.aws_bucket_name.trim()) {
+                        validations.push({
+                            field: `${id}.aws_bucket_name`,
+                            message: 'AWS bucket name is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check parquet/csv file path
+                if (type === 'parquet' || type === 'csv') {
+                    if (!dataset.parquet_path || !dataset.parquet_path.trim()) {
+                        validations.push({
+                            field: `${id}.parquet_path`,
+                            message: `${type.toUpperCase()} file path is required`,
+                            level: 'error'
+                        });
+                    }
+                }
+            });
+
+            return validations;
+        },
         normalizeDataset(dataset, index = 0) {
             if (!dataset || typeof dataset !== 'object') {
                 return dataset;
@@ -2412,6 +2529,7 @@ function trainerComponent() {
          dataLoaderMode: 'builder', // 'builder' or 'json'
          dataLoaderJson: '',
          hasUnsavedChanges: false,
+         loadValidationErrors: [], // Validation errors returned when loading config
          // Save dialog state
          showSaveDialog: false,
          createBackupOption: false,
@@ -2694,9 +2812,33 @@ function trainerComponent() {
                     this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
                     this.hasUnsavedChanges = false;
                     this.datasetValidationErrors = {};
+
+                    // Store validation errors from the load response + client-side checks
+                    const serverValidations = Array.isArray(planData.validations) ? planData.validations : [];
+                    const clientValidations = this.detectDuplicateIds(this.datasets);
+
+                    // Merge validations, avoiding duplicates
+                    const allValidations = [...serverValidations];
+                    clientValidations.forEach(cv => {
+                        if (!allValidations.some(sv => sv.field === cv.field && sv.message === cv.message)) {
+                            allValidations.push(cv);
+                        }
+                    });
+
+                    this.loadValidationErrors = allValidations.filter(v => v.level === 'error' || v.level === 'warning');
+
+                    // Show toast for critical errors (like duplicate IDs, missing paths)
+                    const criticalErrors = this.loadValidationErrors.filter(v => v.level === 'error');
+                    if (criticalErrors.length > 0) {
+                        const errorMessages = criticalErrors.slice(0, 3).map(e => `• ${e.field}: ${e.message}`).join('<br>');
+                        const moreCount = criticalErrors.length > 3 ? `<br>...and ${criticalErrors.length - 3} more` : '';
+                        window.showToast(`<strong>Dataset configuration has errors:</strong><br>${errorMessages}${moreCount}`, 'error', 8000);
+                    }
+
                     if (Alpine.store('trainer')) {
                         Alpine.store('trainer').datasets = this.datasets;
                         Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
+                        Alpine.store('trainer').loadValidationErrors = this.loadValidationErrors;
                     }
                     if (window.dataloaderSectionComponentInstance &&
                         typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
@@ -2718,6 +2860,10 @@ function trainerComponent() {
                 this.datasets = [];
                 this.dataLoaderJson = JSON.stringify([], null, 2);
                 this.hasUnsavedChanges = false;
+                this.loadValidationErrors = [];
+                if (Alpine.store('trainer')) {
+                    Alpine.store('trainer').loadValidationErrors = [];
+                }
             } finally {
                 this.datasetsLoading = false;
             }
@@ -2746,14 +2892,26 @@ function trainerComponent() {
                         const sanitized = this.prepareDatasetsForSave(this.datasets);
                         this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
 
+                        // Client-side duplicate ID detection
+                        const clientValidations = this.detectDuplicateIds(this.datasets);
+                        this.loadValidationErrors = clientValidations;
+
                         // Update the trainer store reference
                         if (Alpine.store('trainer')) {
                             Alpine.store('trainer').datasets = this.datasets;
                             Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
+                            Alpine.store('trainer').loadValidationErrors = this.loadValidationErrors;
                         }
 
                         this.hasUnsavedChanges = false;
                         this.datasetValidationErrors = {};
+
+                        // Show toast for client-side detected errors
+                        if (clientValidations.length > 0) {
+                            const errorMessages = clientValidations.slice(0, 3).map(e => `• ${e.field}: ${e.message}`).join('<br>');
+                            window.showToast(`<strong>Dataset configuration has errors:</strong><br>${errorMessages}`, 'error', 8000);
+                        }
+
                         if (window.dataloaderSectionComponentInstance &&
                             typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
                             window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll();
@@ -2774,6 +2932,10 @@ function trainerComponent() {
                this.datasets = [];
                this.dataLoaderJson = JSON.stringify([], null, 2);
                 this.hasUnsavedChanges = false;
+                this.loadValidationErrors = [];
+                if (Alpine.store('trainer')) {
+                    Alpine.store('trainer').loadValidationErrors = [];
+                }
             } finally {
                this.datasetsLoading = false;
             }

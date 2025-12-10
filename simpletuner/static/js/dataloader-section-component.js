@@ -172,6 +172,10 @@ function dataloaderSectionComponent() {
     get hasUnsavedChanges() {
         return this.trainer.hasUnsavedChanges || false;
     },
+    get loadValidationErrors() {
+        // Get validation errors that were returned when loading the dataset config
+        return this.trainer.loadValidationErrors || [];
+    },
     get modelContext() {
         const trainer = Alpine.store('trainer');
         if (!trainer) {
@@ -835,6 +839,12 @@ function dataloaderSectionComponent() {
     toggleSectionCollapsed(dataset, section) {
         const collapsed = this.sectionIsCollapsed(dataset, section);
         this.setSectionCollapsed(dataset, section, !collapsed);
+    },
+    expandSectionIfCollapsed(dataset, section) {
+        // Expand a section if it's currently collapsed (useful for clickable error links)
+        if (this.sectionIsCollapsed(dataset, section)) {
+            this.setSectionCollapsed(dataset, section, false);
+        }
     },
     collectCollapsedState() {
         const state = {};
