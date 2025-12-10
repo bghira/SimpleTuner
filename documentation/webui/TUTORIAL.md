@@ -246,6 +246,14 @@ If you're just wanting to use a single trigger word, that'd be the **Instance Pr
 
 <img width="1146" height="896" alt="image" src="https://github.com/user-attachments/assets/6252bf9a-5e68-41c6-8a95-906993f2f546" />
 
+##### Optional: Upload a dataset from your browser
+
+If your images and captions aren't on the box yet, the dataset wizard now includes an **Upload** button next to **Browse directories**. You can:
+
+- Create a new subfolder under your configured datasets directory, then upload individual files or a ZIP (images plus .txt/.jsonl/.csv metadata are accepted).
+- Let SimpleTuner extract the ZIP into that folder (sized for local backends; very large archives are rejected).
+- Immediately pick the freshly uploaded folder in the browser and continue the wizard without leaving the UI.
+
 #### Learning rate, batch size & optimiser
 
 Once you complete the dataset wizard (or if you elected to keep your existing datasets), you'll be offered presets for optimiser/learning rate and batch size.
