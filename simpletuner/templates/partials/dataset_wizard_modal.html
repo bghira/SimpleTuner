@@ -1198,6 +1198,35 @@
                 </div>
             </div>
 
+            <!-- New Folder Input -->
+            <div x-show="showNewFolderInput" class="mb-3" x-cloak>
+                <label class="form-label">Create New Folder:</label>
+                <div class="input-group">
+                    <input type="text"
+                           class="form-control"
+                           x-model="newFolderName"
+                           placeholder="Enter folder name"
+                           @keyup.enter="createNewFolder()"
+                           @keyup.escape="cancelNewFolder()"
+                           x-ref="newFolderInput">
+                    <button type="button"
+                            class="btn btn-success"
+                            @click="createNewFolder()"
+                            :disabled="!newFolderName || creatingFolder"
+                            title="Create folder">
+                        <i class="fas" :class="creatingFolder ? 'fa-spinner fa-spin' : 'fa-check'"></i>
+                    </button>
+                    <button type="button"
+                            class="btn btn-outline-secondary"
+                            @click="cancelNewFolder()"
+                            :disabled="creatingFolder"
+                            title="Cancel">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div x-show="newFolderError" class="text-danger small mt-1" x-text="newFolderError"></div>
+            </div>
+
             <!-- Directory listing -->
             <div class="directory-list-container">
                 <!-- Loading State -->
@@ -1303,16 +1332,295 @@
                 </template>
             </div>
         </div>
+        <div class="modal-footer d-flex justify-content-between">
+            <div>
+                <button type="button"
+                        class="btn btn-outline-secondary me-2"
+                        @click="openNewFolderDialog()"
+                        :disabled="showNewFolderInput || loadingDirectories || fileBrowserError">
+                    <i class="fas fa-folder-plus me-1"></i>
+                    New Folder
+                </button>
+                <button type="button"
+                        class="btn btn-outline-primary"
+                        @click="openUploadModal()"
+                        :disabled="loadingDirectories || fileBrowserError">
+                    <i class="fas fa-upload me-1"></i>
+                    Upload
+                </button>
+            </div>
+            <div>
+                <button type="button" class="btn btn-outline-secondary me-2" @click="closeFileBrowser()">
+                    Cancel
+                </button>
+                <button type="button"
+                        class="btn btn-primary"
+                        @click="confirmDirectory()"
+                        :disabled="!selectedPath">
+                    <i class="fas fa-check me-1"></i>
+                    Select Directory
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Upload Modal (higher z-index, stacks over file browser) -->
+<div class="dataset-wizard-backdrop upload-modal-backdrop"
+     x-show="uploadModalOpen"
+     x-transition.opacity
+     x-cloak
+     @click.self="!uploading && closeUploadModal()">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-header">
+            <h5 class="modal-title">
+                <i class="fas fa-upload me-2"></i>
+                Upload Files
+            </h5>
+            <button type="button" class="btn-close" @click="closeUploadModal()"></button>
+        </div>
+        <div class="modal-body p-4">
+            <!-- Upload destination -->
+            <div class="mb-3">
+                <small class="text-muted d-block mb-1">
+                    <i class="fas fa-folder-open me-1"></i>Upload to:
+                </small>
+                <code class="d-block text-break" style="word-wrap: break-word; white-space: pre-wrap;" x-text="currentPath"></code>
+            </div>
+
+            <!-- Upload type tabs -->
+            <ul class="nav nav-tabs mb-3">
+                <li class="nav-item">
+                    <a class="nav-link"
+                       :class="{'active': uploadTab === 'files'}"
+                       href="#"
+                       @click.prevent="uploadTab = 'files'">
+                        <i class="fas fa-images me-1"></i>
+                        Upload Files
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link"
+                       :class="{'active': uploadTab === 'zip'}"
+                       href="#"
+                       @click.prevent="uploadTab = 'zip'">
+                        <i class="fas fa-file-archive me-1"></i>
+                        Upload ZIP
+                    </a>
+                </li>
+            </ul>
+
+            <!-- Files upload tab -->
+            <div x-show="uploadTab === 'files'">
+                <div class="mb-3">
+                    <label class="form-label">Select files to upload:</label>
+                    <input type="file"
+                           class="form-control"
+                           multiple
+                           accept=".png,.jpg,.jpeg,.webp,.jxl,.gif,.bmp,.tiff,.tif,.txt,.parquet,.jsonl,.csv,.json"
+                           @change="handleFileSelect($event)"
+                           x-ref="fileInput">
+                </div>
+                <p class="text-muted small mb-0">
+                    <strong>Supported formats:</strong>
+                </p>
+                <ul class="text-muted small mb-0">
+                    <li>Images: PNG, JPG, JPEG, WebP, JXL, GIF, BMP, TIFF</li>
+                    <li>Captions: TXT</li>
+                    <li>Metadata: Parquet, JSONL, CSV, JSON</li>
+                </ul>
+            </div>
+
+            <!-- ZIP upload tab -->
+            <div x-show="uploadTab === 'zip'">
+                <div class="mb-3">
+                    <label class="form-label">Select ZIP archive:</label>
+                    <input type="file"
+                           class="form-control"
+                           accept=".zip"
+                           @change="handleZipSelect($event)"
+                           x-ref="zipInput">
+                </div>
+                <p class="text-muted small">
+                    The ZIP file will be extracted directly into the current directory.
+                    Only supported file types will be extracted.
+                </p>
+            </div>
+
+            <!-- Selected files list -->
+            <div x-show="selectedUploadFiles.length > 0" class="mt-3">
+                <h6>Selected Files (<span x-text="selectedUploadFiles.length"></span>):</h6>
+                <div class="list-group" style="max-height: 200px; overflow-y: auto;">
+                    <template x-for="(file, index) in selectedUploadFiles" :key="index">
+                        <div class="list-group-item d-flex justify-content-between align-items-center py-2">
+                            <span class="text-truncate me-2" x-text="file.name"></span>
+                            <div class="d-flex align-items-center">
+                                <span class="badge bg-secondary me-2" x-text="formatFileSize(file.size)"></span>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-danger"
+                                        @click="removeSelectedFile(index)"
+                                        :disabled="uploading">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Upload progress -->
+            <div x-show="uploading" class="mt-3">
+                <label class="form-label">Uploading...</label>
+                <div class="progress">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                         role="progressbar"
+                         :style="`width: ${uploadProgress}%`"
+                         :aria-valuenow="uploadProgress"
+                         aria-valuemin="0"
+                         aria-valuemax="100">
+                        <span x-text="`${uploadProgress}%`"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload result -->
+            <div x-show="uploadResult" class="mt-3">
+                <template x-if="uploadResult && uploadResult.success">
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle me-2"></i>
+                        <strong x-text="`${uploadResult.files_uploaded} file(s) uploaded successfully.`"></strong>
+                        <span x-show="uploadResult.files_skipped > 0"
+                              x-text="`${uploadResult.files_skipped} file(s) skipped.`"></span>
+                    </div>
+                </template>
+                <template x-if="uploadResult && !uploadResult.success">
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        <strong>Upload failed.</strong>
+                        <ul class="mb-0 mt-2" x-show="uploadResult.errors && uploadResult.errors.length > 0">
+                            <template x-for="error in uploadResult.errors" :key="error">
+                                <li x-text="error"></li>
+                            </template>
+                        </ul>
+                    </div>
+                </template>
+            </div>
+        </div>
         <div class="modal-footer">
-            <button type="button" class="btn btn-outline-secondary" @click="closeFileBrowser()">
-                Cancel
+            <button type="button"
+                    class="btn btn-outline-secondary"
+                    @click="closeUploadModal()"
+                    :disabled="uploading">
+                <span x-text="uploadResult ? 'Close' : 'Cancel'"></span>
             </button>
             <button type="button"
                     class="btn btn-primary"
-                    @click="confirmDirectory()"
-                    :disabled="!selectedPath">
-                <i class="fas fa-check me-1"></i>
-                Select Directory
+                    @click="startUpload()"
+                    :disabled="selectedUploadFiles.length === 0 || uploading"
+                    x-show="!uploadResult">
+                <i class="fas" :class="uploading ? 'fa-spinner fa-spin' : 'fa-upload'" class="me-1"></i>
+                Upload
+            </button>
+            <button type="button"
+                    class="btn btn-success"
+                    @click="proceedAfterUpload()"
+                    x-show="uploadResult && uploadResult.success && uploadResult.files_uploaded > 0">
+                <i class="fas fa-arrow-right me-1"></i>
+                Continue
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Caption Editor Modal (highest z-index) -->
+<div class="dataset-wizard-backdrop caption-modal-backdrop"
+     x-show="captionModalOpen"
+     x-transition.opacity
+     x-cloak
+     @click.self="!savingCaptions && closeCaptionModal()">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-header">
+            <h5 class="modal-title">
+                <i class="fas fa-edit me-2"></i>
+                Caption Images
+            </h5>
+            <button type="button" class="btn-close" @click="closeCaptionModal()"></button>
+        </div>
+        <div class="modal-body">
+            <!-- Caption status info -->
+            <div class="alert" :class="captionStatus.coverage_ratio === 0 ? 'alert-warning' : 'alert-info'">
+                <i class="fas me-2" :class="captionStatus.coverage_ratio === 0 ? 'fa-exclamation-triangle' : 'fa-info-circle'"></i>
+                <span x-text="`${captionStatus.without_caption} of ${captionStatus.total_images} images need captions`"></span>
+                <template x-if="captionStatus.coverage_ratio > 0 && captionStatus.coverage_ratio < 1">
+                    <span x-text="` (${Math.round(captionStatus.coverage_ratio * 100)}% have captions)`"></span>
+                </template>
+            </div>
+
+            <!-- Loading thumbnails -->
+            <div x-show="loadingThumbnails" class="text-center py-4">
+                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                <p class="mt-2">Loading images...</p>
+            </div>
+
+            <!-- Thumbnail grid -->
+            <div x-show="!loadingThumbnails && uncaptionedThumbnails.length > 0" class="row g-3">
+                <template x-for="img in uncaptionedThumbnails" :key="img.path">
+                    <div class="col-md-4 col-lg-3">
+                        <div class="card h-100">
+                            <img :src="img.thumbnail"
+                                 class="card-img-top"
+                                 style="height: 150px; object-fit: cover;"
+                                 :alt="img.filename">
+                            <div class="card-body p-2">
+                                <p class="card-text small text-truncate mb-1" x-text="img.filename" :title="img.filename"></p>
+                                <textarea class="form-control form-control-sm"
+                                          x-model="pendingCaptions[img.path]"
+                                          rows="2"
+                                          placeholder="Enter caption..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Pagination -->
+            <div x-show="!loadingThumbnails && captionStatus.without_caption > captionThumbnailLimit" class="mt-3 text-center">
+                <p class="text-muted small">
+                    Showing <span x-text="Math.min(captionThumbnailLimit, uncaptionedThumbnails.length)"></span>
+                    of <span x-text="captionStatus.without_caption"></span> images.
+                </p>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="loadMoreThumbnails()"
+                        :disabled="loadingThumbnails">
+                    Load More
+                </button>
+            </div>
+
+            <!-- Saving indicator -->
+            <div x-show="savingCaptions" class="mt-3">
+                <div class="progress">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                         style="width: 100%">
+                        Saving captions...
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button"
+                    class="btn btn-outline-secondary"
+                    @click="skipCaptioning()"
+                    :disabled="savingCaptions">
+                <i class="fas fa-forward me-1"></i>
+                Skip (use trigger words later)
+            </button>
+            <button type="button"
+                    class="btn btn-primary"
+                    @click="saveCaptions()"
+                    :disabled="Object.keys(pendingCaptions).length === 0 || savingCaptions">
+                <i class="fas" :class="savingCaptions ? 'fa-spinner fa-spin' : 'fa-save'" class="me-1"></i>
+                Save Captions (<span x-text="Object.keys(pendingCaptions).filter(k => pendingCaptions[k]).length"></span>)
             </button>
         </div>
     </div>

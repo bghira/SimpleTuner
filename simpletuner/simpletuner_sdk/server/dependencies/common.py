@@ -20,6 +20,7 @@ from ..services.config_store import ConfigStore
 from ..services.field_registry_wrapper import lazy_field_registry
 from ..services.field_service import FieldFormat, FieldService
 from ..services.webui_state import WebUIStateStore
+from ..utils.assets import get_asset_version
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,7 @@ async def get_webui_defaults() -> Dict[str, Any]:
         state_store = WebUIStateStore()
         bundle = state_store.get_defaults_bundle()
         resolved = bundle["resolved"]
+        asset_version = resolved.get("asset_version") or get_asset_version()
 
         webui_defaults = {
             "configs_dir": resolved.get("configs_dir", "Not configured"),
@@ -106,6 +108,7 @@ async def get_webui_defaults() -> Dict[str, Any]:
             "theme": resolved.get("theme", "dark"),
             "event_polling_interval": resolved.get("event_polling_interval", 5),
             "event_stream_enabled": resolved.get("event_stream_enabled", True),
+            "asset_version": asset_version,
         }
     except Exception as e:
         logger.error(f"Error loading WebUI defaults: {e}")
@@ -115,6 +118,7 @@ async def get_webui_defaults() -> Dict[str, Any]:
             "theme": "dark",
             "event_polling_interval": 5,
             "event_stream_enabled": True,
+            "asset_version": get_asset_version(),
         }
 
     return webui_defaults

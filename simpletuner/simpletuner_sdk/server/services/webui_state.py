@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from simpletuner.simpletuner_sdk.server.utils.assets import get_asset_version
+
 _WEBUI_CONFIG_ENV = "SIMPLETUNER_WEB_UI_CONFIG"
 _XDG_HOME_ENV = "XDG_HOME"
 _XDG_CONFIG_HOME_ENV = "XDG_CONFIG_HOME"
@@ -394,6 +396,9 @@ class WebUIStateStore:
         else:
             resolved["datasets_dir"] = fallbacks["datasets_dir"]
             resolved["datasets_dir__source"] = "fallback"
+
+        # Provide a cache-busting token for static assets
+        resolved["asset_version"] = get_asset_version()
 
         return {
             "raw": raw,

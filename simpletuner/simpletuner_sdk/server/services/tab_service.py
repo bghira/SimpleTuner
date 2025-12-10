@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from ..services.webui_state import WebUIStateStore
+from ..utils.assets import get_asset_version
 from .custom_section_service import CUSTOM_SECTION_SERVICE
 from .dataset_service import build_data_backend_choices
 from .hardware_service import detect_gpu_inventory
@@ -199,6 +200,10 @@ class TabService:
             or _coerce_bool(raw_config.get("--i_know_what_i_am_doing"))
         )
 
+        asset_version = (
+            webui_defaults.get("asset_version") if isinstance(webui_defaults, dict) else None
+        ) or get_asset_version()
+
         context = {
             "request": request,
             "tab_name": tab_name,
@@ -219,6 +224,7 @@ class TabService:
             "raw_config": raw_config,
             "webui_defaults": webui_defaults or {},
             "danger_mode_enabled": danger_mode_enabled,
+            "asset_version": asset_version,
         }
 
         # Add sections if provided
