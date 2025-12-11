@@ -61,6 +61,17 @@ The solver used for the rollout generation steps.
 *   **Choices:** `unipc` (recommended, fast & accurate), `euler`, `dpm`, `rk4`.
 *   `unipc` is generally the best trade-off between speed and accuracy for these short sampling bursts.
 
+### Flow Matching + ReflexFlow
+
+For flow-matching models (`--prediction_type flow_matching`), scheduled sampling now supports ReflexFlow-style exposure bias mitigation:
+
+*   `scheduled_sampling_reflexflow`: Enable ReflexFlow enhancements during rollout.
+*   `scheduled_sampling_reflexflow_alpha`: Scale the exposure-bias-based loss weight (frequency compensation).
+*   `scheduled_sampling_reflexflow_beta1`: Scale the directional anti-drift regularizer (default 10.0 to mirror the paper).
+*   `scheduled_sampling_reflexflow_beta2`: Scale the frequency-compensated loss (default 1.0).
+
+These reuse the rollout predictions/latents you already compute, avoiding an extra gradient pass, and help keep biased rollouts aligned with the clean trajectory while emphasizing missing low-frequency components early in denoising.
+
 ### Performance Impact
 
 > ⚠️ **Warning:** Enabling rollout requires running the model in inference mode *inside* the training loop.

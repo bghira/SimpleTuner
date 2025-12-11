@@ -2739,6 +2739,7 @@ class ModelFoundation(ABC):
         """
         target = self.get_prediction_target(prepared_batch)
         model_pred = model_output["model_prediction"]
+        extra_sample_loss = None
         if target is None:
             raise ValueError("Target is None. Cannot compute loss.")
 
@@ -2766,6 +2767,36 @@ class ModelFoundation(ABC):
         elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
             # Flow matching always uses L2 loss
             loss = (model_pred.float() - target.float()) ** 2
+            if getattr(self.config, "scheduled_sampling_reflexflow", False):
+                clean_pred = prepared_batch.get("_reflexflow_clean_pred")
+                biased_pred = prepared_batch.get("_reflexflow_biased_pred")
+                beta2 = getattr(self.config, "scheduled_sampling_reflexflow_beta2", 1.0)
+                beta2 = 1.0 if beta2 is None else float(beta2)
+                if clean_pred is not None and biased_pred is not None:
+                    exposure = (biased_pred - clean_pred).detach()
+                    norm_dims = tuple(range(1, exposure.dim()))
+                    exposure_norm = exposure.abs().sum(dim=norm_dims, keepdim=True).clamp_min(1e-6)
+                    alpha = float(getattr(self.config, "scheduled_sampling_reflexflow_alpha", 1.0) or 0.0)
+                    if alpha != 0.0:
+                        weight = 1.0 + alpha * exposure / exposure_norm
+                        loss = loss * weight
+                if beta2 != 1.0:
+                    loss = loss * beta2
+
+                adr_scale = float(getattr(self.config, "scheduled_sampling_reflexflow_beta1", 10.0) or 0.0)
+                if adr_scale != 0.0:
+                    biased_latents = prepared_batch.get("noisy_latents")
+                    clean_latents = prepared_batch.get("latents")
+                    if biased_latents is not None and clean_latents is not None:
+                        target_vec = clean_latents - biased_latents
+                        flat_target = target_vec.reshape(target_vec.shape[0], -1)
+                        flat_pred = model_pred.reshape(model_pred.shape[0], -1)
+                        target_norm = torch.norm(flat_target, dim=1, keepdim=True).clamp_min(1e-6)
+                        pred_norm = torch.norm(flat_pred, dim=1, keepdim=True).clamp_min(1e-6)
+                        target_dir = flat_target / target_norm
+                        pred_dir = flat_pred / pred_norm
+                        adr = (pred_dir - target_dir).pow(2).sum(dim=1)
+                        extra_sample_loss = adr_scale * adr
         elif self.PREDICTION_TYPE in [
             PredictionTypes.EPSILON,
             PredictionTypes.V_PREDICTION,
@@ -2868,7 +2899,10 @@ class ModelFoundation(ABC):
                 mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
                 loss = loss * mask_image
 
-        loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
+        loss = loss.mean(dim=list(range(1, len(loss.shape))))
+        if extra_sample_loss is not None:
+            loss = loss + extra_sample_loss.to(device=loss.device, dtype=loss.dtype)
+        loss = loss.mean()
         return loss
 
     def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
