@@ -863,6 +863,9 @@ function trainerComponent() {
                     if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_dataset')) {
                         context.requiresConditioningDataset = Boolean(requirementOverrides.requires_conditioning_dataset);
                     }
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'supports_conditioning_dataset')) {
+                        context.supportsConditioningDataset = Boolean(requirementOverrides.supports_conditioning_dataset);
+                    }
                     if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_latents')) {
                         context.requiresConditioningLatents = Boolean(requirementOverrides.requires_conditioning_latents);
                     }
@@ -895,6 +898,7 @@ function trainerComponent() {
                 context.supportsConditioningGenerators
                 || context.controlnetEnabled
                 || context.controlEnabled
+                || context.supportsConditioningDataset
                 || context.requiresConditioningDataset,
             );
 
@@ -910,6 +914,7 @@ function trainerComponent() {
         defaultModelContext() {
             return {
                 requiresConditioningDataset: false,
+                supportsConditioningDataset: false,
                 requiresConditioningLatents: false,
                 requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: false,
@@ -1018,6 +1023,7 @@ function trainerComponent() {
 
             return {
                 requiresConditioningDataset: requiresDataset,
+                supportsConditioningDataset: requiresDataset,
                 requiresConditioningLatents: requiresLatents,
                 requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: requiresValidationInputs,

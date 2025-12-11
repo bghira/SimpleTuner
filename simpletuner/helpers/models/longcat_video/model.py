@@ -114,6 +114,13 @@ class LongCatVideo(VideoModelFoundation):
         # Validation can run without conditioning inputs; use them if available.
         return False
 
+    def supports_conditioning_dataset(self) -> bool:
+        """
+        Indicates conditioning datasets are supported (optional) so the UI can surface
+        conditioning controls without forcing them.
+        """
+        return True
+
     def default_validation_pipeline_type(self):
         """
         LongCat-Video uses a single pipeline for both T2V and I2V. When validation

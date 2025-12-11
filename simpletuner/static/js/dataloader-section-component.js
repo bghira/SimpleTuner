@@ -187,7 +187,12 @@ function dataloaderSectionComponent() {
     },
     get conditioningFeaturesActive() {
         const context = this.modelContext || {};
-        return Boolean(context.controlnetEnabled || context.requiresConditioningDataset);
+        return Boolean(
+            context.controlnetEnabled
+            || context.requiresConditioningDataset
+            || context.supportsConditioningDataset
+            || context.supportsConditioningGenerators
+        );
     },
     get conditioningSupported() {
         return this.conditioningFeaturesActive;

@@ -272,6 +272,7 @@ class ModelsService:
         requires_validation_inputs = bool(_safe_call("requires_conditioning_validation_inputs", False))
         requires_edit_captions = bool(_safe_call("requires_validation_edit_captions", False))
         requires_i2v_validation_samples = bool(_safe_call("requires_validation_i2v_samples", False))
+        supports_conditioning_dataset = bool(_safe_call("supports_conditioning_dataset", False))
         dataset_type = _safe_call("conditioning_validation_dataset_type", "conditioning")
         if not isinstance(dataset_type, str) or not dataset_type:
             dataset_type = "conditioning"
@@ -284,6 +285,7 @@ class ModelsService:
             "requires_validation_edit_captions": requires_edit_captions,
             "requires_validation_i2v_samples": requires_i2v_validation_samples,
             "conditioning_dataset_type": dataset_type,
+            "supports_conditioning_dataset": supports_conditioning_dataset,
         }
 
     # ------------------------------------------------------------------
