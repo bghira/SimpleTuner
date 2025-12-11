@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 
@@ -352,6 +353,18 @@ class Attention(nn.Module):
                 Tq = SQ // (H_spatial * W_spatial)
                 latent_shape_q = (Tq, H_spatial, W_spatial)
                 attn_output = flash_attn_bsa_3d(q, k, v, latent_shape_q, latent_shape_q, **(self.bsa_params or {}))
+            except Exception:
+                attn_output = None
+
+        if attn_output is None:
+            try:
+                attn_output = dispatch_attention_fn(
+                    q,
+                    k,
+                    v,
+                    attn_mask=None,
+                    backend=getattr(self, "_attention_backend", None),
+                )
             except Exception:
                 attn_output = None
 
