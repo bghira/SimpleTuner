@@ -18,6 +18,46 @@ from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTra
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+DEFAULT_VAE_SCALE_FACTOR_TEMPORAL = 4
+DEFAULT_VAE_SCALE_FACTOR_SPATIAL = 8
+DEFAULT_VAE_Z_DIM = 16
+DEFAULT_VAE_LATENTS_MEAN = [
+    -0.7571,
+    -0.7089,
+    -0.9113,
+    0.1075,
+    -0.1745,
+    0.9653,
+    -0.1517,
+    1.5508,
+    0.4134,
+    -0.0715,
+    0.5517,
+    -0.3632,
+    -0.1922,
+    -0.9497,
+    0.2503,
+    -0.2921,
+]
+DEFAULT_VAE_LATENTS_STD = [
+    2.8184,
+    1.4541,
+    2.3275,
+    2.6558,
+    1.2196,
+    1.7708,
+    2.6052,
+    2.0743,
+    3.2687,
+    2.1526,
+    2.8652,
+    1.5579,
+    1.6382,
+    1.1253,
+    2.8251,
+    1.916,
+]
+
 
 @dataclass
 class LongCatVideoPipelineOutput(BaseOutput):
@@ -47,7 +87,7 @@ class LongCatVideoPipeline(DiffusionPipeline):
     def __init__(
         self,
         scheduler: FlowMatchEulerDiscreteScheduler,
-        vae: AutoencoderKLWan,
+        vae: Optional[AutoencoderKLWan],
         text_encoder: Qwen2_5_VLForConditionalGeneration,
         tokenizer: AutoTokenizer,
         transformer: LongCatVideoTransformer3DModel,
@@ -61,20 +101,45 @@ class LongCatVideoPipeline(DiffusionPipeline):
             scheduler=scheduler,
         )
 
-        self.vae_scale_factor_temporal = self.vae.config.scale_factor_temporal if getattr(self, "vae", None) else 4
-        self.vae_scale_factor_spatial = self.vae.config.scale_factor_spatial if getattr(self, "vae", None) else 8
+        (
+            latents_mean_config,
+            latents_std_config,
+            z_dim,
+            vae_scale_factor_temporal,
+            vae_scale_factor_spatial,
+        ) = self._resolve_vae_config(vae)
+
+        self.vae_scale_factor_temporal = vae_scale_factor_temporal
+        self.vae_scale_factor_spatial = vae_scale_factor_spatial
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
         self.max_tokenizer_len = 512
 
-        latents_mean = torch.tensor(self.vae.config.latents_mean, dtype=torch.float32).view(
-            1, self.vae.config.z_dim, 1, 1, 1
-        )
-        latents_std = 1.0 / torch.tensor(self.vae.config.latents_std, dtype=torch.float32).view(
-            1, self.vae.config.z_dim, 1, 1, 1
-        )
+        latents_mean = torch.tensor(latents_mean_config, dtype=torch.float32).view(1, z_dim, 1, 1, 1)
+        latents_std = 1.0 / torch.tensor(latents_std_config, dtype=torch.float32).view(1, z_dim, 1, 1, 1)
         self.register_buffer("latents_mean", latents_mean, persistent=False)
         self.register_buffer("latents_std", latents_std, persistent=False)
+
+    def _resolve_vae_config(self, vae: Optional[AutoencoderKLWan]) -> Tuple[List[float], List[float], int, int, int]:
+        vae_config = getattr(vae, "config", None)
+
+        latents_mean = getattr(vae_config, "latents_mean", None) or DEFAULT_VAE_LATENTS_MEAN
+        latents_std = getattr(vae_config, "latents_std", None) or DEFAULT_VAE_LATENTS_STD
+        z_dim = getattr(vae_config, "z_dim", None) or DEFAULT_VAE_Z_DIM
+        vae_scale_factor_temporal = getattr(vae_config, "scale_factor_temporal", DEFAULT_VAE_SCALE_FACTOR_TEMPORAL)
+        vae_scale_factor_spatial = getattr(vae_config, "scale_factor_spatial", DEFAULT_VAE_SCALE_FACTOR_SPATIAL)
+
+        if len(latents_mean) != z_dim or len(latents_std) != z_dim:
+            raise ValueError(
+                f"VAE latent statistics length ({len(latents_mean)}, {len(latents_std)}) " f"does not match z_dim ({z_dim})."
+            )
+
+        return latents_mean, latents_std, z_dim, vae_scale_factor_temporal, vae_scale_factor_spatial
+
+    def _require_vae(self) -> AutoencoderKLWan:
+        if self.vae is None:
+            raise ValueError("VAE is not loaded; load a VAE before encoding or decoding latents.")
+        return self.vae
 
     def _get_attention_mask(self, attention_mask: torch.Tensor, target_batch: int, num_videos_per_prompt: int):
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
@@ -258,7 +323,8 @@ class LongCatVideoPipeline(DiffusionPipeline):
                 if num_cond_frames_added > 0:
                     pad_front = encoded_input[:, :, 0:1].repeat(1, 1, num_cond_frames_added, 1, 1)
                     encoded_input = torch.cat([pad_front, encoded_input], dim=2)
-                latent = _retrieve_latents(self.vae.encode(encoded_input), gen)
+                vae = self._require_vae()
+                latent = _retrieve_latents(vae.encode(encoded_input), gen)
                 cond_latents.append(latent)
 
             cond_latents = torch.cat(cond_latents, dim=0).to(dtype)
@@ -472,8 +538,9 @@ class LongCatVideoPipeline(DiffusionPipeline):
         if output_type == "latent":
             video = latents
         else:
-            latents_for_decode = self._unpack_latents(latents).to(self.vae.dtype)
-            video = self.vae.decode(latents_for_decode, return_dict=False)[0]
+            vae = self._require_vae()
+            latents_for_decode = self._unpack_latents(latents).to(vae.dtype)
+            video = vae.decode(latents_for_decode, return_dict=False)[0]
             video = self.video_processor.postprocess_video(video, output_type=output_type)
 
         return LongCatVideoPipelineOutput(videos=video)
