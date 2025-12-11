@@ -243,6 +243,8 @@ class CrepaRegularizer:
         self.encoder_dim = int(encoded.shape[-1])
 
     def _forward_encoder(self, images: torch.Tensor) -> torch.Tensor:
+        enc_dtype = next(self.encoder.parameters()).dtype
+        images = images.to(dtype=enc_dtype)
         with torch.no_grad():
             output = self.encoder(images)
         if isinstance(output, dict):
@@ -299,8 +301,10 @@ class CrepaRegularizer:
         frames = F.interpolate(
             frames, size=(self.encoder_image_size, self.encoder_image_size), mode="bilinear", align_corners=False
         )
-        mean = torch.tensor([0.485, 0.456, 0.406], device=self.device, dtype=frames.dtype).view(1, 3, 1, 1)
-        std = torch.tensor([0.229, 0.224, 0.225], device=self.device, dtype=frames.dtype).view(1, 3, 1, 1)
+        enc_dtype = next(self.encoder.parameters()).dtype
+        frames = frames.to(dtype=enc_dtype)
+        mean = torch.tensor([0.485, 0.456, 0.406], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
         frames = (frames - mean) / std
 
         tokens = self._forward_encoder(frames)  # (BT, N_tokens, D)
