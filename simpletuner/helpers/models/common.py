@@ -566,6 +566,34 @@ class ModelFoundation(ABC):
                 **lora_config_kwargs,
             )
 
+        def _register_ramtorch_custom_mapping():
+            if not self._ramtorch_enabled():
+                return
+            try:
+                imports = ramtorch_utils.ensure_available()
+                ramtorch_linear = imports.get("Linear")
+            except Exception as exc:  # pragma: no cover - defensive import guard
+                logger.warning("RamTorch unavailable for LoRA custom mapping: %s", exc)
+                return
+
+            try:
+                if getattr(self.config, "peft_lora_mode", "").lower() == "singlora":
+                    from peft_singlora.layer import Linear as LoraLinearLayer  # type: ignore
+                else:
+                    from peft.tuners.lora.layer import Linear as LoraLinearLayer  # type: ignore
+            except Exception as exc:  # pragma: no cover - defensive import guard
+                logger.warning("Failed to import LoRA layer class for RamTorch mapping: %s", exc)
+                return
+
+            if hasattr(self.lora_config, "_register_custom_module"):
+                try:
+                    self.lora_config._register_custom_module({ramtorch_linear: LoraLinearLayer})
+                    logger.info("Registered RamTorch Linear with LoRA custom module mapping.")
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("Unable to register RamTorch Linear for LoRA: %s", exc)
+
+        _register_ramtorch_custom_mapping()
+
         if getattr(self.config, "controlnet", False):
             self.controlnet.add_adapter(self.lora_config)
         else:
