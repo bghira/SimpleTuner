@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 
@@ -630,7 +631,7 @@ class LongCatSingleStreamBlock(nn.Module):
         return x
 
 
-class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin):
+class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     """
     The 3D DiT-style transformer used by LongCat-Video.
     """

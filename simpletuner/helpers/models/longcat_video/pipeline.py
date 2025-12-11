@@ -5,18 +5,38 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from diffusers.image_processor import PipelineImageInput
+from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
 from diffusers.models import AutoencoderKLWan
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.utils import BaseOutput, logging
+from diffusers.utils import (
+    USE_PEFT_BACKEND,
+    BaseOutput,
+    convert_state_dict_to_peft,
+    convert_unet_state_dict_to_peft,
+    get_adapter_name,
+    get_peft_kwargs,
+    is_peft_version,
+    logging,
+    scale_lora_layers,
+    unscale_lora_layers,
+)
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from transformers import AutoTokenizer, Qwen2_5_VLForConditionalGeneration
 
 from simpletuner.helpers.models.longcat_video import optimized_scale, pack_video_latents, unpack_video_latents
 from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    convert_comfyui_to_diffusers,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+TRANSFORMER_NAME = "transformer"
 
 DEFAULT_VAE_SCALE_FACTOR_TEMPORAL = 4
 DEFAULT_VAE_SCALE_FACTOR_SPATIAL = 8
@@ -61,6 +81,151 @@ DEFAULT_TRANSFORMER_CAPTION_CHANNELS = 4096
 DEFAULT_TRANSFORMER_IN_CHANNELS = 16
 
 
+class LongCatLoraLoaderMixin(LoraBaseMixin):
+    _lora_loadable_modules = [TRANSFORMER_NAME]
+    transformer_name = TRANSFORMER_NAME
+
+    @classmethod
+    def lora_state_dict(
+        cls,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        return_alphas: bool = False,
+        **kwargs,
+    ):
+        cache_dir = kwargs.pop("cache_dir", None)
+        force_download = kwargs.pop("force_download", False)
+        proxies = kwargs.pop("proxies", None)
+        local_files_only = kwargs.pop("local_files_only", None)
+        token = kwargs.pop("token", None)
+        revision = kwargs.pop("revision", None)
+        subfolder = kwargs.pop("subfolder", None)
+        weight_name = kwargs.pop("weight_name", None)
+        use_safetensors = kwargs.pop("use_safetensors", None)
+
+        allow_pickle = False
+        if use_safetensors is None:
+            use_safetensors = True
+            allow_pickle = True
+
+        user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+
+        state_dict, metadata = _fetch_state_dict(
+            pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
+            weight_name=weight_name,
+            use_safetensors=use_safetensors,
+            local_files_only=local_files_only,
+            cache_dir=cache_dir,
+            force_download=force_download,
+            proxies=proxies,
+            token=token,
+            revision=revision,
+            subfolder=subfolder,
+            user_agent=user_agent,
+            allow_pickle=allow_pickle,
+        )
+
+        if return_alphas:
+            raise NotImplementedError("Returning alphas is not implemented for LongCat lora loader.")
+
+        return state_dict, metadata
+
+    def load_lora_weights(
+        self,
+        pretrained_model_name_or_path_or_dict: Union[str, Dict[str, torch.Tensor]],
+        adapter_name: Optional[str] = None,
+        hotswap: bool = False,
+        **kwargs,
+    ):
+        if not USE_PEFT_BACKEND:
+            raise ValueError("PEFT backend is required for LongCat LoRA loading.")
+
+        low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", False)
+        if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        if isinstance(pretrained_model_name_or_path_or_dict, dict):
+            pretrained_model_name_or_path_or_dict = pretrained_model_name_or_path_or_dict.copy()
+
+        lora_format = normalize_lora_format(kwargs.pop("lora_format", None))
+        kwargs["return_lora_metadata"] = True
+        state_dict, metadata = self.lora_state_dict(pretrained_model_name_or_path_or_dict, **kwargs)
+        network_alphas = None
+
+        # Handle ComfyUI format
+        detected_format = detect_state_dict_format(state_dict)
+        if lora_format == PEFTLoRAFormat.DIFFUSERS and detected_format == PEFTLoRAFormat.COMFYUI:
+            lora_format = PEFTLoRAFormat.COMFYUI
+        if lora_format == PEFTLoRAFormat.COMFYUI:
+            state_dict, comfy_alphas = convert_comfyui_to_diffusers(state_dict, target_prefix=self.transformer_name)
+            network_alphas = comfy_alphas
+
+        # Convert legacy unet prefixes to PEFT format if needed
+        keys = list(state_dict.keys())
+        transformer_keys = [k for k in keys if k.startswith(self.transformer_name)]
+        state_dict = {k: v for k, v in state_dict.items() if k in transformer_keys or k.startswith("unet.")}
+        if any(k.startswith("unet.") for k in state_dict):
+            state_dict = convert_unet_state_dict_to_peft(state_dict)
+        elif state_dict:
+            first_key = next(iter(state_dict))
+            if "lora_A" not in first_key:
+                state_dict = convert_unet_state_dict_to_peft(state_dict)
+
+        if not state_dict:
+            raise ValueError("No transformer LoRA weights found for LongCat-Video.")
+
+        self.load_lora_into_transformer(
+            state_dict,
+            transformer=getattr(self, self.transformer_name) if not hasattr(self, "transformer") else self.transformer,
+            adapter_name=adapter_name,
+            metadata=metadata,
+            network_alphas=network_alphas,
+            _pipeline=self,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            hotswap=hotswap,
+        )
+
+    @classmethod
+    def load_lora_into_transformer(
+        cls,
+        state_dict,
+        transformer,
+        adapter_name=None,
+        _pipeline=None,
+        low_cpu_mem_usage=False,
+        hotswap: bool = False,
+        metadata=None,
+        network_alphas=None,
+    ):
+        if low_cpu_mem_usage and is_peft_version("<", "0.13.0"):
+            raise ValueError(
+                "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
+            )
+
+        if adapter_name is None:
+            adapter_name = get_adapter_name(transformer)
+
+        transformer.load_lora_adapter(
+            state_dict,
+            network_alphas=network_alphas,
+            adapter_name=adapter_name,
+            metadata=metadata,
+            _pipeline=_pipeline,
+            low_cpu_mem_usage=low_cpu_mem_usage,
+            hotswap=hotswap,
+        )
+
+    def fuse_lora(self, lora_scale: float = 1.0, fuse_unet: bool = True, fuse_text_encoder: bool = True):
+        scale_lora_layers(self.transformer, lora_scale)
+        super().fuse_lora(components=[self.transformer_name])
+
+    def unfuse_lora(self, components: List[str] = None, **kwargs):
+        components = components or [self.transformer_name]
+        super().unfuse_lora(components=components, **kwargs)
+        unscale_lora_layers(self.transformer)
+
+
 @dataclass
 class LongCatVideoPipelineOutput(BaseOutput):
     videos: Union[torch.Tensor, List["np.ndarray"]]  # type: ignore[name-defined]
@@ -78,7 +243,7 @@ def _retrieve_latents(
     raise AttributeError("Could not access latents of provided encoder_output")
 
 
-class LongCatVideoPipeline(DiffusionPipeline):
+class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
     """
     Pipeline for LongCat-Video text-to-video and image-to-video generation.
     """
