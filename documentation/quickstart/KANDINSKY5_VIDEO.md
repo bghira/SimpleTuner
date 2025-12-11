@@ -99,6 +99,15 @@ Key settings for Kandinsky 5 Video:
 - `validation_guidance`: `5.0`.
 - `frame_rate`: Default is 24.
 
+### Optional: CREPA temporal regularizer
+
+To reduce flicker and keep subjects stable across frames:
+- In **Training → Loss functions**, enable **CREPA**.
+- Recommended starting values: **Block Index = 8**, **Weight = 0.5**, **Adjacent Distance = 1**, **Temporal Decay = 1.0**.
+- Keep the default vision encoder (`dinov2_vitg14`, size `518`) unless you need a smaller one (`dinov2_vits14` + `224`).
+- Requires network (or a cached torch hub) to fetch DINOv2 weights the first time.
+- Only enable **Drop VAE Encoder** if you are training entirely from cached latents; otherwise leave it off.
+
 ### Advanced Experimental Features
 
 <details>

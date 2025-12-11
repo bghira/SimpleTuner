@@ -161,6 +161,15 @@ At the end, your config should resemble:
 ```
 </details>
 
+### Optional: CREPA temporal regularizer
+
+If your videos show flicker or drifting subjects, enable CREPA:
+- In **Training → Loss functions**, turn on **CREPA**.
+- Suggested defaults: **Block Index = 10**, **Weight = 0.5**, **Adjacent Distance = 1**, **Temporal Decay = 1.0**.
+- Keep the default encoder (`dinov2_vitg14`, size `518`) unless you need a smaller option (`dinov2_vits14` + `224`) to save VRAM.
+- First run downloads DINOv2 via torch hub; cache or prefetch if offline.
+- Only toggle **Drop VAE Encoder** when training purely from cached latents; leave it off if you still encode pixels.
+
 ### Advanced Experimental Features
 
 <details>

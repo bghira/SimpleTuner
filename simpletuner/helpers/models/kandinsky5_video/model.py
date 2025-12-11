@@ -446,23 +446,39 @@ class Kandinsky5Video(VideoModelFoundation):
         if raw_force_keep is not None and getattr(self.config, "tread_config", None):
             force_keep_mask = self._prepare_force_keep_mask(latents, raw_force_keep)
 
-        model_pred = self.model(
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        transformer_kwargs = {
+            "encoder_hidden_states": encoder_hidden_states.to(dtype),
+            "pooled_projections": pooled.to(dtype),
+            "timestep": timesteps,
+            "visual_rope_pos": visual_rope_pos,
+            "text_rope_pos": text_rope_pos,
+            "scale_factor": (1, 2, 2),
+            "sparse_params": None,
+            "return_dict": True,
+            "force_keep_mask": force_keep_mask,
+        }
+        if capture_hidden:
+            transformer_kwargs["output_hidden_states"] = True
+            transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+
+        model_output = self.model(
             hidden_states=latents.to(dtype),
-            encoder_hidden_states=encoder_hidden_states.to(dtype),
-            pooled_projections=pooled.to(dtype),
-            timestep=timesteps,
-            visual_rope_pos=visual_rope_pos,
-            text_rope_pos=text_rope_pos,
-            scale_factor=(1, 2, 2),
-            sparse_params=None,
-            return_dict=True,
-            force_keep_mask=force_keep_mask,
-        ).sample
+            **transformer_kwargs,
+        )
+
+        model_pred = model_output.sample
+        crepa_hidden = getattr(model_output, "crepa_hidden_states", None) if capture_hidden else None
+        if capture_hidden and crepa_hidden is None:
+            raise ValueError(
+                f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                "but none were returned. Check that crepa_block_index is within the model's block count."
+            )
 
         # Restore to (B, C, T, H, W)
         model_pred = model_pred.permute(0, 4, 1, 2, 3)
 
-        return {"model_prediction": model_pred}
+        return {"model_prediction": model_pred, "crepa_hidden_states": crepa_hidden}
 
     def _prepare_force_keep_mask(self, latents: torch.Tensor, mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
         """

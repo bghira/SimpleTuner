@@ -1061,6 +1061,11 @@ class Wan(VideoModelFoundation):
             "return_dict": False,
         }
 
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        if capture_hidden:
+            wan_transformer_kwargs["output_hidden_states"] = True
+            wan_transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+
         if prepared_batch.get("conditioning_image_embeds") is not None:
             wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch["conditioning_image_embeds"].to(
                 self.config.weight_dtype
@@ -1105,10 +1110,25 @@ class Wan(VideoModelFoundation):
                     force_keep if existing_force_keep is None else (existing_force_keep | force_keep)
                 )
 
-        model_pred = self.model(**wan_transformer_kwargs)[0]
+        model_output = self.model(**wan_transformer_kwargs)
+        if capture_hidden:
+            if isinstance(model_output, tuple) and len(model_output) >= 2:
+                model_pred, crepa_hidden = model_output[0], model_output[1]
+            else:
+                model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+                crepa_hidden = None
+            if crepa_hidden is None:
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    "but none were returned. Check that crepa_block_index is within the model's block count."
+                )
+        else:
+            model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+            crepa_hidden = None
 
         return {
             "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
         }
 
     def check_user_config(self):

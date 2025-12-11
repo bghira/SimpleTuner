@@ -150,3 +150,177 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             order=7,
         )
     )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_enabled",
+            arg_name="--crepa_enabled",
+            ui_label="Enable CREPA",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            help_text="Enable Cross-frame Representation Alignment for video models.",
+            tooltip="Adds a DINOv2-driven temporal alignment regularizer over intermediate hidden states.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=8,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_block_index",
+            arg_name="--crepa_block_index",
+            ui_label="CREPA Block Index",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=8,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Transformer block index to tap for hidden states (0-based).",
+            tooltip="Use an encoder-side layer; earlier blocks capture spatial/temporal structure better.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=9,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_lambda",
+            arg_name="--crepa_lambda",
+            ui_label="CREPA Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.5,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Scaling factor applied to the CREPA alignment loss.",
+            tooltip="Higher values increase regularisation strength; try 0.5–1.0.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=10,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_adjacent_distance",
+            arg_name="--crepa_adjacent_distance",
+            ui_label="CREPA Adjacent Distance",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be >= 0")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="How many neighbouring frames to include in cross-frame alignment.",
+            tooltip="1 aligns to immediate neighbours; larger values expand the temporal window but add compute.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=11,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_adjacent_tau",
+            arg_name="--crepa_adjacent_tau",
+            ui_label="CREPA Temporal Decay",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.01, message="Must be > 0")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Exponential decay for neighbour weighting (smaller = faster decay).",
+            tooltip="Controls how quickly similarity weighting drops for farther frames.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=12,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_encoder",
+            arg_name="--crepa_encoder",
+            ui_label="CREPA Vision Model",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="loss_functions",
+            default_value="dinov2_vitg14",
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Torch hub identifier for the frozen vision encoder (default: DINOv2 ViT-G/14, per CREPA paper).",
+            tooltip='Passes directly to torch.hub.load("facebookresearch/dinov2", <id>); e.g., dinov2_vitg14 or dinov2_vits14.',
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=13,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_encoder_image_size",
+            arg_name="--crepa_encoder_image_size",
+            ui_label="CREPA Encoder Resolution",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=518,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=64, message="Must be >= 64")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Input resolution for the vision encoder preprocessing.",
+            tooltip="Set to the pretrained encoder's default (518 for DINOv2-G/14; 224 for ViT-S/14).",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=14,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_drop_vae_encoder",
+            arg_name="--crepa_drop_vae_encoder",
+            ui_label="CREPA: Drop VAE Encoder",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Release VAE encoder/quant_conv after load to save memory when only decoding latents.",
+            tooltip="Enable only if latents come from caches or elsewhere; encoding new pixels will no longer work.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=15,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_normalize_by_frames",
+            arg_name="--crepa_normalize_by_frames",
+            ui_label="CREPA: Normalize by Frames",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=True,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Divide alignment similarity by the number of frames to keep loss scale stable.",
+            tooltip="Turn off to let longer clips contribute proportionally more alignment signal.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=16,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_spatial_align",
+            arg_name="--crepa_spatial_align",
+            ui_label="CREPA: Spatial Token Align",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=True,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Interpolate patch tokens to match encoder/DiT token counts instead of global pooling.",
+            tooltip="Disable to pool both sides before similarity if memory is tight.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=17,
+        )
+    )
