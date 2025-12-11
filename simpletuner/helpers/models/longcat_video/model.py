@@ -211,6 +211,43 @@ class LongCatVideo(VideoModelFoundation):
             "negative_prompt_attention_mask": negative_attention_mask,
         }
 
+    def pack_text_embeddings_for_cache(self, embeddings):
+        """
+        Strip extra singleton prompt/attention dimensions before writing to cache so collate sees 3D/2D tensors.
+        """
+        if isinstance(embeddings, tuple):
+            embeddings = self._format_text_embedding(embeddings)
+
+        prompt_embeds = self._normalize_prompt_tensor(embeddings.get("prompt_embeds"))
+        prompt_attention_mask = self._normalize_attention_tensor(embeddings.get("prompt_attention_mask"))
+        negative_prompt_embeds = self._normalize_prompt_tensor(embeddings.get("negative_prompt_embeds"))
+        negative_prompt_attention_mask = self._normalize_attention_tensor(embeddings.get("negative_prompt_attention_mask"))
+
+        return {
+            "prompt_embeds": prompt_embeds,
+            "prompt_attention_mask": prompt_attention_mask,
+            "negative_prompt_embeds": negative_prompt_embeds,
+            "negative_prompt_attention_mask": negative_prompt_attention_mask,
+        }
+
+    def unpack_text_embeddings_from_cache(self, embeddings):
+        """
+        Ensure cached embeddings are normalized before consumption.
+        """
+        if isinstance(embeddings, tuple):
+            embeddings = self._format_text_embedding(embeddings)
+        embeddings = dict(embeddings)
+        embeddings["prompt_embeds"] = self._normalize_prompt_tensor(embeddings.get("prompt_embeds"))
+        embeddings["prompt_attention_mask"] = self._normalize_attention_tensor(embeddings.get("prompt_attention_mask"))
+        embeddings["negative_prompt_embeds"] = self._normalize_prompt_tensor(embeddings.get("negative_prompt_embeds"))
+        embeddings["negative_prompt_attention_mask"] = self._normalize_attention_tensor(
+            embeddings.get("negative_prompt_attention_mask")
+        )
+        return embeddings
+
+    def collate_prompt_embeds(self, text_encoder_output: list[dict]) -> dict:
+        return {}
+
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
         return TextEmbedCacheKey.CAPTION
 
