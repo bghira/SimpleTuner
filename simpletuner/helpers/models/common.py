@@ -258,6 +258,7 @@ class ModelFoundation(ABC):
         self.setup_training_noise_schedule()
         self.diff2flow_bridge = None
         self.setup_diff2flow_bridge()
+        self._maybe_enable_reflexflow_default()
         self.assistant_adapter_name = "assistant"
         self.assistant_lora_loaded = False
 
@@ -2428,6 +2429,29 @@ class ModelFoundation(ABC):
         timesteps = sigmas * 1000.0
         return sigmas, timesteps
 
+    def _maybe_enable_reflexflow_default(self) -> bool:
+        """
+        Enable ReflexFlow automatically when scheduled sampling is active on flow-matching models
+        and the user did not explicitly set the flag.
+        """
+        try:
+            offset_value = getattr(self.config, "scheduled_sampling_max_step_offset", 0)
+            max_offset = float(offset_value or 0)
+        except Exception:
+            return False
+
+        if max_offset <= 0:
+            return False
+
+        if getattr(self.config, "scheduled_sampling_reflexflow", None) is not None:
+            return False
+
+        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+            return False
+
+        setattr(self.config, "scheduled_sampling_reflexflow", True)
+        return True
+
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         """
         Moves the batch to the proper device/dtype,
@@ -2548,6 +2572,7 @@ class ModelFoundation(ABC):
                 batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
+        self._maybe_enable_reflexflow_default()
         if getattr(self.config, "scheduled_sampling_max_step_offset", 0) > 0:
             effective_prob = float(getattr(self.config, "scheduled_sampling_probability", 0.0) or 0.0)
             prob_start = float(getattr(self.config, "scheduled_sampling_prob_start", effective_prob) or effective_prob)

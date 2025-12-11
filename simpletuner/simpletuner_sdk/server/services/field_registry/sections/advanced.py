@@ -319,7 +319,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="loss_functions",
             subsection="advanced",
-            default_value=False,
+            default_value=None,
             help_text="Apply ReflexFlow anti-drift and frequency-compensation weighting during scheduled sampling for flow-matching models.",
             tooltip="Adds ADR directional regularization and exposure-bias weighting to rollout samples.",
             importance=ImportanceLevel.EXPERIMENTAL,

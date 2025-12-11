@@ -65,7 +65,7 @@ The solver used for the rollout generation steps.
 
 For flow-matching models (`--prediction_type flow_matching`), scheduled sampling now supports ReflexFlow-style exposure bias mitigation:
 
-*   `scheduled_sampling_reflexflow`: Enable ReflexFlow enhancements during rollout.
+*   `scheduled_sampling_reflexflow`: Enable ReflexFlow enhancements during rollout (auto-enabled for flow-matching models when scheduled sampling is active; pass `--scheduled_sampling_reflexflow=false` to opt out).
 *   `scheduled_sampling_reflexflow_alpha`: Scale the exposure-bias-based loss weight (frequency compensation).
 *   `scheduled_sampling_reflexflow_beta1`: Scale the directional anti-drift regularizer (default 10.0 to mirror the paper).
 *   `scheduled_sampling_reflexflow_beta2`: Scale the frequency-compensated loss (default 1.0).

@@ -202,6 +202,56 @@ class ScheduledSamplingRolloutTests(unittest.TestCase):
         assert "_reflexflow_biased_pred" in updated
 
 
+class ReflexFlowDefaultToggleTests(unittest.TestCase):
+    def _make_model(self, prediction_type, config):
+        class _StubModel(ModelFoundation):
+            PREDICTION_TYPE = prediction_type
+
+            def __init__(self, cfg):
+                self.config = cfg
+
+            def model_predict(self, prepared_batch, custom_timesteps: list | None = None):
+                return prepared_batch
+
+            def _encode_prompts(self, *args, **kwargs):
+                return None
+
+            def convert_text_embed_for_pipeline(self, text_encoder_output, pooling_encode_output=None):
+                return text_encoder_output
+
+            def convert_negative_text_embed_for_pipeline(self, text_encoder_output, pooling_encode_output=None):
+                return text_encoder_output
+
+        return _StubModel(config)
+
+    def test_auto_enables_when_unset_for_flow_matching(self):
+        config = SimpleNamespace(scheduled_sampling_max_step_offset=3, scheduled_sampling_reflexflow=None)
+        model = self._make_model(PredictionTypes.FLOW_MATCHING, config)
+
+        changed = model._maybe_enable_reflexflow_default()
+
+        self.assertTrue(changed)
+        self.assertTrue(config.scheduled_sampling_reflexflow)
+
+    def test_respects_user_opt_out(self):
+        config = SimpleNamespace(scheduled_sampling_max_step_offset=3, scheduled_sampling_reflexflow=False)
+        model = self._make_model(PredictionTypes.FLOW_MATCHING, config)
+
+        changed = model._maybe_enable_reflexflow_default()
+
+        self.assertFalse(changed)
+        self.assertFalse(config.scheduled_sampling_reflexflow)
+
+    def test_skips_non_flow_matching_models(self):
+        config = SimpleNamespace(scheduled_sampling_max_step_offset=3, scheduled_sampling_reflexflow=None)
+        model = self._make_model(PredictionTypes.EPSILON, config)
+
+        changed = model._maybe_enable_reflexflow_default()
+
+        self.assertFalse(changed)
+        self.assertIsNone(config.scheduled_sampling_reflexflow)
+
+
 class _FlowLossModel(ModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     NAME = "dummy"
