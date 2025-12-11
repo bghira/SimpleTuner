@@ -107,10 +107,12 @@ class LongCatVideo(VideoModelFoundation):
         return True
 
     def requires_conditioning_dataset(self) -> bool:
-        return True
+        # Conditioning is supported when provided, but not mandatory.
+        return False
 
     def requires_conditioning_validation_inputs(self) -> bool:
-        return True
+        # Validation can run without conditioning inputs; use them if available.
+        return False
 
     def default_validation_pipeline_type(self):
         """
