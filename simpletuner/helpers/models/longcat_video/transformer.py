@@ -23,17 +23,42 @@ def _rotate_half(x):
 def _broadcat(tensors, dim=-1):
     """
     Broadcast then concatenate a list of tensors along the given dimension.
+
+    This implementation explicitly computes a target shape for all non-concatenated
+    axes and validates that each tensor can be broadcast to that shape before
+    concatenation.
     """
-    num_tensors = len(tensors)
-    shape_len = len(tensors[0].shape)
-    dim = (dim + shape_len) if dim < 0 else dim
-    max_dims = []
-    for axis, sizes in enumerate(zip(*[t.shape for t in tensors])):
+    if not tensors:
+        raise ValueError("No tensors provided to _broadcat.")
+    nd = tensors[0].dim()
+    dim = dim if dim >= 0 else nd + dim
+    if dim < 0 or dim >= nd:
+        raise ValueError(f"Invalid concat dimension {dim} for tensors with {nd} dims.")
+
+    # Target shape for broadcast axes (leave concat axis None)
+    target_shape = []
+    for axis in range(nd):
         if axis == dim:
-            max_dims.append(sizes)
+            target_shape.append(None)
         else:
-            max_dims.append((max(sizes),) * num_tensors)
-    expanded = [t.expand(*[dims[i] for i, dims in enumerate(max_dims)]) for i, t in enumerate(tensors)]
+            target_shape.append(max(t.shape[axis] for t in tensors))
+
+    expanded = []
+    for t in tensors:
+        if t.dim() != nd:
+            raise ValueError(f"Tensor rank mismatch in _broadcat: expected {nd} dims, got {t.dim()}")
+        shape = list(target_shape)
+        shape[dim] = t.shape[dim]
+        # Validate broadcastability
+        for axis in range(nd):
+            if axis == dim:
+                continue
+            if t.shape[axis] not in (1, shape[axis]):
+                raise ValueError(
+                    f"Cannot broadcast tensor with shape {t.shape} to target shape {tuple(shape)} at axis {axis}"
+                )
+        expanded.append(t.expand(*shape))
+
     return torch.cat(expanded, dim=dim)
 
 
