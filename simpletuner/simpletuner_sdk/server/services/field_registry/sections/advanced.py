@@ -310,6 +310,90 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow",
+            arg_name="--scheduled_sampling_reflexflow",
+            ui_label="Enable ReflexFlow Enhancements",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Apply ReflexFlow anti-drift and frequency-compensation weighting during scheduled sampling for flow-matching models.",
+            tooltip="Adds ADR directional regularization and exposure-bias weighting to rollout samples.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=39,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow_alpha",
+            arg_name="--scheduled_sampling_reflexflow_alpha",
+            ui_label="ReflexFlow FC Alpha",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=1.0,
+            help_text="Scaling for exposure-bias-based loss reweighting (frequency compensation) during ReflexFlow.",
+            tooltip="Higher values up-weight regions with larger exposure bias during rollout.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=40,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_reflexflow", operator="equals", value=True, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow_alpha",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow_beta1",
+            arg_name="--scheduled_sampling_reflexflow_beta1",
+            ui_label="ReflexFlow ADR Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=10.0,
+            help_text="Directional regularization strength for ReflexFlow anti-drift rectification.",
+            tooltip="Scales the unit-direction alignment term between predicted velocity and target direction.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=41,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_reflexflow", operator="equals", value=True, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow_beta1",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow_beta2",
+            arg_name="--scheduled_sampling_reflexflow_beta2",
+            ui_label="ReflexFlow FC Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=1.0,
+            help_text="Weight for the ReflexFlow frequency-compensated loss term.",
+            tooltip="Scales the exposure-bias-reweighted flow-matching loss (β2 in the paper).",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=42,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_reflexflow", operator="equals", value=True, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow_beta2",
+        )
+    )
+
     # Flow Matching Configuration
     registry._add_field(
         ConfigField(

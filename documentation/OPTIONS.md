@@ -687,6 +687,30 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: The order of the solver used for rollout.
 - **Default**: 2.
 
+### `--scheduled_sampling_reflexflow`
+
+- **What**: Enable ReflexFlow-style enhancements (anti-drift + frequency-compensated weighting) during scheduled sampling for flow-matching models.
+- **Why**: Reduces exposure bias when rolling out flow-matching models by adding directional regularization and bias-aware loss weighting.
+- **Default**: False. Requires `--scheduled_sampling_max_step_offset` > 0.
+
+### `--scheduled_sampling_reflexflow_alpha`
+
+- **What**: Scaling factor for the frequency-compensation weight derived from exposure bias.
+- **Default**: 1.0.
+- **Why**: Higher values up-weight regions with larger exposure bias during rollout for flow-matching models.
+
+### `--scheduled_sampling_reflexflow_beta1`
+
+- **What**: Weight for the ReflexFlow anti-drift (directional) regularizer.
+- **Default**: 10.0.
+- **Why**: Controls how strongly the model is encouraged to align its predicted direction with the target clean sample when using scheduled sampling on flow-matching models.
+
+### `--scheduled_sampling_reflexflow_beta2`
+
+- **What**: Weight for the ReflexFlow frequency-compensation (loss reweighting) term.
+- **Default**: 1.0.
+- **Why**: Scales the reweighted flow-matching loss, matching the β₂ knob described in the ReflexFlow paper.
+
 ---
 
 ## 🔄 Checkpointing and Resumption
