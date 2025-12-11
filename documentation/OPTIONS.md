@@ -713,6 +713,91 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 
 ---
 
+## 🎯 CREPA (Cross-frame Representation Alignment)
+
+CREPA is a regularization technique for fine-tuning video diffusion models that improves temporal consistency by aligning hidden states with pretrained visual features from adjacent frames. Based on the paper ["Cross-Frame Representation Alignment for Fine-Tuning Video Diffusion Models"](https://arxiv.org/abs/2506.09229).
+
+### `--crepa_enabled`
+
+- **What**: Enable CREPA regularization during training.
+- **Why**: Improves semantic consistency across video frames by aligning DiT hidden states with DINOv2 features from neighboring frames.
+- **Default**: `false`
+- **Note**: Only applies to video models (Wan, LTXVideo, SanaVideo, Kandinsky5).
+
+### `--crepa_block_index`
+
+- **What**: Which transformer block's hidden states to use for alignment.
+- **Why**: The paper recommends block 8 for CogVideoX and block 10 for Hunyuan Video. Earlier blocks tend to work better as they act as the "encoder" portion of the DiT.
+- **Required**: Yes, when CREPA is enabled.
+
+### `--crepa_lambda`
+
+- **What**: Weight of the CREPA alignment loss relative to the main training loss.
+- **Why**: Controls how strongly the alignment regularization influences training. The paper uses 0.5 for CogVideoX and 1.0 for Hunyuan Video.
+- **Default**: `0.5`
+
+### `--crepa_adjacent_distance`
+
+- **What**: Distance `d` for neighbor frame alignment.
+- **Why**: Per the paper's Equation 6, $K = \{f-d, f+d\}$ defines which neighboring frames to align with. With `d=1`, each frame aligns with its immediate neighbors.
+- **Default**: `1`
+
+### `--crepa_adjacent_tau`
+
+- **What**: Temperature coefficient for the exponential distance weighting.
+- **Why**: Controls how quickly alignment weight decays with frame distance via $e^{-|k-f|/\tau}$. Lower values focus more strongly on immediate neighbors.
+- **Default**: `1.0`
+
+### `--crepa_cumulative_neighbors`
+
+- **What**: Use cumulative mode instead of adjacent mode.
+- **Why**:
+  - **Adjacent mode (default)**: Only aligns with frames at exact distance `d` (matches paper's $K = \{f-d, f+d\}$)
+  - **Cumulative mode**: Aligns with all frames from distance 1 to `d`, providing smoother gradients
+- **Default**: `false`
+
+### `--crepa_normalize_by_frames`
+
+- **What**: Normalize the alignment loss by the number of frames.
+- **Why**: Ensures consistent loss scale regardless of video length. Disable to give longer videos stronger alignment signal.
+- **Default**: `true`
+
+### `--crepa_spatial_align`
+
+- **What**: Use spatial interpolation when token counts differ between DiT and encoder.
+- **Why**: DiT hidden states and DINOv2 features may have different spatial resolutions. When enabled, bilinear interpolation aligns them spatially. When disabled, falls back to global pooling.
+- **Default**: `true`
+
+### `--crepa_model`
+
+- **What**: Which pretrained encoder to use for feature extraction.
+- **Why**: The paper uses DINOv2-g (ViT-Giant). Smaller variants like `dinov2_vitb14` use less memory.
+- **Default**: `dinov2_vitg14`
+- **Choices**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`
+
+### `--crepa_encoder_image_size`
+
+- **What**: Input resolution for the encoder.
+- **Why**: DINOv2 models work best at their training resolution. The giant model uses 518x518.
+- **Default**: `518`
+
+### Example Configuration
+
+```toml
+# Enable CREPA for video fine-tuning
+crepa_enabled = true
+crepa_block_index = 8          # Adjust based on your model
+crepa_lambda = 0.5
+crepa_adjacent_distance = 1
+crepa_adjacent_tau = 1.0
+crepa_cumulative_neighbors = false
+crepa_normalize_by_frames = true
+crepa_spatial_align = true
+crepa_model = "dinov2_vitg14"
+```
+
+---
+
 ## 🔄 Checkpointing and Resumption
 
 ### `--checkpoint_step_interval` (alias: `--checkpointing_steps`)

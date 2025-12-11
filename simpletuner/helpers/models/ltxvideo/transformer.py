@@ -516,6 +516,8 @@ class LTXVideoTransformer3DModel(
         attention_kwargs: Optional[Dict[str, Any]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        output_hidden_states: bool = False,
+        hidden_state_layer: Optional[int] = None,
     ) -> torch.Tensor:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -538,6 +540,15 @@ class LTXVideoTransformer3DModel(
             encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
 
         batch_size = hidden_states.size(0)
+        if output_hidden_states and (num_frames is None or height is None or width is None):
+            raise ValueError("CREPA hidden-state capture requires num_frames, height, and width inputs.")
+        post_patch_num_frames = None
+        post_patch_height = None
+        post_patch_width = None
+        if num_frames is not None and height is not None and width is not None:
+            post_patch_num_frames = num_frames // self.config.patch_size_t
+            post_patch_height = height // self.config.patch_size
+            post_patch_width = width // self.config.patch_size
         hidden_states = self.proj_in(hidden_states)
 
         temb, embedded_timestep = self.time_embed(
@@ -556,6 +567,8 @@ class LTXVideoTransformer3DModel(
         routes = self._tread_routes or []
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
+
+        captured_frame_hidden: Optional[torch.Tensor] = None
 
         for bid, block in enumerate(self.transformer_blocks):
             # TREAD routing for this layer
@@ -613,6 +626,17 @@ class LTXVideoTransformer3DModel(
                         hidden_states = router.end_route(hidden_states, mask_info)
                         break
 
+            if output_hidden_states and post_patch_num_frames is not None:
+                if hidden_state_layer is None or bid == hidden_state_layer:
+                    captured_frame_hidden = hidden_states.reshape(
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height * post_patch_width,
+                        -1,
+                    )
+                    if hidden_state_layer is not None and bid == hidden_state_layer:
+                        output_hidden_states = False
+
         scale_shift_values = self.scale_shift_table[None, None] + embedded_timestep[:, :, None]
         shift, scale = scale_shift_values[:, :, 0], scale_shift_values[:, :, 1]
 
@@ -625,8 +649,13 @@ class LTXVideoTransformer3DModel(
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
-            return (output,)
-        return Transformer2DModelOutput(sample=output)
+            if captured_frame_hidden is None:
+                return (output,)
+            return (output, captured_frame_hidden)
+        result = Transformer2DModelOutput(sample=output)
+        if captured_frame_hidden is not None:
+            result.crepa_hidden_states = captured_frame_hidden
+        return result
 
 
 def apply_rotary_emb(x, freqs):

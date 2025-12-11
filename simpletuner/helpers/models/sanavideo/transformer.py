@@ -581,6 +581,8 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         attention_kwargs: Optional[Dict[str, Any]] = None,
         controlnet_block_samples: Optional[Tuple[torch.Tensor]] = None,
         return_dict: bool = True,
+        output_hidden_states: bool = False,
+        hidden_state_layer: Optional[int] = None,
     ) -> Union[Tuple[torch.Tensor, ...], Transformer2DModelOutput]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -640,6 +642,8 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
         encoder_hidden_states = self.caption_norm(encoder_hidden_states)
 
+        captured_frame_hidden: Optional[torch.Tensor] = None
+
         # 2. Transformer blocks
         if torch.is_grad_enabled() and self.gradient_checkpointing:
             for index_block, block in enumerate(self.transformer_blocks):
@@ -657,6 +661,15 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                 )
                 if controlnet_block_samples is not None and 0 < index_block <= len(controlnet_block_samples):
                     hidden_states = hidden_states + controlnet_block_samples[index_block - 1]
+                if output_hidden_states and (hidden_state_layer is None or index_block == hidden_state_layer):
+                    captured_frame_hidden = hidden_states.reshape(
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height * post_patch_width,
+                        -1,
+                    )
+                    if hidden_state_layer is not None and index_block == hidden_state_layer:
+                        output_hidden_states = False
 
         else:
             for index_block, block in enumerate(self.transformer_blocks):
@@ -673,6 +686,15 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                 )
                 if controlnet_block_samples is not None and 0 < index_block <= len(controlnet_block_samples):
                     hidden_states = hidden_states + controlnet_block_samples[index_block - 1]
+                if output_hidden_states and (hidden_state_layer is None or index_block == hidden_state_layer):
+                    captured_frame_hidden = hidden_states.reshape(
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height * post_patch_width,
+                        -1,
+                    )
+                    if hidden_state_layer is not None and index_block == hidden_state_layer:
+                        output_hidden_states = False
 
         # 3. Normalization
         hidden_states = self.norm_out(hidden_states, embedded_timestep, self.scale_shift_table)
@@ -691,6 +713,11 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
-            return (output,)
+            if captured_frame_hidden is None:
+                return (output,)
+            return (output, captured_frame_hidden)
 
-        return Transformer2DModelOutput(sample=output)
+        result = Transformer2DModelOutput(sample=output)
+        if captured_frame_hidden is not None:
+            result.crepa_hidden_states = captured_frame_hidden
+        return result
