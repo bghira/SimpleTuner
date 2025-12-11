@@ -140,8 +140,11 @@ class LongCatVideo(VideoModelFoundation):
             return None
         if tensor.dim() == 4 and tensor.shape[1] == 1 and tensor.shape[2] == 1:
             tensor = tensor.squeeze(1).squeeze(1)
-        if tensor.dim() == 3 and tensor.shape[1] == 1:
-            tensor = tensor.squeeze(1)
+        if tensor.dim() == 3:
+            if tensor.shape[1] == 1:
+                tensor = tensor.squeeze(1)
+            if tensor.dim() == 3 and tensor.shape[2] == 1:
+                tensor = tensor.squeeze(2)
         return tensor
 
     def _format_text_embedding(self, text_embedding: dict):
@@ -198,14 +201,7 @@ class LongCatVideo(VideoModelFoundation):
         if negative_embeds.dim() == 3:
             negative_embeds = negative_embeds.unsqueeze(1)
         if negative_attention_mask is not None:
-            if negative_attention_mask.dim() == 4:
-                negative_attention_mask = negative_attention_mask.squeeze(1).squeeze(1)
-            elif negative_attention_mask.dim() == 3 and negative_attention_mask.shape[1] == 1:
-                negative_attention_mask = negative_attention_mask.squeeze(1)
-            elif negative_attention_mask.dim() == 2:
-                pass
-            else:
-                raise ValueError(f"Unexpected negative attention mask shape for LongCat: {negative_attention_mask.shape}")
+            negative_attention_mask = self._normalize_attention_tensor(negative_attention_mask)
         return {
             "negative_prompt_embeds": negative_embeds,
             "negative_prompt_attention_mask": negative_attention_mask,

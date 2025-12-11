@@ -732,23 +732,21 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         encoder_hidden_states = self.y_embedder(encoder_hidden_states)
 
+        def _normalize_mask(mask: torch.Tensor) -> torch.Tensor:
+            if mask.dim() == 4 and mask.shape[1] == 1 and mask.shape[2] == 1:
+                return mask.squeeze(1).squeeze(1)
+            if mask.dim() == 3 and mask.shape[1] == 1:
+                return mask.squeeze(1)
+            if mask.dim() == 3 and mask.shape[2] == 1:
+                return mask.squeeze(2)
+            if mask.dim() == 2:
+                return mask
+            raise ValueError(f"Unexpected encoder_attention_mask shape: {mask.shape}")
+
         if self.text_tokens_zero_pad and encoder_attention_mask is not None:
             try:
-                # Normalize masks from cache/encode into (B, seq, 1) for clean broadcast
-                if (
-                    encoder_attention_mask.dim() == 4
-                    and encoder_attention_mask.shape[1] == 1
-                    and encoder_attention_mask.shape[2] == 1
-                ):
-                    encoder_attention_mask = encoder_attention_mask.squeeze(1).squeeze(1)
-                if encoder_attention_mask.dim() == 3 and encoder_attention_mask.shape[1] == 1:
-                    encoder_attention_mask = encoder_attention_mask.squeeze(1)
-                if encoder_attention_mask.dim() == 2:
-                    encoder_attention_mask = encoder_attention_mask.unsqueeze(-1)
-                if encoder_attention_mask.dim() != 3:
-                    raise ValueError(f"Unexpected encoder_attention_mask shape: {encoder_attention_mask.shape}")
-
-                encoder_hidden_states = encoder_hidden_states * encoder_attention_mask.to(dtype)
+                encoder_attention_mask = _normalize_mask(encoder_attention_mask)
+                encoder_hidden_states = encoder_hidden_states * encoder_attention_mask.unsqueeze(-1).to(dtype)
             except Exception as exc:
                 logger.error(
                     "LongCat encoder mask broadcast failed: encoder_hidden_states shape %s, mask shape %s",
@@ -759,18 +757,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             encoder_attention_mask = (encoder_attention_mask * 0 + 1).to(encoder_attention_mask.dtype)
 
         if encoder_attention_mask is not None:
-            if (
-                encoder_attention_mask.dim() == 4
-                and encoder_attention_mask.shape[1] == 1
-                and encoder_attention_mask.shape[2] == 1
-            ):
-                encoder_attention_mask = encoder_attention_mask.squeeze(1).squeeze(1)
-            if encoder_attention_mask.dim() == 3 and encoder_attention_mask.shape[1] == 1:
-                encoder_attention_mask = encoder_attention_mask.squeeze(1)
-            if encoder_attention_mask.dim() != 2:
-                raise ValueError(f"Unexpected encoder_attention_mask shape for masking: {encoder_attention_mask.shape}")
-
-            encoder_attention_mask = encoder_attention_mask.to(dtype)
+            encoder_attention_mask = _normalize_mask(encoder_attention_mask).to(dtype)
             y_seqlens = encoder_attention_mask.sum(dim=1).tolist()
 
             flat_mask = encoder_attention_mask.reshape(-1)
