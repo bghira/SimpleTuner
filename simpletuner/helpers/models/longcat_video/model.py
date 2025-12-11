@@ -160,10 +160,25 @@ class LongCatVideo(VideoModelFoundation):
     def convert_text_embed_for_pipeline(self, text_embedding: dict, pipeline_type=None) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]
         attention_mask = text_embedding["prompt_attention_mask"]
-        if prompt_embeds is not None and prompt_embeds.dim() == 3:
-            prompt_embeds = prompt_embeds.unsqueeze(1)
-        if attention_mask is not None and attention_mask.dim() == 2:
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
+
+        if prompt_embeds is not None:
+            if prompt_embeds.dim() == 4 and prompt_embeds.shape[1] == 1:
+                # already [B, 1, S, C]
+                pass
+            elif prompt_embeds.dim() == 3:
+                # [B, S, C] -> [B, 1, S, C]
+                prompt_embeds = prompt_embeds.unsqueeze(1)
+            else:
+                raise ValueError(f"Unexpected prompt_embeds shape for LongCat: {prompt_embeds.shape}")
+
+        if attention_mask is not None:
+            if attention_mask.dim() == 4:
+                attention_mask = attention_mask.squeeze(1).squeeze(1)
+            elif attention_mask.dim() == 3 and attention_mask.shape[1] == 1:
+                attention_mask = attention_mask.squeeze(1)
+            elif attention_mask.dim() != 2:
+                raise ValueError(f"Unexpected attention_mask shape for LongCat: {attention_mask.shape}")
+
         return {
             "prompt_embeds": prompt_embeds,
             "prompt_attention_mask": attention_mask,
@@ -183,10 +198,14 @@ class LongCatVideo(VideoModelFoundation):
         if negative_embeds.dim() == 3:
             negative_embeds = negative_embeds.unsqueeze(1)
         if negative_attention_mask is not None:
-            if negative_attention_mask.dim() == 2:
-                negative_attention_mask = negative_attention_mask.unsqueeze(1).unsqueeze(1)
-            elif negative_attention_mask.dim() == 3:
-                negative_attention_mask = negative_attention_mask.unsqueeze(1)
+            if negative_attention_mask.dim() == 4:
+                negative_attention_mask = negative_attention_mask.squeeze(1).squeeze(1)
+            elif negative_attention_mask.dim() == 3 and negative_attention_mask.shape[1] == 1:
+                negative_attention_mask = negative_attention_mask.squeeze(1)
+            elif negative_attention_mask.dim() == 2:
+                pass
+            else:
+                raise ValueError(f"Unexpected negative attention mask shape for LongCat: {negative_attention_mask.shape}")
         return {
             "negative_prompt_embeds": negative_embeds,
             "negative_prompt_attention_mask": negative_attention_mask,
