@@ -83,6 +83,31 @@ class CrepaDecodeTests(unittest.TestCase):
         self.assertEqual(tokens.dtype, torch.float32)
         self.assertEqual(tokens.shape, (1, 2, 2, 4))
 
+    def test_hidden_projection_casts_to_projector_dtype(self):
+        config = SimpleNamespace(
+            crepa_enabled=True,
+            crepa_block_index=0,
+            crepa_adjacent_distance=1,
+            crepa_adjacent_tau=1.0,
+            crepa_lambda=0.5,
+            crepa_model=None,
+            crepa_encoder_image_size=8,
+            crepa_normalize_by_frames=True,
+            crepa_spatial_align=True,
+            crepa_cumulative_neighbors=False,
+        )
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4)
+        reg.encoder = _DummyEncoder(dtype=torch.float32)
+        reg.encoder_dim = 4
+        reg.projector = torch.nn.Sequential(torch.nn.LayerNorm(4), torch.nn.Linear(4, 4))
+        reg.projector = reg.projector.to(dtype=torch.float32)
+
+        hidden = torch.randn(1, 2, 3, 4, dtype=torch.bfloat16)
+        projected = reg._project_hidden_states(hidden)
+        self.assertEqual(projected.dtype, torch.float32)
+        self.assertEqual(projected.shape, (1, 2, 3, 4))
+
 
 if __name__ == "__main__":
     unittest.main()

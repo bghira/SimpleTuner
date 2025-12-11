@@ -188,7 +188,8 @@ class CrepaRegularizer:
             raise ValueError(f"CREPA expected hidden states with 3 or 4 dims, got {hidden_states.shape}")
 
         b, t, p, d = hidden_states.shape
-        flattened = hidden_states.float().reshape(b * t * p, d)
+        projector_dtype = next(self.projector.parameters()).dtype
+        flattened = hidden_states.to(dtype=projector_dtype).reshape(b * t * p, d)
         projected = self.projector(flattened)
         projected = projected.view(b, t, p, -1)
         return projected
