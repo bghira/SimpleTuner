@@ -117,8 +117,10 @@ class LongCatVideoPipeline(DiffusionPipeline):
 
         latents_mean = torch.tensor(latents_mean_config, dtype=torch.float32).view(1, z_dim, 1, 1, 1)
         latents_std = 1.0 / torch.tensor(latents_std_config, dtype=torch.float32).view(1, z_dim, 1, 1, 1)
-        self.register_buffer("latents_mean", latents_mean, persistent=False)
-        self.register_buffer("latents_std", latents_std, persistent=False)
+        latents_mean.requires_grad = False
+        latents_std.requires_grad = False
+        self.latents_mean = latents_mean
+        self.latents_std = latents_std
 
     def _resolve_vae_config(self, vae: Optional[AutoencoderKLWan]) -> Tuple[List[float], List[float], int, int, int]:
         vae_config = getattr(vae, "config", None)
