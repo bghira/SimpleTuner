@@ -691,7 +691,7 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 
 - **What**: Enable ReflexFlow-style enhancements (anti-drift + frequency-compensated weighting) during scheduled sampling for flow-matching models.
 - **Why**: Reduces exposure bias when rolling out flow-matching models by adding directional regularization and bias-aware loss weighting.
-- **Default**: False. Requires `--scheduled_sampling_max_step_offset` > 0.
+- **Default**: Auto-enable for flow-matching models when `--scheduled_sampling_max_step_offset` > 0; override with `--scheduled_sampling_reflexflow=false`.
 
 ### `--scheduled_sampling_reflexflow_alpha`
 
