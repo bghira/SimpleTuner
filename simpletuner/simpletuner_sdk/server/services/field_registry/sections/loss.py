@@ -164,6 +164,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Adds a DINOv2-driven temporal alignment regularizer over intermediate hidden states.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=8,
+            documentation="OPTIONS.md#--crepa_enabled",
         )
     )
 
@@ -182,6 +183,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Use an encoder-side layer; earlier blocks capture spatial/temporal structure better.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=9,
+            documentation="OPTIONS.md#--crepa_block_index",
         )
     )
 
@@ -200,6 +202,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Higher values increase regularisation strength; try 0.5–1.0.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=10,
+            documentation="OPTIONS.md#--crepa_lambda",
         )
     )
 
@@ -218,6 +221,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="1 aligns to immediate neighbours; larger values expand the temporal window but add compute.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=11,
+            documentation="OPTIONS.md#--crepa_adjacent_distance",
         )
     )
 
@@ -236,6 +240,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Controls how quickly similarity weighting drops for farther frames.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=12,
+            documentation="OPTIONS.md#--crepa_adjacent_tau",
         )
     )
 
@@ -253,6 +258,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip='Passes directly to torch.hub.load("facebookresearch/dinov2", <id>); e.g., dinov2_vitg14 or dinov2_vits14.',
             importance=ImportanceLevel.EXPERIMENTAL,
             order=13,
+            documentation="OPTIONS.md#--crepa_model",
         )
     )
 
@@ -271,6 +277,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Set to the pretrained encoder's default (518 for DINOv2-G/14; 224 for ViT-S/14).",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=14,
+            documentation="OPTIONS.md#--crepa_encoder_image_size",
         )
     )
 
@@ -288,6 +295,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Enable only if latents come from caches or elsewhere; encoding new pixels will no longer work.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=15,
+            documentation="OPTIONS.md#--crepa_drop_vae_encoder",
         )
     )
 
@@ -305,6 +313,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Turn off to let longer clips contribute proportionally more alignment signal.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=16,
+            documentation="OPTIONS.md#--crepa_normalize_by_frames",
         )
     )
 
@@ -322,5 +331,6 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Disable to pool both sides before similarity if memory is tight.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=17,
+            documentation="OPTIONS.md#--crepa_spatial_align",
         )
     )
