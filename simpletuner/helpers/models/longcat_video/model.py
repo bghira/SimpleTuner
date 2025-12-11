@@ -128,8 +128,28 @@ class LongCatVideo(VideoModelFoundation):
         """
         return PipelineTypes.TEXT2IMG
 
+    def _normalize_prompt_tensor(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
+        if tensor is None:
+            return None
+        if tensor.dim() == 4 and tensor.shape[1] == 1:
+            return tensor.squeeze(1)
+        return tensor
+
+    def _normalize_attention_tensor(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
+        if tensor is None:
+            return None
+        if tensor.dim() == 4 and tensor.shape[1] == 1 and tensor.shape[2] == 1:
+            tensor = tensor.squeeze(1).squeeze(1)
+        if tensor.dim() == 3 and tensor.shape[1] == 1:
+            tensor = tensor.squeeze(1)
+        return tensor
+
     def _format_text_embedding(self, text_embedding: dict):
         prompt_embeds, prompt_attention_mask, negative_prompt_embeds, negative_prompt_attention_mask = text_embedding
+        prompt_embeds = self._normalize_prompt_tensor(prompt_embeds)
+        prompt_attention_mask = self._normalize_attention_tensor(prompt_attention_mask)
+        negative_prompt_embeds = self._normalize_prompt_tensor(negative_prompt_embeds)
+        negative_prompt_attention_mask = self._normalize_attention_tensor(negative_prompt_attention_mask)
         return {
             "prompt_embeds": prompt_embeds,
             "prompt_attention_mask": prompt_attention_mask,
@@ -138,24 +158,35 @@ class LongCatVideo(VideoModelFoundation):
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: dict, pipeline_type=None) -> dict:
+        prompt_embeds = text_embedding["prompt_embeds"]
+        attention_mask = text_embedding["prompt_attention_mask"]
+        if prompt_embeds is not None and prompt_embeds.dim() == 3:
+            prompt_embeds = prompt_embeds.unsqueeze(1)
+        if attention_mask is not None and attention_mask.dim() == 2:
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
         return {
-            "prompt_embeds": text_embedding["prompt_embeds"],
-            "prompt_attention_mask": text_embedding["prompt_attention_mask"],
+            "prompt_embeds": prompt_embeds,
+            "prompt_attention_mask": attention_mask,
             "negative_prompt_embeds": text_embedding.get("negative_prompt_embeds"),
             "negative_prompt_attention_mask": text_embedding.get("negative_prompt_attention_mask"),
         }
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
-        negative_embeds = text_embedding.get("negative_prompt_embeds") or text_embedding.get("prompt_embeds")
-        negative_attention_mask = text_embedding.get("negative_prompt_attention_mask") or text_embedding.get(
-            "prompt_attention_mask"
+        negative_embeds = self._normalize_prompt_tensor(
+            text_embedding.get("negative_prompt_embeds") or text_embedding.get("prompt_embeds")
+        )
+        negative_attention_mask = self._normalize_attention_tensor(
+            text_embedding.get("negative_prompt_attention_mask") or text_embedding.get("prompt_attention_mask")
         )
         if negative_embeds is None:
             return {}
         if negative_embeds.dim() == 3:
-            negative_embeds = negative_embeds.unsqueeze(0)
-        if negative_attention_mask is not None and negative_attention_mask.dim() == 3:
-            negative_attention_mask = negative_attention_mask.unsqueeze(0)
+            negative_embeds = negative_embeds.unsqueeze(1)
+        if negative_attention_mask is not None:
+            if negative_attention_mask.dim() == 2:
+                negative_attention_mask = negative_attention_mask.unsqueeze(1).unsqueeze(1)
+            elif negative_attention_mask.dim() == 3:
+                negative_attention_mask = negative_attention_mask.unsqueeze(1)
         return {
             "negative_prompt_embeds": negative_embeds,
             "negative_prompt_attention_mask": negative_attention_mask,
