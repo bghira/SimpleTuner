@@ -267,7 +267,8 @@ class CrepaRegularizer:
         return tokens
 
     def _decode_latents(self, latents: torch.Tensor, vae: nn.Module) -> torch.Tensor:
-        latents = latents.to(device=self.device, dtype=torch.float32)
+        vae_dtype = next(vae.parameters()).dtype
+        latents = latents.to(device=self.device, dtype=vae_dtype)
         scaling_factor = getattr(getattr(vae, "config", None), "scaling_factor", 1.0)
         shift_factor = getattr(getattr(vae, "config", None), "shift_factor", None)
 
