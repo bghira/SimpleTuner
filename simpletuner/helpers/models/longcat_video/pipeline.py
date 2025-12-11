@@ -57,6 +57,8 @@ DEFAULT_VAE_LATENTS_STD = [
     2.8251,
     1.916,
 ]
+DEFAULT_TRANSFORMER_CAPTION_CHANNELS = 4096
+DEFAULT_TRANSFORMER_IN_CHANNELS = 16
 
 
 @dataclass
@@ -90,7 +92,7 @@ class LongCatVideoPipeline(DiffusionPipeline):
         vae: Optional[AutoencoderKLWan],
         text_encoder: Qwen2_5_VLForConditionalGeneration,
         tokenizer: AutoTokenizer,
-        transformer: LongCatVideoTransformer3DModel,
+        transformer: Optional[LongCatVideoTransformer3DModel],
     ):
         super().__init__()
         self.register_modules(
@@ -114,6 +116,12 @@ class LongCatVideoPipeline(DiffusionPipeline):
         self.video_processor = VideoProcessor(vae_scale_factor=self.vae_scale_factor_spatial)
 
         self.max_tokenizer_len = 512
+
+        transformer_config = getattr(transformer, "config", None)
+        self.transformer_caption_channels = getattr(
+            transformer_config, "caption_channels", DEFAULT_TRANSFORMER_CAPTION_CHANNELS
+        )
+        self.transformer_in_channels = getattr(transformer_config, "in_channels", DEFAULT_TRANSFORMER_IN_CHANNELS)
 
         latents_mean = torch.tensor(latents_mean_config, dtype=torch.float32).view(1, z_dim, 1, 1, 1)
         latents_std = 1.0 / torch.tensor(latents_std_config, dtype=torch.float32).view(1, z_dim, 1, 1, 1)
@@ -143,6 +151,11 @@ class LongCatVideoPipeline(DiffusionPipeline):
             raise ValueError("VAE is not loaded; load a VAE before encoding or decoding latents.")
         return self.vae
 
+    def _require_transformer(self) -> LongCatVideoTransformer3DModel:
+        if self.transformer is None:
+            raise ValueError("Transformer is not loaded; load a transformer before running generation.")
+        return self.transformer
+
     def _get_attention_mask(self, attention_mask: torch.Tensor, target_batch: int, num_videos_per_prompt: int):
         attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
         attention_mask = attention_mask.repeat(1, num_videos_per_prompt, 1, 1)
@@ -170,7 +183,7 @@ class LongCatVideoPipeline(DiffusionPipeline):
         return getattr(self, "_interrupt", False)
 
     def _pad_prompt_embeds(self, prompt_embeds: torch.Tensor):
-        target_dim = getattr(self.transformer.config, "caption_channels", prompt_embeds.shape[-1])
+        target_dim = self.transformer_caption_channels or prompt_embeds.shape[-1]
         if prompt_embeds.shape[-1] == target_dim:
             return prompt_embeds
         if prompt_embeds.shape[-1] < target_dim:
@@ -385,7 +398,9 @@ class LongCatVideoPipeline(DiffusionPipeline):
         else:
             batch_size = len(prompt)
 
-        dtype = self.transformer.dtype if hasattr(self.transformer, "dtype") else torch.float32
+        transformer = self._require_transformer()
+
+        dtype = transformer.dtype if hasattr(transformer, "dtype") else torch.float32
         (
             prompt_embeds,
             prompt_attention_mask,
@@ -426,7 +441,7 @@ class LongCatVideoPipeline(DiffusionPipeline):
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
 
-        num_channels_latents = self.transformer.config.in_channels
+        num_channels_latents = getattr(transformer.config, "in_channels", self.transformer_in_channels)
 
         image_tensor = None
         if image is not None:
@@ -470,14 +485,16 @@ class LongCatVideoPipeline(DiffusionPipeline):
                 self._current_timestep = t
 
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
-                latent_model_input = latent_model_input.to(dtype=self.transformer.dtype)
+                latent_model_input = latent_model_input.to(
+                    dtype=transformer.dtype if hasattr(transformer, "dtype") else latents.dtype
+                )
 
                 timestep = t.expand(latent_model_input.shape[0]).to(latents.dtype)
                 if cond_count > 0:
                     timestep = timestep.unsqueeze(-1).repeat(1, latent_model_input.shape[2])
                     timestep[:, :cond_count] = 0
 
-                noise_pred = self.transformer(
+                noise_pred = transformer(
                     hidden_states=latent_model_input,
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
