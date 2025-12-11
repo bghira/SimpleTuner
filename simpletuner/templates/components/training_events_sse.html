@@ -4,9 +4,7 @@
             <div class="d-flex justify-content-between align-items-start">
                 <div>
                     <h6 class="card-title mb-1"><i class="fas fa-bolt"></i> Training Progress</h6>
-                    <small class="text-muted" data-progress-label>Waiting for updates…</small>
                 </div>
-                <span class="badge bg-secondary" data-progress-status>Idle</span>
             </div>
             <div class="progress mt-3" style="height: 8px;">
                 <div class="progress-bar" role="progressbar" data-progress-bar
@@ -613,8 +611,6 @@
         if (existingCard) {
             progressCard = existingCard;
             elements = {
-                label: progressCard.querySelector('[data-progress-label]'),
-                status: progressCard.querySelector('[data-progress-status]'),
                 bar: progressCard.querySelector('[data-progress-bar]'),
                 step: progressCard.querySelector('[data-progress-step]'),
                 totalSteps: progressCard.querySelector('[data-progress-total-steps]'),
@@ -644,8 +640,6 @@
         }
 
         elements = {
-            label: progressCard.querySelector('[data-progress-label]'),
-            status: progressCard.querySelector('[data-progress-status]'),
             bar: progressCard.querySelector('[data-progress-bar]'),
             step: progressCard.querySelector('[data-progress-step]'),
             totalSteps: progressCard.querySelector('[data-progress-total-steps]'),
@@ -1146,20 +1140,8 @@
     }
 
     function setStatus(statusText, severity) {
-        // Don't create or update the event dock card during startup
-        // The status is shown in the "Training Starting" card instead
-        if (startupStatusActive || hasActiveStartupStages()) {
-            return;
-        }
-
-        const card = ensureCard();
-        if (!card || !elements || !elements.status) {
-            return;
-        }
-
-        const level = mapSeverityToBootstrap(severity);
-        elements.status.className = 'badge bg-' + level;
-        elements.status.textContent = statusText;
+        // Status badge was removed from the training progress card
+        // Connection status is now managed via Alpine store
     }
 
     function updateProgressCard(progress, jobId) {
@@ -1475,17 +1457,27 @@
 
         var connectionStatusHandler = function(info) {
             if (!info) return;
+            var store = getTrainerStore();
             if (info.status === 'connected') {
-                setStatus('Connected', 'success');
+                if (store) {
+                    store.connectionStatus = 'connected';
+                    store.connectionMessage = '';
+                }
                 // Restore training state after reconnection
                 console.log('[SSE-DEBUG] SSE reconnected, restoring training state...');
                 checkInitialTrainingStatus().catch(function(err) {
                     console.error('[SSE-DEBUG] Failed to restore training status after reconnect:', err);
                 });
             } else if (info.status === 'reconnecting') {
-                setStatus('Reconnecting', 'warning');
+                if (store) {
+                    store.connectionStatus = 'reconnecting';
+                    store.connectionMessage = info.message || 'Reconnecting...';
+                }
             } else if (info.status === 'disconnected') {
-                setStatus('Disconnected', 'secondary');
+                if (store) {
+                    store.connectionStatus = 'disconnected';
+                    store.connectionMessage = info.message || 'Disconnected';
+                }
                 setTrainingState('disconnected', {
                     job_id: activeJobId,
                     message: info.message || 'Event stream disconnected',

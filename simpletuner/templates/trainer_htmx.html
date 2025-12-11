@@ -355,6 +355,7 @@ function trainerComponent() {
          showTrainingProgress: false,
         trainingProgress: {},
         connectionStatus: 'connected',
+        connectionMessage: '',
         defaults: null,
         mergeEnvironmentDefaults: (() => {
             try {
@@ -5684,9 +5685,6 @@ function trainerComponent() {
                     <span class="text-muted"
                           x-text="`Step ${trainingProgress.step || 0}`"></span>
                 </div>
-                <div id="connectionStatus" class="connection-status-inline">
-                    <i class="fas fa-circle text-success"></i> Connected
-                </div>
             </div>
         </div>
 
@@ -5941,7 +5939,8 @@ function trainerComponent() {
                               'bg-warning text-dark': connectionStatus === 'reconnecting',
                               'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
                           }"
-                          x-text="connectionStatus"></span>
+                          :title="connectionMessage || ''"
+                          x-text="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"></span>
                 </div>
                 <div class="event-dock-sysstat">
                     <template x-if="hasSystemStatus">

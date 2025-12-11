@@ -3,7 +3,6 @@ class EventHandler {
     constructor() {
         this.lastEventIndex = 0;
         this.eventList = document.getElementById('eventList');
-        this.connectionStatus = document.getElementById('connectionStatus');
         this.callbackUrl = null; // Will be set after config detection
         this.isConnected = false;
         this.reconnectAttempts = 0;
@@ -1506,26 +1505,32 @@ class EventHandler {
     }
 
     setConnectionStatus(connected, message = null, showMessage = false) {
-        const connectionStatus = document.getElementById('connectionStatus');
         const eventStatus = document.getElementById('eventStatus');
 
         const statusText = connected ? 'Connected' : (message || 'Disconnected');
         const statusIcon = connected ? 'fa-circle text-success' : 'fa-circle text-danger';
         const statusContent = `<i class="fas ${statusIcon}"></i> ${statusText}`;
 
-        if (connectionStatus) {
-            connectionStatus.innerHTML = statusContent;
-            // Add pulsing animation for disconnected state
-            if (!connected) {
-                connectionStatus.classList.add('connection-error');
-            } else {
-                connectionStatus.classList.remove('connection-error');
-            }
-        }
-
-        // Also update event display status
+        // Update event display status if element exists
         if (eventStatus) {
             eventStatus.innerHTML = statusContent;
+        }
+
+        // Update Alpine store for the event dock badge
+        const store = window.Alpine && typeof window.Alpine.store === 'function'
+            ? window.Alpine.store('trainer')
+            : null;
+        if (store) {
+            if (connected) {
+                store.connectionStatus = 'connected';
+                store.connectionMessage = '';
+            } else if (message && message.toLowerCase().includes('reconnect')) {
+                store.connectionStatus = 'reconnecting';
+                store.connectionMessage = message;
+            } else {
+                store.connectionStatus = 'disconnected';
+                store.connectionMessage = message || 'Disconnected';
+            }
         }
 
         // Only show message in event list if requested

@@ -735,7 +735,11 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         if self.text_tokens_zero_pad and encoder_attention_mask is not None:
             try:
                 # Normalize masks from cache/encode into (B, seq, 1) for clean broadcast
-                if encoder_attention_mask.dim() == 4 and encoder_attention_mask.shape[1] == 1 and encoder_attention_mask.shape[2] == 1:
+                if (
+                    encoder_attention_mask.dim() == 4
+                    and encoder_attention_mask.shape[1] == 1
+                    and encoder_attention_mask.shape[2] == 1
+                ):
                     encoder_attention_mask = encoder_attention_mask.squeeze(1).squeeze(1)
                 if encoder_attention_mask.dim() == 3 and encoder_attention_mask.shape[1] == 1:
                     encoder_attention_mask = encoder_attention_mask.squeeze(1)
@@ -755,16 +759,29 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             encoder_attention_mask = (encoder_attention_mask * 0 + 1).to(encoder_attention_mask.dtype)
 
         if encoder_attention_mask is not None:
-            encoder_attention_mask = encoder_attention_mask.squeeze(1).squeeze(1)
-            encoder_hidden_states = (
-                encoder_hidden_states.squeeze(1)
-                .masked_select(encoder_attention_mask.unsqueeze(-1) != 0)
-                .view(1, -1, hidden_states.shape[-1])
-            )
+            if (
+                encoder_attention_mask.dim() == 4
+                and encoder_attention_mask.shape[1] == 1
+                and encoder_attention_mask.shape[2] == 1
+            ):
+                encoder_attention_mask = encoder_attention_mask.squeeze(1).squeeze(1)
+            if encoder_attention_mask.dim() == 3 and encoder_attention_mask.shape[1] == 1:
+                encoder_attention_mask = encoder_attention_mask.squeeze(1)
+            if encoder_attention_mask.dim() != 2:
+                raise ValueError(f"Unexpected encoder_attention_mask shape for masking: {encoder_attention_mask.shape}")
+
+            encoder_attention_mask = encoder_attention_mask.to(dtype)
             y_seqlens = encoder_attention_mask.sum(dim=1).tolist()
+
+            flat_mask = encoder_attention_mask.reshape(-1)
+            encoder_hidden_states = encoder_hidden_states.reshape(
+                B * encoder_hidden_states.shape[1], encoder_hidden_states.shape[2]
+            )
+            encoder_hidden_states = encoder_hidden_states[flat_mask != 0]
+            encoder_hidden_states = encoder_hidden_states.view(1, -1, hidden_states.shape[-1])
         else:
-            y_seqlens = [encoder_hidden_states.shape[2]] * encoder_hidden_states.shape[0]
-            encoder_hidden_states = encoder_hidden_states.squeeze(1).view(1, -1, hidden_states.shape[-1])
+            y_seqlens = [encoder_hidden_states.shape[1]] * encoder_hidden_states.shape[0]
+            encoder_hidden_states = encoder_hidden_states.view(1, -1, hidden_states.shape[-1])
 
         if self.cp_split_hw[0] * self.cp_split_hw[1] > 1:
             hidden_states = hidden_states.view(B, N_t, N_h, N_w, -1)
