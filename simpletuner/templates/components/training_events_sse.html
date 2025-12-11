@@ -1457,35 +1457,30 @@
 
         var connectionStatusHandler = function(info) {
             if (!info) return;
-            var store = getTrainerStore();
-            if (info.status === 'connected') {
-                if (store) {
-                    store.connectionStatus = 'connected';
-                    store.connectionMessage = '';
-                }
+            var status = info.status;
+            var message = info.message || '';
+
+            // Update connection status via centralized function (updates Alpine store + dispatches event)
+            if (typeof window.updateConnectionStatus === 'function') {
+                window.updateConnectionStatus(status, message);
+            }
+
+            // Handle status-specific side effects
+            if (status === 'connected') {
                 // Restore training state after reconnection
                 console.log('[SSE-DEBUG] SSE reconnected, restoring training state...');
                 checkInitialTrainingStatus().catch(function(err) {
                     console.error('[SSE-DEBUG] Failed to restore training status after reconnect:', err);
                 });
-            } else if (info.status === 'reconnecting') {
-                if (store) {
-                    store.connectionStatus = 'reconnecting';
-                    store.connectionMessage = info.message || 'Reconnecting...';
-                }
-            } else if (info.status === 'disconnected') {
-                if (store) {
-                    store.connectionStatus = 'disconnected';
-                    store.connectionMessage = info.message || 'Disconnected';
-                }
+            } else if (status === 'disconnected') {
                 setTrainingState('disconnected', {
                     job_id: activeJobId,
-                    message: info.message || 'Event stream disconnected',
+                    message: message || 'Event stream disconnected',
                     source: 'sse-manager'
                 });
                 // Only clear lifecycle stages if this is a permanent disconnect (max retries reached)
                 // Don't clear on temporary network issues that will auto-reconnect
-                if (info.message && info.message.includes('Maximum retries')) {
+                if (message && message.includes('Maximum retries')) {
                     resetTrainingProgressUI('disconnected', activeJobId);
                 }
             }

@@ -1516,21 +1516,17 @@ class EventHandler {
             eventStatus.innerHTML = statusContent;
         }
 
-        // Update Alpine store for the event dock badge
-        const store = window.Alpine && typeof window.Alpine.store === 'function'
-            ? window.Alpine.store('trainer')
-            : null;
-        if (store) {
-            if (connected) {
-                store.connectionStatus = 'connected';
-                store.connectionMessage = '';
-            } else if (message && message.toLowerCase().includes('reconnect')) {
-                store.connectionStatus = 'reconnecting';
-                store.connectionMessage = message;
-            } else {
-                store.connectionStatus = 'disconnected';
-                store.connectionMessage = message || 'Disconnected';
-            }
+        // Determine the status string
+        let status = 'disconnected';
+        if (connected) {
+            status = 'connected';
+        } else if (message && message.toLowerCase().includes('reconnect')) {
+            status = 'reconnecting';
+        }
+
+        // Update via centralized function (updates Alpine store + dispatches event)
+        if (typeof window.updateConnectionStatus === 'function') {
+            window.updateConnectionStatus(status, connected ? '' : (message || 'Disconnected'));
         }
 
         // Only show message in event list if requested
