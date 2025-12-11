@@ -397,7 +397,8 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
         prompt_embeds = outputs.hidden_states[-1].to(device=device, dtype=target_dtype)
         prompt_embeds = self._pad_prompt_embeds(prompt_embeds[:, :max_length, :])
 
-        prompt_embeds = prompt_embeds.unsqueeze(1)
+        if prompt_embeds.dim() == 3:
+            prompt_embeds = prompt_embeds.unsqueeze(1)
         prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1, 1)
         prompt_embeds = prompt_embeds.view(batch_size * num_videos_per_prompt, 1, max_length, -1)
         prompt_attention_mask = self._get_attention_mask(attention_mask, prompt_embeds.shape[0], num_videos_per_prompt).to(
@@ -427,7 +428,8 @@ class LongCatVideoPipeline(DiffusionPipeline, LongCatLoraLoaderMixin):
         )
         negative_prompt_embeds = negative_outputs.hidden_states[-1].to(device=device, dtype=target_dtype)
         negative_prompt_embeds = self._pad_prompt_embeds(negative_prompt_embeds[:, :max_length, :])
-        negative_prompt_embeds = negative_prompt_embeds.unsqueeze(1)
+        if negative_prompt_embeds.dim() == 3:
+            negative_prompt_embeds = negative_prompt_embeds.unsqueeze(1)
         negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_videos_per_prompt, 1, 1)
         negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_videos_per_prompt, 1, max_length, -1)
         negative_attention_mask = self._get_attention_mask(
