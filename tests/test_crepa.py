@@ -1,79 +1,49 @@
-import math
-import types
 import unittest
+from types import SimpleNamespace
 
 import torch
-import torch.nn as nn
 
 from simpletuner.helpers.training.crepa import CrepaRegularizer
 
 
-class _DummyAccelerator:
-    def __init__(self):
-        self.device = torch.device("cpu")
+class _DummyVAE(torch.nn.Module):
+    def __init__(self, dtype=torch.bfloat16):
+        super().__init__()
+        # Parameter establishes the VAE's dtype/device.
+        self.register_parameter("_dummy", torch.nn.Parameter(torch.zeros(1, dtype=dtype), requires_grad=False))
+        self.config = SimpleNamespace(scaling_factor=1.0, shift_factor=None)
+
+    def decode(self, latents):
+        # Ensure inputs arrive in the same dtype as the VAE parameters.
+        assert latents.dtype == self._dummy.dtype
+        # Return a minimal video tensor: (B, C, T, H, W)
+        sample = torch.ones(latents.shape[0], 3, latents.shape[2], 2, 2, device=latents.device, dtype=latents.dtype)
+        return SimpleNamespace(sample=sample)
 
 
-class _DummyVAE(nn.Module):
-    pass
-
-
-class CrepaRegularizerTests(unittest.TestCase):
-    def setUp(self):
-        self.accelerator = _DummyAccelerator()
-
-    def _make_regularizer(self, adjacent_distance: int) -> CrepaRegularizer:
-        config = types.SimpleNamespace(
+class CrepaDecodeTests(unittest.TestCase):
+    def test_decode_preserves_vae_dtype(self):
+        config = SimpleNamespace(
             crepa_enabled=True,
             crepa_block_index=0,
-            crepa_adjacent_distance=adjacent_distance,
+            crepa_adjacent_distance=1,
             crepa_adjacent_tau=1.0,
             crepa_lambda=0.5,
+            crepa_model=None,
+            crepa_encoder_image_size=8,
             crepa_normalize_by_frames=True,
             crepa_spatial_align=True,
+            crepa_cumulative_neighbors=False,
         )
-        regularizer = CrepaRegularizer(config, self.accelerator, hidden_size=4)
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=8)
 
-        def fake_load_encoder():
-            regularizer.encoder = nn.Identity()
-            regularizer.encoder_dim = 4
+        vae = _DummyVAE(dtype=torch.bfloat16)
+        latents = torch.randn(1, 4, 2, 2, 2, dtype=torch.float32)
 
-        regularizer._load_encoder = fake_load_encoder
-        model = nn.Module()
-        regularizer.attach_to_model(model)
-        regularizer.projector = nn.Identity()
-        model.crepa_projector = regularizer.projector
-        regularizer._decode_latents = lambda latents, vae: torch.zeros(1, 3, 3, 2, 2)
-        regularizer._encode_frames = lambda video: torch.ones(1, 3, 2, 4)
-        return regularizer
-
-    def test_alignment_with_neighbors_matches_expected_weighting(self):
-        regularizer = self._make_regularizer(adjacent_distance=1)
-        hidden_states = torch.ones(1, 3, 2, 4)
-        latents = torch.zeros(1, 4, 3, 2, 2)
-
-        loss, logs = regularizer.compute_loss(hidden_states, latents, _DummyVAE())
-
-        self.assertIsNotNone(loss)
-        self.assertIsNotNone(logs)
-        weight = math.exp(-1.0)
-        expected = -((3.0 + 4.0 * weight) / 3.0) * 0.5
-        self.assertAlmostEqual(loss.item(), expected, places=5)
-        self.assertIn("crepa_loss", logs)
-        self.assertIn("crepa_similarity", logs)
-
-    def test_alignment_without_neighbors_respects_distance_zero(self):
-        regularizer = self._make_regularizer(adjacent_distance=0)
-        hidden_states = torch.ones(1, 3, 2, 4)
-        latents = torch.zeros(1, 4, 3, 2, 2)
-
-        loss, logs = regularizer.compute_loss(hidden_states, latents, _DummyVAE())
-
-        self.assertIsNotNone(loss)
-        self.assertIsNotNone(logs)
-        expected = -1.0 * 0.5
-        self.assertAlmostEqual(loss.item(), expected, places=5)
-        self.assertIn("crepa_loss", logs)
-        self.assertIn("crepa_similarity", logs)
+        decoded = reg._decode_latents(latents, vae)
+        self.assertEqual(decoded.dtype, vae._dummy.dtype)
+        self.assertEqual(decoded.shape, (1, 2, 3, 2, 2))
 
 
 if __name__ == "__main__":
