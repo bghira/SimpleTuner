@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import List, Optional, Tuple, Union
 
@@ -8,6 +9,8 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
+
+logger = logging.getLogger(__name__)
 
 
 def _rotate_half(x):
@@ -730,7 +733,15 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         encoder_hidden_states = self.y_embedder(encoder_hidden_states)
 
         if self.text_tokens_zero_pad and encoder_attention_mask is not None:
-            encoder_hidden_states = encoder_hidden_states * encoder_attention_mask[:, None, :, None]
+            try:
+                encoder_hidden_states = encoder_hidden_states * encoder_attention_mask[:, None, :, None]
+            except Exception as exc:
+                logger.error(
+                    "LongCat encoder mask broadcast failed: encoder_hidden_states shape %s, mask shape %s",
+                    tuple(encoder_hidden_states.shape),
+                    tuple(encoder_attention_mask.shape),
+                )
+                raise
             encoder_attention_mask = (encoder_attention_mask * 0 + 1).to(encoder_attention_mask.dtype)
 
         if encoder_attention_mask is not None:
