@@ -505,6 +505,14 @@ class MultiHeadCrossAttention(nn.Module):
         B, H, N, _ = q.shape
         attn_output = None
 
+        # Sanity: ensure k/v are (B, H, S, D) like q
+        if k.shape[1] != H and k.shape[2] == H:
+            logger.debug("Permuting cross-attn kv to match q heads: q %s, k %s", tuple(q.shape), tuple(k.shape))
+            k = k.permute(0, 2, 1, 3).contiguous()
+            v = v.permute(0, 2, 1, 3).contiguous()
+        if k.shape[1] != H:
+            raise ValueError(f"Cross-attn key head mismatch: q heads {H}, k shape {k.shape}")
+
         if self.enable_flashattn3:
             try:  # pragma: no cover - optional dependency
                 from flash_attn_interface import flash_attn_func
@@ -594,7 +602,7 @@ class MultiHeadCrossAttention(nn.Module):
         kv_list = []
         for b in range(B):
             seq_len = kv_seqlen[b] if kv_seqlen is not None else cond.shape[1]
-            kv_list.append(seq_len)
+            kv_list.append(int(seq_len))
         kv_list = kv_list or [cond.shape[1]] * B
 
         attn_output = self._process_cross_attn(q, k, v, kv_list)
@@ -650,6 +658,13 @@ class LongCatSingleStreamBlock(nn.Module):
         self, x, y, t, y_seqlen, latent_shape, num_cond_latents=None, return_kv=False, kv_cache=None, skip_crs_attn=False
     ):
         x_dtype = x.dtype
+
+        if x.dim() > 3:
+            # Flatten any extra spatial dims into the sequence dimension
+            logger.debug("Flattening LongCat block input from shape %s", tuple(x.shape))
+            x = x.view(x.shape[0], -1, x.shape[-1])
+        elif x.dim() < 3:
+            raise ValueError(f"Expected block input with at least 3 dims, got {x.shape}")
 
         B, N, C = x.shape
         T, _, _ = latent_shape
