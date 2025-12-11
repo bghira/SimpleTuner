@@ -549,6 +549,7 @@ class Wan(VideoModelFoundation):
         patched = patched.view(batch, expected_channels, frames, height // patch_size, width // patch_size)
         return patched, True
 
+    @torch.no_grad()
     def _wan_encode_without_internal_patchify(self, vae, samples: torch.Tensor, original_patch_size):
         config = getattr(vae, "config", None)
         if config is None or original_patch_size is None:
@@ -559,6 +560,7 @@ class Wan(VideoModelFoundation):
         finally:
             config.patch_size = original_patch_size
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         patched_samples, disable_internal_patch = self._wan_prepare_vae_encode_inputs(vae, samples)
         if disable_internal_patch:
@@ -570,6 +572,7 @@ class Wan(VideoModelFoundation):
             return self._wan_encode_without_internal_patchify(vae, patched_samples, original_patch_size)
         return super().encode_with_vae(vae, patched_samples)
 
+    @torch.no_grad()
     def _apply_i2v_conditioning_to_kwargs(self, prepared_batch, transformer_kwargs):
         is_i2v_batch = bool(prepared_batch.get("is_i2v_data", False))
         if not (self._is_i2v_like_flavour() or is_i2v_batch):
@@ -1034,7 +1037,10 @@ class Wan(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
-        prompt_embeds, masks = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+        prompt_embeds, masks = pipeline.encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
         )
@@ -1054,6 +1060,11 @@ class Wan(VideoModelFoundation):
             "timestep": prepared_batch["timesteps"],
             "return_dict": False,
         }
+
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        if capture_hidden:
+            wan_transformer_kwargs["output_hidden_states"] = True
+            wan_transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
 
         if prepared_batch.get("conditioning_image_embeds") is not None:
             wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch["conditioning_image_embeds"].to(
@@ -1099,10 +1110,25 @@ class Wan(VideoModelFoundation):
                     force_keep if existing_force_keep is None else (existing_force_keep | force_keep)
                 )
 
-        model_pred = self.model(**wan_transformer_kwargs)[0]
+        model_output = self.model(**wan_transformer_kwargs)
+        if capture_hidden:
+            if isinstance(model_output, tuple) and len(model_output) >= 2:
+                model_pred, crepa_hidden = model_output[0], model_output[1]
+            else:
+                model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+                crepa_hidden = None
+            if crepa_hidden is None:
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    "but none were returned. Check that crepa_block_index is within the model's block count."
+                )
+        else:
+            model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+            crepa_hidden = None
 
         return {
             "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
         }
 
     def check_user_config(self):

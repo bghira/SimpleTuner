@@ -534,6 +534,7 @@ class SanaImg2ImgPipeline(DiffusionPipeline, SanaLoraLoaderMixin):
 
         return timesteps, new_num_inference_steps
 
+    @torch.no_grad()
     def prepare_latents(
         self,
         image: torch.Tensor,

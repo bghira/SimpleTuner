@@ -1,11 +1,52 @@
 <!-- Conditioning Body (for modal) -->
 <div class="modal-section-body">
-    <!-- Conditioning Dataset Links -->
-    <div class="section-group" x-show="matchesParamFilter('conditioning', 'dataset', 'link', 'control')">
+    <!-- Conditioning Type (for conditioning datasets only) -->
+    <div class="section-group" x-show="editingDataset.dataset_type === 'conditioning' && matchesParamFilter('conditioning', 'type', 'controlnet', 'mask', 'reference')">
+        <h6 class="modal-section-title">Conditioning Type</h6>
+        <label class="form-label small">Type <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#conditioning_type" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+        <select class="form-select form-select-sm"
+                x-model="editingDataset.conditioning_type"
+                @change="markAsUnsaved()">
+            <option value="controlnet">ControlNet</option>
+            <option value="mask">Inpainting Mask</option>
+            <option value="reference_strict">Reference (Strict Alignment)</option>
+            <option value="reference_loose">Reference (Loose Alignment)</option>
+        </select>
+        <div class="form-text small text-muted">
+            <span x-show="editingDataset.conditioning_type === 'controlnet'">For ControlNet training with control signal inputs</span>
+            <span x-show="editingDataset.conditioning_type === 'mask'">For inpainting with binary mask inputs</span>
+            <span x-show="editingDataset.conditioning_type === 'reference_strict'">For edit models (Qwen Edit) with strict pixel alignment</span>
+            <span x-show="editingDataset.conditioning_type === 'reference_loose'">For edit models with loose alignment</span>
+        </div>
+    </div>
+
+    <!-- Source Dataset (for reference_strict/loose/mask conditioning datasets) -->
+    <div class="section-group" x-show="editingDataset.dataset_type === 'conditioning' && ['reference_strict', 'reference_loose', 'mask'].includes(editingDataset.conditioning_type) && matchesParamFilter('source', 'dataset', 'reference', 'link')">
+        <h6 class="modal-section-title">Source Dataset</h6>
+        <p class="text-muted small mb-2">
+            Link to the source image/video dataset for pixel alignment.
+        </p>
+        <label class="form-label small">Source <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#conditioning" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+        <select class="form-select form-select-sm"
+                x-model="editingDataset.source_dataset_id"
+                @change="markAsUnsaved()">
+            <option value="">Select source dataset...</option>
+            <template x-for="(option, idx) in sourceDatasetOptions(editingDataset)" :key="`src-${idx}-${option.id}`">
+                <option :value="option.id" x-text="option.label"></option>
+            </template>
+        </select>
+        <div class="form-text small text-warning" x-show="!editingDataset.source_dataset_id && ['reference_strict', 'mask'].includes(editingDataset.conditioning_type)" x-cloak>
+            <i class="fas fa-exclamation-triangle"></i> Source dataset required for strict alignment.
+        </div>
+    </div>
+
+    <!-- Conditioning Dataset Links (for image/video datasets only) -->
+    <div class="section-group" x-show="editingDataset.dataset_type !== 'conditioning' && matchesParamFilter('conditioning', 'dataset', 'link', 'control')">
         <h6 class="modal-section-title">Conditioning Datasets</h6>
         <p class="text-muted small mb-2">
             Link existing <code x-text="conditioningDatasetType"></code> datasets to feed control inputs.
         </p>
+        <label class="form-label small">Linked Datasets <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#conditioning_data" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
         <template x-if="conditioningOptions(editingDataset).length === 0">
             <div class="alert alert-secondary small py-2 mb-2">
                 Create a <code x-text="conditioningDatasetType"></code> dataset first.
@@ -23,10 +64,10 @@
         <div class="form-text small">Hold <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> to select multiple</div>
     </div>
 
-    <!-- Conditioning Generators -->
-    <div class="section-group" x-show="matchesParamFilter('conditioning', 'generator', 'canny', 'depth', 'edge', 'lineart', 'normal', 'scribble', 'mask')">
+    <!-- Conditioning Generators (for image/video datasets only) -->
+    <div class="section-group" x-show="editingDataset.dataset_type !== 'conditioning' && matchesParamFilter('conditioning', 'generator', 'canny', 'depth', 'edge', 'lineart', 'normal', 'scribble', 'mask')">
         <div class="d-flex align-items-center justify-content-between mb-2">
-            <h6 class="modal-section-title mb-0">Conditioning Generators</h6>
+            <h6 class="modal-section-title mb-0">Conditioning Generators <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#conditioning" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></h6>
             <button type="button"
                     class="btn btn-sm btn-outline-primary"
                     @click="addConditioningGenerator(editingDataset)"

@@ -32,6 +32,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="One epoch = one full pass through all training data. More epochs can improve quality but may cause overfitting.",
             importance=ImportanceLevel.ESSENTIAL,
             order=1,
+            documentation="OPTIONS.md#--num_train_epochs",
         )
     )
 
@@ -50,6 +51,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="If set to a positive value, training will stop after this many steps regardless of epochs",
             importance=ImportanceLevel.IMPORTANT,
             order=2,
+            documentation="OPTIONS.md#--max_train_steps",
         )
     )
 
@@ -71,6 +73,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Higher batch sizes can improve training stability but require more VRAM. Start with 1-4 for most GPUs.",
             importance=ImportanceLevel.ESSENTIAL,
             order=3,
+            documentation="OPTIONS.md#--train_batch_size",
         )
     )
 
@@ -92,6 +95,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Controls how much model weights change per step. Lower = more stable but slower. Typical range: 1e-6 to 1e-4",
             importance=ImportanceLevel.ESSENTIAL,
             order=1,
+            documentation="OPTIONS.md#--learning_rate",
         )
     )
 
@@ -114,10 +118,11 @@ def register_training_fields(registry: "FieldRegistry") -> None:
                 ValidationRule(ValidationRuleType.REQUIRED, message="Optimizer is required"),
                 ValidationRule(ValidationRuleType.CHOICES, value=optimizer_choices),
             ],
-            help_text="Optimization algorithm for training",
+            help_text="The algorithm that adjusts model weights based on training errors. AdamW variants are reliable defaults. 8-bit versions use less memory with minimal quality loss. Prodigy/Adafactor can auto-tune learning rate.",
             tooltip="AdamW variants are most common. 8-bit versions save memory. Prodigy auto-adjusts learning rate.",
             importance=ImportanceLevel.ESSENTIAL,
             order=5,
+            documentation="OPTIONS.md#--optimizer",
         )
     )
 
@@ -146,6 +151,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Sine and cosine gradually reduce LR. Constant keeps it fixed. Warmup helps stability at start.",
             importance=ImportanceLevel.IMPORTANT,
             order=2,
+            documentation="OPTIONS.md#--lr_scheduler",
         )
     )
 
@@ -164,6 +170,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Simulates larger batch sizes without using more VRAM. Effective batch = batch_size * accumulation_steps",
             importance=ImportanceLevel.IMPORTANT,
             order=4,
+            documentation="OPTIONS.md#--gradient_accumulation_steps",
         )
     )
 
@@ -219,6 +226,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Reduces VRAM usage significantly but increases training time by ~20%",
             importance=ImportanceLevel.ADVANCED,
             order=1,
+            documentation="OPTIONS.md#--gradient_checkpointing",
         )
     )
 
@@ -237,6 +245,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Useful when training large models on limited VRAM. May slow training slightly depending on hardware.",
             importance=ImportanceLevel.ADVANCED,
             order=3,
+            documentation="OPTIONS.md#--enable_group_offload",
         )
     )
 
@@ -256,6 +265,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=5,
             dependencies=[FieldDependency(field="enable_group_offload", operator="not_equals", value=True)],
+            documentation="OPTIONS.md#--ramtorch",
         )
     )
 
@@ -273,6 +283,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=6,
             dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_target_modules",
         )
     )
 
@@ -290,6 +301,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=7,
             dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_text_encoder",
         )
     )
 
@@ -307,6 +319,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=8,
             dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_vae",
         )
     )
 
@@ -324,6 +337,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=9,
             dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--ramtorch_controlnet",
         )
     )
 
@@ -345,6 +359,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=4,
             dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--group_offload_type",
         )
     )
 
@@ -366,6 +381,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
                 FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show"),
                 FieldDependency(field="group_offload_type", operator="equals", value="block_level", action="enable"),
             ],
+            documentation="OPTIONS.md#--group_offload_blocks_per_group",
         )
     )
 
@@ -383,6 +399,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=6,
             dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--group_offload_use_stream",
         )
     )
 
@@ -401,6 +418,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=7,
             dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--group_offload_to_disk_path",
         )
     )
 
@@ -451,6 +469,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Helps avoid CUDA OOMs during fp8 checkpoint saves; the model is restored immediately afterwards.",
             importance=ImportanceLevel.ADVANCED,
             order=10,
+            documentation="OPTIONS.md#--offload_during_save",
         )
     )
 
@@ -504,8 +523,8 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="text_encoder",
             default_value=False,
-            help_text="Also train the text encoder (CLIP) model",
-            tooltip="Can improve concept learning but uses more VRAM. Not recommended for LoRA",
+            help_text="Train the text encoder alongside the diffusion model. Generally only recommended for SD 1.x and SD 2.x; newer architectures (SDXL, Flux) typically don't benefit and it significantly increases VRAM usage.",
+            tooltip="Can improve concept learning for older models but uses more VRAM. Not recommended for LoRA or modern architectures.",
             importance=ImportanceLevel.ADVANCED,
             order=1,
         )
@@ -663,6 +682,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Smoother transition at the clamping boundary. May improve training stability.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=8,
+            documentation="OPTIONS.md#--use_soft_min_snr",
         )
     )
 
@@ -681,6 +701,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Improves convergence stability at the cost of extra memory and compute.",
             importance=ImportanceLevel.ADVANCED,
             order=0,
+            documentation="OPTIONS.md#--use_ema",
         )
     )
 
@@ -703,6 +724,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="'Accelerator' keeps EMA on the training device for fastest updates. 'CPU' allows moving weights off-device.",
             importance=ImportanceLevel.ADVANCED,
             order=1,
+            documentation="OPTIONS.md#--ema_device",
         )
     )
 
@@ -722,6 +744,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Combine with ema_device=cpu to avoid shuttling weights; trades speed for lower VRAM use.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+            documentation="OPTIONS.md#--ema_cpu_only",
         )
     )
 
@@ -741,6 +764,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Higher values = faster training but less smooth EMA. Default: 10",
             importance=ImportanceLevel.ADVANCED,
             order=3,
+            documentation="OPTIONS.md#--ema_update_interval",
         )
     )
 
@@ -760,6 +784,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Enable if your hardware or backend has issues with torch.foreach kernels.",
             importance=ImportanceLevel.ADVANCED,
             order=4,
+            documentation="OPTIONS.md#--ema_foreach_disable",
         )
     )
 
@@ -782,5 +807,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             tooltip="Try 0.999 for responsive EMA, 0.9999 for extra smoothness.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
+            documentation="OPTIONS.md#--ema_decay",
         )
     )

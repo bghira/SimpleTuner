@@ -752,14 +752,14 @@
     min-height: calc(1.5rem + var(--spacing-sm) * 2 + 2px);
 }
 
-/* Legacy form check alignment - preserved for other sections */
+/* Legacy form check alignment - for dataloader modal checkboxes */
 .form-check:not(.checkbox-item .form-check) {
     display: block;
     min-height: var(--spacing-xl);
     padding-left: 0;
 }
 
-/* Legacy checkbox styling - preserved for other sections */
+/* Legacy checkbox styling - for dataloader modal checkboxes */
 .form-check:not(.checkbox-item .form-check) .form-check-input {
     float: left;
     margin-right: var(--spacing-sm);
@@ -776,6 +776,29 @@
     font-size: 0.8125rem;
     line-height: 1.4;
     color: var(--text-muted);
+}
+
+/* Reset form-check styling for UI Settings tab (restore Bootstrap defaults) */
+#ui-settings-tab-content .form-check {
+    display: flex;
+    min-height: 1.5rem;
+    padding-left: 1.5em;
+    margin-bottom: 0.125rem;
+}
+
+#ui-settings-tab-content .form-check .form-check-input {
+    float: none;
+    flex-shrink: 0;
+    width: 1em;
+    height: 1em;
+    margin-top: 0.25em;
+    margin-left: -1.5em;
+    margin-right: 0;
+}
+
+#ui-settings-tab-content .form-check .form-check-label {
+    display: inline;
+    margin-left: 0;
 }
 
 /* Standardized checkbox group component */
@@ -1058,10 +1081,13 @@
     width: 100%;
 }
 
-.input-group-sm > .form-control,
-.input-group-sm > .btn {
-    padding: var(--spacing-xs-sm) var(--spacing-sm-md);
+/* Input groups - ensure buttons match small input height */
+#dataloaderSection .input-group-sm > .form-control,
+#dataloaderSection .input-group-sm > .btn {
+    padding: 0.25rem 0.5rem !important;
     font-size: 0.875rem;
+    line-height: 1.5;
+    min-height: 0;
 }
 
 /* Text formatting */
@@ -1509,6 +1535,28 @@
     white-space: nowrap;
 }
 
+#dataloaderSection .list-item-path.text-danger {
+    font-weight: 500;
+}
+
+#dataloaderSection .list-item-path.text-danger:hover {
+    text-decoration: underline;
+}
+
+#dataloaderSection .list-item-path .path-error-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.4rem;
+    background: rgba(220, 53, 69, 0.15);
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    white-space: nowrap;
+}
+
+#dataloaderSection .list-item-path .path-error-badge i {
+    font-size: 0.65rem;
+}
+
 #dataloaderSection .list-item-resolution {
     flex: 0 0 auto;
     margin-left: auto;
@@ -1533,6 +1581,7 @@
 
 #dataloaderSection .list-item-actions {
     flex: 0 0 auto;
+    margin-left: auto;
     opacity: 0.6;
     transition: opacity 0.15s ease;
 }
@@ -1690,8 +1739,9 @@
     font-size: 0.6875rem;
 }
 
-/* Inputs and selects - standardized sizing */
-#dataloaderSection .dataset-list-item-expanded .form-control-sm,
+/* Inputs and selects - standardized sizing
+   Exclude .resizable-path from fixed height so resize works */
+#dataloaderSection .dataset-list-item-expanded .form-control-sm:not(.resizable-path),
 #dataloaderSection .dataset-list-item-expanded .form-select-sm {
     padding: 0.25rem 0.5rem !important;
     font-size: 0.775rem !important;
@@ -1700,10 +1750,57 @@
     line-height: 1.25rem !important;
 }
 
-/* Textareas - specific handling */
-#dataloaderSection .dataset-list-item-expanded textarea.form-control-sm {
+/* Textareas - specific handling (exclude resizable-path which needs inline height for resize) */
+#dataloaderSection .dataset-list-item-expanded textarea.form-control-sm:not(.resizable-path) {
+    height: auto !important;
+    min-height: 2.5rem !important;
+}
+
+/* Resizable path textareas - user can drag to resize in both directions
+   NOTE: height/width must NOT use !important or it will override the inline style
+   that the browser sets when the user drags the resize handle */
+#dataloaderSection .dataset-list-item-expanded textarea.resizable-path,
+#dataloaderSection .resizable-input-group textarea.resizable-path {
     height: auto;
-    min-height: 2.5rem;
+    min-height: 1.75rem;
+    max-height: none;
+    min-width: 100px;
+    resize: both !important;
+    overflow: auto !important;
+    font-family: var(--bs-font-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: 0.75rem !important;
+    white-space: nowrap;
+    line-height: 1.3;
+}
+
+/* Fix resize inside input-group - use CSS Grid instead of Flex
+   Flexbox prevents textarea resize; Grid allows it */
+#dataloaderSection .resizable-input-group,
+.resizable-input-group {
+    display: grid !important;
+    grid-template-columns: minmax(100px, 1fr) auto;
+    gap: 0;
+    align-items: start !important;
+}
+
+#dataloaderSection .resizable-input-group textarea.resizable-path,
+.resizable-input-group textarea.resizable-path {
+    grid-column: 1;
+    width: 100%;
+    min-width: 150px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+/* Keep browse button at fixed height when textarea resizes */
+#dataloaderSection .resizable-input-group > .btn,
+.resizable-input-group > .btn {
+    grid-column: 2;
+    height: 1.75rem;
+    align-self: start;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    margin-left: -1px;
 }
 
 /* Form hints - subtle */
@@ -1776,18 +1873,6 @@
     font-size: 0.6875rem;
     margin-top: 0.125rem;
 }
-
-/* Input groups - fix button alignment */
-#dataloaderSection .dataset-list-item-expanded .input-group-sm > .btn,
-#dataloaderSection .modal-section-body .input-group-sm > .btn,
-#dataloaderSection .dataset-modal .input-group-sm > .btn {
-    padding: 0.25rem 0.5rem;
-    line-height: 1.5;
-    height: auto;
-    align-self: stretch;
-}
-
-/* Input groups inherit width from column */
 
 /* Note: Section spacing now handled by flex gap on .modal-section-body */
 /* Row spacing within sections handled by rule at line ~1591 */
@@ -1893,6 +1978,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     margin-top: var(--spacing-xs);
+}
+
+#dataloaderSection .grid-card-path.path-error {
+    background: rgba(220, 53, 69, 0.1);
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    margin-top: var(--spacing-sm);
 }
 
 #dataloaderSection .grid-card-footer {

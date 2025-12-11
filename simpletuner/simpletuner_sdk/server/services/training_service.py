@@ -1010,9 +1010,7 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
 
     # Remove non-CLI arguments that shouldn't be passed to the trainer
     non_cli_keys = {
-        "accelerate_visible_devices",
         "accelerate_strategy",
-        "--accelerate_visible_devices",
         "--accelerate_strategy",
         "ui-accelerate-mode",
         "--ui-accelerate-mode",

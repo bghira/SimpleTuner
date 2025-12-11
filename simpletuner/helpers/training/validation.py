@@ -17,6 +17,7 @@ import torch
 import wandb
 from tqdm import tqdm
 
+from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training import validation_audio
 from simpletuner.helpers.training import validation_images as validation_images_utils
@@ -82,6 +83,7 @@ else:
 SCHEDULER_NAME_MAP = {
     "euler": EulerDiscreteScheduler,
     "euler-a": EulerAncestralDiscreteScheduler,
+    "flow_match_euler": FlowMatchEulerDiscreteScheduler,
     "flow_matching": FlowMatchEulerDiscreteScheduler,
     "unipc": UniPCMultistepScheduler,
     "flow_unipc": FlowUniPCMultistepScheduler,
@@ -1179,6 +1181,7 @@ class Validation:
         )
         self._active_adapter_run: ValidationAdapterRun | None = None
         self.preview = ValidationPreviewer(self.model, self.accelerator, self.config)
+        self._active_pipeline_type: str | None = None
 
     def _validation_method(self) -> str:
         configured_method = getattr(self.config, "validation_method", "simpletuner-local")
@@ -1673,38 +1676,45 @@ class Validation:
             else:
                 logger.debug("Starting validation process...")
                 diffusers.utils.logging._tqdm_active = False
-                self.setup_pipeline(validation_type)
-                if self.model.pipeline is None:
-                    logger.error("Not able to run validations, we did not obtain a valid pipeline.")
-                    self.validation_images = None
-                    return self
-                self.setup_scheduler()
-                master_validation_images: dict = {}
-                self.validation_prompt_dict = {}
-                self.validation_video_paths.clear()
-                self.eval_scores = {}
-                for adapter_run in self.validation_adapter_runs:
-                    self._log_adapter_run(adapter_run)
-                    with self._temporary_validation_adapters(adapter_run):
-                        self.process_prompts(
-                            validation_type=validation_type,
-                            adapter_run=adapter_run,
-                            image_accumulator=master_validation_images,
+                pipeline_prepared = False
+                try:
+                    self.setup_pipeline(validation_type)
+                    pipeline_prepared = self.model.pipeline is not None
+                    if self.model.pipeline is None:
+                        logger.error("Not able to run validations, we did not obtain a valid pipeline.")
+                        self.validation_images = None
+                        return self
+                    self.setup_scheduler()
+                    master_validation_images: dict = {}
+                    self.validation_prompt_dict = {}
+                    self.validation_video_paths.clear()
+                    self.eval_scores = {}
+                    for adapter_run in self.validation_adapter_runs:
+                        self._log_adapter_run(adapter_run)
+                        with self._temporary_validation_adapters(adapter_run):
+                            self.process_prompts(
+                                validation_type=validation_type,
+                                adapter_run=adapter_run,
+                                image_accumulator=master_validation_images,
+                            )
+                    self.validation_images = master_validation_images
+                    self.finalize_validation(validation_type)
+                    self._publish_validation_artifacts(validation_type)
+                    if self.evaluation_result is not None:
+                        logger.info(f"Evaluation result: {self.evaluation_result}")
+                    logger.debug("Validation process completed.")
+                    if should_notify:
+                        webhook_handler.send_lifecycle_stage(
+                            stage_key="validation",
+                            stage_label="Running Validation",
+                            stage_status="completed",
+                            message="Validation completed.",
                         )
-                self.validation_images = master_validation_images
-                self.finalize_validation(validation_type)
-                self._publish_validation_artifacts(validation_type)
-                if self.evaluation_result is not None:
-                    logger.info(f"Evaluation result: {self.evaluation_result}")
-                logger.debug("Validation process completed.")
-                if should_notify:
-                    webhook_handler.send_lifecycle_stage(
-                        stage_key="validation",
-                        stage_label="Running Validation",
-                        stage_status="completed",
-                        message="Validation completed.",
-                    )
-                self.clean_pipeline()
+                finally:
+                    if pipeline_prepared:
+                        # Always clean up to release GPU memory, even when validation fails partway.
+                        self.clean_pipeline()
+                        reclaim_memory()
 
         if epoch_validation_pending and current_validation_will_execute and validation_type == "intermediary":
             self._epoch_validations_completed.add(self._pending_epoch_validation)
@@ -1769,10 +1779,10 @@ class Validation:
                 self._pending_epoch_validation = self.current_epoch
                 should_do_epoch_validation = True
 
-        should_validate = (should_do_step_validation or should_do_epoch_validation) and (
-            self.accelerator.is_main_process or self.deepspeed
-        )
-        return should_validate
+        should_validate = should_do_step_validation or should_do_epoch_validation
+        if not (self.deepspeed or self._use_distributed_validation()):
+            should_validate = should_validate and self.accelerator.is_main_process
+        return bool(should_validate)
 
     def setup_scheduler(self):
         if self.distiller is not None:
@@ -1793,7 +1803,7 @@ class Validation:
             self.config.validation_noise_scheduler = self.model.DEFAULT_NOISE_SCHEDULER
         if self.model.PREDICTION_TYPE.value == "flow_matching":
             # some flow-matching adjustments should be made for euler and unipc video model generations.
-            if self.config.validation_noise_scheduler in ["flow_matching", "euler"]:
+            if self.config.validation_noise_scheduler in ["flow_matching", "flow_match_euler", "euler"]:
                 if self.config.validation_noise_scheduler == "euler":
                     self.config.validation_noise_scheduler = "flow_matching"
                 # The Beta schedule looks WAY better...
@@ -1860,8 +1870,17 @@ class Validation:
             pipeline_type=pipeline_type,
             load_base_model=False,
         )
+        self._active_pipeline_type = pipeline_type
 
         self.model.move_models(self.accelerator.device)
+
+        # Ensure the pipeline has an attached base model; some model-specific get_pipeline
+        # implementations skip binding the transformer/unet when load_base_model=False.
+        pipeline_model = getattr(self.model.pipeline, self.model.MODEL_TYPE.value, None)
+        if pipeline_model is None and getattr(self.model, "model", None) is not None:
+            # Prefer unwrapped module so pipeline APIs that expect .dtype work even with DDP/FSDP/compile.
+            setattr(self.model.pipeline, self.model.MODEL_TYPE.value, self.model.unwrap_model())
+
         # Remove text encoders on 'meta' device to avoid move errors
         for attr in [
             "text_encoder",
@@ -1893,9 +1912,23 @@ class Validation:
         if hasattr(self.model, "configure_assistant_lora_for_training"):
             # Restore training-time adapter stack after validation.
             self.model.configure_assistant_lora_for_training()
+        if hasattr(self.model, "pipelines") and isinstance(getattr(self.model, "pipelines"), dict):
+            if self._active_pipeline_type and self._active_pipeline_type in self.model.pipelines:
+                try:
+                    del self.model.pipelines[self._active_pipeline_type]
+                except Exception:
+                    pass
+            # Drop any None entries that might accumulate
+            stale_keys = [k for k, v in list(self.model.pipelines.items()) if v is None]
+            for key in stale_keys:
+                try:
+                    del self.model.pipelines[key]
+                except Exception:
+                    pass
         if self.model.pipeline is not None:
             del self.model.pipeline
             self.model.pipeline = None
+        self._active_pipeline_type = None
 
     def _has_adapter_variants(self) -> bool:
         return any(run.adapters for run in self.validation_adapter_runs if not run.is_base)

@@ -7,18 +7,29 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.data.dataset_blueprints import get_dataset_blueprints
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.services.dataset_caption_service import (
+    CaptionStatus,
+    CaptionWriteResult,
+    DatasetCaptionService,
+    ThumbnailInfo,
+)
 from simpletuner.simpletuner_sdk.server.services.dataset_connection_service import (
     DatasetConnectionError,
     DatasetConnectionService,
 )
 from simpletuner.simpletuner_sdk.server.services.dataset_plan import DatasetPlanStore, ValidationMessage, compute_validations
+from simpletuner.simpletuner_sdk.server.services.dataset_upload_service import (
+    DatasetUploadService,
+    FolderCreateResult,
+    UploadResult,
+)
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
@@ -442,6 +453,267 @@ async def detect_dataset(path: str) -> Dict[str, Any]:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error detecting dataset: {str(e)}",
+        )
+
+
+# Folder Creation, Upload, and Caption Endpoints
+
+
+def _get_upload_service() -> DatasetUploadService:
+    """Get a DatasetUploadService configured with current settings."""
+    webui_state = WebUIStateStore()
+    defaults_bundle = webui_state.get_defaults_bundle()
+    resolved = defaults_bundle["resolved"]
+
+    # Get datasets_dir from onboarding or defaults
+    onboarding = webui_state.load_onboarding()
+    datasets_dir = None
+    onboarding_step = onboarding.steps.get("default_datasets_dir")
+    if onboarding_step and onboarding_step.value:
+        datasets_dir = onboarding_step.value
+    else:
+        datasets_dir = resolved.get("datasets_dir")
+        if not datasets_dir:
+            datasets_dir = defaults_bundle["fallbacks"].get("datasets_dir")
+
+    allow_outside = bool(resolved.get("allow_dataset_paths_outside_dir", False))
+    datasets_path = Path(datasets_dir).resolve() if datasets_dir else None
+
+    return DatasetUploadService(datasets_dir=datasets_path, allow_outside=allow_outside)
+
+
+def _get_caption_service() -> DatasetCaptionService:
+    """Get a DatasetCaptionService configured with current settings."""
+    webui_state = WebUIStateStore()
+    defaults_bundle = webui_state.get_defaults_bundle()
+    resolved = defaults_bundle["resolved"]
+
+    # Get datasets_dir from onboarding or defaults
+    onboarding = webui_state.load_onboarding()
+    datasets_dir = None
+    onboarding_step = onboarding.steps.get("default_datasets_dir")
+    if onboarding_step and onboarding_step.value:
+        datasets_dir = onboarding_step.value
+    else:
+        datasets_dir = resolved.get("datasets_dir")
+        if not datasets_dir:
+            datasets_dir = defaults_bundle["fallbacks"].get("datasets_dir")
+
+    allow_outside = bool(resolved.get("allow_dataset_paths_outside_dir", False))
+    datasets_path = Path(datasets_dir).resolve() if datasets_dir else None
+
+    return DatasetCaptionService(datasets_dir=datasets_path, allow_outside=allow_outside)
+
+
+@router.post("/folders", response_model=FolderCreateResult)
+async def create_folder(
+    parent_path: str = Form(...),
+    folder_name: str = Form(...),
+) -> FolderCreateResult:
+    """Create a new folder in the given parent directory.
+
+    Args:
+        parent_path: Absolute path to the parent directory.
+        folder_name: Name for the new folder.
+
+    Returns:
+        FolderCreateResult with path and success status.
+    """
+    try:
+        # Validate parent path exists and is within bounds
+        path_obj, _, _ = _resolve_datasets_dir_and_validate_path(parent_path)
+
+        service = _get_upload_service()
+        result = service.create_folder(path_obj, folder_name)
+
+        if not result.success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=result.error or "Failed to create folder",
+            )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating folder: {str(e)}",
+        )
+
+
+@router.post("/upload", response_model=UploadResult)
+async def upload_files(
+    target_path: str = Form(...),
+    files: List[UploadFile] = File(...),
+) -> UploadResult:
+    """Upload files (images, txt, parquet, jsonl, csv) to target directory.
+
+    Args:
+        target_path: Absolute path to the target directory.
+        files: List of files to upload.
+
+    Returns:
+        UploadResult with counts of uploaded/skipped files.
+    """
+    try:
+        # Validate target path exists and is within bounds
+        path_obj, _, _ = _resolve_datasets_dir_and_validate_path(target_path)
+
+        service = _get_upload_service()
+        result = await service.handle_file_uploads(files, path_obj)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading files: {str(e)}",
+        )
+
+
+@router.post("/upload/zip", response_model=UploadResult)
+async def upload_zip(
+    target_path: str = Form(...),
+    file: UploadFile = File(...),
+) -> UploadResult:
+    """Upload and extract a zip file to target directory.
+
+    Args:
+        target_path: Absolute path to the target directory.
+        file: ZIP file to extract.
+
+    Returns:
+        UploadResult with counts of extracted files.
+    """
+    try:
+        # Validate target path exists and is within bounds
+        path_obj, _, _ = _resolve_datasets_dir_and_validate_path(target_path)
+
+        # Validate it's a zip file
+        if not file.filename or not file.filename.lower().endswith(".zip"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File must be a ZIP archive",
+            )
+
+        service = _get_upload_service()
+        result = await service.handle_zip_upload(file, path_obj)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error extracting ZIP: {str(e)}",
+        )
+
+
+@router.get("/captions/status", response_model=CaptionStatus)
+async def get_caption_status(path: str) -> CaptionStatus:
+    """Analyze caption coverage in a directory.
+
+    Args:
+        path: Absolute path to the directory to analyze.
+
+    Returns:
+        CaptionStatus with coverage statistics.
+    """
+    try:
+        # Validate path exists and is within bounds
+        path_obj, _, _ = _resolve_datasets_dir_and_validate_path(path)
+
+        service = _get_caption_service()
+        return service.get_caption_status(path_obj)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error analyzing captions: {str(e)}",
+        )
+
+
+@router.get("/captions/thumbnails", response_model=List[ThumbnailInfo])
+async def get_thumbnails(
+    path: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> List[ThumbnailInfo]:
+    """Get thumbnails for images missing captions in a directory.
+
+    Args:
+        path: Absolute path to the directory.
+        limit: Maximum number of thumbnails to return.
+        offset: Number of images to skip (for pagination).
+
+    Returns:
+        List of ThumbnailInfo with base64 encoded images.
+    """
+    try:
+        # Validate path exists and is within bounds
+        path_obj, _, _ = _resolve_datasets_dir_and_validate_path(path)
+
+        service = _get_caption_service()
+
+        # First get the caption status to find images without captions
+        status_result = service.get_caption_status(path_obj)
+        image_paths = [Path(img.path) for img in status_result.images_without_captions]
+
+        # Generate thumbnails
+        return service.get_thumbnails(image_paths, limit=limit, offset=offset)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating thumbnails: {str(e)}",
+        )
+
+
+class CaptionWriteRequest(BaseModel):
+    """Request body for writing captions."""
+
+    captions: Dict[str, str]
+
+
+@router.post("/captions", response_model=CaptionWriteResult)
+async def save_captions(
+    request: CaptionWriteRequest = Body(...),
+) -> CaptionWriteResult:
+    """Create .txt caption files for the given images.
+
+    Args:
+        request: CaptionWriteRequest with dict mapping image paths to caption text.
+
+    Returns:
+        CaptionWriteResult with count of files written.
+    """
+    try:
+        service = _get_caption_service()
+        result = service.create_captions(request.captions)
+
+        if not result.success and result.files_written == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to write any caption files",
+            )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error writing captions: {str(e)}",
         )
 
 

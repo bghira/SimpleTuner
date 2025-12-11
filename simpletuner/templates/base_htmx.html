@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% set asset_version = (webui_defaults.get('asset_version') if webui_defaults is defined else None) or '20241206' %}
     {% if csrf_token %}
     <meta name="csrf-token" content="{{ csrf_token }}">
     {% endif %}
@@ -12,6 +13,30 @@
 
     <!-- Critical CSS (inline for performance) -->
     <script>var cssTimestamp = Date.now();</script>
+    <!-- Global WebUI defaults -->
+    {% set show_docs_default = webui_defaults.show_documentation_links if webui_defaults is defined and webui_defaults.show_documentation_links is defined else true %}
+    <script>
+    window.webuiDefaults = {
+        show_documentation_links: {{ 'true' if show_docs_default else 'false' }}
+    };
+    function updateDocLinkVisibility() {
+        var show = window.webuiDefaults.show_documentation_links;
+        document.querySelectorAll('.doc-link').forEach(function(el) {
+            el.style.display = show ? '' : 'none';
+        });
+    }
+    window.addEventListener('webui-defaults-updated', function(event) {
+        var payload = event && event.detail && (event.detail.resolved_defaults || event.detail.defaults);
+        if (payload && typeof payload.show_documentation_links !== 'undefined') {
+            window.webuiDefaults.show_documentation_links = Boolean(payload.show_documentation_links);
+            updateDocLinkVisibility();
+        }
+    });
+    document.addEventListener('DOMContentLoaded', updateDocLinkVisibility);
+    document.addEventListener('htmx:afterSwap', updateDocLinkVisibility);
+    document.addEventListener('htmx:afterSettle', updateDocLinkVisibility);
+    </script>
+    <style>.doc-link { display: {{ 'inline' if show_docs_default else 'none' }}; }</style>
     <link href="/static/css/critical.css" rel="stylesheet" id="css-critical">
     <script>document.getElementById('css-critical').href = '/static/css/critical.css?t=' + cssTimestamp;</script>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
@@ -46,34 +71,34 @@
     </script>
 
     <!-- JavaScript Polyfills for Browser Compatibility -->
-    <script src="/static/js/polyfills.js"></script>
+    <script src="/static/js/polyfills.js?v={{ asset_version }}"></script>
 
     <!-- Debouncing utility for performance -->
-    <script src="/static/js/debounce.js" defer></script>
+    <script src="/static/js/debounce.js?v={{ asset_version }}" defer></script>
 
     <!-- Lazy loading for heavy components -->
-    <script src="/static/js/lazy-load.js" defer></script>
+    <script src="/static/js/lazy-load.js?v={{ asset_version }}" defer></script>
 
     <!-- HTMX for dynamic HTML updates -->
     <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"></script>
 
     <!-- Server configuration detection -->
-    <script src="/static/js/server-config.js"></script>
+    <script src="/static/js/server-config.js?v={{ asset_version }}"></script>
 
     <!-- Shared API helper -->
-    <script src="/static/js/utils/api.js"></script>
+    <script src="/static/js/utils/api.js?v={{ asset_version }}"></script>
 
     <!-- Dataset wizard component (needs to load before Alpine) -->
-    <script src="/static/js/dataset-wizard.js"></script>
+    <script src="/static/js/dataset-wizard.js?v={{ asset_version }}"></script>
 
     <!-- Training wizard component (needs to load before Alpine) -->
-    <script src="/static/js/training-wizard.js"></script>
+    <script src="/static/js/training-wizard.js?v={{ asset_version }}"></script>
     <!-- Shared create environment form component -->
-    <script src="/static/js/create-environment-form.js"></script>
+    <script src="/static/js/create-environment-form.js?v={{ asset_version }}"></script>
     <!-- DeepSpeed builder lazy loader -->
-    <script src="/static/js/deepspeed-builder-loader.js"></script>
+    <script src="/static/js/deepspeed-builder-loader.js?v={{ asset_version }}"></script>
     <!-- DeepSpeed builder (registers Alpine component before initialization) -->
-    <script src="/static/js/deepspeed-builder.js"></script>
+    <script src="/static/js/deepspeed-builder.js?v={{ asset_version }}"></script>
 
     <!-- Alpine.js for reactive UI components -->
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -418,12 +443,10 @@
                 maxRetryDelay: 30000
             });
 
-            // Add custom event listeners
-            window.sseManager.addEventListener('training_progress', function(data) {
-                // Progress is handled by the trainer page directly
-                // Just dispatch the event for other listeners
-                window.dispatchEvent(new CustomEvent('training-progress', { detail: data }));
-            });
+            // Note: training_progress events are handled by training_events_sse.html
+            // which properly extracts and normalizes metrics before dispatching
+            // training-progress custom events. Do NOT dispatch here to avoid
+            // overwriting properly processed data with raw SSE payloads.
 
             window.sseManager.addEventListener('validation_complete', function(data) {
                 showToast('Validation completed', 'success');

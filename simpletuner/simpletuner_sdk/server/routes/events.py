@@ -268,6 +268,10 @@ async def events_stream(request: Request):
                             if event.type == EventType.TRAINING_PROGRESS:
                                 should_skip = True
 
+                            # Skip training status events with progress data (also broadcast via _broadcast_training_progress)
+                            if event.type == EventType.TRAINING_STATUS and event.progress is not None:
+                                should_skip = True
+
                             # Skip lifecycle stage events (broadcast via _broadcast_startup_stage)
                             if event.stage is not None:
                                 should_skip = True

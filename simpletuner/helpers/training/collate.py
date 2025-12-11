@@ -780,12 +780,12 @@ def collate_fn(batch):
         assert model is not None
         if conditioning_type is not None or model.requires_conditioning_dataset():
             conditioning_latents = []
+            requires_conditioning_latents = model.requires_conditioning_latents() or is_i2v_data
             needs_conditioning_pixels = (
-                not model.requires_conditioning_latents()
-                or getattr(model, "requires_text_embed_image_context", lambda: False)()
+                not requires_conditioning_latents or getattr(model, "requires_text_embed_image_context", lambda: False)()
             )
 
-            if model.requires_conditioning_latents():
+            if requires_conditioning_latents:
                 # Kontext / other latent-conditioned models / adapters
                 debug_log("Compute conditioning latents")
                 for backend_cfg in conditioning_backends:

@@ -195,6 +195,15 @@ At the end, your config should resemble mine:
 ```
 </details>
 
+### Optional: CREPA temporal regularizer
+
+If your LTX runs show flicker or identity drift, try CREPA (cross-frame alignment):
+- In the WebUI, go to **Training → Loss functions** and enable **CREPA**.
+- Start with **Block Index = 8**, **Weight = 0.5**, **Adjacent Distance = 1**, **Temporal Decay = 1.0**.
+- Leave the default vision encoder (`dinov2_vitg14`, size `518`). Switch to `dinov2_vits14` + `224` only if you need lower VRAM.
+- Needs internet (or a cached torch hub) the first time to fetch DINOv2 weights.
+- Optional: if training purely from cached latents, enable **Drop VAE Encoder** to save memory; keep it off if you need to encode new videos.
+
 ### Advanced Experimental Features
 
 <details>

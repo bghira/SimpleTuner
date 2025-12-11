@@ -45,6 +45,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Keeps the underlying UNet the same but exposes flow targets for optional loss computation.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=27,
+            documentation="OPTIONS.md#--diff2flow_enabled",
         )
     )
 
@@ -63,6 +64,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=28,
             dependencies=[FieldDependency(field="diff2flow_enabled", operator="equals", value=True, action="enable")],
+            documentation="OPTIONS.md#--diff2flow_loss",
         )
     )
 
@@ -82,6 +84,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Set >0 to enable scheduled sampling rollout for DDPM-style models. Higher values increase compute.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=29,
+            documentation="OPTIONS.md#--scheduled_sampling_max_step_offset",
         )
     )
 
@@ -107,6 +110,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_strategy",
         )
     )
 
@@ -131,6 +135,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_probability",
         )
     )
 
@@ -155,6 +160,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_prob_start",
         )
     )
 
@@ -179,6 +185,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_prob_end",
         )
     )
 
@@ -200,6 +207,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_ramp_steps",
         )
     )
 
@@ -221,6 +229,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_start_step",
         )
     )
 
@@ -245,6 +254,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_ramp_shape",
         )
     )
 
@@ -271,6 +281,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_sampler",
         )
     )
 
@@ -295,6 +306,91 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
             ],
+            documentation="OPTIONS.md#--scheduled_sampling_order",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow",
+            arg_name="--scheduled_sampling_reflexflow",
+            ui_label="Enable ReflexFlow Enhancements",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Apply ReflexFlow anti-drift and frequency-compensation weighting during scheduled sampling for flow-matching models.",
+            tooltip="Adds ADR directional regularization and exposure-bias weighting to rollout samples.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=39,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="greater_than", value=0, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow_alpha",
+            arg_name="--scheduled_sampling_reflexflow_alpha",
+            ui_label="ReflexFlow FC Alpha",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=1.0,
+            help_text="Scaling for exposure-bias-based loss reweighting (frequency compensation) during ReflexFlow.",
+            tooltip="Higher values up-weight regions with larger exposure bias during rollout.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=40,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_reflexflow", operator="equals", value=True, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow_alpha",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow_beta1",
+            arg_name="--scheduled_sampling_reflexflow_beta1",
+            ui_label="ReflexFlow ADR Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=10.0,
+            help_text="Directional regularization strength for ReflexFlow anti-drift rectification.",
+            tooltip="Scales the unit-direction alignment term between predicted velocity and target direction.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=41,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_reflexflow", operator="equals", value=True, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow_beta1",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="scheduled_sampling_reflexflow_beta2",
+            arg_name="--scheduled_sampling_reflexflow_beta2",
+            ui_label="ReflexFlow FC Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=1.0,
+            help_text="Weight for the ReflexFlow frequency-compensated loss term.",
+            tooltip="Scales the exposure-bias-reweighted flow-matching loss (β2 in the paper).",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=42,
+            dependencies=[
+                FieldDependency(field="scheduled_sampling_reflexflow", operator="equals", value=True, action="show")
+            ],
+            documentation="OPTIONS.md#--scheduled_sampling_reflexflow_beta2",
         )
     )
 
@@ -849,10 +945,10 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             name="lr_end",
             arg_name="--lr_end",
             ui_label="Learning Rate End",
-            field_type=FieldType.TEXT,
+            field_type=FieldType.NUMBER,
             tab="training",
             section="learning_rate",
-            default_value="4e-7",
+            default_value=4e-7,
             help_text="A polynomial learning rate will end up at this value after the specified number of warmup steps",
             tooltip="A sine or cosine wave will use this value as its lower bound for the learning rate.",
             importance=ImportanceLevel.ADVANCED,
@@ -2427,8 +2523,8 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
                 {"value": "range", "label": "Bias Range"},
                 {"value": "none", "label": "No Bias"},
             ],
-            help_text="Strategy for biasing timestep sampling",
-            tooltip="'earlier'/'later' emphasise different regions of the schedule, 'range' targets a custom window, 'none' disables the bias.",
+            help_text="Bias which noise levels are sampled during training. 'Earlier' focuses on high-noise (composition), 'later' on low-noise (details), 'range' targets a custom window. Only applies to epsilon/V-prediction models, not flow-matching.",
+            tooltip="'earlier'/'later' emphasise different regions of the schedule, 'range' targets a custom window, 'none' disables the bias. Not applicable to flow-matching models like Flux.",
             importance=ImportanceLevel.ADVANCED,
             order=41,
         )

@@ -83,16 +83,16 @@ class WebhookLoggerTests(unittest.TestCase):
         handler_instance.send_raw.assert_called_once()
 
     @patch(
-        "simpletuner.helpers.logging._fallback_webhook_config",
+        "simpletuner.helpers.logging._load_env_webhook_config",
         return_value=[{"webhook_type": "raw", "webhook_url": "https://fallback.test"}],
     )
     @patch("simpletuner.helpers.logging._extract_webhook_config", return_value=None)
     @patch("simpletuner.helpers.webhooks.handler.WebhookHandler")
-    def test_fallback_config_used_when_args_missing(
+    def test_env_config_used_when_args_missing(
         self,
         webhook_handler_cls,
         extract_config_mock,
-        fallback_config_mock,
+        load_env_mock,
     ):
         from simpletuner.helpers.training import state_tracker as tracker_module
 
@@ -112,7 +112,7 @@ class WebhookLoggerTests(unittest.TestCase):
 
         self.assertTrue(get_handler.called, "Expected get_webhook_handler to be invoked")
         self.assertTrue(extract_config_mock.called, "Expected extract helper to be invoked")
-        self.assertTrue(fallback_config_mock.called, "Expected fallback configuration loader to be called")
+        self.assertTrue(load_env_mock.called, "Expected env webhook configuration loader to be called")
         self.assertTrue(set_handler.called, "set_webhook_handler should be invoked")
         webhook_handler_cls.assert_called_once()
         kwargs = webhook_handler_cls.call_args.kwargs
@@ -121,6 +121,12 @@ class WebhookLoggerTests(unittest.TestCase):
         self.assertTrue(config, "Expected fallback webhook config to be provided")
         handler_instance.send.assert_called_once()
         handler_instance.send_raw.assert_called_once()
+
+    def test_fallback_returns_none_without_env_config(self):
+        from simpletuner.helpers import logging as logging_module
+
+        with patch("simpletuner.helpers.logging._load_env_webhook_config", return_value=None):
+            self.assertIsNone(logging_module._fallback_webhook_config())
 
 
 if __name__ == "__main__":

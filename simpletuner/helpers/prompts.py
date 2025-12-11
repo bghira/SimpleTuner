@@ -374,7 +374,19 @@ class PromptHandler:
                 sampler_backend_id=sampler_backend_id,
             )
         elif caption_strategy == "instanceprompt":
-            return instance_prompt
+            if instance_prompt is None:
+                raise ValueError("caption_strategy='instanceprompt' requires an instance_prompt value.")
+
+            if isinstance(instance_prompt, (list, tuple, set)):
+                cleaned_prompts = [str(prompt).strip() for prompt in instance_prompt if str(prompt).strip()]
+                if not cleaned_prompts:
+                    raise ValueError("caption_strategy='instanceprompt' requires at least one non-empty prompt.")
+                return cleaned_prompts
+
+            cleaned_prompt = str(instance_prompt).strip()
+            if cleaned_prompt == "":
+                raise ValueError("caption_strategy='instanceprompt' requires a non-empty prompt.")
+            return cleaned_prompt
         elif caption_strategy == "csv":
             return data_backend.get_caption(image_path)
         elif caption_strategy is not None:

@@ -208,6 +208,48 @@ class TestPromptHandler(unittest.TestCase):
             data_backend=self.data_backend,
         )
 
+    def test_magic_prompt_instanceprompt_trims_whitespace(self):
+        """Ensure instanceprompt captions are normalized the same way as pre-compute."""
+        handler = PromptHandler(
+            self.args,
+            self.text_encoders,
+            self.tokenizers,
+            self.accelerator,
+            self.model_type,
+        )
+
+        result = handler.magic_prompt(
+            image_path="path/to/image.png",
+            use_captions=True,
+            caption_strategy="instanceprompt",
+            prepend_instance_prompt=False,
+            data_backend=self.data_backend,
+            instance_prompt="my-style, ",
+        )
+
+        self.assertEqual(result, "my-style,")
+
+    def test_magic_prompt_instanceprompt_cleans_list_prompts(self):
+        """Ensure instanceprompt lists are stripped and empties removed."""
+        handler = PromptHandler(
+            self.args,
+            self.text_encoders,
+            self.tokenizers,
+            self.accelerator,
+            self.model_type,
+        )
+
+        result = handler.magic_prompt(
+            image_path="path/to/image.png",
+            use_captions=True,
+            caption_strategy="instanceprompt",
+            prepend_instance_prompt=False,
+            data_backend=self.data_backend,
+            instance_prompt=["  keep-me  ", "  "],
+        )
+
+        self.assertEqual(result, ["keep-me"])
+
     def test_magic_prompt_raises_error_with_invalid_strategy(self):
         """Ensure magic_prompt raises ValueError with an unsupported caption strategy."""
         # Setup

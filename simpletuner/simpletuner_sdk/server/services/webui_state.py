@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from simpletuner.simpletuner_sdk.server.utils.assets import get_asset_version
+
 _WEBUI_CONFIG_ENV = "SIMPLETUNER_WEB_UI_CONFIG"
 _XDG_HOME_ENV = "XDG_HOME"
 _XDG_CONFIG_HOME_ENV = "XDG_CONFIG_HOME"
@@ -161,6 +163,7 @@ class WebUIDefaults:
     event_stream_enabled: bool = True
     auto_preserve_defaults: bool = True
     allow_dataset_paths_outside_dir: bool = False
+    show_documentation_links: bool = True
     accelerate_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -317,6 +320,18 @@ class WebUIStateStore:
         else:
             defaults.allow_dataset_paths_outside_dir = bool(allow_paths_value)
 
+        # Normalise show_documentation_links toggle
+        sentinel = object()
+        show_docs_value = payload.get("show_documentation_links", sentinel)
+        if show_docs_value is sentinel:
+            defaults.show_documentation_links = True
+        elif isinstance(show_docs_value, str):
+            defaults.show_documentation_links = show_docs_value.strip().lower() not in {"0", "false", "no", "off"}
+        elif show_docs_value is None:
+            defaults.show_documentation_links = True
+        else:
+            defaults.show_documentation_links = bool(show_docs_value)
+
         defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults
 
@@ -351,7 +366,7 @@ class WebUIStateStore:
         root_dir = self.base_dir.parent
         root_dir.mkdir(parents=True, exist_ok=True)
         return {
-            "configs_dir": str(root_dir / "configs"),
+            "configs_dir": str(root_dir / "config"),
             "output_dir": str(root_dir / "output"),
             "datasets_dir": str(root_dir / "datasets"),
         }
@@ -381,6 +396,9 @@ class WebUIStateStore:
         else:
             resolved["datasets_dir"] = fallbacks["datasets_dir"]
             resolved["datasets_dir__source"] = "fallback"
+
+        # Provide a cache-busting token for static assets
+        resolved["asset_version"] = get_asset_version()
 
         return {
             "raw": raw,

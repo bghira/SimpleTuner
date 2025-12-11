@@ -697,6 +697,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
+        output_hidden_states: bool = False,
+        hidden_state_layer: Optional[int] = None,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -764,6 +766,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 for r in routes
             ]
 
+        captured_frame_hidden: Optional[torch.Tensor] = None
+
         # Transformer blocks with TREAD routing
         for i, block in enumerate(self.blocks):
             # TREAD: START a route?
@@ -822,6 +826,16 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 route_ptr += 1
                 current_rope = rotary_emb
 
+            if output_hidden_states and (hidden_state_layer is None or i == hidden_state_layer):
+                captured_frame_hidden = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+                if hidden_state_layer is not None and i == hidden_state_layer:
+                    output_hidden_states = False
+
         # Output processing remains the same
         shift, scale = (self.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)
         shift = shift.to(hidden_states.device)
@@ -847,6 +861,11 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             unscale_lora_layers(self, lora_scale)
 
         if not return_dict:
-            return (output,)
+            if captured_frame_hidden is None:
+                return (output,)
+            return (output, captured_frame_hidden)
 
-        return Transformer2DModelOutput(sample=output)
+        result = Transformer2DModelOutput(sample=output)
+        if captured_frame_hidden is not None:
+            result.crepa_hidden_states = captured_frame_hidden
+        return result

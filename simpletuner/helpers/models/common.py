@@ -1,3 +1,4 @@
+import copy
 import inspect
 import json
 import logging
@@ -27,10 +28,12 @@ except ImportError:
     FSDP_AVAILABLE = False
 
 from simpletuner.diff2flow import DiffusionToFlowBridge
+from simpletuner.helpers.assistant_lora import build_adapter_stack, set_adapter_stack
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
+from simpletuner.helpers.training.crepa import CrepaRegularizer
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
@@ -338,34 +341,45 @@ class ModelFoundation(ABC):
         except Exception:
             assistant_weight = 1.0
 
-        adapter_names = []
-        adapter_weights = []
-
-        if assistant_weight != 0:
-            adapter_names.append(self.assistant_adapter_name)
-            adapter_weights.append(assistant_weight)
-
-        peft_config = getattr(trained_component, "peft_config", {}) or {}
-        if "default" in peft_config:
-            adapter_names.append("default")
-            adapter_weights.append(1.0)
+        target_component = self.unwrap_model(trained_component)
+        peft_config = getattr(target_component, "peft_config", {}) or {}
+        has_default_adapter = isinstance(peft_config, dict) and "default" in peft_config
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        require_default = lora_type == "standard"
+        include_default = has_default_adapter or require_default
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name=self.assistant_adapter_name,
+            assistant_weight=assistant_weight if assistant_weight != 0 else None,
+            include_default=include_default,
+            require_default=require_default,
+        )
 
         if not adapter_names:
             return
 
-        weight_arg = None
-        if len(adapter_weights) == 1:
-            weight_arg = adapter_weights[0]
-        else:
-            weight_arg = adapter_weights
+        def _weight_for(idx: int) -> object:
+            if isinstance(weight_arg, list):
+                return weight_arg[idx]
+            return weight_arg
 
-        logger.info(f"Configuring assistant LoRA for training with weights: {self.assistant_adapter_name}={weight_arg}")
-        set_adapter_stack(
-            trained_component,
-            adapter_names,
-            weights=weight_arg,
-            freeze_names=[self.assistant_adapter_name],
-        )
+        weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
+        logger.info(f"Configuring assistant LoRA for training with weights: {weight_summary}")
+        components = [
+            target_component,
+            trained_component if trained_component is not target_component else None,
+        ]
+        pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+        if pipeline_component is not None:
+            components.append(pipeline_component)
+        seen: set[int] = set()
+        for component in components:
+            if component is None:
+                continue
+            if id(component) in seen:
+                continue
+            seen.add(id(component))
+            set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     def configure_assistant_lora_for_inference(self):
         """
@@ -379,36 +393,79 @@ class ModelFoundation(ABC):
         if trained_component is None:
             return
 
-        from simpletuner.helpers.assistant_lora import set_adapter_stack
-
-        inference_weight = getattr(self.config, "assistant_lora_inference_strength", 0.0)
         try:
-            inference_weight = float(inference_weight)
+            inference_weight = float(getattr(self.config, "assistant_lora_inference_strength", 0.0))
         except Exception:
             inference_weight = 0.0
 
-        adapter_names = []
-        adapter_weights = []
-        if inference_weight != 0:
-            adapter_names.append(self.assistant_adapter_name)
-            adapter_weights.append(inference_weight)
+        target_component = self.unwrap_model(trained_component)
+        peft_config = getattr(target_component, "peft_config", {}) or {}
+        has_default_adapter = isinstance(peft_config, dict) and "default" in peft_config
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        require_default = lora_type == "standard"
+        include_default = has_default_adapter or require_default
 
-        peft_config = getattr(trained_component, "peft_config", {}) or {}
-        if "default" in peft_config:
-            adapter_names.append("default")
-            adapter_weights.append(1.0)
+        if inference_weight == 0:
+            adapter_names, weight_arg, freeze_names = build_adapter_stack(
+                peft_config=peft_config,
+                assistant_adapter_name=self.assistant_adapter_name,
+                assistant_weight=None,
+                include_default=include_default,
+                require_default=require_default,
+            )
+            if not adapter_names:
+                return
+            logger.info("Configuring assistant LoRA for inference with weights: default=1.0")
+            components = [
+                target_component,
+                trained_component if trained_component is not target_component else None,
+            ]
+            pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+            if pipeline_component is not None:
+                components.append(pipeline_component)
+            seen: set[int] = set()
+            for component in components:
+                if component is None:
+                    continue
+                if id(component) in seen:
+                    continue
+                seen.add(id(component))
+                set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
+            return
+
+        adapter_names, weight_arg, freeze_names = build_adapter_stack(
+            peft_config=peft_config,
+            assistant_adapter_name=self.assistant_adapter_name,
+            assistant_weight=inference_weight,
+            include_default=include_default,
+            require_default=require_default,
+        )
 
         if not adapter_names:
             return
 
-        weight_arg = adapter_weights[0] if len(adapter_weights) == 1 else adapter_weights
-        logger.info(f"Configuring assistant LoRA for inference with weights: {self.assistant_adapter_name}={weight_arg}")
-        set_adapter_stack(
-            trained_component,
-            adapter_names,
-            weights=weight_arg,
-            freeze_names=[self.assistant_adapter_name],
-        )
+        def _weight_for(idx: int) -> object:
+            if isinstance(weight_arg, list):
+                return weight_arg[idx]
+            return weight_arg
+
+        weight_summary = ", ".join(f"{name}={_weight_for(idx)}" for idx, name in enumerate(adapter_names))
+        logger.info(f"Configuring assistant LoRA for inference with weights: {weight_summary}")
+        components = [
+            target_component,
+            trained_component if trained_component is not target_component else None,
+        ]
+        pipeline_component = getattr(getattr(self, "pipeline", None), self.MODEL_TYPE.value, None)
+        if pipeline_component is not None:
+            components.append(pipeline_component)
+        seen: set[int] = set()
+        for component in components:
+            if component is None:
+                continue
+            if id(component) in seen:
+                continue
+            seen.add(id(component))
+            set_adapter_stack(component, adapter_names, weights=weight_arg, freeze_names=freeze_names)
 
     @classmethod
     def supports_lora(cls) -> bool:
@@ -1020,6 +1077,45 @@ class ModelFoundation(ABC):
             return None
         return unwrap_model(self.accelerator, model or self.model)
 
+    @staticmethod
+    def _module_has_meta_tensors(module: Optional[torch.nn.Module]) -> bool:
+        if module is None:
+            return False
+        try:
+            for tensor in module.parameters(recurse=True):
+                if tensor is not None and getattr(tensor, "device", None) is not None and tensor.device.type == "meta":
+                    return True
+            for tensor in module.buffers(recurse=True):
+                if tensor is not None and getattr(tensor, "device", None) is not None and tensor.device.type == "meta":
+                    return True
+        except Exception:
+            logger.debug("Meta tensor detection failed for %s", module.__class__.__name__, exc_info=True)
+        return False
+
+    @staticmethod
+    def _sample_meta_tensor_names(module: Optional[torch.nn.Module], limit: int = 3) -> list[str]:
+        names: list[str] = []
+        if module is None:
+            return names
+
+        def _collect(iterator):
+            for name, tensor in iterator:
+                if tensor is None or getattr(tensor, "device", None) is None:
+                    continue
+                if tensor.device.type == "meta":
+                    names.append(name)
+                    if len(names) >= limit:
+                        return True
+            return False
+
+        try:
+            if _collect(module.named_parameters(recurse=True)):
+                return names
+            _collect(module.named_buffers(recurse=True))
+        except Exception:
+            logger.debug("Meta tensor name sampling failed for %s", module.__class__.__name__, exc_info=True)
+        return names
+
     def move_extra_models(self, target_device):
         """
         Move any extra models in the child class.
@@ -1043,15 +1139,18 @@ class ModelFoundation(ABC):
         skip_moving_trained_component = should_configure_offload and self.group_offload_configured
 
         if self.model is not None and not skip_moving_trained_component:
-            self.unwrap_model(model=self.model).to(target_device)
+            model_ref = self.unwrap_model(model=self.model)
+            if getattr(model_ref, "device", None) != "meta":
+                model_ref.to(target_device)
         if self.controlnet is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
             self.vae.to(target_device)
         if self.text_encoders is not None:
             for text_encoder in self.text_encoders:
-                if text_encoder.device != "meta":
-                    text_encoder.to(target_device)
+                if text_encoder is None or getattr(text_encoder, "device", None) == "meta":
+                    continue
+                text_encoder.to(target_device)
         self.move_extra_models(target_device)
 
         if should_configure_offload:
@@ -1184,6 +1283,12 @@ class ModelFoundation(ABC):
                 self.vae.enable_slicing()
             else:
                 logger.warning(f"VAE slicing is enabled, but not yet supported by {self.config.model_family}.")
+        if getattr(self.config, "crepa_drop_vae_encoder", False):
+            logger.info("CREPA decode-only mode enabled; dropping VAE encoder/quant_conv to save memory.")
+            if hasattr(self.vae, "encoder"):
+                self.vae.encoder = None
+            if hasattr(self.vae, "quant_conv"):
+                self.vae.quant_conv = None
         if self._ramtorch_vae_requested():
             mid_block = getattr(self.vae, "mid_block", None)
             if mid_block is None:
@@ -1226,6 +1331,7 @@ class ModelFoundation(ABC):
         """
         return sample
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         """
         Hook for models to customize VAE encoding behaviour (e.g. applying flavour-specific patches).
@@ -1345,6 +1451,8 @@ class ModelFoundation(ABC):
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
                     )
+                if hasattr(text_encoder, "eval"):
+                    text_encoder.eval()
                 setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
                 self.text_encoders.append(text_encoder)
 
@@ -1458,12 +1566,38 @@ class ModelFoundation(ABC):
             else:
                 model_subfolder = self.config.pretrained_unet_subfolder
 
+        from transformers.utils import ContextManagers
+
         logger.info(f"Loading diffusion model from {model_path}")
-        self.model = loader_fn(
-            model_path,
-            subfolder=model_subfolder,
-            **pretrained_load_args,
-        )
+
+        def _load_model(load_kwargs: dict):
+            with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+                return loader_fn(
+                    model_path,
+                    subfolder=model_subfolder,
+                    **load_kwargs,
+                )
+
+        load_kwargs = dict(pretrained_load_args)
+        self.model = _load_model(load_kwargs)
+        unwrapped_model = self.unwrap_model(model=self.model)
+
+        if self._module_has_meta_tensors(unwrapped_model):
+            if load_kwargs.get("low_cpu_mem_usage", True):
+                sample_meta = ", ".join(self._sample_meta_tensor_names(unwrapped_model)) or "(unknown tensors)"
+                logger.warning(
+                    "Detected meta tensors after loading %s (e.g. %s); disabling low_cpu_mem_usage and retrying.",
+                    model_path,
+                    sample_meta,
+                )
+                load_kwargs["low_cpu_mem_usage"] = False
+                self.model = _load_model(load_kwargs)
+                unwrapped_model = self.unwrap_model(model=self.model)
+            if self._module_has_meta_tensors(unwrapped_model):
+                raise RuntimeError(
+                    f"{self.__class__.__name__} failed to materialize weights for {model_path}. "
+                    "All model parameters remain on the meta device after reload."
+                )
         if self._ramtorch_enabled() and self.model is not None:
             self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
         if move_to_device and self.model is not None:
@@ -1647,10 +1781,7 @@ class ModelFoundation(ABC):
             pipeline_kwargs["watermarker"] = None
         if "watermark" in signature.parameters:
             pipeline_kwargs["watermark"] = None
-        if load_base_model:
-            pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
-        else:
-            pipeline_kwargs[self.MODEL_TYPE.value] = None
+        pipeline_kwargs[self.MODEL_TYPE.value] = self.unwrap_model(model=self.model)
 
         if getattr(self, "vae", None) is not None:
             pipeline_kwargs["vae"] = self.unwrap_model(self.vae)
@@ -1814,24 +1945,39 @@ class ModelFoundation(ABC):
             else:
                 pipeline_kwargs["image_processor"] = image_processor
 
+        base_scheduler = getattr(self, "noise_schedule", None)
+        if "scheduler" not in pipeline_kwargs and base_scheduler is not None:
+            try:
+                pipeline_kwargs["scheduler"] = base_scheduler.__class__.from_config(base_scheduler.config)
+            except Exception:
+                pipeline_kwargs["scheduler"] = copy.deepcopy(base_scheduler)
+
         logger.debug(f"Initialising {pipeline_class.__name__} with components: {pipeline_kwargs}")
-        try:
-            pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
-        except (OSError, EnvironmentError, ValueError) as exc:
-            alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
-            current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
-            if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
-                logger.warning(
-                    "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
-                    current_repo,
-                    exc,
-                    alt_repo,
-                )
-                alt_kwargs = dict(pipeline_kwargs)
-                alt_kwargs["pretrained_model_name_or_path"] = alt_repo
-                pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
-            else:
-                raise
+        if load_base_model:
+            try:
+                pipeline_instance = pipeline_class.from_pretrained(**pipeline_kwargs)
+            except (OSError, EnvironmentError, ValueError) as exc:
+                alt_repo = getattr(self.config, "pretrained_model_name_or_path", None)
+                current_repo = pipeline_kwargs.get("pretrained_model_name_or_path")
+                if alt_repo and isinstance(alt_repo, str) and alt_repo != current_repo:
+                    logger.warning(
+                        "Pipeline load failed from resolved config path '%s' (%s). Retrying with repository id '%s'.",
+                        current_repo,
+                        exc,
+                        alt_repo,
+                    )
+                    alt_kwargs = dict(pipeline_kwargs)
+                    alt_kwargs["pretrained_model_name_or_path"] = alt_repo
+                    pipeline_instance = pipeline_class.from_pretrained(**alt_kwargs)
+                else:
+                    raise
+        else:
+            init_kwargs = {
+                key: value
+                for key, value in pipeline_kwargs.items()
+                if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
+            }
+            pipeline_instance = pipeline_class(**init_kwargs)
         self.pipelines[pipeline_type] = pipeline_instance
 
         return pipeline_instance
@@ -2507,6 +2653,7 @@ class ModelFoundation(ABC):
         """
         return self._encode_prompts([negative_prompt], is_negative_prompt=True)
 
+    @torch.no_grad()
     def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
         """
         Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
@@ -2602,6 +2749,7 @@ class ModelFoundation(ABC):
         """
         target = self.get_prediction_target(prepared_batch)
         model_pred = model_output["model_prediction"]
+        extra_sample_loss = None
         if target is None:
             raise ValueError("Target is None. Cannot compute loss.")
 
@@ -2629,6 +2777,36 @@ class ModelFoundation(ABC):
         elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
             # Flow matching always uses L2 loss
             loss = (model_pred.float() - target.float()) ** 2
+            if getattr(self.config, "scheduled_sampling_reflexflow", False):
+                clean_pred = prepared_batch.get("_reflexflow_clean_pred")
+                biased_pred = prepared_batch.get("_reflexflow_biased_pred")
+                beta2 = getattr(self.config, "scheduled_sampling_reflexflow_beta2", 1.0)
+                beta2 = 1.0 if beta2 is None else float(beta2)
+                if clean_pred is not None and biased_pred is not None:
+                    exposure = (biased_pred - clean_pred).detach()
+                    norm_dims = tuple(range(1, exposure.dim()))
+                    exposure_norm = exposure.abs().sum(dim=norm_dims, keepdim=True).clamp_min(1e-6)
+                    alpha = float(getattr(self.config, "scheduled_sampling_reflexflow_alpha", 1.0) or 0.0)
+                    if alpha != 0.0:
+                        weight = 1.0 + alpha * exposure / exposure_norm
+                        loss = loss * weight
+                if beta2 != 1.0:
+                    loss = loss * beta2
+
+                adr_scale = float(getattr(self.config, "scheduled_sampling_reflexflow_beta1", 10.0) or 0.0)
+                if adr_scale != 0.0:
+                    biased_latents = prepared_batch.get("noisy_latents")
+                    clean_latents = prepared_batch.get("latents")
+                    if biased_latents is not None and clean_latents is not None:
+                        target_vec = clean_latents - biased_latents
+                        flat_target = target_vec.reshape(target_vec.shape[0], -1)
+                        flat_pred = model_pred.reshape(model_pred.shape[0], -1)
+                        target_norm = torch.norm(flat_target, dim=1, keepdim=True).clamp_min(1e-6)
+                        pred_norm = torch.norm(flat_pred, dim=1, keepdim=True).clamp_min(1e-6)
+                        target_dir = flat_target / target_norm
+                        pred_dir = flat_pred / pred_norm
+                        adr = (pred_dir - target_dir).pow(2).sum(dim=1)
+                        extra_sample_loss = adr_scale * adr
         elif self.PREDICTION_TYPE in [
             PredictionTypes.EPSILON,
             PredictionTypes.V_PREDICTION,
@@ -2731,7 +2909,10 @@ class ModelFoundation(ABC):
                 mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
                 loss = loss * mask_image
 
-        loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
+        loss = loss.mean(dim=list(range(1, len(loss.shape))))
+        if extra_sample_loss is not None:
+            loss = loss + extra_sample_loss.to(device=loss.device, dtype=loss.dtype)
+        loss = loss.mean()
         return loss
 
     def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
@@ -2929,6 +3110,7 @@ class VideoModelFoundation(ImageModelFoundation):
         """
         super().__init__(config, accelerator)
         self.config = config
+        self.crepa_regularizer: Optional[CrepaRegularizer] = None
 
     def get_transforms(self, dataset_type: str = "image"):
         return transforms.Compose(
@@ -2955,6 +3137,65 @@ class VideoModelFoundation(ImageModelFoundation):
         You can reshape or permute as needed for the underlying model.
         """
         return tensor
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        self._init_crepa_regularizer()
+
+    def _init_crepa_regularizer(self):
+        if not getattr(self.config, "crepa_enabled", False):
+            self.crepa_regularizer = None
+            return
+
+        hidden_size = self._infer_crepa_hidden_size()
+        if hidden_size is None:
+            raise ValueError("CREPA enabled but unable to infer transformer hidden size.")
+
+        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size)
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("CREPA requires an attached diffusion model to register its projector.")
+        self.crepa_regularizer.attach_to_model(model_component)
+
+    def _infer_crepa_hidden_size(self) -> Optional[int]:
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        unwrapped = self.unwrap_model(model=model)
+        config = getattr(unwrapped, "config", None)
+        if config is None:
+            return None
+        # Primary: num_attention_heads * attention_head_dim (most DiT models)
+        heads = getattr(config, "num_attention_heads", None)
+        head_dim = getattr(config, "attention_head_dim", None)
+        if heads is not None and head_dim is not None:
+            return int(heads * head_dim)
+        # Fallback: model_dim (Kandinsky5)
+        model_dim = getattr(config, "model_dim", None)
+        if model_dim is not None:
+            return int(model_dim)
+        # Fallback: hidden_size (some models expose this directly)
+        hidden_size = getattr(config, "hidden_size", None)
+        if hidden_size is not None:
+            return int(hidden_size)
+        return None
+
+    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+        loss, aux_logs = super().auxiliary_loss(model_output=model_output, prepared_batch=prepared_batch, loss=loss)
+
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled:
+            crepa_loss, crepa_logs = crepa.compute_loss(
+                hidden_states=model_output.get("crepa_hidden_states"),
+                latents=prepared_batch.get("latents"),
+                vae=self.get_vae(),
+            )
+            if crepa_loss is not None:
+                loss = loss + crepa_loss
+            if crepa_logs:
+                aux_logs = (aux_logs or {}) | crepa_logs
+
+        return loss, aux_logs
 
 
 class AudioModelFoundation(ModelFoundation):
@@ -2988,6 +3229,7 @@ class AudioModelFoundation(ModelFoundation):
             return _audio_transform
         return super().get_transforms(dataset_type=dataset_type)
 
+    @torch.no_grad()
     def encode_with_vae(self, vae, samples):
         """
         Music-focused autoencoders often return both latents and accompanying

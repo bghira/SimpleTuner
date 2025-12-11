@@ -16,7 +16,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
@@ -59,6 +59,100 @@ def forward_with_checkpointing(module, *inputs, use_checkpointing=False):
         return torch.utils.checkpoint.checkpoint(create_custom_forward(module), *inputs, use_reentrant=False)
     else:
         return module(*inputs)
+
+
+def torch_cat_if_needed(tensors, dim: int):
+    """
+    Concatenate a list of tensors if needed, otherwise return the single element.
+    If tensors are off by a few elements along the concat dimension (e.g., from streaming pads),
+    trim to the minimum length to keep shapes aligned.
+    """
+    if len(tensors) == 1:
+        return tensors[0]
+    min_len = min(t.shape[dim] for t in tensors)
+    if any(t.shape[dim] != min_len for t in tensors):
+        tensors = [t.narrow(dim, 0, min_len) for t in tensors]
+    return torch.cat(tensors, dim=dim)
+
+
+class CarriedCausalConv3d(nn.Module):
+    """
+    Causal 3D convolution that cooperates with conv_carry_causal_3d to reuse tail frames between chunks.
+    Padding is applied externally by conv_carry_causal_3d.
+    """
+
+    def __init__(
+        self,
+        chan_in: int,
+        chan_out: int,
+        kernel_size: Union[int, Tuple[int, int, int]],
+        stride: Union[int, Tuple[int, int, int]] = 1,
+        dilation: Union[int, Tuple[int, int, int]] = 1,
+        pad_mode: str = "replicate",
+        enable_patch_conv: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+        kernel_size = (kernel_size, kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+
+        self.pad_mode = pad_mode
+        self.time_causal_padding = (
+            kernel_size[0] // 2,
+            kernel_size[0] // 2,
+            kernel_size[1] // 2,
+            kernel_size[1] // 2,
+            kernel_size[2] - 1,
+            0,
+        )
+        self.carry_frames = kernel_size[0] - 1
+
+        conv_module = PatchCausalConv3d if enable_patch_conv else nn.Conv3d
+        self.conv = conv_module(chan_in, chan_out, kernel_size, stride=stride, dilation=dilation, padding=0, **kwargs)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.conv(x)
+
+
+def conv_carry_causal_3d(
+    xl: list, op: nn.Module, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None
+):
+    """
+    Apply a convolution with optional temporal carry so consecutive chunks share boundary context.
+    """
+    x = xl[0]
+    xl.clear()
+
+    if isinstance(op, CarriedCausalConv3d):
+        pad = op.time_causal_padding
+        if conv_carry_in is None:
+            x = F.pad(x, pad, mode=op.pad_mode)
+        else:
+            carry = conv_carry_in.pop(0)
+            # Align spatial dims (H, W) from carry to current chunk to avoid concat mismatches when tiling.
+            if carry.shape[3] != x.shape[3] or carry.shape[4] != x.shape[4]:
+                # Crop if carry is larger, pad if smaller.
+                h_delta = x.shape[3] - carry.shape[3]
+                w_delta = x.shape[4] - carry.shape[4]
+                if carry.shape[3] > x.shape[3]:
+                    carry = carry[:, :, :, : x.shape[3], :]
+                elif h_delta > 0:
+                    carry = F.pad(carry, (0, 0, 0, h_delta, 0, 0), mode=op.pad_mode)
+                if carry.shape[4] > x.shape[4]:
+                    carry = carry[:, :, :, :, : x.shape[4]]
+                elif w_delta > 0:
+                    carry = F.pad(carry, (0, w_delta, 0, 0, 0, 0), mode=op.pad_mode)
+
+            carry_len = carry.shape[2]
+            x = torch.cat([carry, x], dim=2)
+            # Adjust the leading temporal pad so we do not double-count carried frames.
+            x = F.pad(x, (pad[0], pad[1], pad[2], pad[3], max(pad[4] - carry_len, 0), pad[5]), mode=op.pad_mode)
+
+        if conv_carry_out is not None and op.carry_frames > 0:
+            conv_carry_out.append(x[:, :, -op.carry_frames :, :, :].clone())
+
+        return op(x)
+
+    return op(x)
 
 
 # Optimized implementation of CogVideoXSafeConv3d
@@ -288,56 +382,82 @@ class AttnBlock(nn.Module):
 class ResnetBlock(nn.Module):
     """ResNet-style block for 3D video tensors."""
 
-    def __init__(self, in_channels: int, out_channels: int, enable_patch_conv: bool = False):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        enable_patch_conv: bool = False,
+        conv_op: Type[nn.Module] = CausalConv3d,
+    ):
         super().__init__()
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
 
         self.norm1 = RMS_norm(in_channels, images=False)
-        self.conv1 = CausalConv3d(in_channels, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
+        self.conv1 = conv_op(in_channels, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         self.norm2 = RMS_norm(out_channels, images=False)
-        self.conv2 = CausalConv3d(out_channels, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
+        self.conv2 = conv_op(out_channels, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
         if self.in_channels != self.out_channels:
             conv_module = PatchConv3d if enable_patch_conv else nn.Conv3d
             self.nin_shortcut = conv_module(in_channels, out_channels, kernel_size=1, stride=1, padding=0)
+        else:
+            self.nin_shortcut = None
 
-    def forward(self, x):
+    def forward(self, x, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
         h = x
         h = self.norm1(h)
         h = swish(h, inplace=True)
-        h = self.conv1(h)
+        h = conv_carry_causal_3d([h], self.conv1, conv_carry_in, conv_carry_out)
 
         h = self.norm2(h)
         h = swish(h, inplace=True)
-        h = self.conv2(h)
+        h = conv_carry_causal_3d([h], self.conv2, conv_carry_in, conv_carry_out)
 
-        if self.in_channels != self.out_channels:
-            x = self.nin_shortcut(x)
+        if self.nin_shortcut is not None:
+            x = (
+                self.nin_shortcut(x)
+                if not isinstance(self.nin_shortcut, CarriedCausalConv3d)
+                else conv_carry_causal_3d([x], self.nin_shortcut, conv_carry_in, conv_carry_out)
+            )
         return x + h
 
 
 class Downsample(nn.Module):
 
     def __init__(
-        self, in_channels: int, out_channels: int, add_temporal_downsample: bool = True, enable_patch_conv: bool = False
+        self,
+        in_channels: int,
+        out_channels: int,
+        add_temporal_downsample: bool = True,
+        enable_patch_conv: bool = False,
+        conv_op: Type[nn.Module] = CausalConv3d,
     ):
         super().__init__()
         factor = 2 * 2 * 2 if add_temporal_downsample else 1 * 2 * 2
         assert out_channels % factor == 0
-        self.conv = CausalConv3d(in_channels, out_channels // factor, kernel_size=3, enable_patch_conv=enable_patch_conv)
+        self.conv = conv_op(in_channels, out_channels // factor, kernel_size=3, enable_patch_conv=enable_patch_conv)
         self.add_temporal_downsample = add_temporal_downsample
         self.group_size = factor * in_channels // out_channels
 
-    def _forward_fast(self, x: Tensor):
+    def _forward_fast(self, x: Tensor, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
         r1 = 2 if self.add_temporal_downsample else 1
-        h = self.conv(x)
+        h = conv_carry_causal_3d([x], self.conv, conv_carry_in, conv_carry_out)
+        # Ensure temporal length aligns with expected stride to avoid reshape issues.
+        if self.add_temporal_downsample and h.shape[2] % r1 != 0:
+            pad_t = r1 - (h.shape[2] % r1)
+            h = F.pad(h, (0, 0, 0, 0, 0, pad_t), mode="replicate")
         if self.add_temporal_downsample:
             h_first = h[:, :, :1, :, :]
             h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
             h_first = torch.cat([h_first, h_first], dim=1)
             h_next = h[:, :, 1:, :, :]
+            if h_next.shape[2] % r1 != 0:
+                pad_t = r1 - (h_next.shape[2] % r1)
+                # replicate padding requires data; if empty, fall back to zeros
+                pad_mode = "replicate" if h_next.shape[2] > 0 else "constant"
+                h_next = F.pad(h_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             h_next = rearrange(h_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             h = torch.cat([h_first, h_next], dim=2)
             # shortcut computation
@@ -355,6 +475,10 @@ class Downsample(nn.Module):
                 assert False, f"Unsupported group_size: {self.group_size}"
 
             x_next = x[:, :, 1:, :, :]
+            if x_next.shape[2] % r1 != 0:
+                pad_t = r1 - (x_next.shape[2] % r1)
+                pad_mode = "replicate" if x_next.shape[2] > 0 else "constant"
+                x_next = F.pad(x_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             x_next = rearrange(x_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             B, C, T, H, W = x_next.shape
             x_next = x_next.view(B, h.shape[1], self.group_size, T, H, W)
@@ -379,6 +503,12 @@ class Downsample(nn.Module):
             else:
                 assert False, f"Unsupported group_size: {self.group_size}"
             shortcut = torch.cat([x_first, x_next], dim=2)
+            if shortcut.shape[2] != h.shape[2]:
+                if shortcut.shape[2] < h.shape[2]:
+                    pad_len = h.shape[2] - shortcut.shape[2]
+                    shortcut = F.pad(shortcut, (0, 0, 0, 0, 0, pad_len), mode="replicate")
+                else:
+                    shortcut = shortcut[:, :, : h.shape[2], ...]
         else:
             h = rearrange(h, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             shortcut = rearrange(x, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
@@ -409,14 +539,21 @@ class Downsample(nn.Module):
 
         return h + shortcut
 
-    def _forward(self, x: Tensor):
+    def _forward(self, x: Tensor, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
         r1 = 2 if self.add_temporal_downsample else 1
-        h = self.conv(x)
+        h = conv_carry_causal_3d([x], self.conv, conv_carry_in, conv_carry_out)
+        if self.add_temporal_downsample and h.shape[2] % r1 != 0:
+            pad_t = r1 - (h.shape[2] % r1)
+            h = F.pad(h, (0, 0, 0, 0, 0, pad_t), mode="replicate")
         if self.add_temporal_downsample:
             h_first = h[:, :, :1, :, :]
             h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
             h_first = torch.cat([h_first, h_first], dim=1)
             h_next = h[:, :, 1:, :, :]
+            if h_next.shape[2] % r1 != 0:
+                pad_t = r1 - (h_next.shape[2] % r1)
+                pad_mode = "replicate" if h_next.shape[2] > 0 else "constant"
+                h_next = F.pad(h_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             h_next = rearrange(h_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             h = torch.cat([h_first, h_next], dim=2)
             # shortcut computation
@@ -426,6 +563,10 @@ class Downsample(nn.Module):
             x_first = x_first.view(B, h.shape[1], self.group_size // 2, T, H, W).mean(dim=2)
 
             x_next = x[:, :, 1:, :, :]
+            if x_next.shape[2] % r1 != 0:
+                pad_t = r1 - (x_next.shape[2] % r1)
+                pad_mode = "replicate" if x_next.shape[2] > 0 else "constant"
+                x_next = F.pad(x_next, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
             x_next = rearrange(x_next, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
             B, C, T, H, W = x_next.shape
             x_next = x_next.view(B, h.shape[1], self.group_size, T, H, W).mean(dim=2)
@@ -438,25 +579,153 @@ class Downsample(nn.Module):
 
         return h + shortcut
 
-    def forward(self, x: Tensor):
-        return self._forward_fast(x)
+    def forward(self, x: Tensor, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
+        return self._forward_fast(x, conv_carry_in, conv_carry_out)
+
+    def forward_stream(
+        self,
+        x: Tensor,
+        conv_carry_in: Optional[list],
+        conv_carry_out: Optional[list],
+        h_carry: Optional[Tensor],
+        x_carry: Optional[Tensor],
+        is_first_chunk: bool,
+        is_last_chunk: bool,
+    ):
+        """
+        Streaming variant that keeps temporal groupings aligned across chunks.
+        h_carry/x_carry hold leftover frames (not yet consumed into r1 groups) from the prior chunk.
+        """
+        r1 = 2 if self.add_temporal_downsample else 1
+        h = conv_carry_causal_3d([x], self.conv, conv_carry_in, conv_carry_out)
+
+        if not self.add_temporal_downsample:
+            return self._forward_fast(x, conv_carry_in, conv_carry_out), None, None
+
+        # Split out the very first frame only on the first chunk.
+        if is_first_chunk:
+            h_first = h[:, :, :1, :, :]
+            x_first = x[:, :, :1, :, :]
+            h_rem = h[:, :, 1:, :, :]
+            x_rem = x[:, :, 1:, :, :]
+        else:
+            h_first = None
+            x_first = None
+            h_rem = h
+            x_rem = x
+
+        if h_carry is not None and h_carry.numel() > 0:
+            h_rem = torch.cat([h_carry, h_rem], dim=2)
+        if x_carry is not None and x_carry.numel() > 0:
+            x_rem = torch.cat([x_carry, x_rem], dim=2)
+
+        rem_len = h_rem.shape[2]
+        if rem_len != x_rem.shape[2]:
+            raise RuntimeError("Mismatched temporal dims for streaming downsample.")
+        rem_extra = rem_len % r1
+
+        if is_last_chunk:
+            pad_t = (r1 - rem_extra) % r1
+            if pad_t:
+                pad_mode = "replicate" if rem_len > 0 else "constant"
+                h_rem = F.pad(h_rem, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
+                x_rem = F.pad(x_rem, (0, 0, 0, 0, 0, pad_t), mode=pad_mode, value=0.0)
+            next_h_carry = None
+            next_x_carry = None
+        else:
+            if rem_extra:
+                next_h_carry = h_rem[:, :, -rem_extra:, :, :].contiguous()
+                next_x_carry = x_rem[:, :, -rem_extra:, :, :].contiguous()
+                h_rem = h_rem[:, :, : rem_len - rem_extra, :, :]
+                x_rem = x_rem[:, :, : rem_len - rem_extra, :, :]
+            else:
+                next_h_carry = None
+                next_x_carry = None
+
+        parts = []
+        if h_first is not None:
+            h_first = rearrange(h_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
+            h_first = torch.cat([h_first, h_first], dim=1)
+            parts.append(h_first)
+        if h_rem.shape[2] > 0:
+            h_rem = rearrange(h_rem, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            parts.append(h_rem)
+        h_out = h_rem if len(parts) == 0 else torch_cat_if_needed(parts, dim=2)
+
+        shortcut_parts = []
+        if x_first is not None:
+            x_first = rearrange(x_first, "b c f (h r2) (w r3) -> b (r2 r3 c) f h w", r2=2, r3=2)
+            B, C, T, H, W = x_first.shape
+            x_first = x_first.view(B, h_out.shape[1], self.group_size // 2, T, H, W)
+            if self.group_size <= 2:
+                x_first = x_first[:, :, 0]
+            elif self.group_size == 4:
+                x_first = x_first[:, :, 0].add_(x_first[:, :, 1]).mul_(0.5)
+            elif self.group_size == 8:
+                x_first = x_first[:, :, 0].add_(x_first[:, :, 1]).add_(x_first[:, :, 2]).add_(x_first[:, :, 3]).mul_(0.25)
+            else:
+                raise AssertionError(f"Unsupported group_size: {self.group_size}")
+            shortcut_parts.append(x_first)
+        if x_rem.shape[2] > 0:
+            x_next = rearrange(x_rem, "b c (f r1) (h r2) (w r3) -> b (r1 r2 r3 c) f h w", r1=r1, r2=2, r3=2)
+            B, C, T, H, W = x_next.shape
+            x_next = x_next.view(B, h_out.shape[1], self.group_size, T, H, W)
+            if self.group_size == 1:
+                x_next = x_next[:, :, 0]
+            elif self.group_size == 2:
+                x_next = x_next[:, :, 0].add_(x_next[:, :, 1]).mul_(0.5)
+            elif self.group_size == 4:
+                x_next = x_next[:, :, 0].add_(x_next[:, :, 1]).add_(x_next[:, :, 2]).add_(x_next[:, :, 3]).mul_(0.25)
+            elif self.group_size == 8:
+                x_next = (
+                    x_next[:, :, 0]
+                    .add_(x_next[:, :, 1])
+                    .add_(x_next[:, :, 2])
+                    .add_(x_next[:, :, 3])
+                    .add_(x_next[:, :, 4])
+                    .add_(x_next[:, :, 5])
+                    .add_(x_next[:, :, 6])
+                    .add_(x_next[:, :, 7])
+                    .mul_(0.125)
+                )
+            else:
+                raise AssertionError(f"Unsupported group_size: {self.group_size}")
+            shortcut_parts.append(x_next)
+
+        if shortcut_parts:
+            shortcut = torch_cat_if_needed(shortcut_parts, dim=2)
+            if shortcut.shape[2] != h_out.shape[2]:
+                if shortcut.shape[2] < h_out.shape[2]:
+                    pad_len = h_out.shape[2] - shortcut.shape[2]
+                    shortcut = F.pad(shortcut, (0, 0, 0, 0, 0, pad_len), mode="replicate")
+                else:
+                    shortcut = shortcut[:, :, : h_out.shape[2], ...]
+        else:
+            shortcut = torch.zeros_like(h_out)
+
+        return h_out + shortcut, next_h_carry, next_x_carry
 
 
 class Upsample(nn.Module):
     """Hierarchical upsampling with temporal/ spatial support."""
 
     def __init__(
-        self, in_channels: int, out_channels: int, add_temporal_upsample: bool = True, enable_patch_conv: bool = False
+        self,
+        in_channels: int,
+        out_channels: int,
+        add_temporal_upsample: bool = True,
+        enable_patch_conv: bool = False,
+        conv_op: Type[nn.Module] = CausalConv3d,
     ):
         super().__init__()
         factor = 2 * 2 * 2 if add_temporal_upsample else 1 * 2 * 2
-        self.conv = CausalConv3d(in_channels, out_channels * factor, kernel_size=3, enable_patch_conv=enable_patch_conv)
+        self.conv = conv_op(in_channels, out_channels * factor, kernel_size=3, enable_patch_conv=enable_patch_conv)
         self.add_temporal_upsample = add_temporal_upsample
         self.repeats = factor * out_channels // in_channels
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, conv_carry_in: Optional[list] = None, conv_carry_out: Optional[list] = None):
         r1 = 2 if self.add_temporal_upsample else 1
-        h = self.conv(x)
+        h = conv_carry_causal_3d([x], self.conv, conv_carry_in, conv_carry_out)
         if self.add_temporal_upsample:
             h_first = h[:, :, :1, :, :]
             h_first = rearrange(h_first, "b (r2 r3 c) f h w -> b c f (h r2) (w r3)", r2=2, r3=2)
@@ -495,6 +764,7 @@ class Encoder(nn.Module):
         ffactor_temporal: int,
         downsample_match_channel: bool = True,
         enable_patch_conv: bool = False,
+        temporal_roll: bool = False,
     ):
         super().__init__()
         assert block_out_channels[-1] % (2 * z_channels) == 0
@@ -502,9 +772,12 @@ class Encoder(nn.Module):
         self.z_channels = z_channels
         self.block_out_channels = block_out_channels
         self.num_res_blocks = num_res_blocks
+        self.temporal_roll = temporal_roll
+        self.time_compress = 1
 
+        conv_op: Type[nn.Module] = CarriedCausalConv3d if temporal_roll else CausalConv3d
         # downsampling
-        self.conv_in = CausalConv3d(in_channels, block_out_channels[0], kernel_size=3, enable_patch_conv=enable_patch_conv)
+        self.conv_in = conv_op(in_channels, block_out_channels[0], kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         self.down = nn.ModuleList()
         block_in = block_out_channels[0]
@@ -512,7 +785,14 @@ class Encoder(nn.Module):
             block = nn.ModuleList()
             block_out = ch
             for _ in range(self.num_res_blocks):
-                block.append(ResnetBlock(in_channels=block_in, out_channels=block_out, enable_patch_conv=enable_patch_conv))
+                block.append(
+                    ResnetBlock(
+                        in_channels=block_in,
+                        out_channels=block_out,
+                        enable_patch_conv=enable_patch_conv,
+                        conv_op=conv_op,
+                    )
+                )
                 block_in = block_out
             down = nn.Module()
             down.block = block
@@ -524,17 +804,27 @@ class Encoder(nn.Module):
             if add_spatial_downsample or add_temporal_downsample:
                 assert i_level < len(block_out_channels) - 1
                 block_out = block_out_channels[i_level + 1] if downsample_match_channel else block_in
+                if add_temporal_downsample:
+                    self.time_compress *= 2
                 down.downsample = Downsample(
-                    block_in, block_out, add_temporal_downsample, enable_patch_conv=enable_patch_conv
+                    block_in,
+                    block_out,
+                    add_temporal_downsample,
+                    enable_patch_conv=enable_patch_conv,
+                    conv_op=conv_op,
                 )
                 block_in = block_out
             self.down.append(down)
 
         # middle
         self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.block_1 = ResnetBlock(
+            in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv, conv_op=conv_op
+        )
         self.mid.attn_1 = AttnBlock(block_in, enable_patch_conv=enable_patch_conv)
-        self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.block_2 = ResnetBlock(
+            in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv, conv_op=conv_op
+        )
 
         # end
         self.norm_out = RMS_norm(block_in, images=False)
@@ -544,10 +834,13 @@ class Encoder(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward pass through the encoder."""
+        if self.temporal_roll:
+            return self._forward_temporal_roll(x)
+
         use_checkpointing = bool(self.training and self.gradient_checkpointing)
 
         # downsampling
-        h = self.conv_in(x)
+        h = conv_carry_causal_3d([x], self.conv_in)
         for i_level in range(len(self.block_out_channels)):
             for i_block in range(self.num_res_blocks):
                 h = forward_with_checkpointing(self.down[i_level].block[i_block], h, use_checkpointing=use_checkpointing)
@@ -564,7 +857,32 @@ class Encoder(nn.Module):
         shortcut = rearrange(h, "b (c r) f h w -> b c r f h w", r=group_size).mean(dim=2)
         h = self.norm_out(h)
         h = swish(h, inplace=True)
-        h = self.conv_out(h)
+        h = conv_carry_causal_3d([h], self.conv_out)
+        h += shortcut
+        return h
+
+    def _forward_temporal_roll(self, x: Tensor) -> Tensor:
+        """
+        Stream the VAE encoder over time, carrying the last frames between chunks to reduce VRAM.
+        """
+        use_checkpointing = bool(self.training and self.gradient_checkpointing)
+
+        h = conv_carry_causal_3d([x], self.conv_in)
+        for i_level in range(len(self.block_out_channels)):
+            for i_block in range(self.num_res_blocks):
+                h = forward_with_checkpointing(self.down[i_level].block[i_block], h, use_checkpointing=use_checkpointing)
+            if hasattr(self.down[i_level], "downsample"):
+                h = forward_with_checkpointing(self.down[i_level].downsample, h, use_checkpointing=use_checkpointing)
+
+        h = forward_with_checkpointing(self.mid.block_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.attn_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.block_2, h, use_checkpointing=use_checkpointing)
+
+        group_size = self.block_out_channels[-1] // (2 * self.z_channels)
+        shortcut = rearrange(h, "b (c r) f h w -> b c r f h w", r=group_size).mean(dim=2)
+        h = self.norm_out(h)
+        h = swish(h, inplace=True)
+        h = conv_carry_causal_3d([h], self.conv_out)
         h += shortcut
         return h
 
@@ -582,6 +900,7 @@ class Decoder(nn.Module):
         ffactor_temporal: int,
         upsample_match_channel: bool = True,
         enable_patch_conv: bool = False,
+        temporal_roll: bool = False,
     ):
         super().__init__()
         assert block_out_channels[0] % z_channels == 0
@@ -589,15 +908,22 @@ class Decoder(nn.Module):
         self.z_channels = z_channels
         self.block_out_channels = block_out_channels
         self.num_res_blocks = num_res_blocks
+        self.temporal_roll = temporal_roll
 
         block_in = block_out_channels[0]
-        self.conv_in = CausalConv3d(z_channels, block_in, kernel_size=3, enable_patch_conv=enable_patch_conv)
+        conv_op: Type[nn.Module] = CarriedCausalConv3d if temporal_roll else CausalConv3d
+
+        self.conv_in = conv_op(z_channels, block_in, kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         # middle
         self.mid = nn.Module()
-        self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.block_1 = ResnetBlock(
+            in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv, conv_op=conv_op
+        )
         self.mid.attn_1 = AttnBlock(block_in, enable_patch_conv=enable_patch_conv)
-        self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv)
+        self.mid.block_2 = ResnetBlock(
+            in_channels=block_in, out_channels=block_in, enable_patch_conv=enable_patch_conv, conv_op=conv_op
+        )
 
         # upsampling
         self.up = nn.ModuleList()
@@ -605,7 +931,14 @@ class Decoder(nn.Module):
             block = nn.ModuleList()
             block_out = ch
             for _ in range(self.num_res_blocks + 1):
-                block.append(ResnetBlock(in_channels=block_in, out_channels=block_out, enable_patch_conv=enable_patch_conv))
+                block.append(
+                    ResnetBlock(
+                        in_channels=block_in,
+                        out_channels=block_out,
+                        enable_patch_conv=enable_patch_conv,
+                        conv_op=conv_op,
+                    )
+                )
                 block_in = block_out
             up = nn.Module()
             up.block = block
@@ -615,23 +948,32 @@ class Decoder(nn.Module):
             if add_spatial_upsample or add_temporal_upsample:
                 assert i_level < len(block_out_channels) - 1
                 block_out = block_out_channels[i_level + 1] if upsample_match_channel else block_in
-                up.upsample = Upsample(block_in, block_out, add_temporal_upsample, enable_patch_conv=enable_patch_conv)
+                up.upsample = Upsample(
+                    block_in,
+                    block_out,
+                    add_temporal_upsample,
+                    enable_patch_conv=enable_patch_conv,
+                    conv_op=conv_op,
+                )
                 block_in = block_out
             self.up.append(up)
 
         # end
         self.norm_out = RMS_norm(block_in, images=False)
-        self.conv_out = CausalConv3d(block_in, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
+        self.conv_out = conv_op(block_in, out_channels, kernel_size=3, enable_patch_conv=enable_patch_conv)
 
         self.gradient_checkpointing = False
 
     def forward(self, z: Tensor) -> Tensor:
         """Forward pass through the decoder."""
+        if self.temporal_roll:
+            return self._forward_temporal_roll(z)
+
         use_checkpointing = bool(self.training and self.gradient_checkpointing)
 
         # z to block_in
         repeats = self.block_out_channels[0] // (self.z_channels)
-        h = self.conv_in(z) + z.repeat_interleave(repeats=repeats, dim=1)
+        h = conv_carry_causal_3d([z], self.conv_in) + z.repeat_interleave(repeats=repeats, dim=1)
 
         # middle
         h = forward_with_checkpointing(self.mid.block_1, h, use_checkpointing=use_checkpointing)
@@ -648,7 +990,28 @@ class Decoder(nn.Module):
         # end
         h = self.norm_out(h)
         h = swish(h, inplace=True)
-        h = self.conv_out(h)
+        h = conv_carry_causal_3d([h], self.conv_out)
+        return h
+
+    def _forward_temporal_roll(self, z: Tensor) -> Tensor:
+        use_checkpointing = bool(self.training and self.gradient_checkpointing)
+
+        repeats = self.block_out_channels[0] // (self.z_channels)
+        h = conv_carry_causal_3d([z], self.conv_in) + z.repeat_interleave(repeats=repeats, dim=1)
+
+        h = forward_with_checkpointing(self.mid.block_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.attn_1, h, use_checkpointing=use_checkpointing)
+        h = forward_with_checkpointing(self.mid.block_2, h, use_checkpointing=use_checkpointing)
+
+        for i_level in range(len(self.block_out_channels)):
+            for i_block in range(self.num_res_blocks + 1):
+                h = forward_with_checkpointing(self.up[i_level].block[i_block], h, use_checkpointing=use_checkpointing)
+            if hasattr(self.up[i_level], "upsample"):
+                h = forward_with_checkpointing(self.up[i_level].upsample, h, use_checkpointing=use_checkpointing)
+
+        h = self.norm_out(h)
+        h = swish(h, inplace=True)
+        h = conv_carry_causal_3d([h], self.conv_out)
         return h
 
 
@@ -674,12 +1037,14 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
         downsample_match_channel: bool = True,
         upsample_match_channel: bool = True,
         enable_patch_conv: bool = False,
+        enable_temporal_roll: bool = False,
     ):
         super().__init__()
         self.ffactor_spatial = ffactor_spatial
         self.ffactor_temporal = ffactor_temporal
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
+        self.temporal_roll = enable_temporal_roll
 
         self.encoder = Encoder(
             in_channels=in_channels,
@@ -690,6 +1055,7 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
             ffactor_temporal=ffactor_temporal,
             downsample_match_channel=downsample_match_channel,
             enable_patch_conv=enable_patch_conv,
+            temporal_roll=enable_temporal_roll,
         )
         self.decoder = Decoder(
             z_channels=latent_channels,
@@ -700,6 +1066,7 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
             ffactor_temporal=ffactor_temporal,
             upsample_match_channel=upsample_match_channel,
             enable_patch_conv=enable_patch_conv,
+            temporal_roll=enable_temporal_roll,
         )
 
         self.use_slicing = False
@@ -714,6 +1081,10 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
         self.tile_overlap_factor = 0.25
 
         self._tile_parallelism_enabled = False
+
+        # Maintain compatibility with the training and pipeline code that expects these attributes.
+        self.spatial_compression_ratio = ffactor_spatial
+        self.temporal_compression_ratio = ffactor_temporal
 
     def set_tile_sample_min_size(self, sample_size: int, tile_overlap_factor: float = 0.2):
         self.tile_sample_min_size = sample_size

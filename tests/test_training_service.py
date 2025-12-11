@@ -286,6 +286,28 @@ class TrainingServiceTests(unittest.TestCase):
             training_service.DEFAULT_WEBHOOK_CONFIG,
         )
 
+    def test_start_training_job_keeps_accelerate_visible_devices(self) -> None:
+        captured = {}
+
+        def fake_submit(job_id, func, config):
+            captured["job_id"] = job_id
+            captured["config"] = config
+
+        payload = {
+            "accelerate_visible_devices": [1],
+            "--num_processes": 1,
+        }
+
+        with (
+            patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
+            patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+        ):
+            job_id = training_service.start_training_job(payload)
+
+        self.assertEqual(job_id, captured["job_id"])
+        self.assertEqual(captured["config"].get("accelerate_visible_devices"), [1])
+        self.assertEqual(captured["config"].get("--num_processes"), 1)
+
     def test_start_training_job_copies_prompt_library(self) -> None:
         captured = {}
 

@@ -110,3 +110,47 @@ def set_adapter_stack(
     if freeze_names:
         for name in freeze_names:
             freeze_adapter_parameters(module, name)
+
+
+def build_adapter_stack(
+    *,
+    peft_config: Optional[dict],
+    assistant_adapter_name: str,
+    assistant_weight: Optional[float],
+    include_default: bool = True,
+    default_weight: float = 1.0,
+    require_default: bool = False,
+) -> tuple[list[str], Union[float, list[float]], list[str]]:
+    """
+    Build adapter names and weights for stacking, returning:
+      (adapter_names, weight_argument, freeze_names)
+    """
+    adapter_names: list[str] = []
+    adapter_weights: list[float] = []
+    freeze_names: list[str] = []
+    has_default = isinstance(peft_config, dict) and "default" in peft_config
+
+    if assistant_weight is not None and assistant_weight != 0:
+        adapter_names.append(assistant_adapter_name)
+        adapter_weights.append(float(assistant_weight))
+        freeze_names.append(assistant_adapter_name)
+
+    if include_default:
+        if not has_default:
+            message = "Expected trainable 'default' adapter to be present on the PEFT module."
+            if require_default:
+                raise ValueError(message)
+            return [], [], []
+        adapter_names.append("default")
+        adapter_weights.append(default_weight)
+
+    if not adapter_names:
+        return [], [], []
+
+    weight_arg: Union[float, list[float]]
+    if len(adapter_weights) == 1:
+        weight_arg = adapter_weights[0]
+    else:
+        weight_arg = adapter_weights
+
+    return adapter_names, weight_arg, freeze_names

@@ -1201,6 +1201,123 @@ function trainerComponent() {
             }
             return datasets.map((dataset, index) => this.normalizeDataset(dataset, index));
         },
+        detectDuplicateIds(datasets) {
+            // Comprehensive client-side validation for immediate feedback
+            const validations = [];
+            if (!Array.isArray(datasets)) {
+                return validations;
+            }
+
+            // Check for duplicate IDs
+            const idCounts = {};
+            datasets.forEach(dataset => {
+                const id = (dataset.id || '').trim();
+                if (id) {
+                    idCounts[id] = (idCounts[id] || 0) + 1;
+                }
+            });
+
+            for (const [id, count] of Object.entries(idCounts)) {
+                if (count > 1) {
+                    validations.push({
+                        field: id,
+                        message: `dataset id "${id}" appears ${count} times - IDs must be unique`,
+                        level: 'error'
+                    });
+                }
+            }
+
+            // Check required paths for each dataset
+            datasets.forEach(dataset => {
+                const id = dataset.id || 'unknown';
+                const type = (dataset.type || '').toLowerCase();
+                const datasetType = (dataset.dataset_type || '').toLowerCase();
+
+                // Skip disabled datasets
+                if (dataset.disabled) {
+                    return;
+                }
+
+                // Check instance_data_dir for local image/video/audio/conditioning datasets
+                if (type === 'local' && ['image', 'video', 'audio', 'conditioning'].includes(datasetType)) {
+                    if (!dataset.instance_data_dir || !dataset.instance_data_dir.trim()) {
+                        validations.push({
+                            field: `${id}.instance_data_dir`,
+                            message: 'instance data directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check cache_dir_vae for local datasets (except text_embeds/image_embeds)
+                if (type === 'local' && !['text_embeds', 'image_embeds'].includes(datasetType)) {
+                    if (!dataset.cache_dir_vae || !dataset.cache_dir_vae.trim()) {
+                        validations.push({
+                            field: `${id}.cache_dir_vae`,
+                            message: 'VAE cache directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check cache_dir for text_embeds datasets
+                if (datasetType === 'text_embeds') {
+                    if (!dataset.cache_dir || !dataset.cache_dir.trim()) {
+                        validations.push({
+                            field: `${id}.cache_dir`,
+                            message: 'text embed cache directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check cache_dir for image_embeds datasets
+                if (datasetType === 'image_embeds') {
+                    if (!dataset.cache_dir || !dataset.cache_dir.trim()) {
+                        validations.push({
+                            field: `${id}.cache_dir`,
+                            message: 'image embed cache directory is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check HuggingFace dataset path
+                if (type === 'huggingface') {
+                    if (!dataset.dataset_name || !dataset.dataset_name.trim()) {
+                        validations.push({
+                            field: `${id}.dataset_name`,
+                            message: 'HuggingFace dataset name is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check AWS bucket for aws type
+                if (type === 'aws') {
+                    if (!dataset.aws_bucket_name || !dataset.aws_bucket_name.trim()) {
+                        validations.push({
+                            field: `${id}.aws_bucket_name`,
+                            message: 'AWS bucket name is required',
+                            level: 'error'
+                        });
+                    }
+                }
+
+                // Check parquet/csv file path
+                if (type === 'parquet' || type === 'csv') {
+                    if (!dataset.parquet_path || !dataset.parquet_path.trim()) {
+                        validations.push({
+                            field: `${id}.parquet_path`,
+                            message: `${type.toUpperCase()} file path is required`,
+                            level: 'error'
+                        });
+                    }
+                }
+            });
+
+            return validations;
+        },
         normalizeDataset(dataset, index = 0) {
             if (!dataset || typeof dataset !== 'object') {
                 return dataset;
@@ -1227,6 +1344,7 @@ function trainerComponent() {
             if (dataset.dataset_type === 'conditioning') {
                 dataset.conditioning_type = dataset.conditioning_type || 'controlnet';
                 dataset.default = this.normalizeBoolean(dataset.default);
+                dataset.source_dataset_id = this._coerceString(dataset.source_dataset_id);
             }
 
             if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {
@@ -1321,6 +1439,17 @@ function trainerComponent() {
             dataset.prepend_instance_prompt = this.normalizeBoolean(dataset.prepend_instance_prompt);
             dataset.only_instance_prompt = this.normalizeBoolean(dataset.only_instance_prompt);
             dataset.disabled = this.normalizeBoolean(dataset.disabled);
+            dataset.vae_cache_clear_each_epoch = this.normalizeBoolean(dataset.vae_cache_clear_each_epoch);
+
+            // max_upscale_threshold (nullable float)
+            if (dataset.max_upscale_threshold !== undefined && dataset.max_upscale_threshold !== null && dataset.max_upscale_threshold !== '') {
+                dataset.max_upscale_threshold = parseFloat(dataset.max_upscale_threshold);
+                if (isNaN(dataset.max_upscale_threshold)) {
+                    dataset.max_upscale_threshold = null;
+                }
+            } else {
+                dataset.max_upscale_threshold = null;
+            }
 
             dataset.instance_prompt = this._coerceString(dataset.instance_prompt);
             dataset.cache_dir_vae = this._coerceString(dataset.cache_dir_vae);
@@ -1334,9 +1463,15 @@ function trainerComponent() {
 
             dataset.text_embeds = this._coerceString(dataset.text_embeds);
             dataset.image_embeds = this._coerceString(dataset.image_embeds);
+            dataset.conditioning_image_embeds = this._coerceString(dataset.conditioning_image_embeds);
+            dataset.cache_dir_conditioning_image_embeds = this._coerceString(dataset.cache_dir_conditioning_image_embeds);
             if (!['image', 'video'].includes(dataset.dataset_type)) {
                 dataset.text_embeds = '';
                 dataset.image_embeds = '';
+            }
+            if (!['image', 'video', 'conditioning'].includes(dataset.dataset_type)) {
+                dataset.conditioning_image_embeds = '';
+                dataset.cache_dir_conditioning_image_embeds = '';
             }
 
             dataset.aws_bucket_name = this._coerceString(dataset.aws_bucket_name);
@@ -1767,10 +1902,26 @@ function trainerComponent() {
 
                 if (cleaned.dataset_type === 'conditioning') {
                     cleaned.default = this.normalizeBoolean(cleaned.default);
+                    // conditioning_type for conditioning datasets
+                    const conditioningType = this._coerceString(dataset.conditioning_type) || 'controlnet';
+                    if (['controlnet', 'mask', 'reference_strict', 'reference_loose'].includes(conditioningType)) {
+                        cleaned.conditioning_type = conditioningType;
+                    } else {
+                        cleaned.conditioning_type = 'controlnet';
+                    }
+                    // source_dataset_id for reference/mask conditioning types
+                    const sourceDatasetId = this._coerceString(dataset.source_dataset_id);
+                    if (sourceDatasetId && ['reference_strict', 'reference_loose', 'mask'].includes(cleaned.conditioning_type)) {
+                        cleaned.source_dataset_id = sourceDatasetId;
+                    } else {
+                        delete cleaned.source_dataset_id;
+                    }
                     if (!Array.isArray(cleaned.conditioning_data)) {
                         cleaned.conditioning_data = [];
                     }
                 } else {
+                    delete cleaned.source_dataset_id;
+                    delete cleaned.conditioning_type;
                     const links = Array.isArray(cleaned.conditioning_data) ? cleaned.conditioning_data : [];
                     cleaned.conditioning_data = links;
                     const invalid = links.filter((id) => !conditioningIds.has(id));
@@ -1893,6 +2044,24 @@ function trainerComponent() {
                     delete cleaned.only_instance_prompt;
                 }
 
+                if (this.normalizeBoolean(dataset.vae_cache_clear_each_epoch)) {
+                    cleaned.vae_cache_clear_each_epoch = true;
+                } else {
+                    delete cleaned.vae_cache_clear_each_epoch;
+                }
+
+                // max_upscale_threshold (nullable float)
+                if (dataset.max_upscale_threshold !== null && dataset.max_upscale_threshold !== undefined && dataset.max_upscale_threshold !== '') {
+                    const threshold = parseFloat(dataset.max_upscale_threshold);
+                    if (!isNaN(threshold)) {
+                        cleaned.max_upscale_threshold = threshold;
+                    } else {
+                        delete cleaned.max_upscale_threshold;
+                    }
+                } else {
+                    delete cleaned.max_upscale_threshold;
+                }
+
                 const instancePrompt = this._coerceString(dataset.instance_prompt);
                 if (instancePrompt) {
                     cleaned.instance_prompt = instancePrompt;
@@ -1954,6 +2123,25 @@ function trainerComponent() {
                 } else {
                     delete cleaned.text_embeds;
                     delete cleaned.image_embeds;
+                }
+
+                // conditioning_image_embeds (for I2V models)
+                if (['image', 'video', 'conditioning'].includes(cleaned.dataset_type)) {
+                    const conditioningImageEmbedRef = this._coerceString(dataset.conditioning_image_embeds);
+                    if (conditioningImageEmbedRef) {
+                        cleaned.conditioning_image_embeds = conditioningImageEmbedRef;
+                    } else {
+                        delete cleaned.conditioning_image_embeds;
+                    }
+                    const cacheDirConditioningImageEmbeds = this._coerceString(dataset.cache_dir_conditioning_image_embeds);
+                    if (cacheDirConditioningImageEmbeds) {
+                        cleaned.cache_dir_conditioning_image_embeds = cacheDirConditioningImageEmbeds;
+                    } else {
+                        delete cleaned.cache_dir_conditioning_image_embeds;
+                    }
+                } else {
+                    delete cleaned.conditioning_image_embeds;
+                    delete cleaned.cache_dir_conditioning_image_embeds;
                 }
 
                 if (cleaned.type === 'aws') {
@@ -2341,6 +2529,7 @@ function trainerComponent() {
          dataLoaderMode: 'builder', // 'builder' or 'json'
          dataLoaderJson: '',
          hasUnsavedChanges: false,
+         loadValidationErrors: [], // Validation errors returned when loading config
          // Save dialog state
          showSaveDialog: false,
          createBackupOption: false,
@@ -2623,9 +2812,33 @@ function trainerComponent() {
                     this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
                     this.hasUnsavedChanges = false;
                     this.datasetValidationErrors = {};
+
+                    // Store validation errors from the load response + client-side checks
+                    const serverValidations = Array.isArray(planData.validations) ? planData.validations : [];
+                    const clientValidations = this.detectDuplicateIds(this.datasets);
+
+                    // Merge validations, avoiding duplicates
+                    const allValidations = [...serverValidations];
+                    clientValidations.forEach(cv => {
+                        if (!allValidations.some(sv => sv.field === cv.field && sv.message === cv.message)) {
+                            allValidations.push(cv);
+                        }
+                    });
+
+                    this.loadValidationErrors = allValidations.filter(v => v.level === 'error' || v.level === 'warning');
+
+                    // Show toast for critical errors (like duplicate IDs, missing paths)
+                    const criticalErrors = this.loadValidationErrors.filter(v => v.level === 'error');
+                    if (criticalErrors.length > 0) {
+                        const errorMessages = criticalErrors.slice(0, 3).map(e => `• ${e.field}: ${e.message}`).join('<br>');
+                        const moreCount = criticalErrors.length > 3 ? `<br>...and ${criticalErrors.length - 3} more` : '';
+                        window.showToast(`<strong>Dataset configuration has errors:</strong><br>${errorMessages}${moreCount}`, 'error', 8000);
+                    }
+
                     if (Alpine.store('trainer')) {
                         Alpine.store('trainer').datasets = this.datasets;
                         Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
+                        Alpine.store('trainer').loadValidationErrors = this.loadValidationErrors;
                     }
                     if (window.dataloaderSectionComponentInstance &&
                         typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
@@ -2647,6 +2860,10 @@ function trainerComponent() {
                 this.datasets = [];
                 this.dataLoaderJson = JSON.stringify([], null, 2);
                 this.hasUnsavedChanges = false;
+                this.loadValidationErrors = [];
+                if (Alpine.store('trainer')) {
+                    Alpine.store('trainer').loadValidationErrors = [];
+                }
             } finally {
                 this.datasetsLoading = false;
             }
@@ -2675,14 +2892,26 @@ function trainerComponent() {
                         const sanitized = this.prepareDatasetsForSave(this.datasets);
                         this.dataLoaderJson = JSON.stringify(sanitized, null, 2);
 
+                        // Client-side duplicate ID detection
+                        const clientValidations = this.detectDuplicateIds(this.datasets);
+                        this.loadValidationErrors = clientValidations;
+
                         // Update the trainer store reference
                         if (Alpine.store('trainer')) {
                             Alpine.store('trainer').datasets = this.datasets;
                             Alpine.store('trainer').dataLoaderJson = this.dataLoaderJson;
+                            Alpine.store('trainer').loadValidationErrors = this.loadValidationErrors;
                         }
 
                         this.hasUnsavedChanges = false;
                         this.datasetValidationErrors = {};
+
+                        // Show toast for client-side detected errors
+                        if (clientValidations.length > 0) {
+                            const errorMessages = clientValidations.slice(0, 3).map(e => `• ${e.field}: ${e.message}`).join('<br>');
+                            window.showToast(`<strong>Dataset configuration has errors:</strong><br>${errorMessages}`, 'error', 8000);
+                        }
+
                         if (window.dataloaderSectionComponentInstance &&
                             typeof window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll === 'function') {
                             window.dataloaderSectionComponentInstance.syncGeneratorSelectionsForAll();
@@ -2703,6 +2932,10 @@ function trainerComponent() {
                this.datasets = [];
                this.dataLoaderJson = JSON.stringify([], null, 2);
                 this.hasUnsavedChanges = false;
+                this.loadValidationErrors = [];
+                if (Alpine.store('trainer')) {
+                    Alpine.store('trainer').loadValidationErrors = [];
+                }
             } finally {
                this.datasetsLoading = false;
             }
@@ -4510,6 +4743,38 @@ function trainerComponent() {
                 return;
             }
 
+            const parseNumeric = (value) => {
+                if (typeof value === 'number') {
+                    return Number.isFinite(value) ? value : null;
+                }
+                if (typeof value === 'string' && value.trim() !== '') {
+                    const parsed = Number(value);
+                    return Number.isFinite(parsed) ? parsed : null;
+                }
+                return null;
+            };
+
+            const formatStepSpeedLabel = (seconds) => {
+                const value = parseNumeric(seconds);
+                if (!value || value <= 0) {
+                    return 'N/A';
+                }
+                const precision = value >= 10 ? 1 : 2;
+                return `${value.toFixed(precision)} s/step`;
+            };
+
+            const formatSamplesPerSecondLabel = (samples) => {
+                const value = parseNumeric(samples);
+                if (!value || value <= 0) {
+                    return 'N/A';
+                }
+                if (value >= 1000) {
+                    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
+                }
+                const precision = value >= 10 ? 1 : 2;
+                return value.toFixed(precision);
+            };
+
             const loss = detail.loss;
             const formattedLoss = (typeof loss === 'number' && !isNaN(loss))
                 ? loss.toFixed(4)
@@ -4525,13 +4790,48 @@ function trainerComponent() {
             const normalizedPercent = Math.max(0, Math.min(100, safePercent));
             const roundedPercent = Math.round(normalizedPercent * 100) / 100;
 
+            // Preserve previous values to avoid losing data from incomplete events
+            const prev = $data.trainingProgress || {};
+
+            let stepSpeedSeconds = parseNumeric(detail.step_speed_seconds ?? detail.iteration_step_time_seconds);
+            let stepsPerSecond = parseNumeric(detail.steps_per_second);
+            if (!stepsPerSecond && stepSpeedSeconds && stepSpeedSeconds > 0) {
+                stepsPerSecond = 1 / stepSpeedSeconds;
+            }
+            if (!stepSpeedSeconds && stepsPerSecond && stepsPerSecond > 0) {
+                stepSpeedSeconds = 1 / stepsPerSecond;
+            }
+            // Fall back to previous values if current event doesn't have rate stats
+            stepSpeedSeconds = stepSpeedSeconds ?? prev.step_speed_seconds;
+            stepsPerSecond = stepsPerSecond ?? (prev.step_speed_seconds ? 1 / prev.step_speed_seconds : null);
+
+            const effectiveBatchSize = parseNumeric(detail.effective_batch_size ?? detail.total_batch_size) ?? prev.effective_batch_size;
+            let samplesPerSecond = parseNumeric(detail.samples_per_second);
+            if (
+                !samplesPerSecond &&
+                stepsPerSecond &&
+                stepsPerSecond > 0 &&
+                effectiveBatchSize &&
+                effectiveBatchSize > 0
+            ) {
+                samplesPerSecond = stepsPerSecond * effectiveBatchSize;
+            }
+            // Fall back to previous samples_per_second
+            samplesPerSecond = samplesPerSecond ?? prev.samples_per_second;
+
+            // Use ?? for step/epoch to handle 0 correctly (|| treats 0 as falsy)
             $data.trainingProgress = {
                 percent: roundedPercent,
-                step: detail.step || detail.current_step || 0,
-                total_steps: detail.total_steps || detail.total || 0,
-                epoch: detail.epoch || 0,
-                loss: formattedLoss,
-                learning_rate: formattedLr,
+                step: detail.step ?? detail.current_step ?? prev.step ?? 0,
+                total_steps: detail.total_steps ?? detail.total ?? prev.total_steps ?? 0,
+                epoch: detail.epoch ?? prev.epoch ?? 0,
+                loss: formattedLoss !== 'N/A' ? formattedLoss : (prev.loss ?? 'N/A'),
+                learning_rate: formattedLr !== 'N/A' ? formattedLr : (prev.learning_rate ?? 'N/A'),
+                step_speed_seconds: stepSpeedSeconds,
+                step_speed_label: formatStepSpeedLabel(stepSpeedSeconds),
+                samples_per_second: samplesPerSecond,
+                samples_per_second_label: formatSamplesPerSecondLabel(samplesPerSecond),
+                effective_batch_size: effectiveBatchSize,
             };
             $data.isTraining = true;
             $data.showTrainingProgress = true;
@@ -5421,6 +5721,16 @@ function trainerComponent() {
                             <span x-text="trainingProgress.learning_rate || 'N/A'"></span>
                         </div>
                     </div>
+                    <div class="row mt-3">
+                        <div class="col-md-3">
+                            <strong>Step Speed:</strong>
+                            <span x-text="trainingProgress.step_speed_label || 'N/A'"></span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Samples/sec:</strong>
+                            <span x-text="trainingProgress.samples_per_second_label || 'N/A'"></span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -5716,19 +6026,19 @@ function trainerComponent() {
 
 {% block extra_js %}
 <!-- Load dataloader builder scripts -->
-<script src="/static/js/server-config.js"></script>
-<script src="/static/js/utils/api.js"></script>
-<script src="/static/js/dataloader-builder.js"></script>
-<script src="/static/js/dataloader-htmx-init.js"></script>
-<script src="/static/js/event-handler.js"></script>
-<script src="/static/js/services/dependency-manager.js"></script>
+<script src="/static/js/server-config.js?v={{ asset_version }}"></script>
+<script src="/static/js/utils/api.js?v={{ asset_version }}"></script>
+<script src="/static/js/dataloader-builder.js?v={{ asset_version }}"></script>
+<script src="/static/js/dataloader-htmx-init.js?v={{ asset_version }}"></script>
+<script src="/static/js/event-handler.js?v={{ asset_version }}"></script>
+<script src="/static/js/services/dependency-manager.js?v={{ asset_version }}"></script>
 
 <!-- Load event lightbox for event images -->
 <link href="/static/css/event_lightbox.css" rel="stylesheet">
-<script src="/static/js/modules/event_lightbox.js"></script>
+<script src="/static/js/modules/event_lightbox.js?v={{ asset_version }}"></script>
 
 <!-- Load event renderer for SSE event display -->
-<script src="/static/js/modules/event-renderer.js"></script>
+<script src="/static/js/modules/event-renderer.js?v={{ asset_version }}"></script>
 
 <script>
 // Enhanced HTMX configuration for trainer
@@ -5997,21 +6307,21 @@ window.triggerManualCheckpoint = async function() {
     </div>
 </div>
 
-<script src="/static/js/modules/tab-navigation.js" defer></script>
+<script src="/static/js/modules/tab-navigation.js?v={{ asset_version }}" defer></script>
 
 <!-- Load search module for sidebar search functionality -->
-<script src="/static/js/modules/search.js"></script>
+<script src="/static/js/modules/search.js?v={{ asset_version }}"></script>
 
 <!-- Load tab-specific modules early so they're available when tabs load -->
-<script src="/static/js/modules/publishing.js"></script>
-<script src="/static/js/modules/webhooks.js"></script>
-<script src="/static/js/modules/checkpoints.js"></script>
-<script src="/static/js/modules/streaming-validation-lightbox.js"></script>
-<script src="/static/js/lycoris-configurator.js"></script>
-<script src="/static/js/prompt-library-manager.js" defer></script>
+<script src="/static/js/modules/publishing.js?v={{ asset_version }}"></script>
+<script src="/static/js/modules/webhooks.js?v={{ asset_version }}"></script>
+<script src="/static/js/modules/checkpoints.js?v={{ asset_version }}"></script>
+<script src="/static/js/modules/streaming-validation-lightbox.js?v={{ asset_version }}"></script>
+<script src="/static/js/lycoris-configurator.js?v={{ asset_version }}"></script>
+<script src="/static/js/prompt-library-manager.js?v={{ asset_version }}" defer></script>
 
 <!-- Module loader for browser compatibility -->
-<script src="/static/js/module-loader.js"></script>
+<script src="/static/js/module-loader.js?v={{ asset_version }}"></script>
 
 <!-- Load modular JavaScript with fallback support -->
 <script>
@@ -6019,7 +6329,7 @@ window.triggerManualCheckpoint = async function() {
 if (window.shouldUseModules && window.shouldUseModules()) {
     // Modern browsers: load trainer.js (IIFE that creates TrainerUI)
     var script = document.createElement('script');
-    script.src = '/static/js/trainer.js';
+    script.src = '/static/js/trainer.js?v={{ asset_version }}';
     script.onload = function() {
         if (window.TrainerUI) {
             window.trainer = new TrainerUI();
@@ -6028,7 +6338,7 @@ if (window.shouldUseModules && window.shouldUseModules()) {
     document.head.appendChild(script);
 } else {
     // Older browsers: use compatibility version
-    window.loadModule('/static/js/trainer-main-compat.js').then(function(module) {
+    window.loadModule('/static/js/trainer-main-compat.js?v={{ asset_version }}').then(function(module) {
         window.trainer = new module.TrainerMain();
         window.trainer.initialize();
     }).catch(function(error) {

@@ -152,6 +152,7 @@ if (!window.uiSettingsTabComponent) {
                     event_polling_interval: Number(data.event_polling_interval) || 5,
                     event_stream_enabled: data.event_stream_enabled !== false,
                     auto_preserve_defaults: coerceAutoPreserve(data.auto_preserve_defaults),
+                    show_documentation_links: coerceAutoPreserve(data.show_documentation_links),
                     output_dir: (data.output_dir && data.output_dir !== 'Not configured') ? data.output_dir : '',
                     configs_dir: data.configs_dir || '',
                     accelerate: this.prepareAccelerateState(data.accelerate_overrides),
@@ -446,6 +447,7 @@ if (!window.uiSettingsTabComponent) {
                     event_polling_interval: this.settings.event_polling_interval,
                     event_stream_enabled: this.settings.event_stream_enabled,
                     auto_preserve_defaults: this.settings.auto_preserve_defaults,
+                    show_documentation_links: this.settings.show_documentation_links,
                 };
 
                 const trimmedConfigsDir = typeof this.settings.configs_dir === 'string' ? this.settings.configs_dir.trim() : '';
@@ -578,7 +580,7 @@ if (!window.uiSettingsTabComponent) {
                 <div class="col-xl-6">
                     <div class="preference-card">
                         <h6 class="mb-3">Event Stream</h6>
-                        <div class="form-switch form-switch-lg mb-3">
+                        <div class="form-check form-switch form-switch-lg mb-3">
                             <input class="form-check-input"
                                    type="checkbox"
                                    id="ui-event-stream-toggle"
@@ -606,7 +608,7 @@ if (!window.uiSettingsTabComponent) {
                 <div class="col-xl-6">
                     <div class="preference-card">
                         <h6 class="mb-3">Configuration Saves</h6>
-                        <div class="form-switch form-switch-lg mb-3">
+                        <div class="form-check form-switch form-switch-lg mb-3">
                             <input class="form-check-input"
                                    type="checkbox"
                                    id="ui-auto-preserve-defaults"
@@ -619,6 +621,26 @@ if (!window.uiSettingsTabComponent) {
                         <p class="text-muted small mb-0">
                             When enabled, configuration saves keep only values that differ from their defaults without asking each time.
                             Disable this to review the save options before writing a config.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-xl-6">
+                    <div class="preference-card">
+                        <h6 class="mb-3">Documentation Links</h6>
+                        <div class="form-check form-switch form-switch-lg mb-3">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-show-documentation-links"
+                                   x-model="settings.show_documentation_links"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-show-documentation-links">
+                                Show documentation links in dataloader
+                            </label>
+                        </div>
+                        <p class="text-muted small mb-0">
+                            When enabled, external link icons appear next to dataloader form fields linking to documentation.
+                            Disable this if you prefer a cleaner interface without the link indicators.
                         </p>
                     </div>
                 </div>
@@ -649,7 +671,7 @@ if (!window.uiSettingsTabComponent) {
                                     <input type="text"
                                            id="ui-configs-dir"
                                            class="form-control"
-                                           placeholder="/path/to/configs"
+                                           placeholder="/path/to/config"
                                            x-model="settings.configs_dir"
                                            @input="updateConfigsDir($event.target.value)">
                                 </div>

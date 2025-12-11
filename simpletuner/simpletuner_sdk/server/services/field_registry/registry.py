@@ -233,6 +233,7 @@ class FieldRegistry:
                     "warning": f.warning,
                     "group": f.group,
                     "order": f.order,
+                    "documentation": f.documentation,
                 }
                 for name, f in self._fields.items()
             },

@@ -2,10 +2,14 @@
 
 import importlib.machinery as machinery
 import importlib.util as _importlib_util
+import json
+import shutil
 import sys
+import tempfile
 import time
 import types
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -26,10 +30,6 @@ _OPTIONAL_MODULES = {
     "torchao.dtypes.uintx.uint4_layout",
     "torchao.dtypes.uintx.uintx_layout",
     "optimi",
-    "fastapi",
-    "fastapi.middleware",
-    "fastapi.middleware.cors",
-    "fastapi.responses",
 }
 
 
@@ -142,6 +142,14 @@ def _ensure_optimi_stub():
 
 
 def _ensure_fastapi_stub():
+    try:
+        import fastapi  # noqa: F401
+        import fastapi.middleware.cors  # noqa: F401
+        import fastapi.responses  # noqa: F401
+
+        return
+    except Exception:
+        pass
     if "fastapi" in sys.modules:
         return
 
@@ -506,6 +514,12 @@ except Exception:
 
 
 def _ensure_models_common_stub():
+    try:
+        import simpletuner.helpers.models.common  # noqa: F401
+
+        return
+    except Exception:
+        pass
     module_name = "simpletuner.helpers.models.common"
     if module_name in sys.modules:
         return
@@ -524,6 +538,9 @@ def _ensure_models_common_stub():
         pass
 
     class ModelFoundation(_BaseModelFoundation):
+        pass
+
+    class AudioModelFoundation(_BaseModelFoundation):
         pass
 
     class _PredictionTypes:
@@ -549,12 +566,18 @@ def _ensure_models_common_stub():
         VAE = "vae"
         TEXT_ENCODER = "text_encoder"
 
+    class _TextEmbedCacheKey:
+        CAPTION = "caption"
+        DATASET_AND_FILENAME = "dataset_and_filename"
+
     common_module.ImageModelFoundation = ImageModelFoundation
     common_module.VideoModelFoundation = VideoModelFoundation
     common_module.ModelFoundation = ModelFoundation
+    common_module.AudioModelFoundation = AudioModelFoundation
     common_module.PredictionTypes = _PredictionTypes
     common_module.PipelineTypes = _PipelineTypes
     common_module.ModelTypes = _ModelTypes
+    common_module.TextEmbedCacheKey = _TextEmbedCacheKey
 
     sys.modules[module_name] = common_module
 
@@ -712,6 +735,122 @@ class TestTrainer(unittest.TestCase):
         self.assertTrue(instance.abort_called)
         self.assertTrue(instance.should_abort)
 
+    def test_run_trainer_job_honours_single_device_selection(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        captured = {}
+
+        class DummyStdout:
+            def readline(self):
+                return ""
+
+            def close(self):
+                captured["stdout_closed"] = True
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = DummyStdout()
+                self.pid = 1234
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def terminate(self):
+                captured["terminated"] = True
+
+            def kill(self):
+                captured["killed"] = True
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env", {})
+            captured["kwargs"] = kwargs
+            return DummyProcess()
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            result = trainer_module.run_trainer_job(
+                {
+                    "accelerate_visible_devices": [1],
+                    "--num_processes": 1,
+                }
+            )
+
+            self.assertEqual(result, 0)
+        self.assertIn("cmd", captured)
+        self.assertEqual(captured["cmd"][0], "accelerate")
+        self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "1")
+        self.assertFalse(any("--accelerate_visible_devices" in arg for arg in captured["cmd"]))
+
+    def test_accelerate_manual_triggers_are_relayed(self):
+        from simpletuner.helpers.training import trainer as trainer_module
+
+        captured = {}
+        trigger_calls = {"count": 0}
+
+        def manual_validation_consumer():
+            trigger_calls["count"] += 1
+            return trigger_calls["count"] == 1
+
+        class DummyStdout:
+            def readline(self):
+                return ""
+
+            def close(self):
+                captured["stdout_closed"] = True
+
+        class DummyProcess:
+            def __init__(self):
+                self.stdout = DummyStdout()
+                self.pid = 4321
+                self._poll_calls = 0
+
+            def poll(self):
+                self._poll_calls += 1
+                return None if self._poll_calls < 2 else 0
+
+            def wait(self, timeout=None):
+                return 0
+
+            def terminate(self):
+                captured["terminated"] = True
+
+            def kill(self):
+                captured["killed"] = True
+
+        def fake_popen(cmd, **kwargs):
+            captured["cmd"] = cmd
+            captured["env"] = kwargs.get("env", {})
+            return DummyProcess()
+
+        removed_paths = []
+
+        def fake_rmtree(path, ignore_errors=True):
+            removed_paths.append(path)
+
+        with (
+            patch("subprocess.Popen", side_effect=fake_popen),
+            patch("simpletuner.helpers.training.trainer.shutil.rmtree", side_effect=fake_rmtree),
+        ):
+            result = trainer_module.run_trainer_job(
+                {
+                    "accelerate_visible_devices": [0],
+                    "consume_manual_validation_request": manual_validation_consumer,
+                }
+            )
+
+        self.assertEqual(result, 0)
+        signal_file = captured.get("env", {}).get("SIMPLETUNER_ACCELERATE_SIGNAL_FILE")
+        self.assertIsNotNone(signal_file)
+        with open(signal_file, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        self.assertGreaterEqual(payload.get("manual_validation", 0), 1)
+        self.assertTrue(removed_paths)
+        for path in removed_paths:
+            shutil.rmtree(path, ignore_errors=True)
+
     def test_accelerate_failure_summary_highlights_oom(self):
         from simpletuner.helpers.training import trainer as trainer_module
 
@@ -793,6 +932,70 @@ class TestTrainer(unittest.TestCase):
         logs = {}
         trainer._update_grad_metrics(logs, require_value_method=True)
         self.assertNotIn("grad_absmax", logs)
+
+    def _build_trainer_for_progress_metrics(self, grad_clip_method: str, use_deepspeed: bool, grad_value):
+        """Build a minimal trainer for testing _compose_training_progress_metrics."""
+        from simpletuner.helpers.training.iteration_tracker import IterationTracker
+
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            grad_clip_method=grad_clip_method,
+            use_deepspeed_optimizer=use_deepspeed,
+            total_batch_size=4,
+        )
+        trainer.grad_norm = grad_value
+        trainer.state = {"global_step": 10}
+        trainer.train_loss = 0.5
+        trainer.lr = 0.0001
+        trainer.iteration_tracker = IterationTracker()
+        trainer.iteration_tracker.mark_start()
+        return trainer
+
+    def test_compose_training_progress_metrics_includes_grad_norm(self):
+        """Test that _compose_training_progress_metrics includes grad_norm when using norm clipping."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="norm",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.5),
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertIn("grad_norm", metrics)
+        self.assertEqual(metrics["grad_norm"], float(trainer.grad_norm.clone().detach()))
+        self.assertNotIn("grad_absmax", metrics)
+
+    def test_compose_training_progress_metrics_includes_grad_absmax(self):
+        """Test that _compose_training_progress_metrics includes grad_absmax when using value clipping."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="value",
+            use_deepspeed=False,
+            grad_value=torch.tensor(2.3),
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertIn("grad_absmax", metrics)
+        self.assertIs(metrics["grad_absmax"], trainer.grad_norm)
+        self.assertNotIn("grad_norm", metrics)
+
+    def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
+        """Test that _compose_training_progress_metrics excludes grad_absmax when deepspeed is enabled."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="value",
+            use_deepspeed=True,
+            grad_value=torch.tensor(1.8),
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertNotIn("grad_absmax", metrics)
+        self.assertNotIn("grad_norm", metrics)
+
+    def test_compose_training_progress_metrics_no_grad_when_none(self):
+        """Test that _compose_training_progress_metrics excludes grad metrics when grad_norm is None."""
+        trainer = self._build_trainer_for_progress_metrics(
+            grad_clip_method="norm",
+            use_deepspeed=False,
+            grad_value=None,
+        )
+        metrics = trainer._compose_training_progress_metrics(epoch=1)
+        self.assertNotIn("grad_norm", metrics)
+        self.assertNotIn("grad_absmax", metrics)
 
     def test_load_fsdp_plugin_maps_options(self):
         trainer = object.__new__(Trainer)
@@ -1419,6 +1622,51 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
             self.assertFalse(group["use_focus"])
 
+    def test_epoch_checkpoint_persists_next_epoch_without_state_mutation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_dir = Path(tmpdir) / "checkpoint-10"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            training_state_path = checkpoint_dir / "training_state.json"
+            training_state_path.write_text(json.dumps({"epoch": 2, "global_step": 10}), encoding="utf-8")
+
+            trainer = object.__new__(Trainer)
+            trainer.job_id = None
+            trainer.hub_manager = None
+            trainer.webhook_handler = None
+            trainer.model_hooks = SimpleNamespace(training_state_path="training_state.json")
+            trainer._send_webhook_msg = Mock()
+            trainer._prepare_training_progress_payload = Mock(return_value=({}, {}))
+            trainer._emit_event = Mock()
+            trainer._run_post_upload_script = Mock()
+            trainer.checkpoint_state_cleanup = Mock()
+            trainer.state = {"global_step": 10, "global_resume_step": 0, "current_epoch": 2}
+            trainer.config = SimpleNamespace(
+                output_dir=str(tmpdir),
+                use_deepspeed_optimizer=False,
+                fsdp_enable=False,
+                checkpoints_total_limit=None,
+                num_train_epochs=5,
+            )
+            trainer.accelerator = SimpleNamespace(is_main_process=True)
+            trainer.checkpoint_state_save = Mock(return_value=str(checkpoint_dir))
+
+            checkpoint_path = trainer._run_standard_checkpoint(
+                webhook_message="Epoch checkpoint",
+                parent_loss=None,
+                epoch=2,
+                upload_to_hub=False,
+            )
+
+            self.assertEqual(str(checkpoint_dir), checkpoint_path)
+            trainer._write_checkpoint_epoch(checkpoint_path, 3)
+
+            persisted_state = json.loads(training_state_path.read_text())
+            self.assertEqual(3, persisted_state["epoch"])
+            self.assertEqual(10, persisted_state["global_step"])
+            self.assertEqual(2, trainer.state["current_epoch"])
+            trainer._run_post_upload_script.assert_called_once_with(local_path=str(checkpoint_dir), remote_path=None)
+            trainer.checkpoint_state_save.assert_called_once_with(str(tmpdir))
+
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
     @patch("simpletuner.helpers.training.trainer.tqdm")
     @patch("simpletuner.helpers.training.trainer.logger")
@@ -1494,6 +1742,7 @@ class TestTrainer(unittest.TestCase):
         trainer.init_trackers = Mock()
         trainer._train_initial_msg = Mock()
         trainer._get_trainable_parameters = Mock(return_value=[])
+        trainer.iteration_tracker = Mock()
 
         received_accumulate_args = []
         accumulate_call_count = 0

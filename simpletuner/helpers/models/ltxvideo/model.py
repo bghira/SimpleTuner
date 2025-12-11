@@ -161,12 +161,15 @@ class LTXVideo(VideoModelFoundation):
         Returns:
             Text encoder output (raw)
         """
+        pipeline = self.pipelines.get(PipelineTypes.TEXT2IMG)
+        if pipeline is None:
+            pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
         (
             prompt_embeds,
             prompt_attention_mask,
             negative_prompt_embeds,
             negative_prompt_attention_mask,
-        ) = self.pipelines[PipelineTypes.TEXT2IMG].encode_prompt(
+        ) = pipeline.encode_prompt(
             prompt=prompts,
             device=self.accelerator.device,
         )
@@ -215,17 +218,39 @@ class LTXVideo(VideoModelFoundation):
         ]
         # rope_interpolation_scale = [1 / 25, 32, 32]
 
-        model_pred = self.model(
+        capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
+        transformer_kwargs = {
+            "encoder_hidden_states": prepared_batch["encoder_hidden_states"],
+            "encoder_attention_mask": prepared_batch["encoder_attention_mask"],
+            "timestep": prepared_batch["timesteps"],
+            "return_dict": False,
+            "num_frames": num_frames,
+            "rope_interpolation_scale": rope_interpolation_scale,
+            "height": height,
+            "width": width,
+        }
+        if capture_hidden:
+            transformer_kwargs["output_hidden_states"] = True
+            transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+
+        model_output = self.model(
             packed_noisy_latents,
-            encoder_hidden_states=prepared_batch["encoder_hidden_states"],
-            encoder_attention_mask=prepared_batch["encoder_attention_mask"],
-            timestep=prepared_batch["timesteps"],
-            return_dict=False,
-            num_frames=num_frames,
-            rope_interpolation_scale=rope_interpolation_scale,
-            height=height,
-            width=width,
-        )[0]
+            **transformer_kwargs,
+        )
+        if capture_hidden:
+            if isinstance(model_output, tuple) and len(model_output) >= 2:
+                model_pred, crepa_hidden = model_output[0], model_output[1]
+            else:
+                model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+                crepa_hidden = None
+            if crepa_hidden is None:
+                raise ValueError(
+                    f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
+                    "but none were returned. Check that crepa_block_index is within the model's block count."
+                )
+        else:
+            model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
+            crepa_hidden = None
         logger.debug(f"Got to the end of prediction, {model_pred.shape}")
         # we need to unpack LTX video latents i think
         model_pred = unpack_ltx_latents(
@@ -239,6 +264,7 @@ class LTXVideo(VideoModelFoundation):
 
         return {
             "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
         }
 
     def check_user_config(self):
