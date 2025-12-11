@@ -553,7 +553,26 @@ class MultiHeadCrossAttention(nn.Module):
                 for idx, seqlen in enumerate(kv_seqlen):
                     if seqlen < max_k:
                         attn_mask[idx, :, :, seqlen:] = float("-inf")
-            attn_output = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            try:
+                attn_output = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            except Exception as exc:
+                logger.error(
+                    "LongCat cross-attn SDPA failed: q %s, k %s, v %s, attn_mask %s, kv_seqlen %s",
+                    tuple(q.shape),
+                    tuple(k.shape),
+                    tuple(v.shape),
+                    tuple(attn_mask.shape) if attn_mask is not None else None,
+                    kv_seqlen,
+                )
+                # Log a quick head/token summary for debugging
+                logger.error(
+                    "SDPA debug: B=%s, heads=%s, q_tokens=%s, k_tokens=%s",
+                    q.shape[0],
+                    q.shape[1],
+                    q.shape[2],
+                    k.shape[2],
+                )
+                raise
 
         return attn_output
 
