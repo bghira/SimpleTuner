@@ -587,6 +587,10 @@ class MultiHeadCrossAttention(nn.Module):
         q = self.q_norm(q)
         k = self.k_norm(k)
 
+        # Reorder kv to (B, H, S, D) to match q layout
+        k = k.permute(0, 2, 1, 3).contiguous()
+        v = v.permute(0, 2, 1, 3).contiguous()
+
         kv_list = []
         for b in range(B):
             seq_len = kv_seqlen[b] if kv_seqlen is not None else cond.shape[1]
