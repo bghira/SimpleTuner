@@ -353,6 +353,27 @@ class ValidationService:
         if model_type == "lora" and not self._get_config_value(config, "lora_rank"):
             result.add_error("lora_rank", "LoRA rank is required when using LoRA model type")
 
+        base_precision_raw = self._get_config_value(config, "base_model_precision")
+        base_precision = ""
+        if base_precision_raw not in (None, ""):
+            base_precision = str(base_precision_raw).strip().lower()
+            if base_precision in {"none", "null", "false"}:
+                base_precision = ""
+
+        if model_type == "full" and base_precision and base_precision != "no_change":
+            result.add_error(
+                "base_model_precision",
+                "Full model training is incompatible with base model quantisation. "
+                "Set base_model_precision to 'no_change' or switch to LoRA.",
+            )
+
+        deepspeed_raw = self._get_config_value(config, "deepspeed_config")
+        if model_type == "lora" and deepspeed_raw not in (None, "", "None", False):
+            result.add_error(
+                "deepspeed_config",
+                "LoRA training cannot be combined with DeepSpeed. " "Clear deepspeed_config or use full model training.",
+            )
+
         # Learning rate scheduler validations
         scheduler = str(self._get_config_value(config, "lr_scheduler") or "")
         if scheduler == "polynomial" and not self._get_config_value(config, "lr_scheduler_polynomial_power"):

@@ -1339,6 +1339,33 @@ class ConfigStore:
                 if "--lora_rank" not in config:
                     validation.suggestions.append("Consider setting '--lora_rank' for LoRA training")
 
+            normalized_model_type = str(model_type or "").lower()
+
+            base_precision_raw = config.get("--base_model_precision")
+            if base_precision_raw is None:
+                base_precision_raw = config.get("base_model_precision")
+            base_precision = ""
+            if base_precision_raw not in (None, ""):
+                base_precision = str(base_precision_raw).strip().lower()
+                if base_precision in {"none", "null", "false"}:
+                    base_precision = ""
+
+            if normalized_model_type == "full" and base_precision and base_precision != "no_change":
+                validation.errors.append(
+                    "Full model training is incompatible with base model quantisation. "
+                    "Set base_model_precision to 'no_change' or switch to LoRA."
+                )
+                validation.is_valid = False
+
+            deepspeed_raw = config.get("--deepspeed_config")
+            if deepspeed_raw is None:
+                deepspeed_raw = config.get("deepspeed_config")
+            if normalized_model_type == "lora" and deepspeed_raw not in (None, "", "None", False):
+                validation.errors.append(
+                    "LoRA training cannot be combined with DeepSpeed. " "Clear deepspeed_config or use full model training."
+                )
+                validation.is_valid = False
+
             # Resolution validation
             if "--resolution" in config:
                 res = config["--resolution"]
