@@ -116,6 +116,10 @@ def replace_linear_layers_with_ramtorch(
         # Replace every Linear using RamTorch's helper.
         num_linear = sum(1 for _, child in module.named_modules() if isinstance(child, nn.Linear))
         replace_all(module, device=resolved_device)
+        for _, child in module.named_modules():
+            if isinstance(child, ramtorch_linear):
+                for param in child.parameters(recurse=False):
+                    setattr(param, "is_ramtorch", True)
         return num_linear
 
     replaced = 0
@@ -147,6 +151,9 @@ def replace_linear_layers_with_ramtorch(
                 new_layer.weight.requires_grad = child.weight.requires_grad
                 if new_layer.bias is not None and child.bias is not None:
                     new_layer.bias.requires_grad = child.bias.requires_grad
+                setattr(new_layer.weight, "is_ramtorch", True)
+                if new_layer.bias is not None:
+                    setattr(new_layer.bias, "is_ramtorch", True)
 
                 setattr(current, child_name, new_layer)
                 replaced += 1
@@ -161,3 +168,23 @@ def replace_linear_layers_with_ramtorch(
 def ramtorch_zero_utils():
     imports = ensure_available()
     return imports["broadcast_zero_params"], imports["create_zero_param_groups"], imports["setup_grad_sharding_hooks"]
+
+
+def mark_ddp_ignore_params(module: nn.Module) -> int:
+    """
+    Mark RamTorch parameters on a module to be ignored by DistributedDataParallel.
+
+    Returns:
+        Number of parameters added to the ignore list.
+    """
+    ramtorch_names = [name for name, param in module.named_parameters() if getattr(param, "is_ramtorch", False)]
+    if not ramtorch_names:
+        device_types = {param.device.type for _, param in module.named_parameters() if param.device is not None}
+        if "cuda" in device_types and "cpu" in device_types:
+            ramtorch_names = [name for name, param in module.named_parameters() if param.device.type == "cpu"]
+    if not ramtorch_names:
+        return 0
+
+    existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
+    module._ddp_params_and_buffers_to_ignore = set(existing) | set(ramtorch_names)
+    return len(ramtorch_names)

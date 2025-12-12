@@ -3324,6 +3324,17 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        attach_shared_ramtorch_parameters = None
+        if self._ramtorch_distributed() and primary_model is not None:
+            ramtorch_utils.ensure_available()
+            from ramtorch.helpers import attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters
+
+            ignored = ramtorch_utils.mark_ddp_ignore_params(primary_model)
+            if ignored:
+                logger.info("Marking %s RamTorch parameters to ignore for DDP.", ignored)
+            attached = attach_shared_ramtorch_parameters(primary_model)
+            if attached:
+                logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
         if getattr(self.config, "use_fsdp", False):
             moved_param_count = 0
             for param in primary_model.parameters():
@@ -3407,6 +3418,16 @@ class Trainer:
             logger.info("Preparing text encoders for training.")
             if self.config.model_family == "sd3":
                 logger.info("NOTE: The third text encoder is not trained for SD3.")
+            if attach_shared_ramtorch_parameters is not None:
+                for idx, encoder in enumerate((self.text_encoder_1, self.text_encoder_2), start=1):
+                    if encoder is None:
+                        continue
+                    ignored = ramtorch_utils.mark_ddp_ignore_params(encoder)
+                    if ignored:
+                        logger.info("Marking %s RamTorch parameters to ignore for DDP on text_encoder_%s.", ignored, idx)
+                    attached = attach_shared_ramtorch_parameters(encoder)
+                    if attached:
+                        logger.info("Attached %s shared RamTorch parameters across ranks on text_encoder_%s.", attached, idx)
             self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(self.text_encoder_1, self.text_encoder_2)
         self._recalculate_training_steps()
         self.accelerator.wait_for_everyone()
