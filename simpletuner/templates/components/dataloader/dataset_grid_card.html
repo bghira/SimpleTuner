@@ -26,14 +26,25 @@
 
     <!-- Card Body -->
     <div class="grid-card-body">
-        <!-- Type Badge -->
-        <span class="badge grid-card-type-badge" :class="{
-            'bg-primary': dataset.dataset_type === 'image',
-            'bg-info': dataset.dataset_type === 'video',
-            'bg-success': dataset.dataset_type === 'audio',
-            'bg-secondary': dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds',
-            'bg-warning text-dark': dataset.dataset_type === 'conditioning'
-        }" x-text="dataset.dataset_type"></span>
+        <!-- Type & Status Badges -->
+        <div class="d-flex align-items-center gap-1 mb-1">
+            <span class="badge grid-card-type-badge" :class="{
+                'bg-primary': dataset.dataset_type === 'image',
+                'bg-info': dataset.dataset_type === 'video',
+                'bg-success': dataset.dataset_type === 'audio',
+                'bg-secondary': dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds',
+                'bg-warning text-dark': dataset.dataset_type === 'conditioning'
+            }" x-text="dataset.dataset_type"></span>
+            <span class="badge grid-card-type-badge bg-warning text-dark"
+                  x-show="dataset.is_regularisation_data"
+                  title="Regularisation/prior preservation data to prevent model drift">REG</span>
+        </div>
+
+        <!-- Repeats -->
+        <div class="grid-card-stat" x-show="dataset.repeats && dataset.repeats > 0">
+            <span class="grid-card-stat-label">Repeats</span>
+            <span class="grid-card-stat-value" x-text="'×' + dataset.repeats"></span>
+        </div>
 
         <!-- Resolution Info -->
         <div class="grid-card-stat" x-show="dataset.dataset_type === 'image' || dataset.dataset_type === 'video' || dataset.dataset_type === 'conditioning'">
@@ -86,10 +97,42 @@
             </span>
         </div>
 
-        <!-- Path Preview -->
-        <div class="grid-card-path" :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || ''">
-            <i class="fas fa-folder-open"></i>
-            <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path').split('/').slice(-2).join('/') || '...'"></span>
+        <!-- Path Preview (for non-embed types) -->
+        <div class="grid-card-path"
+             x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
+             :class="{'path-error': !(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)}"
+             :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path configured'">
+            <template x-if="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name">
+                <span>
+                    <i class="fas fa-folder-open"></i>
+                    <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name).split('/').slice(-2).join('/')"></span>
+                </span>
+            </template>
+            <template x-if="!(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)">
+                <span class="text-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>No path configured</span>
+                </span>
+            </template>
+        </div>
+
+        <!-- Cache Path Preview (for embed types) -->
+        <div class="grid-card-path"
+             x-show="dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds'"
+             :class="{'path-error': !dataset.cache_dir}"
+             :title="dataset.cache_dir || 'No cache path configured'">
+            <template x-if="dataset.cache_dir">
+                <span>
+                    <i class="fas fa-database"></i>
+                    <span x-text="dataset.cache_dir.split('/').slice(-2).join('/')"></span>
+                </span>
+            </template>
+            <template x-if="!dataset.cache_dir">
+                <span class="text-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>No cache path configured</span>
+                </span>
+            </template>
         </div>
     </div>
 

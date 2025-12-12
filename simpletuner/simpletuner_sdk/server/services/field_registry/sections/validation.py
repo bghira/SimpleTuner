@@ -65,6 +65,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=3,
             subsection="advanced",
+            documentation="OPTIONS.md#--disable_benchmark",
         )
     )
 
@@ -83,6 +84,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=4,
             subsection="advanced",
+            documentation="OPTIONS.md#--validation_preview",
         )
     )
 
@@ -101,6 +103,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=5,
             subsection="advanced",
+            documentation="OPTIONS.md#--validation_preview_steps",
         )
     )
 
@@ -296,6 +299,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Choose evaluation metric for validation runs. CLIP measures text-image alignment.",
             importance=ImportanceLevel.ADVANCED,
             order=1,
+            documentation="OPTIONS.md#--evaluation_type",
         )
     )
 
@@ -394,6 +398,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Default runs validations locally. Select external-script to call a custom executable instead of the built-in pipeline.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+            documentation="OPTIONS.md#--validation_method",
         )
     )
 
@@ -414,6 +419,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="validation_method", operator="equals", value="external-script", action="show")
             ],
+            documentation="OPTIONS.md#--validation_external_script",
         )
     )
 
@@ -433,6 +439,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             dependencies=[
                 FieldDependency(field="validation_method", operator="equals", value="external-script", action="show")
             ],
+            documentation="OPTIONS.md#--validation_external_background",
         )
     )
 
@@ -451,25 +458,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=3,
             subsection="advanced",
-        )
-    )
-
-    # Validation Torch Compile
-    registry._add_field(
-        ConfigField(
-            name="validation_torch_compile",
-            arg_name="--validation_torch_compile",
-            ui_label="Compile Validation Pipeline",
-            field_type=FieldType.CHECKBOX,
-            tab="validation",
-            section="validation_options",
-            default_value=False,
-            help_text="Use torch.compile() on validation pipeline for speed",
-            tooltip="Can significantly speed up validation but may error on some setups",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=4,
-            subsection="advanced",
-            dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show")],
         )
     )
 
@@ -884,6 +872,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Enter a pixel size like 512 or a megapixel value like 0.5 to auto-convert.",
             importance=ImportanceLevel.ADVANCED,
             order=17,
+            documentation="OPTIONS.md#--validation_resolution",
         )
     )
 
@@ -909,29 +898,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Validation Torch Compile Mode
-    registry._add_field(
-        ConfigField(
-            name="validation_torch_compile_mode",
-            arg_name="--validation_torch_compile_mode",
-            ui_label="Torch Compile Mode",
-            field_type=FieldType.SELECT,
-            tab="validation",
-            section="validation_options",
-            default_value="max-autotune",
-            choices=[
-                {"value": "default", "label": "Default"},
-                {"value": "reduce-overhead", "label": "Reduce Overhead"},
-                {"value": "max-autotune", "label": "Max Autotune"},
-            ],
-            help_text="Torch compile mode for validation",
-            tooltip="Different compilation modes for torch.compile() during validation.",
-            importance=ImportanceLevel.ADVANCED,
-            order=19,
-            subsection="advanced",
-        )
-    )
-
     registry._add_field(
         ConfigField(
             name="validation_adapter_path",
@@ -946,6 +912,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Formats: 'org/repo:weights.safetensors', 'org/repo' (defaults to pytorch_lora_weights.safetensors) or a local path.",
             importance=ImportanceLevel.ADVANCED,
             order=1,
+            documentation="OPTIONS.md#--validation_adapter_path",
         )
     )
 
@@ -963,6 +930,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="If left blank, SimpleTuner generates a unique adapter name automatically.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+            documentation="OPTIONS.md#--validation_adapter_name",
         )
     )
 
@@ -982,6 +950,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Strength must be greater than 0"),
             ],
+            documentation="OPTIONS.md#--validation_adapter_strength",
         )
     )
 
@@ -1003,6 +972,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Comparison renders both with and without the adapter so you can review differences.",
             importance=ImportanceLevel.ADVANCED,
             order=4,
+            documentation="OPTIONS.md#--validation_adapter_mode",
         )
     )
 
@@ -1020,5 +990,6 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Each entry can define 'label' and a list of adapter paths so multiple validation runs are automated.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=5,
+            documentation="OPTIONS.md#--validation_adapter_config",
         )
     )

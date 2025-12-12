@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from simpletuner.simpletuner_sdk.server.dependencies import common
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+from simpletuner.simpletuner_sdk.server.services.tab_service import TabService
+from tests.unittest_support import run_async
 
 
 class ActiveConfigCacheTests(unittest.TestCase):
@@ -68,6 +70,80 @@ class ActiveConfigCacheTests(unittest.TestCase):
         self.assertIsInstance(resolved, dict)
         self.assertEqual(resolved.get("learning_rate"), 9.99)
         self.assertEqual(resolved.get("model_family"), "wan")
+
+
+class AssetVersionTests(unittest.TestCase):
+    """Ensure asset versioning is exposed through dependencies and tab rendering."""
+
+    def test_get_webui_defaults_provides_asset_version(self) -> None:
+        """Defaults dependency should always emit an asset_version token."""
+        resolved_defaults = {
+            "configs_dir": "/tmp/configs",
+            "output_dir": "/tmp/output",
+            "theme": "dark",
+            "event_polling_interval": 5,
+            "event_stream_enabled": True,
+            # Intentionally omit asset_version to exercise fallback
+        }
+
+        with (
+            patch.object(common, "WebUIStateStore") as mock_store_cls,
+            patch.object(common, "get_asset_version", return_value="fixed-token"),
+        ):
+            mock_store = mock_store_cls.return_value
+            mock_store.get_defaults_bundle.return_value = {
+                "raw": {},
+                "resolved": resolved_defaults,
+                "fallbacks": {},
+            }
+
+            defaults = run_async(common.get_webui_defaults())
+
+        self.assertEqual(defaults["asset_version"], "fixed-token")
+        self.assertEqual(defaults["configs_dir"], resolved_defaults["configs_dir"])
+
+    def test_tab_render_context_includes_asset_version(self) -> None:
+        """TabService should propagate asset_version into template context."""
+        dummy_templates = SimpleNamespace(TemplateResponse=lambda request, name, context: {"name": name, "context": context})
+
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.tab_service.get_asset_version",
+            return_value="context-token",
+        ):
+            service = TabService(dummy_templates)  # type: ignore[arg-type]
+
+        result = run_async(
+            service.render_tab(
+                request=SimpleNamespace(),
+                tab_name="datasets",
+                fields=[],
+                config_values={},
+                sections=None,
+                raw_config={},
+                webui_defaults={"asset_version": "from-defaults"},
+            )
+        )
+
+        context = result["context"]
+        self.assertEqual(context["asset_version"], "from-defaults")
+
+        # When asset_version is missing, fallback should be used
+        with patch(
+            "simpletuner.simpletuner_sdk.server.services.tab_service.get_asset_version",
+            return_value="context-token",
+        ):
+            result_fallback = run_async(
+                service.render_tab(
+                    request=SimpleNamespace(),
+                    tab_name="datasets",
+                    fields=[],
+                    config_values={},
+                    sections=None,
+                    raw_config={},
+                    webui_defaults={},
+                )
+            )
+        self.assertEqual(result_fallback["context"]["asset_version"], "context-token")
 
 
 if __name__ == "__main__":

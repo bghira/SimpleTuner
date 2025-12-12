@@ -95,6 +95,30 @@
             fileBrowserContext: 'wizard',
             fileBrowserBodyClassApplied: false,
 
+            // New folder state
+            showNewFolderInput: false,
+            newFolderName: '',
+            newFolderError: null,
+            creatingFolder: false,
+
+            // Upload modal state
+            uploadModalOpen: false,
+            uploadTab: 'files',  // 'files' or 'zip'
+            selectedUploadFiles: [],
+            uploading: false,
+            uploadProgress: 0,
+            uploadResult: null,
+
+            // Caption modal state
+            captionModalOpen: false,
+            captionStatus: { total_images: 0, with_caption: 0, without_caption: 0, coverage_ratio: 0 },
+            uncaptionedThumbnails: [],
+            loadingThumbnails: false,
+            pendingCaptions: {},
+            savingCaptions: false,
+            captionThumbnailLimit: 50,
+            captionThumbnailOffset: 0,
+
             // Model context (ControlNet detection and video model detection)
             get showConditioningStep() {
                 const trainer = Alpine.store('trainer');
@@ -233,7 +257,15 @@
 
             async init() {
                 console.log('[WIZARD] Component initializing...');
-                window.datasetWizardComponentInstance = this;
+                const exposeInstance = () => {
+                    // Expose a raw object so tests can inspect fields without Alpine proxies interfering
+                    const raw = (window.Alpine && typeof window.Alpine.raw === 'function') ? window.Alpine.raw(this) : this;
+                    window.datasetWizardComponentInstance = raw;
+                };
+                exposeInstance();
+                if (this.$nextTick) {
+                    this.$nextTick(() => exposeInstance());
+                }
                 this.currentDataset = this.getDefaultDataset();
                 await this.loadBlueprints();
             },
@@ -1278,6 +1310,373 @@
                 this.selectedDirInfo = null;
                 this.fileBrowserError = null;
                 this.fileBrowserErrorType = null;
+                // Reset new folder state
+                this.showNewFolderInput = false;
+                this.newFolderName = '';
+                this.newFolderError = null;
+                // Also close child modals (upload and caption)
+                this.uploadModalOpen = false;
+                this.selectedUploadFiles = [];
+                this.uploadResult = null;
+                this.captionModalOpen = false;
+            },
+
+            // ==================== New Folder Methods ====================
+
+            openNewFolderDialog() {
+                this.showNewFolderInput = true;
+                this.newFolderName = '';
+                this.newFolderError = null;
+                // Focus the input after DOM update
+                this.$nextTick(() => {
+                    if (this.$refs.newFolderInput) {
+                        this.$refs.newFolderInput.focus();
+                    }
+                });
+            },
+
+            cancelNewFolder() {
+                this.showNewFolderInput = false;
+                this.newFolderName = '';
+                this.newFolderError = null;
+            },
+
+            async createNewFolder() {
+                if (!this.newFolderName || this.creatingFolder) return;
+
+                this.creatingFolder = true;
+                this.newFolderError = null;
+
+                try {
+                    const formData = new FormData();
+                    formData.append('parent_path', this.currentPath);
+                    formData.append('folder_name', this.newFolderName);
+
+                    const response = await fetch('/api/datasets/folders', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+
+                    if (!response.ok) {
+                        this.newFolderError = result.detail || 'Failed to create folder';
+                        return;
+                    }
+
+                    if (!result.success) {
+                        this.newFolderError = result.error || 'Failed to create folder';
+                        return;
+                    }
+
+                    // Success - close input and refresh directory listing
+                    this.showToast(`Folder '${result.name}' created successfully`, 'success');
+                    this.cancelNewFolder();
+
+                    // Refresh directory listing
+                    await this.loadDirectories(this.currentPath);
+
+                    // Auto-select the new folder
+                    this.selectedPath = result.path;
+
+                } catch (error) {
+                    console.error('Error creating folder:', error);
+                    this.newFolderError = error.message || 'Failed to create folder';
+                } finally {
+                    this.creatingFolder = false;
+                }
+            },
+
+            // ==================== Upload Modal Methods ====================
+
+            openUploadModal() {
+                this.uploadModalOpen = true;
+                this.uploadTab = 'files';
+                this.selectedUploadFiles = [];
+                this.uploading = false;
+                this.uploadProgress = 0;
+                this.uploadResult = null;
+            },
+
+            closeUploadModal() {
+                if (this.uploading) return; // Don't close while uploading
+                this.uploadModalOpen = false;
+                this.selectedUploadFiles = [];
+                this.uploadResult = null;
+                // Clear file inputs
+                if (this.$refs.fileInput) this.$refs.fileInput.value = '';
+                if (this.$refs.zipInput) this.$refs.zipInput.value = '';
+            },
+
+            handleFileSelect(event) {
+                const files = Array.from(event.target.files || []);
+                this.selectedUploadFiles = files;
+                this.uploadResult = null; // Clear previous result
+            },
+
+            handleZipSelect(event) {
+                const files = Array.from(event.target.files || []);
+                // For zip, we only take the first file
+                this.selectedUploadFiles = files.slice(0, 1);
+                this.uploadResult = null;
+            },
+
+            removeSelectedFile(index) {
+                this.selectedUploadFiles.splice(index, 1);
+            },
+
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+            },
+
+            async startUpload() {
+                if (this.selectedUploadFiles.length === 0 || this.uploading) return;
+
+                this.uploading = true;
+                this.uploadProgress = 0;
+                this.uploadResult = null;
+
+                try {
+                    const formData = new FormData();
+                    formData.append('target_path', this.currentPath);
+
+                    // Determine if we're uploading a ZIP or regular files
+                    const isZip = this.uploadTab === 'zip';
+                    const endpoint = isZip ? '/api/datasets/upload/zip' : '/api/datasets/upload';
+
+                    if (isZip) {
+                        formData.append('file', this.selectedUploadFiles[0]);
+                    } else {
+                        for (const file of this.selectedUploadFiles) {
+                            formData.append('files', file);
+                        }
+                    }
+
+                    // Use XMLHttpRequest for progress tracking
+                    const result = await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+
+                        xhr.upload.addEventListener('progress', (event) => {
+                            if (event.lengthComputable) {
+                                this.uploadProgress = Math.round((event.loaded / event.total) * 100);
+                            }
+                        });
+
+                        xhr.addEventListener('load', () => {
+                            try {
+                                const response = JSON.parse(xhr.responseText);
+                                if (xhr.status >= 200 && xhr.status < 300) {
+                                    resolve(response);
+                                } else {
+                                    reject(new Error(response.detail || 'Upload failed'));
+                                }
+                            } catch (e) {
+                                reject(new Error('Invalid response from server'));
+                            }
+                        });
+
+                        xhr.addEventListener('error', () => {
+                            reject(new Error('Network error during upload'));
+                        });
+
+                        xhr.open('POST', endpoint);
+                        xhr.send(formData);
+                    });
+
+                    this.uploadResult = result;
+                    this.uploadProgress = 100;
+
+                    if (result.success && result.files_uploaded > 0) {
+                        this.showToast(`${result.files_uploaded} file(s) uploaded successfully`, 'success');
+                        // Refresh directory listing
+                        await this.loadDirectories(this.currentPath);
+                    }
+
+                } catch (error) {
+                    console.error('Upload error:', error);
+                    this.uploadResult = {
+                        success: false,
+                        files_uploaded: 0,
+                        files_skipped: 0,
+                        errors: [error.message || 'Upload failed']
+                    };
+                    this.showToast('Upload failed: ' + error.message, 'error');
+                } finally {
+                    this.uploading = false;
+                }
+            },
+
+            async proceedAfterUpload() {
+                // After upload, check caption status and show captioning modal if needed
+                if (!this.uploadResult || !this.uploadResult.success) {
+                    this.closeUploadModal();
+                    return;
+                }
+
+                try {
+                    // Check caption status
+                    const response = await fetch(`/api/datasets/captions/status?path=${encodeURIComponent(this.currentPath)}`);
+                    if (!response.ok) {
+                        this.closeUploadModal();
+                        return;
+                    }
+
+                    const status = await response.json();
+                    this.captionStatus = status;
+
+                    // If all images have captions, just close and maybe auto-set caption_strategy
+                    if (status.coverage_ratio === 1.0) {
+                        this.showToast('All images have captions. Caption strategy can be set to "textfile".', 'info');
+                        this.closeUploadModal();
+                        // Optionally auto-set caption_strategy
+                        if (this.currentDataset) {
+                            this.currentDataset.caption_strategy = 'textfile';
+                        }
+                        return;
+                    }
+
+                    // If there are images without captions, offer the captioning UI
+                    if (status.without_caption > 0) {
+                        this.closeUploadModal();
+                        this.openCaptionModal();
+                    } else {
+                        this.closeUploadModal();
+                    }
+
+                } catch (error) {
+                    console.error('Error checking caption status:', error);
+                    this.closeUploadModal();
+                }
+            },
+
+            // ==================== Caption Modal Methods ====================
+
+            async openCaptionModal() {
+                this.captionModalOpen = true;
+                this.pendingCaptions = {};
+                this.uncaptionedThumbnails = [];
+                this.captionThumbnailOffset = 0;
+
+                // Load caption status if not already loaded
+                if (!this.captionStatus || this.captionStatus.total_images === 0) {
+                    await this.loadCaptionStatus();
+                }
+
+                // Load thumbnails
+                await this.loadThumbnails();
+            },
+
+            closeCaptionModal() {
+                this.captionModalOpen = false;
+                this.pendingCaptions = {};
+                this.uncaptionedThumbnails = [];
+                this.captionStatus = { total_images: 0, with_caption: 0, without_caption: 0, coverage_ratio: 0 };
+            },
+
+            async loadCaptionStatus() {
+                try {
+                    const response = await fetch(`/api/datasets/captions/status?path=${encodeURIComponent(this.currentPath)}`);
+                    if (response.ok) {
+                        this.captionStatus = await response.json();
+                    }
+                } catch (error) {
+                    console.error('Error loading caption status:', error);
+                }
+            },
+
+            async loadThumbnails() {
+                this.loadingThumbnails = true;
+
+                try {
+                    const url = `/api/datasets/captions/thumbnails?path=${encodeURIComponent(this.currentPath)}&limit=${this.captionThumbnailLimit}&offset=${this.captionThumbnailOffset}`;
+                    const response = await fetch(url);
+
+                    if (response.ok) {
+                        const thumbnails = await response.json();
+                        if (this.captionThumbnailOffset === 0) {
+                            this.uncaptionedThumbnails = thumbnails;
+                        } else {
+                            this.uncaptionedThumbnails = [...this.uncaptionedThumbnails, ...thumbnails];
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading thumbnails:', error);
+                } finally {
+                    this.loadingThumbnails = false;
+                }
+            },
+
+            async loadMoreThumbnails() {
+                this.captionThumbnailOffset += this.captionThumbnailLimit;
+                await this.loadThumbnails();
+            },
+
+            skipCaptioning() {
+                this.closeCaptionModal();
+                this.showToast('Caption step skipped. You can configure trigger words in the dataset settings.', 'info');
+            },
+
+            async saveCaptions() {
+                // Filter out empty captions
+                const captionsToSave = {};
+                for (const [path, caption] of Object.entries(this.pendingCaptions)) {
+                    if (caption && caption.trim()) {
+                        captionsToSave[path] = caption.trim();
+                    }
+                }
+
+                if (Object.keys(captionsToSave).length === 0) {
+                    this.showToast('No captions to save', 'warning');
+                    return;
+                }
+
+                this.savingCaptions = true;
+
+                try {
+                    const response = await fetch('/api/datasets/captions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ captions: captionsToSave })
+                    });
+
+                    const result = await response.json();
+
+                    if (response.ok && result.success) {
+                        this.showToast(`${result.files_written} caption(s) saved successfully`, 'success');
+
+                        // Reload caption status to update UI
+                        await this.loadCaptionStatus();
+
+                        // If all images now have captions, close the modal
+                        if (this.captionStatus.coverage_ratio === 1.0) {
+                            this.closeCaptionModal();
+                            // Auto-set caption_strategy
+                            if (this.currentDataset) {
+                                this.currentDataset.caption_strategy = 'textfile';
+                            }
+                        } else {
+                            // Reload thumbnails to show remaining uncaptioned images
+                            this.pendingCaptions = {};
+                            this.captionThumbnailOffset = 0;
+                            await this.loadThumbnails();
+                        }
+                    } else {
+                        const errorMsg = result.errors?.join(', ') || 'Failed to save captions';
+                        this.showToast(errorMsg, 'error');
+                    }
+
+                } catch (error) {
+                    console.error('Error saving captions:', error);
+                    this.showToast('Failed to save captions: ' + error.message, 'error');
+                } finally {
+                    this.savingCaptions = false;
+                }
             },
 
             openDatasetsDirConfig() {

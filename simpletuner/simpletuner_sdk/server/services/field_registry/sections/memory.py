@@ -27,5 +27,6 @@ def register_memory_fields(registry: "FieldRegistry") -> None:
             tooltip="Simulates larger batch sizes. Effective batch = batch_size * accumulation_steps * num_gpus",
             importance=ImportanceLevel.IMPORTANT,
             order=4,
+            documentation="OPTIONS.md#--gradient_accumulation_steps",
         )
     )

@@ -38,11 +38,45 @@
     </select>
 
     <!-- Path (truncated) - hide for embed types -->
-    <div class="list-item-path text-muted small"
+    <div class="list-item-path small"
          x-show="dataset.dataset_type !== 'text_embeds' && dataset.dataset_type !== 'image_embeds'"
-         :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path configured'">
-        <i class="fas fa-folder-open me-1"></i>
-        <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || '...').split('/').slice(-2).join('/') || '...'"></span>
+         :class="{'text-muted': (dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name), 'text-danger': !(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)}"
+         :title="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name || 'No path configured - click to fix'"
+         @click.stop="!(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name) && (expandSectionIfCollapsed(dataset, 'card'), setListTab(dataset, 'storage'))"
+         :style="!(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name) ? 'cursor: pointer;' : ''">
+        <template x-if="dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name">
+            <span>
+                <i class="fas fa-folder-open me-1"></i>
+                <span x-text="(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name).split('/').slice(-2).join('/')"></span>
+            </span>
+        </template>
+        <template x-if="!(dataset.instance_data_dir || dataset.aws_bucket_name || dataset.dataset_name)">
+            <span class="path-error-badge">
+                <i class="fas fa-exclamation-triangle me-1"></i>
+                <span>No path - click to configure</span>
+            </span>
+        </template>
+    </div>
+
+    <!-- Cache path indicator for embed types -->
+    <div class="list-item-path small"
+         x-show="dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds'"
+         :class="{'text-muted': dataset.cache_dir, 'text-danger': !dataset.cache_dir}"
+         :title="dataset.cache_dir || 'No cache path configured - click to fix'"
+         @click.stop="!dataset.cache_dir && (expandSectionIfCollapsed(dataset, 'card'), setListTab(dataset, 'storage'))"
+         :style="!dataset.cache_dir ? 'cursor: pointer;' : ''">
+        <template x-if="dataset.cache_dir">
+            <span>
+                <i class="fas fa-database me-1"></i>
+                <span x-text="dataset.cache_dir.split('/').slice(-2).join('/')"></span>
+            </span>
+        </template>
+        <template x-if="!dataset.cache_dir">
+            <span class="path-error-badge">
+                <i class="fas fa-exclamation-triangle me-1"></i>
+                <span>No cache path - click to configure</span>
+            </span>
+        </template>
     </div>
 
     <!-- Resolution Info -->

@@ -31,6 +31,7 @@ class WebUITestCase(SeleniumTestCase):
         configs_dir: Path | None = None,
         output_dir: str = "/tmp/output",
         active_config: str | None = "default",
+        datasets_dir: Path | None = None,
     ) -> None:
         defaults = {
             "configs_dir": str(configs_dir or self.config_dir),
@@ -38,6 +39,8 @@ class WebUITestCase(SeleniumTestCase):
         }
         if active_config:
             defaults["active_config"] = active_config
+        if datasets_dir:
+            defaults["datasets_dir"] = str(datasets_dir)
         (self.state_dir / "defaults.json").write_text(json.dumps(defaults), encoding="utf-8")
 
     def write_config(self, name: str, payload: dict) -> Path:

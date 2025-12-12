@@ -772,12 +772,6 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
     for text_encoder in text_encoders:
         te_idx += 1
         te_attr_id += 1
-        # if (
-        #     getattr(args, f"text_encoder_{te_idx + 1}_precision", "no_change")
-        #     != "no_change"
-        # ):
-        #     logger.info(f"Not moving text encoder {te_idx + 1}")
-        #     continue
         if text_encoder.device == target_device:
             logger.info(f"Text encoder {te_idx + 1} already on target device")
             continue
@@ -2545,9 +2539,14 @@ class FactoryRegistry:
 
         use_captions = True
         is_regularisation_data = backend.get("is_regularisation_data", backend.get("is_regularization_data", False))
-        is_i2v_data = backend.get("video", {}).get(
-            "is_i2v", True if getattr(self.args, "ltx_train_mode", None) == "i2v" else False
-        )
+
+        # Default to i2v only when explicitly requested, or when using LTX in i2v mode.
+        video_cfg = backend.get("video", {}) or {}
+        is_i2v_data = video_cfg.get("is_i2v")
+        if is_i2v_data is None:
+            ltx_mode = getattr(self.args, "ltx_train_mode", None)
+            is_ltx_family = str(getattr(self.args, "model_family", "")).lower() == "ltx"
+            is_i2v_data = bool(is_ltx_family and ltx_mode == "i2v")
 
         if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
             use_captions = False

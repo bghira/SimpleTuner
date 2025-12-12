@@ -35,6 +35,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="WandB provides cloud logging. TensorBoard is local. 'All' logs to all configured platforms.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+            documentation="OPTIONS.md#--report_to",
         )
     )
 
@@ -80,6 +81,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Regular checkpoints let you resume training and test different training stages",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
+            documentation="OPTIONS.md#--checkpoint_step_interval",
         )
     )
 
@@ -98,6 +100,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="Combine with step interval for fine-grained and end-of-epoch checkpointing.",
             importance=ImportanceLevel.ADVANCED,
             order=2,
+            documentation="OPTIONS.md#--checkpoint_epoch_interval",
         )
     )
 
@@ -257,6 +260,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                     field="report_to", operator="in", values=["tensorboard", "all", "custom-tracker"], action="show"
                 )
             ],
+            documentation="OPTIONS.md#--logging_dir",
         )
     )
 
@@ -570,8 +574,8 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tab="training",
             section="noise_settings",
             default_value=False,
-            help_text="Enable offset-noise training",
-            tooltip="Applies the offset noise technique described by Cross Labs (requires --noise_offset for magnitude)",
+            help_text="Alternative to zero-SNR for producing dark outputs. Adds a small constant to noise so the model learns to generate very dark or very light images. Only for epsilon/V-prediction models (not flow-matching). Use sparingly; high values can harm training.",
+            tooltip="Cross Labs technique for improving contrast range. Requires --noise_offset for magnitude. Not applicable to flow-matching models like Flux.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
         )
@@ -608,6 +612,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             tooltip="When enabled, trains the refiner component of SDXL models for higher quality outputs.",
             importance=ImportanceLevel.ADVANCED,
             order=29,
+            documentation="OPTIONS.md#--refiner_training",
         )
     )
 

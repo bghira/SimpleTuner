@@ -248,6 +248,15 @@ Your config at the end will look like mine:
 
 Of particular importance in this configuration are the validation settings. Without these, the outputs do not look super great.
 
+### Optional: CREPA temporal regularizer
+
+For smoother motion and less identity drift on Wan:
+- In **Training → Loss functions**, enable **CREPA**.
+- Start with **Block Index = 8**, **Weight = 0.5**, **Adjacent Distance = 1**, **Temporal Decay = 1.0**.
+- Default encoder (`dinov2_vitg14`, size `518`) works well; swap to `dinov2_vits14` + `224` only if you need to trim VRAM.
+- First run downloads DINOv2 via torch hub; cache or prefetch if you train offline.
+- Only enable **Drop VAE Encoder** when training entirely from cached latents; otherwise keep it off so pixel encodes still work.
+
 ### Advanced Experimental Features
 
 <details>

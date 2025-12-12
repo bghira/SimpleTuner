@@ -13,6 +13,30 @@
 
     <!-- Critical CSS (inline for performance) -->
     <script>var cssTimestamp = Date.now();</script>
+    <!-- Global WebUI defaults -->
+    {% set show_docs_default = webui_defaults.show_documentation_links if webui_defaults is defined and webui_defaults.show_documentation_links is defined else true %}
+    <script>
+    window.webuiDefaults = {
+        show_documentation_links: {{ 'true' if show_docs_default else 'false' }}
+    };
+    function updateDocLinkVisibility() {
+        var show = window.webuiDefaults.show_documentation_links;
+        document.querySelectorAll('.doc-link').forEach(function(el) {
+            el.style.display = show ? '' : 'none';
+        });
+    }
+    window.addEventListener('webui-defaults-updated', function(event) {
+        var payload = event && event.detail && (event.detail.resolved_defaults || event.detail.defaults);
+        if (payload && typeof payload.show_documentation_links !== 'undefined') {
+            window.webuiDefaults.show_documentation_links = Boolean(payload.show_documentation_links);
+            updateDocLinkVisibility();
+        }
+    });
+    document.addEventListener('DOMContentLoaded', updateDocLinkVisibility);
+    document.addEventListener('htmx:afterSwap', updateDocLinkVisibility);
+    document.addEventListener('htmx:afterSettle', updateDocLinkVisibility);
+    </script>
+    <style>.doc-link { display: {{ 'inline' if show_docs_default else 'none' }}; }</style>
     <link href="/static/css/critical.css" rel="stylesheet" id="css-critical">
     <script>document.getElementById('css-critical').href = '/static/css/critical.css?t=' + cssTimestamp;</script>
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
@@ -419,12 +443,10 @@
                 maxRetryDelay: 30000
             });
 
-            // Add custom event listeners
-            window.sseManager.addEventListener('training_progress', function(data) {
-                // Progress is handled by the trainer page directly
-                // Just dispatch the event for other listeners
-                window.dispatchEvent(new CustomEvent('training-progress', { detail: data }));
-            });
+            // Note: training_progress events are handled by training_events_sse.html
+            // which properly extracts and normalizes metrics before dispatching
+            // training-progress custom events. Do NOT dispatch here to avoid
+            // overwriting properly processed data with raw SSE payloads.
 
             window.sseManager.addEventListener('validation_complete', function(data) {
                 showToast('Validation completed', 'success');

@@ -93,6 +93,12 @@ def lifecycle_stage_event(
 def training_status_event(
     status: str,
     *,
+    label: str | None = None,
+    current: float | None = None,
+    total: float | None = None,
+    percent: float | None = None,
+    eta_seconds: float | None = None,
+    metrics: Mapping[str, Any] | None = None,
     message: str | None = None,
     job_id: str | None = None,
     severity: str | None = None,
@@ -112,8 +118,16 @@ def training_status_event(
         event["severity"] = severity
     if timestamp:
         event["timestamp"] = timestamp.isoformat()
-    if progress:
-        event["progress"] = dict(progress)
+    progress_payload = progress or _progress_payload(
+        label=label,
+        current=current,
+        total=total,
+        percent=percent,
+        eta_seconds=eta_seconds,
+        metrics=metrics,
+    )
+    if progress_payload:
+        event["progress"] = dict(progress_payload)
     if extra:
         data = event.setdefault("data", {})
         data.update(dict(extra))

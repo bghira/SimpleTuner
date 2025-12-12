@@ -485,10 +485,6 @@ class ConfigsService:
                 config_payload["lycoris_config"] = lycoris_rel
                 config_payload.pop("--lycoris_config", None)
 
-        pretrained_path = self._resolve_pretrained_path(model_family, model_flavour)
-        if not pretrained_path:
-            pretrained_path = model_flavour or model_family
-
         overrides = {
             "data_backend_config": dataloader_rel,
         }
@@ -499,7 +495,6 @@ class ConfigsService:
                     "--model_family": model_family,
                     "--model_flavour": model_flavour,
                     "--model_type": model_type,
-                    "--pretrained_model_name_or_path": pretrained_path,
                     "--output_dir": f"output/{name}",
                 }
             )

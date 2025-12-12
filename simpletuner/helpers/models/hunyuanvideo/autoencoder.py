@@ -1082,6 +1082,10 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
 
         self._tile_parallelism_enabled = False
 
+        # Maintain compatibility with the training and pipeline code that expects these attributes.
+        self.spatial_compression_ratio = ffactor_spatial
+        self.temporal_compression_ratio = ffactor_temporal
+
     def set_tile_sample_min_size(self, sample_size: int, tile_overlap_factor: float = 0.2):
         self.tile_sample_min_size = sample_size
         self.tile_latent_min_size = sample_size // self.ffactor_spatial

@@ -98,6 +98,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 - **Group offloading** - Diffusers v0.33+ module-group CPU/disk staging with optional CUDA streams
 - **Validation adapter sweeps** - Temporarily attach LoRA adapters (single or JSON presets) during validation to measure adapter-only or comparison renders without touching the training loop
 - **External validation hooks** - Swap the built-in validation pipeline or post-upload steps for your own scripts, so you can run checks on another GPU or forward artifacts to any cloud provider of your choice ([details](/documentation/OPTIONS.md#validation_method))
+- **CREPA regularization** - Cross-frame representation alignment for video DiTs ([guide](/documentation/experimental/VIDEO_CREPA.md))
 - **LoRA I/O formats** - Load/save PEFT LoRAs in standard Diffusers layout or ComfyUI-style `diffusion_model.*` keys (Flux/Flux2/Lumina2/Z-Image auto-detect ComfyUI inputs)
 
 ### Model-Specific Features

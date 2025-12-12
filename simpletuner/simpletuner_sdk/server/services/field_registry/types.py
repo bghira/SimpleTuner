@@ -115,3 +115,6 @@ class ConfigField:
     aliases: Optional[List[str]] = None
     parser_type: Optional[ParserType] = None
     allow_empty: bool = False  # True if empty strings should be preserved instead of replaced with default_value
+    documentation: Optional[str] = (
+        None  # Relative path to documentation file with optional anchor (e.g., "OPTIONS.md#learning_rate")
+    )

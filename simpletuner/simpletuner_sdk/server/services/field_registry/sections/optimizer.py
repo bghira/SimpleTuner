@@ -255,6 +255,7 @@ def register_optimizer_fields(registry: "FieldRegistry") -> None:
             tooltip="Example: beta1=0.9,beta2=0.95,weight_decay=0.01. Leave blank to use optimizer defaults.",
             importance=ImportanceLevel.ADVANCED,
             order=7,
+            documentation="OPTIONS.md#--optimizer_config",
         )
     )
 

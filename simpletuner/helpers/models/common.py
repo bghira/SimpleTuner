@@ -33,6 +33,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
+from simpletuner.helpers.training.crepa import CrepaRegularizer
 from simpletuner.helpers.training.custom_schedule import (
     apply_flow_schedule_shift,
     generate_timestep_weights,
@@ -257,6 +258,7 @@ class ModelFoundation(ABC):
         self.setup_training_noise_schedule()
         self.diff2flow_bridge = None
         self.setup_diff2flow_bridge()
+        self._maybe_enable_reflexflow_default()
         self.assistant_adapter_name = "assistant"
         self.assistant_lora_loaded = False
 
@@ -1066,6 +1068,45 @@ class ModelFoundation(ABC):
             return None
         return unwrap_model(self.accelerator, model or self.model)
 
+    @staticmethod
+    def _module_has_meta_tensors(module: Optional[torch.nn.Module]) -> bool:
+        if module is None:
+            return False
+        try:
+            for tensor in module.parameters(recurse=True):
+                if tensor is not None and getattr(tensor, "device", None) is not None and tensor.device.type == "meta":
+                    return True
+            for tensor in module.buffers(recurse=True):
+                if tensor is not None and getattr(tensor, "device", None) is not None and tensor.device.type == "meta":
+                    return True
+        except Exception:
+            logger.debug("Meta tensor detection failed for %s", module.__class__.__name__, exc_info=True)
+        return False
+
+    @staticmethod
+    def _sample_meta_tensor_names(module: Optional[torch.nn.Module], limit: int = 3) -> list[str]:
+        names: list[str] = []
+        if module is None:
+            return names
+
+        def _collect(iterator):
+            for name, tensor in iterator:
+                if tensor is None or getattr(tensor, "device", None) is None:
+                    continue
+                if tensor.device.type == "meta":
+                    names.append(name)
+                    if len(names) >= limit:
+                        return True
+            return False
+
+        try:
+            if _collect(module.named_parameters(recurse=True)):
+                return names
+            _collect(module.named_buffers(recurse=True))
+        except Exception:
+            logger.debug("Meta tensor name sampling failed for %s", module.__class__.__name__, exc_info=True)
+        return names
+
     def move_extra_models(self, target_device):
         """
         Move any extra models in the child class.
@@ -1089,15 +1130,18 @@ class ModelFoundation(ABC):
         skip_moving_trained_component = should_configure_offload and self.group_offload_configured
 
         if self.model is not None and not skip_moving_trained_component:
-            self.unwrap_model(model=self.model).to(target_device)
+            model_ref = self.unwrap_model(model=self.model)
+            if getattr(model_ref, "device", None) != "meta":
+                model_ref.to(target_device)
         if self.controlnet is not None and not skip_moving_trained_component:
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
             self.vae.to(target_device)
         if self.text_encoders is not None:
             for text_encoder in self.text_encoders:
-                if text_encoder.device != "meta":
-                    text_encoder.to(target_device)
+                if text_encoder is None or getattr(text_encoder, "device", None) == "meta":
+                    continue
+                text_encoder.to(target_device)
         self.move_extra_models(target_device)
 
         if should_configure_offload:
@@ -1230,6 +1274,12 @@ class ModelFoundation(ABC):
                 self.vae.enable_slicing()
             else:
                 logger.warning(f"VAE slicing is enabled, but not yet supported by {self.config.model_family}.")
+        if getattr(self.config, "crepa_drop_vae_encoder", False):
+            logger.info("CREPA decode-only mode enabled; dropping VAE encoder/quant_conv to save memory.")
+            if hasattr(self.vae, "encoder"):
+                self.vae.encoder = None
+            if hasattr(self.vae, "quant_conv"):
+                self.vae.quant_conv = None
         if self._ramtorch_vae_requested():
             mid_block = getattr(self.vae, "mid_block", None)
             if mid_block is None:
@@ -1371,13 +1421,15 @@ class ModelFoundation(ABC):
                     quant_config = Int4WeightOnlyConfig(group_size=128)
                     extra_kwargs["quantization_config"] = TorchAoConfig(quant_type=quant_config)
 
-                text_encoder = text_encoder_config["model"].from_pretrained(
-                    text_encoder_path,
-                    variant=self.config.variant,
-                    revision=self.config.revision,
-                    subfolder=text_encoder_config.get("subfolder", "text_encoder") or "",
+                text_encoder_kwargs = {
+                    "pretrained_model_name_or_path": text_encoder_path,
+                    "variant": self.config.variant,
+                    "revision": self.config.revision,
+                    "subfolder": text_encoder_config.get("subfolder", "text_encoder") or "",
                     **extra_kwargs,
-                )
+                }
+                logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
+                text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
                 if text_encoder.__class__.__name__ in [
                     "UMT5EncoderModel",
                     "T5EncoderModel",
@@ -1507,12 +1559,38 @@ class ModelFoundation(ABC):
             else:
                 model_subfolder = self.config.pretrained_unet_subfolder
 
+        from transformers.utils import ContextManagers
+
         logger.info(f"Loading diffusion model from {model_path}")
-        self.model = loader_fn(
-            model_path,
-            subfolder=model_subfolder,
-            **pretrained_load_args,
-        )
+
+        def _load_model(load_kwargs: dict):
+            with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+                return loader_fn(
+                    model_path,
+                    subfolder=model_subfolder,
+                    **load_kwargs,
+                )
+
+        load_kwargs = dict(pretrained_load_args)
+        self.model = _load_model(load_kwargs)
+        unwrapped_model = self.unwrap_model(model=self.model)
+
+        if self._module_has_meta_tensors(unwrapped_model):
+            if load_kwargs.get("low_cpu_mem_usage", True):
+                sample_meta = ", ".join(self._sample_meta_tensor_names(unwrapped_model)) or "(unknown tensors)"
+                logger.warning(
+                    "Detected meta tensors after loading %s (e.g. %s); disabling low_cpu_mem_usage and retrying.",
+                    model_path,
+                    sample_meta,
+                )
+                load_kwargs["low_cpu_mem_usage"] = False
+                self.model = _load_model(load_kwargs)
+                unwrapped_model = self.unwrap_model(model=self.model)
+            if self._module_has_meta_tensors(unwrapped_model):
+                raise RuntimeError(
+                    f"{self.__class__.__name__} failed to materialize weights for {model_path}. "
+                    "All model parameters remain on the meta device after reload."
+                )
         if self._ramtorch_enabled() and self.model is not None:
             self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
         if move_to_device and self.model is not None:
@@ -2353,6 +2431,29 @@ class ModelFoundation(ABC):
         timesteps = sigmas * 1000.0
         return sigmas, timesteps
 
+    def _maybe_enable_reflexflow_default(self) -> bool:
+        """
+        Enable ReflexFlow automatically when scheduled sampling is active on flow-matching models
+        and the user did not explicitly set the flag.
+        """
+        try:
+            offset_value = getattr(self.config, "scheduled_sampling_max_step_offset", 0)
+            max_offset = float(offset_value or 0)
+        except Exception:
+            return False
+
+        if max_offset <= 0:
+            return False
+
+        if getattr(self.config, "scheduled_sampling_reflexflow", None) is not None:
+            return False
+
+        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+            return False
+
+        setattr(self.config, "scheduled_sampling_reflexflow", True)
+        return True
+
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         """
         Moves the batch to the proper device/dtype,
@@ -2473,6 +2574,7 @@ class ModelFoundation(ABC):
                 batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
+        self._maybe_enable_reflexflow_default()
         if getattr(self.config, "scheduled_sampling_max_step_offset", 0) > 0:
             effective_prob = float(getattr(self.config, "scheduled_sampling_probability", 0.0) or 0.0)
             prob_start = float(getattr(self.config, "scheduled_sampling_prob_start", effective_prob) or effective_prob)
@@ -2664,6 +2766,7 @@ class ModelFoundation(ABC):
         """
         target = self.get_prediction_target(prepared_batch)
         model_pred = model_output["model_prediction"]
+        extra_sample_loss = None
         if target is None:
             raise ValueError("Target is None. Cannot compute loss.")
 
@@ -2691,6 +2794,36 @@ class ModelFoundation(ABC):
         elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
             # Flow matching always uses L2 loss
             loss = (model_pred.float() - target.float()) ** 2
+            if getattr(self.config, "scheduled_sampling_reflexflow", False):
+                clean_pred = prepared_batch.get("_reflexflow_clean_pred")
+                biased_pred = prepared_batch.get("_reflexflow_biased_pred")
+                beta2 = getattr(self.config, "scheduled_sampling_reflexflow_beta2", 1.0)
+                beta2 = 1.0 if beta2 is None else float(beta2)
+                if clean_pred is not None and biased_pred is not None:
+                    exposure = (biased_pred - clean_pred).detach()
+                    norm_dims = tuple(range(1, exposure.dim()))
+                    exposure_norm = exposure.abs().sum(dim=norm_dims, keepdim=True).clamp_min(1e-6)
+                    alpha = float(getattr(self.config, "scheduled_sampling_reflexflow_alpha", 1.0) or 0.0)
+                    if alpha != 0.0:
+                        weight = 1.0 + alpha * exposure / exposure_norm
+                        loss = loss * weight
+                if beta2 != 1.0:
+                    loss = loss * beta2
+
+                adr_scale = float(getattr(self.config, "scheduled_sampling_reflexflow_beta1", 10.0) or 0.0)
+                if adr_scale != 0.0:
+                    biased_latents = prepared_batch.get("noisy_latents")
+                    clean_latents = prepared_batch.get("latents")
+                    if biased_latents is not None and clean_latents is not None:
+                        target_vec = clean_latents - biased_latents
+                        flat_target = target_vec.reshape(target_vec.shape[0], -1)
+                        flat_pred = model_pred.reshape(model_pred.shape[0], -1)
+                        target_norm = torch.norm(flat_target, dim=1, keepdim=True).clamp_min(1e-6)
+                        pred_norm = torch.norm(flat_pred, dim=1, keepdim=True).clamp_min(1e-6)
+                        target_dir = flat_target / target_norm
+                        pred_dir = flat_pred / pred_norm
+                        adr = (pred_dir - target_dir).pow(2).sum(dim=1)
+                        extra_sample_loss = adr_scale * adr
         elif self.PREDICTION_TYPE in [
             PredictionTypes.EPSILON,
             PredictionTypes.V_PREDICTION,
@@ -2793,7 +2926,10 @@ class ModelFoundation(ABC):
                 mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
                 loss = loss * mask_image
 
-        loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
+        loss = loss.mean(dim=list(range(1, len(loss.shape))))
+        if extra_sample_loss is not None:
+            loss = loss + extra_sample_loss.to(device=loss.device, dtype=loss.dtype)
+        loss = loss.mean()
         return loss
 
     def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
@@ -2991,6 +3127,7 @@ class VideoModelFoundation(ImageModelFoundation):
         """
         super().__init__(config, accelerator)
         self.config = config
+        self.crepa_regularizer: Optional[CrepaRegularizer] = None
 
     def get_transforms(self, dataset_type: str = "image"):
         return transforms.Compose(
@@ -3017,6 +3154,65 @@ class VideoModelFoundation(ImageModelFoundation):
         You can reshape or permute as needed for the underlying model.
         """
         return tensor
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        self._init_crepa_regularizer()
+
+    def _init_crepa_regularizer(self):
+        if not getattr(self.config, "crepa_enabled", False):
+            self.crepa_regularizer = None
+            return
+
+        hidden_size = self._infer_crepa_hidden_size()
+        if hidden_size is None:
+            raise ValueError("CREPA enabled but unable to infer transformer hidden size.")
+
+        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size)
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("CREPA requires an attached diffusion model to register its projector.")
+        self.crepa_regularizer.attach_to_model(model_component)
+
+    def _infer_crepa_hidden_size(self) -> Optional[int]:
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        unwrapped = self.unwrap_model(model=model)
+        config = getattr(unwrapped, "config", None)
+        if config is None:
+            return None
+        # Primary: num_attention_heads * attention_head_dim (most DiT models)
+        heads = getattr(config, "num_attention_heads", None)
+        head_dim = getattr(config, "attention_head_dim", None)
+        if heads is not None and head_dim is not None:
+            return int(heads * head_dim)
+        # Fallback: model_dim (Kandinsky5)
+        model_dim = getattr(config, "model_dim", None)
+        if model_dim is not None:
+            return int(model_dim)
+        # Fallback: hidden_size (some models expose this directly)
+        hidden_size = getattr(config, "hidden_size", None)
+        if hidden_size is not None:
+            return int(hidden_size)
+        return None
+
+    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+        loss, aux_logs = super().auxiliary_loss(model_output=model_output, prepared_batch=prepared_batch, loss=loss)
+
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.enabled:
+            crepa_loss, crepa_logs = crepa.compute_loss(
+                hidden_states=model_output.get("crepa_hidden_states"),
+                latents=prepared_batch.get("latents"),
+                vae=self.get_vae(),
+            )
+            if crepa_loss is not None:
+                loss = loss + crepa_loss
+            if crepa_logs:
+                aux_logs = (aux_logs or {}) | crepa_logs
+
+        return loss, aux_logs
 
 
 class AudioModelFoundation(ModelFoundation):

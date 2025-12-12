@@ -222,6 +222,36 @@ Video-capable models attach a `videos` array instead (GIF data URIs with `mime_t
 
 Each example below follows this flow.
 
+## Optional: upload datasets over the API (local backends)
+
+If the dataset is not yet on the machine where SimpleTuner runs, you can push it over HTTP before wiring the dataloader. The upload endpoints respect the configured `datasets_dir` (set during WebUI onboarding) and are intended for local filesystems:
+
+1. **Create a target folder** under your datasets root:
+
+   ```bash
+   DATASETS_DIR=${DATASETS_DIR:-/workspace/simpletuner/datasets}
+   curl -s -X POST http://localhost:8001/api/datasets/folders \
+     -F parent_path="$DATASETS_DIR" \
+     -F folder_name="pixart-upload"
+   ```
+
+2. **Upload files or a ZIP** (images plus optional `.txt/.jsonl/.csv` metadata are accepted):
+
+   ```bash
+   # Upload a zip (automatically extracted on the server)
+   curl -s -X POST http://localhost:8001/api/datasets/upload/zip \
+     -F target_path="$DATASETS_DIR/pixart-upload" \
+     -F file=@/path/to/dataset.zip
+
+   # Or upload individual files
+   curl -s -X POST http://localhost:8001/api/datasets/upload \
+     -F target_path="$DATASETS_DIR/pixart-upload" \
+     -F files[]=@image001.png \
+     -F files[]=@image001.txt
+   ```
+
+After the upload finishes, point your `multidatabackend.json` entry at the new folder (for example, `"/data/datasets/pixart-upload"`).
+
 ## Example: PixArt Sigma 900M full fine-tune
 
 ### 1. Create the environment via REST
