@@ -772,9 +772,6 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
     for text_encoder in text_encoders:
         te_idx += 1
         te_attr_id += 1
-        if getattr(args, f"text_encoder_{te_idx + 1}_precision", "no_change") != "no_change":
-            logger.info(f"Not moving text encoder {te_idx + 1}")
-            continue
         if text_encoder.device == target_device:
             logger.info(f"Text encoder {te_idx + 1} already on target device")
             continue
