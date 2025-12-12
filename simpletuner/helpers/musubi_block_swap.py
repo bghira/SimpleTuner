@@ -29,6 +29,8 @@ class MusubiBlockSwapManager:
         self._warned_grad = False
         self._warned_device = False
         self._logger = logger
+        self._backward_hooks: List[torch.utils.hooks.RemovableHandle] = []
+        self._backward_hook_device: Optional[torch.device] = None
 
     @classmethod
     def build(
@@ -67,21 +69,12 @@ class MusubiBlockSwapManager:
 
     def activate(self, blocks: Iterable[nn.Module], compute_device: torch.device, grad_enabled: bool) -> bool:
         if compute_device == self.offload_device:
-            if not self._warned_device:
-                self._logger.warning(
-                    "Musubi block offload requested but compute and offload devices both %s; skipping offload.",
-                    compute_device,
-                )
-                self._warned_device = True
             return False
 
-        if grad_enabled:
-            if not self._warned_grad:
-                self._logger.warning("Musubi block offload disabled while gradients are enabled to avoid breaking autograd.")
-                self._warned_grad = True
-            return False
+        blocks_list = list(blocks)
+        self._ensure_backward_hooks(blocks_list, compute_device, grad_enabled)
 
-        self.mark_blocks_for_offload(list(blocks))
+        self.mark_blocks_for_offload(blocks_list)
         return True
 
     def is_managed_block(self, index: int) -> bool:
@@ -98,6 +91,47 @@ class MusubiBlockSwapManager:
             if idx < 0 or idx >= len(blocks):
                 continue
             self._move_module(blocks[idx], self.offload_device)
+
+    def _clear_backward_hooks(self):
+        for handle in self._backward_hooks:
+            try:
+                handle.remove()
+            except Exception:
+                continue
+        self._backward_hooks.clear()
+        self._backward_hook_device = None
+
+    def _ensure_backward_hooks(self, blocks: List[nn.Module], compute_device: torch.device, grad_enabled: bool) -> None:
+        if not grad_enabled:
+            return
+
+        if self._backward_hook_device == compute_device and self._backward_hooks:
+            return
+
+        self._clear_backward_hooks()
+
+        for idx, block in enumerate(blocks):
+            if not self.is_managed_block(idx):
+                continue
+
+            def _make_pre_hook():
+                def _pre_hook(_module, _grad_output):
+                    self.stream_in(_module, compute_device)
+                    return None
+
+                return _pre_hook
+
+            def _make_post_hook():
+                def _post_hook(_module, _grad_input, _grad_output):
+                    self.stream_out(_module)
+                    return None
+
+                return _post_hook
+
+            self._backward_hooks.append(block.register_full_backward_pre_hook(_make_pre_hook()))
+            self._backward_hooks.append(block.register_full_backward_hook(_make_post_hook()))
+
+        self._backward_hook_device = compute_device
 
     def _move_module(self, module: nn.Module, device: torch.device):
         if _module_on_device(module, device):
