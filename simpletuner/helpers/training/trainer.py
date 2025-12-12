@@ -1693,11 +1693,13 @@ class Trainer:
             self._exit_on_signal()
             self.init_huggingface_hub()
             self._exit_on_signal()
+            self.init_preprocessing_models()
+            self._exit_on_signal()
+            self.init_precision(preprocessing_models_only=True)
 
             # Core initialization steps with signal checks after each step
             self._initialize_components_with_signal_check(
                 [
-                    self.init_preprocessing_models,
                     self.init_data_backend,
                     self.init_validation_prompts,
                     self.init_unload_text_encoder,
