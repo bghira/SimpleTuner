@@ -504,6 +504,7 @@ class MultiHeadCrossAttention(nn.Module):
     def _process_cross_attn(self, q, k, v, kv_seqlen):
         B, H, N, _ = q.shape
         attn_output = None
+        allow_unmasked_kv = kv_seqlen is None or len(set(int(s) for s in kv_seqlen)) == 1
 
         # Sanity: ensure k/v are (B, H, S, D) like q
         if k.shape[1] != H and k.shape[2] == H:
@@ -513,7 +514,7 @@ class MultiHeadCrossAttention(nn.Module):
         if k.shape[1] != H:
             raise ValueError(f"Cross-attn key head mismatch: q heads {H}, k shape {k.shape}")
 
-        if self.enable_flashattn3:
+        if self.enable_flashattn3 and allow_unmasked_kv:
             try:  # pragma: no cover - optional dependency
                 from flash_attn_interface import flash_attn_func
 
@@ -525,7 +526,7 @@ class MultiHeadCrossAttention(nn.Module):
             except Exception:
                 attn_output = None
 
-        if attn_output is None and self.enable_flashattn2:
+        if attn_output is None and self.enable_flashattn2 and allow_unmasked_kv:
             try:  # pragma: no cover - optional dependency
                 from flash_attn import flash_attn_func
 
@@ -554,25 +555,27 @@ class MultiHeadCrossAttention(nn.Module):
                 attn_output = None
 
         if attn_output is None:
-            attn_mask = None
-            if kv_seqlen is not None:
-                max_k = k.shape[2]
-                attn_mask = torch.zeros((B, 1, N, max_k), device=q.device, dtype=q.dtype)
-                for idx, seqlen in enumerate(kv_seqlen):
-                    if seqlen < max_k:
-                        attn_mask[idx, :, :, seqlen:] = float("-inf")
             try:
-                attn_output = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+                if kv_seqlen is not None:
+                    # Avoid allocating a dense (B, N, S) mask which can OOM for long video sequences.
+                    outputs = []
+                    for idx, seqlen in enumerate(kv_seqlen):
+                        seq_len_int = int(seqlen)
+                        k_b = k[idx : idx + 1, :, :seq_len_int, :]
+                        v_b = v[idx : idx + 1, :, :seq_len_int, :]
+                        q_b = q[idx : idx + 1]
+                        outputs.append(torch.nn.functional.scaled_dot_product_attention(q_b, k_b, v_b))
+                    attn_output = torch.cat(outputs, dim=0)
+                else:
+                    attn_output = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None)
             except Exception as exc:
                 logger.error(
-                    "LongCat cross-attn SDPA failed: q %s, k %s, v %s, attn_mask %s, kv_seqlen %s",
+                    "LongCat cross-attn SDPA failed: q %s, k %s, v %s, kv_seqlen %s",
                     tuple(q.shape),
                     tuple(k.shape),
                     tuple(v.shape),
-                    tuple(attn_mask.shape) if attn_mask is not None else None,
                     kv_seqlen,
                 )
-                # Log a quick head/token summary for debugging
                 logger.error(
                     "SDPA debug: B=%s, heads=%s, q_tokens=%s, k_tokens=%s",
                     q.shape[0],

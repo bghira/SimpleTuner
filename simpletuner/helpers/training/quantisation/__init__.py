@@ -118,6 +118,9 @@ def _quanto_model(
 
 
 def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
+    # Skip RamTorch-offloaded modules; TorchAO expects GPU-resident weights.
+    if any(getattr(p, "is_ramtorch", False) for p in mod.parameters(recurse=False)):
+        return False
     # don't convert the output module
     if fqn == "proj_out":
         return False
