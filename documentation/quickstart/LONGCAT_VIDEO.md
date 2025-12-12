@@ -66,6 +66,7 @@ Optional VRAM savers:
 - Reduce `lora_rank` (4–8) and use `int8-quanto` base precision.
 - Enable group offload: `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`.
 - Lower `validation_resolution`, frames, or steps first if previews OOM.
+- Attention defaults: on CUDA, LongCat‑Video will automatically use the bundled block‑sparse Triton kernel when it’s available and fall back to the standard dispatcher otherwise. No toggle needed. If you specifically want xFormers, set `attention_implementation: "xformers"` in your config/CLI.
 
 ### Start training (CLI)
 ```bash
@@ -89,6 +90,7 @@ Or launch the Web UI and submit a job with the same config.
 - Guidance: 3.5–5.0 works well; empty negative prompts are auto‑generated when CFG is enabled.
 - Steps: 35–45 for quality checks; lower for quick previews.
 - Frames: 93 by default (aligns with the VAE temporal stride of 4).
+- Need more headroom for previews? Set `musubi_blocks_to_swap` (try 4–8) and optionally `musubi_block_swap_device` to stream the last transformer blocks from CPU during validation/inference. It only activates when gradients are off, so training speed stays the same.
 
 - Validation runs from the `validation_*` fields in your config or via the WebUI preview tab after `simpletuner server` is started. Use those paths for quick checks instead of a standalone CLI subcommand.
 - For dataset-driven validation (including I2V), set `validation_using_datasets: true` and point `eval_dataset_id` at your validation split. If that split is marked `is_i2v` and has linked conditioning frames, the pipeline keeps the first frame fixed automatically.

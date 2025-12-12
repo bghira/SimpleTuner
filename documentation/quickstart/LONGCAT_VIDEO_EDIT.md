@@ -51,6 +51,10 @@ cp config/config.json.example config/config.json
 ```
 Fill in `model_family`, `model_flavour`, `output_dir`, `data_backend_config`, and `eval_dataset_id`. Leave the defaults above unless you know you need different values.
 
+CUDA attention options:
+- On CUDA, LongCat‑Video automatically prefers the bundled block‑sparse Triton kernel when present and falls back to the standard dispatcher otherwise. No manual toggle is required.
+- To force xFormers instead, set `attention_implementation: "xformers"` in your config/CLI.
+
 ---
 
 ## 3) Dataloader: pair clips with start frames
@@ -94,6 +98,7 @@ Example `multidatabackend.json`:
 - Add a small validation split with the same paired structure as training. Set `validation_using_datasets: true` and point `eval_dataset_id` to that split (e.g., `longcat-video-val`) so validation pulls the start frame automatically.
 - WebUI previews: start `simpletuner server`, choose LongCat‑Video edit, and upload the start frame + prompt.
 - Guidance: 3.5–5.0 works; empty negatives are auto‑filled when CFG is on.
+- For low‑VRAM previews, set `musubi_blocks_to_swap` (start with 4–8) and optionally `musubi_block_swap_device` to stream the last transformer blocks from CPU during validation/inference. It only engages when gradients are off, so training is unaffected.
 - The conditioning frame stays fixed during sampling; only later frames denoise.
 
 ---
