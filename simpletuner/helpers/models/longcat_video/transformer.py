@@ -586,10 +586,40 @@ class MultiHeadCrossAttention(nn.Module):
 
     def forward(self, x, cond, kv_seqlen, num_cond_latents=None, shape=None):
         B, N, C = x.shape
-        assert C == self.dim and cond.shape[2] == self.dim
+        if C != self.dim or cond.shape[-1] != self.dim:
+            raise ValueError(
+                f"Cross-attn dim mismatch: x {tuple(x.shape)}, cond {tuple(cond.shape)}, expected dim {self.dim}"
+            )
+
+        cond_B, cond_S, _ = cond.shape
+        kv_list = [int(s) for s in kv_seqlen] if kv_seqlen is not None else None
+
+        # LongCat packs text tokens across the batch into cond.shape[0] == 1 while
+        # providing kv_seqlen per original batch. Unpack to (B, max_len, C).
+        if cond_B == B:
+            cond_for_kv = cond
+            if kv_list is None:
+                kv_list = [cond_S] * B
+        elif cond_B == 1 and kv_list is not None and len(kv_list) == B:
+            total_tokens = sum(kv_list)
+            if total_tokens != cond_S:
+                raise ValueError(f"Packed cond length mismatch: sum(kv_seqlen)={total_tokens} != cond tokens {cond_S}")
+            max_len = max(kv_list) if kv_list else 0
+            chunks = []
+            offset = 0
+            for seqlen in kv_list:
+                chunk = cond[:, offset : offset + seqlen, :]
+                offset += seqlen
+                if seqlen < max_len:
+                    pad = cond.new_zeros((1, max_len - seqlen, self.dim))
+                    chunk = torch.cat([chunk, pad], dim=1)
+                chunks.append(chunk)
+            cond_for_kv = torch.cat(chunks, dim=0)
+        else:
+            raise ValueError(f"Cross-attn batch mismatch: x batch {B}, cond batch {cond_B}, kv_seqlen {kv_seqlen}")
 
         q = self.q_linear(x).view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
-        kv = self.kv_linear(cond).view(B, cond.shape[1], 2, self.num_heads, self.head_dim)
+        kv = self.kv_linear(cond_for_kv).view(B, cond_for_kv.shape[1], 2, self.num_heads, self.head_dim)
         k, v = kv.unbind(2)
 
         q = self.q_norm(q)
@@ -599,11 +629,8 @@ class MultiHeadCrossAttention(nn.Module):
         k = k.permute(0, 2, 1, 3).contiguous()
         v = v.permute(0, 2, 1, 3).contiguous()
 
-        kv_list = []
-        for b in range(B):
-            seq_len = kv_seqlen[b] if kv_seqlen is not None else cond.shape[1]
-            kv_list.append(int(seq_len))
-        kv_list = kv_list or [cond.shape[1]] * B
+        if kv_list is None:
+            kv_list = [cond_for_kv.shape[1]] * B
 
         attn_output = self._process_cross_attn(q, k, v, kv_list)
         attn_output = attn_output.transpose(1, 2).reshape(B, N, C)
