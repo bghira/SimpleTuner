@@ -11,6 +11,7 @@ For Ubuntu systems, start by installing the required packages:
 ```bash
 apt -y install python3.12-venv python3.12-dev
 apt -y install libopenmpi-dev openmpi-bin cuda-toolkit-12-8 libaio-dev # if you're using DeepSpeed
+apt -y install ffmpeg # if training video models
 ```
 
 ## Creating a workspace directory
