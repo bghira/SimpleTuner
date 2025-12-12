@@ -219,8 +219,10 @@ class Flux2(ImageModelFoundation):
         self._mistral_processor = AutoProcessor.from_pretrained(mistral_path, **processor_kwargs)
 
         # Load model
-        model_dtype = dtype if not should_quantize_text_encoder else torch.float32
-        model_kwargs = {"torch_dtype": model_dtype}
+        model_kwargs = {
+            "torch_dtype": dtype,
+            "low_cpu_mem_usage": True,
+        }
         if mistral_revision is not None:
             model_kwargs["revision"] = mistral_revision
         self._mistral_model = Mistral3ForConditionalGeneration.from_pretrained(
@@ -231,8 +233,7 @@ class Flux2(ImageModelFoundation):
             target_device = (
                 torch.device("cpu") if quantize_via_cpu and should_quantize_text_encoder else self.accelerator.device
             )
-            target_dtype = dtype if not should_quantize_text_encoder else model_dtype
-            self._mistral_model.to(target_device, dtype=target_dtype)
+            self._mistral_model.to(target_device, dtype=dtype)
         self._mistral_model.requires_grad_(False)
         self._mistral_model.eval()
 
