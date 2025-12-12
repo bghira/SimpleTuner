@@ -1459,13 +1459,15 @@ class ModelFoundation(ABC):
                     quant_config = Int4WeightOnlyConfig(group_size=128)
                     extra_kwargs["quantization_config"] = TorchAoConfig(quant_type=quant_config)
 
-                text_encoder = text_encoder_config["model"].from_pretrained(
-                    text_encoder_path,
-                    variant=self.config.variant,
-                    revision=self.config.revision,
-                    subfolder=text_encoder_config.get("subfolder", "text_encoder") or "",
+                text_encoder_kwargs = {
+                    "pretrained_model_name_or_path": text_encoder_path,
+                    "variant": self.config.variant,
+                    "revision": self.config.revision,
+                    "subfolder": text_encoder_config.get("subfolder", "text_encoder") or "",
                     **extra_kwargs,
-                )
+                }
+                logger.debug(f"Text encoder {text_encoder_idx} load args: {text_encoder_kwargs}")
+                text_encoder = text_encoder_config["model"].from_pretrained(**text_encoder_kwargs)
                 if text_encoder.__class__.__name__ in [
                     "UMT5EncoderModel",
                     "T5EncoderModel",
