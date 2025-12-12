@@ -702,7 +702,7 @@ class LongCatSingleStreamBlock(nn.Module):
         x = modulate_fp32(self.mod_norm_ffn, x.view(B, T, -1, C), shift_mlp, scale_mlp).view(B, N, C)
 
         with torch.autocast(device_type=t.device.type, dtype=torch.float32, enabled=t.device.type == "cuda"):
-            x = x + gate_mlp * self.ffn(x.view(B, -1, N // T, C)).view(B, -1, C)
+            x = x + (gate_mlp * self.ffn(x.view(B, -1, N // T, C))).view(B, -1, C)
         x = x.to(x_dtype)
 
         if return_kv:
