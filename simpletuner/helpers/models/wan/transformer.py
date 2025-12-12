@@ -29,6 +29,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import FP32LayerNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -563,6 +564,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         rope_max_seq_len: int = 1024,
         feed_forward_chunk_size: Optional[int] = None,
         feed_forward_chunk_dim: int = 0,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -584,6 +587,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             rope_max_seq_len=rope_max_seq_len,
             feed_forward_chunk_size=feed_forward_chunk_size,
             feed_forward_chunk_dim=feed_forward_chunk_dim,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
 
         inner_dim = num_attention_heads * attention_head_dim
@@ -636,6 +641,12 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         self.gradient_checkpointing = False
         self.force_v2_1_time_embedding: bool = False
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_time_embedding_v2_1(self, force_2_1_time_embedding: bool) -> None:
         """
@@ -736,6 +747,12 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         if encoder_hidden_states_image is not None:
             encoder_hidden_states = torch.concat([encoder_hidden_states_image, encoder_hidden_states], dim=1)
 
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.blocks, hidden_states.device, grad_enabled)
+
         # TREAD initialization
         # Note: In Wan, video tokens and text tokens are kept separate
         # - hidden_states contains video tokens (B, S_video, D)
@@ -798,6 +815,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             if skip_layers is not None and i in skip_layers:
                 continue
 
+            if musubi_offload_active and musubi_manager.is_managed_block(i):
+                musubi_manager.stream_in(block, hidden_states.device)
+
             # Apply transformer block
             # Each block does:
             # 1. Self-attention on video tokens (with rotary embeddings)
@@ -835,6 +855,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 )
                 if hidden_state_layer is not None and i == hidden_state_layer:
                     output_hidden_states = False
+
+            if musubi_offload_active and musubi_manager.is_managed_block(i):
+                musubi_manager.stream_out(block)
 
         # Output processing remains the same
         shift, scale = (self.scale_shift_table + temb.unsqueeze(1)).chunk(2, dim=1)

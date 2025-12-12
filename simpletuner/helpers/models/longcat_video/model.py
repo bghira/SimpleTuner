@@ -17,6 +17,7 @@ from simpletuner.helpers.models.common import (
 from simpletuner.helpers.models.longcat_video.pipeline import LongCatVideoPipeline
 from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,10 @@ class LongCatVideo(VideoModelFoundation):
             self.config.aspect_bucket_alignment = 64
         if getattr(self.config, "flow_schedule_shift", None) is None:
             self.config.flow_schedule_shift = 12.0
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     @classmethod
     def get_flavour_choices(cls):

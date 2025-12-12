@@ -21,6 +21,7 @@ from simpletuner.helpers.models.common import (
 from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
 from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 
 logger = logging.getLogger(__name__)
 from torch.nn import functional as F
@@ -1181,6 +1182,10 @@ class Wan(VideoModelFoundation):
 
         self.config.vae_enable_tiling = True
         self.config.vae_enable_slicing = True
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     def custom_model_card_schedule_info(self):
         output_args = []

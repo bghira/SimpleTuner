@@ -1,0 +1,119 @@
+import logging
+from typing import Iterable, List, Optional
+
+import torch
+import torch.nn as nn
+
+__all__ = ["MusubiBlockSwapManager", "apply_musubi_pretrained_defaults"]
+
+
+def _module_on_device(module: nn.Module, device: torch.device) -> bool:
+    target = torch.device(device)
+    for tensor in module.parameters():
+        if tensor.device != target:
+            return False
+    for tensor in module.buffers():
+        if tensor.device != target:
+            return False
+    return True
+
+
+class MusubiBlockSwapManager:
+    """
+    Streams a subset of transformer blocks between devices to reduce VRAM usage.
+    """
+
+    def __init__(self, block_indices: List[int], offload_device: torch.device, logger: logging.Logger):
+        self.block_indices = set(block_indices)
+        self.offload_device = offload_device
+        self._warned_grad = False
+        self._warned_device = False
+        self._logger = logger
+
+    @classmethod
+    def build(
+        cls,
+        depth: int,
+        blocks_to_swap: int,
+        swap_device: str,
+        logger: logging.Logger,
+    ) -> Optional["MusubiBlockSwapManager"]:
+        if blocks_to_swap is None or blocks_to_swap == 0:
+            return None
+        if blocks_to_swap < 0:
+            raise ValueError(f"musubi_blocks_to_swap must be non-negative, got {blocks_to_swap}")
+
+        max_swappable_blocks = max(depth - 1, 0)
+        if max_swappable_blocks == 0:
+            return None
+
+        if blocks_to_swap > max_swappable_blocks:
+            logger.warning(
+                "Requested musubi_blocks_to_swap=%s but maximum swappable blocks is %s; clamping to %s.",
+                blocks_to_swap,
+                max_swappable_blocks,
+                max_swappable_blocks,
+            )
+            blocks_to_swap = max_swappable_blocks
+
+        block_indices = list(range(depth - blocks_to_swap, depth))
+        try:
+            offload_device = torch.device(swap_device)
+        except Exception as exc:
+            logger.warning("Failed to initialize Musubi block offload; continuing without offload: %s", exc)
+            return None
+
+        return cls(block_indices, offload_device, logger)
+
+    def activate(self, blocks: Iterable[nn.Module], compute_device: torch.device, grad_enabled: bool) -> bool:
+        if compute_device == self.offload_device:
+            if not self._warned_device:
+                self._logger.warning(
+                    "Musubi block offload requested but compute and offload devices both %s; skipping offload.",
+                    compute_device,
+                )
+                self._warned_device = True
+            return False
+
+        if grad_enabled:
+            if not self._warned_grad:
+                self._logger.warning("Musubi block offload disabled while gradients are enabled to avoid breaking autograd.")
+                self._warned_grad = True
+            return False
+
+        self.mark_blocks_for_offload(list(blocks))
+        return True
+
+    def is_managed_block(self, index: int) -> bool:
+        return index in self.block_indices
+
+    def stream_in(self, block: nn.Module, device: torch.device):
+        self._move_module(block, device)
+
+    def stream_out(self, block: nn.Module):
+        self._move_module(block, self.offload_device)
+
+    def mark_blocks_for_offload(self, blocks: List[nn.Module]):
+        for idx in self.block_indices:
+            if idx < 0 or idx >= len(blocks):
+                continue
+            self._move_module(blocks[idx], self.offload_device)
+
+    def _move_module(self, module: nn.Module, device: torch.device):
+        if _module_on_device(module, device):
+            return
+        with torch.no_grad():
+            module.to(device)
+
+
+def apply_musubi_pretrained_defaults(config, pretrained_load_args: dict) -> dict:
+    """
+    Inject musubi block swap defaults into pretrained load kwargs for any model
+    that supports the Musubi block swapping path.
+    """
+    args = dict(pretrained_load_args or {})
+    blocks = getattr(config, "musubi_blocks_to_swap", 0)
+    device = getattr(config, "musubi_block_swap_device", "cpu")
+    args.setdefault("musubi_blocks_to_swap", blocks)
+    args.setdefault("musubi_block_swap_device", device)
+    return args

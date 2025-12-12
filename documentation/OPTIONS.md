@@ -102,6 +102,18 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: Useful for extremely tight CPU RAM budgets (e.g., workstation with large NVMe drive).
 - **Tip**: Use a fast local SSD; network filesystems will significantly slow training.
 
+### `--musubi_blocks_to_swap`
+
+- **What**: Musubi block swap for LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, Cosmos2Image, and HunyuanVideo — keep the last N transformer blocks on CPU and stream weights per block during forward.
+- **Default**: `0` (disabled)
+- **Notes**: Musubi-style weight offload; reduces VRAM at a throughput cost and is skipped when gradients are enabled.
+
+### `--musubi_block_swap_device`
+
+- **What**: Device string for storing swapped transformer blocks (e.g., `cpu`, `cuda:0`).
+- **Default**: `cpu`
+- **Notes**: Only used when `--musubi_blocks_to_swap` > 0.
+
 ### `--ramtorch`
 
 - **What**: Replaces `nn.Linear` layers with RamTorch CPU-streamed implementations.

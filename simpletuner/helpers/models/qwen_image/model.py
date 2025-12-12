@@ -29,6 +29,7 @@ from simpletuner.helpers.models.qwen_image.pipeline_edit_plus import (
 )
 from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
 from simpletuner.helpers.models.tae.types import VideoTAESpec
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -1193,6 +1194,10 @@ class QwenImage(ImageModelFoundation):
         if self.config.prediction_type != "flow_matching":
             logger.warning(f"{self.NAME} uses flow matching. " "Overriding prediction_type to 'flow_matching'.")
             self.config.prediction_type = "flow_matching"
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
 
 from simpletuner.helpers.models.registry import ModelRegistry

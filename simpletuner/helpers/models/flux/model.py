@@ -24,6 +24,7 @@ from simpletuner.helpers.models.flux.pipeline import FluxKontextPipeline, FluxPi
 from simpletuner.helpers.models.flux.pipeline_controlnet import FluxControlNetPipeline, FluxControlPipeline
 from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
 from simpletuner.helpers.models.tae.types import ImageTAESpec
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training import diffusers_overrides
 from simpletuner.helpers.training.multi_process import _get_rank
 
@@ -1057,6 +1058,10 @@ class Flux(ImageModelFoundation):
 - Ensures proper aspect bucket alignment
 - Checks tokenizer max length constraints""",
         )
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     @staticmethod
     def _validate_flux_specific(config: dict) -> List[ValidationResult]:

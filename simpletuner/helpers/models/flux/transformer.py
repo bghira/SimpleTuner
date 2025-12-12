@@ -33,6 +33,7 @@ except:
     pass
 
 from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, FluxSingleAttnProcessor3_0
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
@@ -419,6 +420,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         pooled_projection_dim: int = 768,
         guidance_embeds: bool = False,
         axes_dims_rope: Tuple[int] = (16, 56, 56),
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         self.register_to_config(
@@ -432,6 +435,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             pooled_projection_dim=pooled_projection_dim,
             guidance_embeds=guidance_embeds,
             axes_dims_rope=axes_dims_rope,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
         self.out_channels = in_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -476,6 +481,13 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         self.gradient_checkpointing = False
         # optional interval for gradient checkpointing
         self.gradient_checkpointing_interval = None
+        total_layers = num_layers + num_single_layers
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=total_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_gradient_checkpointing_interval(self, value: int):
         self.gradient_checkpointing_interval = value
@@ -670,6 +682,12 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         saved_tokens = None  # copy of full‑seq image tokens
         global_idx = 0  # counts over *all* transformer layers
         current_rope = image_rotary_emb
+        combined_blocks = list(self.transformer_blocks) + list(self.single_transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
         # TREAD: handle negative route index.
         if routes:
@@ -688,6 +706,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             ]
 
         for index_block, block in enumerate(self.transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -771,6 +791,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 route_ptr += 1
                 current_rope = image_rotary_emb
 
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_out(block)
             global_idx += 1  # advance global layer counter
 
         # Flux places the text tokens in front of the image tokens in the
@@ -779,6 +801,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         txt_len = encoder_hidden_states.shape[1]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START? (operate on *image* tokens only)
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -885,6 +909,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                 current_rope = image_rotary_emb
 
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_out(block)
             global_idx += 1
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]

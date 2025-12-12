@@ -1,3 +1,5 @@
+import functools
+import importlib
 import logging
 import math
 from typing import List, Optional, Tuple, Union
@@ -11,7 +13,64 @@ from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+
 logger = logging.getLogger(__name__)
+_BSA_DISABLED_WARNED = False
+_BSA_ATTENTION_FN = None
+_BSA_IMPORT_CHECKED = False
+
+
+@functools.lru_cache(maxsize=1)
+def _load_optional_triton_attention():
+    module_candidates = [
+        "simpletuner.helpers.models.longcat_video.triton_attention",
+    ]
+
+    for module_name in module_candidates:
+        if importlib.util.find_spec(module_name) is None:
+            continue
+        try:  # pragma: no cover - optional dependency path
+            module = importlib.import_module(module_name)
+            fn = getattr(module, "longcat_triton_attention", None)
+            if callable(fn):
+                if getattr(fn, "_is_stub", False):
+                    logger.debug("LongCat Triton attention stub found in %s; skipping.", module_name)
+                    continue
+                logger.info("Loaded LongCat Triton attention from %s", module_name)
+                return fn
+        except Exception as exc:  # pragma: no cover - optional dependency path
+            logger.warning("LongCat Triton attention import from %s failed: %s", module_name, exc)
+            return None
+    return None
+
+
+def _load_optional_bsa_attention():
+    global _BSA_ATTENTION_FN, _BSA_IMPORT_CHECKED
+    if _BSA_IMPORT_CHECKED:
+        return _BSA_ATTENTION_FN
+
+    module_candidates = [
+        "simpletuner.helpers.models.longcat_video.block_sparse_attention.bsa_interface",
+        "longcat_video.block_sparse_attention.bsa_interface",
+    ]
+    for module_name in module_candidates:
+        try:  # pragma: no cover - optional dependency path
+            module = importlib.import_module(module_name)
+        except ImportError:
+            continue
+        except Exception as exc:  # pragma: no cover - optional dependency path
+            logger.warning("LongCat block-sparse attention import from %s failed: %s", module_name, exc)
+            continue
+
+        fn = getattr(module, "flash_attn_bsa_3d", None)
+        if callable(fn):
+            logger.info("Loaded LongCat block-sparse Triton attention from %s", module_name)
+            _BSA_ATTENTION_FN = fn
+            break
+
+    _BSA_IMPORT_CHECKED = True
+    return _BSA_ATTENTION_FN
 
 
 def _rotate_half(x):
@@ -329,8 +388,17 @@ class Attention(nn.Module):
         self.enable_flashattn2 = enable_flashattn2
         self.enable_xformers = enable_xformers
         self.enable_bsa = enable_bsa
-        self.bsa_params = bsa_params
+        self.bsa_params = bsa_params or {}
         self.cp_split_hw = cp_split_hw or [1, 1]
+        self._triton_attention = _load_optional_triton_attention()
+        self._triton_attention_failed = False
+        self._bsa_attention = _load_optional_bsa_attention()
+        self._bsa_attention_failed = False
+
+        global _BSA_DISABLED_WARNED
+        if self.enable_bsa and self._bsa_attention is None and not _BSA_DISABLED_WARNED:
+            logger.warning("Block-sparse attention requested but kernel not found; falling back to other backends.")
+            _BSA_DISABLED_WARNED = True
 
         self.qkv = nn.Linear(dim, dim * 3, bias=True)
         self.q_norm = RMSNorm_FP32(self.head_dim, eps=1e-6)
@@ -342,18 +410,40 @@ class Attention(nn.Module):
     def _flash_or_sdp_attention(self, q, k, v, shape):
         B, H, SQ, _ = q.shape
         attn_output = None
+        explicit_backend = self.enable_flashattn3 or self.enable_flashattn2 or self.enable_xformers
 
-        if self.enable_bsa and shape[0] > 1:
+        if (
+            attn_output is None
+            and self.enable_bsa
+            and self._bsa_attention is not None
+            and not self._bsa_attention_failed
+            and shape is not None
+            and shape[0] > 1
+            and not explicit_backend
+        ):
             try:  # pragma: no cover - optional dependency
-                from simpletuner.helpers.models.longcat_video.block_sparse_attention.bsa_interface import flash_attn_bsa_3d
-
                 _, H_spatial, W_spatial = shape
                 H_spatial //= self.cp_split_hw[0]
                 W_spatial //= self.cp_split_hw[1]
                 Tq = SQ // (H_spatial * W_spatial)
                 latent_shape_q = (Tq, H_spatial, W_spatial)
-                attn_output = flash_attn_bsa_3d(q, k, v, latent_shape_q, latent_shape_q, **(self.bsa_params or {}))
-            except Exception:
+                attn_output = self._bsa_attention(q, k, v, latent_shape_q, latent_shape_q, **(self.bsa_params or {}))
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logger.warning("LongCat BSA Triton attention failed; disabling BSA path: %s", exc)
+                self._bsa_attention_failed = True
+                attn_output = None
+
+        if (
+            attn_output is None
+            and self._triton_attention is not None
+            and not self._triton_attention_failed
+            and not explicit_backend
+        ):
+            try:  # pragma: no cover - optional dependency
+                attn_output = self._triton_attention(q, k, v, shape=shape, scale=self.scale)
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logger.warning("LongCat Triton attention failed; disabling Triton path: %s", exc)
+                self._triton_attention_failed = True
                 attn_output = None
 
         if attn_output is None:
@@ -396,13 +486,21 @@ class Attention(nn.Module):
             try:  # pragma: no cover - optional dependency
                 import xformers.ops
 
-                q_x = q.permute(0, 2, 1, 3)
-                k_x = k.permute(0, 2, 1, 3)
-                v_x = v.permute(0, 2, 1, 3)
+                q_x = q.permute(0, 2, 1, 3).contiguous()
+                k_x = k.permute(0, 2, 1, 3).contiguous()
+                v_x = v.permute(0, 2, 1, 3).contiguous()
                 attn_output = xformers.ops.memory_efficient_attention(q_x, k_x, v_x, attn_bias=None, op=None)
                 attn_output = attn_output.permute(0, 2, 1, 3)
-            except Exception:
-                attn_output = None
+            except Exception as exc:
+                logger.error(
+                    "LongCat self-attn xformers path failed; disable enable_xformers to fall back. "
+                    "Shapes q %s, k %s, v %s. Error: %s",
+                    tuple(q.shape),
+                    tuple(k.shape),
+                    tuple(v.shape),
+                    exc,
+                )
+                raise
 
         if attn_output is None:
             attn_weights = torch.matmul(q, k.transpose(-1, -2)) * self.scale
@@ -500,11 +598,29 @@ class MultiHeadCrossAttention(nn.Module):
         self.enable_flashattn3 = enable_flashattn3
         self.enable_flashattn2 = enable_flashattn2
         self.enable_xformers = enable_xformers
+        self._triton_attention = _load_optional_triton_attention()
+        self._triton_attention_failed = False
+        self.scale = self.head_dim**-0.5
 
     def _process_cross_attn(self, q, k, v, kv_seqlen):
         B, H, N, _ = q.shape
         attn_output = None
         allow_unmasked_kv = kv_seqlen is None or len(set(int(s) for s in kv_seqlen)) == 1
+        explicit_backend = self.enable_flashattn3 or self.enable_flashattn2 or self.enable_xformers
+
+        if (
+            attn_output is None
+            and not explicit_backend
+            and self._triton_attention is not None
+            and not self._triton_attention_failed
+            and allow_unmasked_kv
+        ):
+            try:  # pragma: no cover - optional dependency
+                attn_output = self._triton_attention(q, k, v, shape=None, scale=self.scale)
+            except Exception as exc:  # pragma: no cover - optional dependency
+                logger.warning("LongCat Triton cross-attn failed; disabling Triton path: %s", exc)
+                self._triton_attention_failed = True
+                attn_output = None
 
         # Sanity: ensure k/v are (B, H, S, D) like q
         if k.shape[1] != H and k.shape[2] == H:
@@ -542,17 +658,26 @@ class MultiHeadCrossAttention(nn.Module):
             try:  # pragma: no cover - optional dependency
                 import xformers.ops
 
-                q_x = q.permute(0, 2, 1, 3)
-                k_x = k.permute(0, 2, 1, 3)
-                v_x = v.permute(0, 2, 1, 3)
+                q_x = q.permute(0, 2, 1, 3).contiguous()
+                k_x = k.permute(0, 2, 1, 3).contiguous()
+                v_x = v.permute(0, 2, 1, 3).contiguous()
                 if kv_seqlen is not None:
                     attn_bias = xformers.ops.fmha.attn_bias.BlockDiagonalMask.from_seqlens([N] * B, kv_seqlen)
                 else:
                     attn_bias = None
                 attn_output = xformers.ops.memory_efficient_attention(q_x, k_x, v_x, attn_bias=attn_bias)
                 attn_output = attn_output.permute(0, 2, 1, 3)
-            except Exception:
-                attn_output = None
+            except Exception as exc:
+                logger.error(
+                    "LongCat cross-attn xformers path failed; disable enable_xformers to fall back. "
+                    "Shapes q %s, k %s, v %s, kv_seqlen %s. Error: %s",
+                    tuple(q.shape),
+                    tuple(k.shape),
+                    tuple(v.shape),
+                    kv_seqlen,
+                    exc,
+                )
+                raise
 
         if attn_output is None:
             try:
@@ -767,6 +892,8 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         bsa_params: dict = None,
         cp_split_hw: Optional[List[int]] = None,
         text_tokens_zero_pad: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
 
@@ -801,6 +928,12 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         self.gradient_checkpointing = False
         self.text_tokens_zero_pad = text_tokens_zero_pad
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=depth,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def forward(
         self,
@@ -880,9 +1013,18 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             hidden_states = hidden_states.view(B, N_t, N_h, N_w, -1)
             hidden_states = hidden_states.view(B, -1, hidden_states.shape[-1])
 
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.blocks, hidden_states.device, grad_enabled)
+
         kv_cache_dict_ret = {}
         for i, block in enumerate(self.blocks):
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if musubi_offload_active and musubi_manager.is_managed_block(i):
+                musubi_manager.stream_in(block, hidden_states.device)
+
+            if grad_enabled and self.gradient_checkpointing:
                 block_outputs = self._gradient_checkpointing_func(
                     block,
                     hidden_states,
@@ -916,6 +1058,9 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     kv_cache_dict_ret[i] = (kv_cache[0].contiguous(), kv_cache[1].contiguous())
             else:
                 hidden_states = block_outputs
+
+            if musubi_offload_active and musubi_manager.is_managed_block(i):
+                musubi_manager.stream_out(block)
 
         hidden_states = self.final_layer(hidden_states, t, (N_t, N_h, N_w))
 
