@@ -3834,14 +3834,12 @@ class Trainer:
 
         group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
         group_offload_configured = getattr(self.model, "group_offload_configured", False)
-        logger.info(
-            f"Moving the {str(self.model.get_trained_component().__class__)} to {target_device} in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
-        )
         if self.model.get_trained_component() is not None:
-            should_move_trained_component = not (
-                fsdp_active and group_offload_requested and group_offload_configured and is_accelerator_target
-            )
+            should_move_trained_component = not (fsdp_active and group_offload_requested and is_accelerator_target)
             if should_move_trained_component:
+                logger.info(
+                    f"Moving the {str(self.model.get_trained_component().__class__)} to {target_device} in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
+                )
                 if self.config.is_quantized:
                     self.model.get_trained_component(unwrap_model=False).to(target_device)
                 else:
