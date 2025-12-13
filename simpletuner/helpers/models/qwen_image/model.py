@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from diffusers import AutoencoderKLQwenImage, QwenImagePipeline
 from diffusers.models.attention_processor import Attention
 from PIL import Image
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
 
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
@@ -81,6 +81,8 @@ class QwenImage(ImageModelFoundation):
             "subfolder": "text_encoder",
         },
     }
+    PROCESSOR_CLASS = Qwen2VLProcessor
+    PROCESSOR_SUBFOLDER = "processor"
 
     # LoRA configuration
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
@@ -96,6 +98,28 @@ class QwenImage(ImageModelFoundation):
         self.PIPELINE_CLASSES = pipeline_classes
         self._conditioning_image_embedder = None
         self._conditioning_processor = None
+        self.processor = None
+
+    def _load_processor_for_pipeline(self):
+        if self.processor is not None:
+            return self.processor
+
+        processor_cls = getattr(self, "PROCESSOR_CLASS", None)
+        if processor_cls is None:
+            return None
+
+        processor_path = getattr(self.config, "processor_pretrained_model_name_or_path", None) or self._model_config_path()
+        processor_subfolder = getattr(self.config, "processor_subfolder", self.PROCESSOR_SUBFOLDER)
+        processor_revision = getattr(self.config, "processor_revision", getattr(self.config, "revision", None))
+
+        processor_kwargs = {"pretrained_model_name_or_path": processor_path}
+        if processor_subfolder:
+            processor_kwargs["subfolder"] = processor_subfolder
+        if processor_revision is not None:
+            processor_kwargs["revision"] = processor_revision
+
+        self.processor = processor_cls.from_pretrained(**processor_kwargs)
+        return self.processor
 
     @contextlib.contextmanager
     def _force_packed_transformer_output(self, transformer):
@@ -153,20 +177,42 @@ class QwenImage(ImageModelFoundation):
     def _get_model_flavour(self) -> Optional[str]:
         return getattr(self.config, "model_flavour", None)
 
+    @staticmethod
+    def _resolve_flavour_from_source(source) -> Optional[str]:
+        config = getattr(source, "config", source)
+        if config is None:
+            return None
+        flavour = getattr(config, "model_flavour", None)
+        if flavour is None and isinstance(config, dict):
+            flavour = config.get("model_flavour")
+        return flavour
+
+    @classmethod
+    def _is_edit_v1_config(cls, source) -> bool:
+        flavour = cls._resolve_flavour_from_source(source)
+        return flavour in cls.EDIT_V1_FLAVOURS if flavour is not None else False
+
+    @classmethod
+    def _is_edit_v2_config(cls, source) -> bool:
+        flavour = cls._resolve_flavour_from_source(source)
+        return flavour in cls.EDIT_V2_FLAVOURS if flavour is not None else False
+
+    @classmethod
+    def _is_edit_config(cls, source) -> bool:
+        return cls._is_edit_v1_config(source) or cls._is_edit_v2_config(source)
+
     def _is_edit_v1_flavour(self) -> bool:
-        flavour = self._get_model_flavour()
-        return flavour in self.EDIT_V1_FLAVOURS if flavour is not None else False
+        return QwenImage._is_edit_v1_config(self)
 
     def _is_edit_v2_flavour(self) -> bool:
-        flavour = self._get_model_flavour()
-        return flavour in self.EDIT_V2_FLAVOURS if flavour is not None else False
+        return QwenImage._is_edit_v2_config(self)
 
     def _is_edit_flavour(self) -> bool:
-        return self._is_edit_v1_flavour() or self._is_edit_v2_flavour()
+        return QwenImage._is_edit_config(self)
 
     def requires_conditioning_latents(self) -> bool:
         # Edit flavours rely on conditioning latents (masked regions) alongside the base inputs.
-        return self._is_edit_flavour()
+        return QwenImage._is_edit_config(self)
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """
@@ -482,17 +528,15 @@ class QwenImage(ImageModelFoundation):
         return pipeline_kwargs
 
     def requires_conditioning_dataset(self) -> bool:
-        if self._is_edit_flavour():
-            return True
-        return False
+        return QwenImage._is_edit_config(self)
 
     def requires_conditioning_validation_inputs(self) -> bool:
         """Whether this model requires conditioning inputs during validation."""
-        return self._is_edit_flavour()
+        return QwenImage._is_edit_config(self)
 
     def requires_validation_edit_captions(self) -> bool:
         """Whether this model requires edit captions with reference images for validation."""
-        return self._is_edit_flavour()
+        return QwenImage._is_edit_config(self)
 
     def should_precompute_validation_negative_prompt(self) -> bool:
         """Qwen edit models need per-sample negative prompt encoding with reference images."""
@@ -547,18 +591,18 @@ class QwenImage(ImageModelFoundation):
         }
 
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
-        if self._is_edit_v1_flavour():
+        if QwenImage._is_edit_v1_config(self):
             return TextEmbedCacheKey.DATASET_AND_FILENAME
         return super().text_embed_cache_key()
 
     def requires_text_embed_image_context(self) -> bool:
-        return self._is_edit_v1_flavour()
+        return QwenImage._is_edit_v1_config(self)
 
     def requires_conditioning_image_embeds(self) -> bool:
-        return self._is_edit_v1_flavour()
+        return QwenImage._is_edit_v1_config(self)
 
     def conditioning_image_embeds_use_reference_dataset(self) -> bool:
-        return self._is_edit_v1_flavour()
+        return QwenImage._is_edit_v1_config(self)
 
     def _get_conditioning_image_embedder(self):
         if not self._is_edit_v1_flavour():

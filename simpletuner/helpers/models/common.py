@@ -572,33 +572,8 @@ class ModelFoundation(ABC):
                 **lora_config_kwargs,
             )
 
-        def _register_ramtorch_custom_mapping():
-            if not self._ramtorch_enabled():
-                return
-            try:
-                imports = ramtorch_utils.ensure_available()
-                ramtorch_linear = imports.get("Linear")
-            except Exception as exc:  # pragma: no cover - defensive import guard
-                logger.warning("RamTorch unavailable for LoRA custom mapping: %s", exc)
-                return
-
-            try:
-                if getattr(self.config, "peft_lora_mode", "").lower() == "singlora":
-                    from peft_singlora.layer import Linear as LoraLinearLayer  # type: ignore
-                else:
-                    from peft.tuners.lora.layer import Linear as LoraLinearLayer  # type: ignore
-            except Exception as exc:  # pragma: no cover - defensive import guard
-                logger.warning("Failed to import LoRA layer class for RamTorch mapping: %s", exc)
-                return
-
-            if hasattr(self.lora_config, "_register_custom_module"):
-                try:
-                    self.lora_config._register_custom_module({ramtorch_linear: LoraLinearLayer})
-                    logger.info("Registered RamTorch Linear with LoRA custom module mapping.")
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.warning("Unable to register RamTorch Linear for LoRA: %s", exc)
-
-        _register_ramtorch_custom_mapping()
+        if self._ramtorch_enabled():
+            ramtorch_utils.register_lora_custom_module(self.lora_config)
 
         if getattr(self.config, "controlnet", False):
             self.controlnet.add_adapter(self.lora_config)
@@ -1883,6 +1858,12 @@ class ModelFoundation(ABC):
             return self.unwrap_model(model=self.model if base_model else None)
         return self.controlnet if self.config.controlnet and not base_model else self.model
 
+    def _load_processor_for_pipeline(self):
+        """
+        Hook for subclasses to load or return any processor modules required by their pipelines.
+        """
+        return getattr(self, "processor", None)
+
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
@@ -1945,6 +1926,12 @@ class ModelFoundation(ABC):
                     pipeline_kwargs[tokenizer_attr] = None
 
             text_encoder_idx += 1
+
+        if "processor" in pipeline_init_signature.parameters and "processor" not in pipeline_kwargs:
+            processor = self._load_processor_for_pipeline()
+            if processor is None:
+                raise ValueError(f"{pipeline_class.__name__} requires a processor but none was provided or could be loaded.")
+            pipeline_kwargs["processor"] = processor
 
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
             pipeline_kwargs["controlnet"] = self.controlnet

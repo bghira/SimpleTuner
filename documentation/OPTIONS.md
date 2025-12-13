@@ -999,7 +999,6 @@ usage: train.py [-h] --model_family
                 [--validation_num_video_frames VALIDATION_NUM_VIDEO_FRAMES]
                 [--validation_resolution VALIDATION_RESOLUTION]
                 [--validation_seed_source {cpu,gpu}]
-                [--validation_torch_compile_mode {default,reduce-overhead,max-autotune}]
                 [--i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]]
                 [--flow_sigmoid_scale FLOW_SIGMOID_SCALE]
                 [--flux_fast_schedule [FLUX_FAST_SCHEDULE]]
@@ -1433,8 +1432,6 @@ options:
                         megapixels)
   --validation_seed_source {cpu,gpu}
                         Source device used to generate validation seeds
-  --validation_torch_compile_mode {default,reduce-overhead,max-autotune}
-                        Torch compile mode for validation
   --i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]
                         Unlock experimental overrides and bypass built-in
                         safety limits.
