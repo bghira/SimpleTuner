@@ -60,6 +60,8 @@ env_to_args_map = {
     "LR_SCHEDULE": "--lr_scheduler",
     "LR_WARMUP_STEPS": "--lr_warmup_steps",
     "BASE_MODEL_PRECISION": "--base_model_precision",
+    "QUANTIZE_VIA": "--quantize_via",
+    "QUANTIZATION_CONFIG": "--quantization_config",
     "TRAINING_NUM_PROCESSES": "--num_processes",
     "TRAINING_NUM_MACHINES": "--num_machines",
     "VALIDATION_TORCH_COMPILE": "--validation_torch_compile",

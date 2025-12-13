@@ -31,6 +31,7 @@ from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, deprecate, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -428,6 +429,8 @@ class LTXVideoTransformer3DModel(
         caption_channels: int = 4096,
         attention_bias: bool = True,
         attention_out_bias: bool = True,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
 
@@ -448,6 +451,8 @@ class LTXVideoTransformer3DModel(
             caption_channels=caption_channels,
             attention_bias=attention_bias,
             attention_out_bias=attention_out_bias,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
 
         out_channels = effective_out_channels
@@ -496,6 +501,12 @@ class LTXVideoTransformer3DModel(
         # TREAD support
         self._tread_router = None
         self._tread_routes = None
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
         """Set TREAD router and routes for token reduction during training."""
@@ -570,6 +581,12 @@ class LTXVideoTransformer3DModel(
 
         captured_frame_hidden: Optional[torch.Tensor] = None
 
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
+
         for bid, block in enumerate(self.transformer_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -589,6 +606,8 @@ class LTXVideoTransformer3DModel(
                         )
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
+            if musubi_offload_active and musubi_manager.is_managed_block(bid):
+                musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -636,6 +655,9 @@ class LTXVideoTransformer3DModel(
                     )
                     if hidden_state_layer is not None and bid == hidden_state_layer:
                         output_hidden_states = False
+
+            if musubi_offload_active and musubi_manager.is_managed_block(bid):
+                musubi_manager.stream_out(block)
 
         scale_shift_values = self.scale_shift_table[None, None] + embedded_timestep[:, :, None]
         shift, scale = scale_shift_values[:, :, 0], scale_shift_values[:, :, 1]

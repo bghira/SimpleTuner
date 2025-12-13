@@ -623,7 +623,7 @@
 
     updateQuantizationAvailability(modelType) {
         const disableQuant = modelType !== 'lora';
-        const quantFieldIds = ['base_model_precision', 'text_encoder_1_precision', 'quantize_via'];
+        const quantFieldIds = ['base_model_precision', 'text_encoder_1_precision', 'quantize_via', 'quantization_config'];
 
         quantFieldIds.forEach((fieldId) => {
             const input = document.getElementById(fieldId);

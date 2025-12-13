@@ -1,14 +1,5 @@
 /* trainer-core.css - Core styles extracted from trainer_htmx.html inline styles */
 
-/* Connection status display */
-.connection-status-inline {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    color: var(--text-secondary);
-    font-size: var(--typography-font-size-sm);
-}
-
 /* Main content layout */
 .main-content {
     margin-left: 280px;

@@ -513,15 +513,34 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             choices=[
                 {"value": "cpu", "label": "CPU (Slower but safer)"},
                 {"value": "accelerator", "label": "GPU/Accelerator (Faster)"},
+                {"value": "pipeline", "label": "Diffusers Pipeline"},
             ],
             dependencies=[
                 FieldDependency(field="model_type", operator="equals", value="lora", action="enable"),
             ],
             help_text="Where to perform model quantization",
-            tooltip="CPU is safer for 24GB cards with large models. GPU is faster but may OOM.",
+            tooltip="CPU is safer for 24GB cards with large models. GPU is faster but may OOM. Pipeline delegates quantization to Diffusers when supported.",
             importance=ImportanceLevel.ADVANCED,
             order=18,
             documentation="OPTIONS.md#--quantize_via",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="quantization_config",
+            arg_name="--quantization_config",
+            ui_label="Quantization Config",
+            field_type=FieldType.TEXTAREA,
+            tab="model",
+            section="quantization",
+            default_value=None,
+            dependencies=[FieldDependency(field="model_type", operator="equals", value="lora", action="enable")],
+            help_text="JSON payload or file path describing a Diffusers quantization_config (BitsAndBytes, TorchAo, GGUF).",
+            tooltip="Use with --quantize_via=pipeline to pass backend-specific kwargs such as TorchAo Int4 configs or BnB options. Accepts inline JSON or a file path.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            documentation="OPTIONS.md#--quantization_config",
         )
     )
 

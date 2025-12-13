@@ -485,7 +485,14 @@ class VAECache(WebhookMixin):
         return relevant_files
 
     def prepare_video_latents(self, samples):
-        if StateTracker.get_model_family() in ["ltxvideo", "wan", "sanavideo", "kandinsky5-video", "hunyuanvideo"]:
+        if StateTracker.get_model_family() in [
+            "ltxvideo",
+            "wan",
+            "sanavideo",
+            "kandinsky5-video",
+            "hunyuanvideo",
+            "longcat_video",
+        ]:
             if samples.ndim == 4:
                 original_shape = samples.shape
                 samples = samples.unsqueeze(2)

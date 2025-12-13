@@ -116,6 +116,17 @@ def safety_check(args, accelerator):
         )
         sys.exit(1)
 
+    if (
+        args.model_type != "lora"
+        and not args.controlnet
+        and getattr(args, "quantization_config", None) not in (None, "", "None")
+        and not args.i_know_what_i_am_doing
+    ):
+        logger.error(
+            f"{args.model_type} tuning is not compatible with pipeline quantisation configs. Please clear --quantization_config or train LyCORIS/LoRA."
+        )
+        sys.exit(1)
+
     if args.flow_schedule_shift is not None and args.flow_schedule_shift > 0 and args.flow_schedule_auto_shift:
         logger.error(
             f"--flow_schedule_auto_shift cannot be combined with --flow_schedule_shift. Please set --flow_schedule_shift to 0 if you want to train with --flow_schedule_auto_shift."

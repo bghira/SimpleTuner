@@ -165,6 +165,33 @@ def replace_linear_layers_with_ramtorch(
     return replaced
 
 
+def register_lora_custom_module(lora_config) -> bool:
+    """
+    Add RamTorch Linear to PEFT's custom module map so LoRA can wrap CPUBouncingLinear layers.
+    """
+    if lora_config is None:
+        return False
+
+    try:
+        from peft.tuners.lora.layer import Linear as PeftLinear
+        from ramtorch.modules.linear import Linear as RamTorchLinear
+    except Exception:
+        return False
+
+    custom_modules = getattr(lora_config, "_custom_modules", None)
+    if custom_modules is None:
+        custom_modules = {}
+        lora_config._custom_modules = custom_modules
+    if not isinstance(custom_modules, dict):
+        return False
+    if RamTorchLinear in custom_modules:
+        return False
+
+    custom_modules[RamTorchLinear] = PeftLinear
+    logger.debug("Registered RamTorch Linear for PEFT LoRA custom module dispatch.")
+    return True
+
+
 def ramtorch_zero_utils():
     imports = ensure_available()
     return imports["broadcast_zero_params"], imports["create_zero_param_groups"], imports["setup_grad_sharding_hooks"]

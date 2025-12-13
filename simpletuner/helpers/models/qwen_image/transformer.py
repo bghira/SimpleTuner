@@ -33,6 +33,7 @@ from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
@@ -544,6 +545,8 @@ class QwenImageTransformer2DModel(
         joint_attention_dim: int = 3584,
         guidance_embeds: bool = False,  # TODO: this should probably be removed
         axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
@@ -575,6 +578,12 @@ class QwenImageTransformer2DModel(
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
         # TREAD support
         self._tread_router = None
@@ -752,6 +761,12 @@ class QwenImageTransformer2DModel(
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
+
         for index_block, block in enumerate(self.transformer_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -771,6 +786,8 @@ class QwenImageTransformer2DModel(
                         )
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
+            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -815,6 +832,9 @@ class QwenImageTransformer2DModel(
                 interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
                 interval_control = int(np.ceil(interval_control))
                 hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
+
+            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                musubi_manager.stream_out(block)
 
         # Use only the image part (hidden_states) from the dual-stream blocks
         hidden_states = self.norm_out(hidden_states, temb)

@@ -25,6 +25,7 @@ from simpletuner.helpers.models.hunyuanvideo.pipeline import HunyuanVideo15Pipel
 from simpletuner.helpers.models.hunyuanvideo.pipeline_i2v import HunyuanVideo15ImageToVideoPipeline
 from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo15Transformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger(__name__)
@@ -618,6 +619,10 @@ class HunyuanVideo(VideoModelFoundation):
             *remaining,
             **kwargs,
         )
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     def tread_init(self):
         raise NotImplementedError("TREAD routing is not supported for the diffusers HunyuanVideo 1.5 transformer.")

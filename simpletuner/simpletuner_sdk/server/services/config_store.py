@@ -1356,6 +1356,12 @@ class ConfigStore:
                     "Set base_model_precision to 'no_change' or switch to LoRA."
                 )
                 validation.is_valid = False
+            quantization_config_raw = config.get("--quantization_config") or config.get("quantization_config")
+            if normalized_model_type == "full" and quantization_config_raw not in (None, "", "None"):
+                validation.errors.append(
+                    "Full model training is incompatible with pipeline quantization configs. Clear quantization_config or switch to LoRA."
+                )
+                validation.is_valid = False
 
             deepspeed_raw = config.get("--deepspeed_config")
             if deepspeed_raw is None:

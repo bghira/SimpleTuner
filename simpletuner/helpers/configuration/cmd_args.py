@@ -19,6 +19,7 @@ from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.quantisation import MANUAL_QUANTIZATION_PRESETS, PIPELINE_QUANTIZATION_PRESETS
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import (
@@ -609,6 +610,74 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.mixed_precision == "fp8" and not torch.cuda.is_available():
         raise ValueError("You cannot use --mixed_precision=fp8 without a CUDA device. Please use bf16 instead.")
 
+    if hasattr(args, "quantization_config"):
+        try:
+            args.quantization_config = _parse_json_like_option(args.quantization_config, "quantization_config")
+        except ValueError as exc:
+            logger.error(str(exc))
+            raise
+        if isinstance(args.quantization_config, list):
+            raise ValueError("quantization_config must be a JSON object, not a list.")
+        if isinstance(args.quantization_config, str) and args.quantization_config not in (None, ""):
+            raise ValueError(
+                "quantization_config must be JSON or a file path to a JSON object. "
+                f"Received a raw string instead: {args.quantization_config}"
+            )
+
+    manual_quant_precisions = set(MANUAL_QUANTIZATION_PRESETS)
+    pipeline_quant_precisions = set(PIPELINE_QUANTIZATION_PRESETS)
+    base_precision = getattr(args, "base_model_precision", "no_change")
+    model_path = str(getattr(args, "pretrained_model_name_or_path", "") or "")
+    is_gguf_checkpoint = model_path.endswith(".gguf")
+    quantize_via_pipeline = getattr(args, "quantize_via", "accelerator") == "pipeline"
+
+    if args.quantization_config is not None and args.model_type != "lora":
+        raise ValueError("quantization_config is only supported for LoRA training.")
+
+    if quantize_via_pipeline and base_precision in manual_quant_precisions:
+        raise ValueError(
+            f"quantize_via=pipeline cannot be combined with base_model_precision '{base_precision}'. "
+            "Use a Diffusers-compatible preset such as nf4-bnb or int4-torchao, or provide a pipeline quantization_config."
+        )
+
+    if quantize_via_pipeline:
+        for idx in range(1, 5):
+            te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
+            if te_precision in manual_quant_precisions:
+                raise ValueError(
+                    f"quantize_via=pipeline cannot be combined with manual text encoder quantization ({te_precision}). "
+                    "Provide a pipeline quantization_config entry for text encoders instead."
+                )
+
+    if quantize_via_pipeline and not (
+        base_precision in pipeline_quant_precisions or args.quantization_config is not None or is_gguf_checkpoint
+    ):
+        raise ValueError(
+            "quantize_via=pipeline requires a pipeline-capable base_model_precision, a quantization_config, or a GGUF checkpoint."
+        )
+
+    if base_precision in pipeline_quant_precisions:
+        for idx in range(1, 5):
+            te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
+            if te_precision in manual_quant_precisions:
+                raise ValueError(
+                    f"base_model_precision '{base_precision}' cannot be combined with manual text encoder quantization ({te_precision}). "
+                    "Use pipeline presets for text encoders or disable manual quantization."
+                )
+    if args.quantization_config is not None and base_precision not in pipeline_quant_precisions and base_precision != "no_change":
+        raise ValueError(
+            "quantization_config is intended for pipeline-backed quantization. "
+            f"Set base_model_precision to a pipeline preset ({', '.join(sorted(pipeline_quant_precisions))}) or 'no_change'."
+        )
+    if args.quantization_config is not None:
+        for idx in range(1, 5):
+            te_precision = getattr(args, f"text_encoder_{idx}_precision", None)
+            if te_precision in manual_quant_precisions:
+                raise ValueError(
+                    "quantization_config should include any text encoder quantization settings. "
+                    f"Manual text encoder precision '{te_precision}' is not supported alongside quantization_config."
+                )
+
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
         args.local_rank = env_local_rank
@@ -654,10 +723,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         )
 
     model_is_bf16 = (
-        args.base_model_precision == "no_change" and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
-    ) or (args.base_model_precision != "no_change" and args.base_model_default_dtype == "bf16")
-    model_is_quantized = args.base_model_precision != "no_change"
-    if model_is_quantized and args.mixed_precision == "fp8" and args.base_model_precision != "fp8-torchao":
+        base_precision == "no_change" and (args.mixed_precision == "bf16" or torch.backends.mps.is_available())
+    ) or (base_precision != "no_change" and args.base_model_default_dtype == "bf16")
+    model_is_quantized = base_precision != "no_change" or args.quantization_config is not None or is_gguf_checkpoint
+    if model_is_quantized and args.mixed_precision == "fp8" and base_precision != "fp8-torchao":
         raise ValueError(
             "You cannot use --mixed_precision=fp8 with a quantized base model. Please use bf16 or remove base_model_precision option from your configuration."
         )
@@ -790,7 +859,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     _configure_tf32(disable_tf32=args.disable_tf32)
     _configure_rocm_environment()
 
-    args.is_quantized = False if (args.base_model_precision == "no_change" or "lora" not in args.model_type) else True
+    args.is_quantized = bool(model_is_quantized and "lora" in str(args.model_type))
     args.weight_dtype = (
         torch.bfloat16
         if (args.mixed_precision == "bf16" or (args.base_model_default_dtype == "bf16" and args.is_quantized))

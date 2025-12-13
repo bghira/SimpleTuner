@@ -29,6 +29,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import logging
 from torch import Tensor
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -621,6 +622,8 @@ class Kandinsky5Transformer3DModel(
         attention_wH: int = None,
         attention_add_sta: bool = None,
         attention_method: str = None,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
 
@@ -655,6 +658,12 @@ class Kandinsky5Transformer3DModel(
         # Initialize output layer
         self.out_layer = Kandinsky5OutLayer(model_dim, time_dim, out_visual_dim, patch_size)
         self.gradient_checkpointing = False
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_text_blocks + num_visual_blocks,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Attach a TREAD router and route definitions."""
@@ -735,6 +744,14 @@ class Kandinsky5Transformer3DModel(
         to_fractal = sparse_params["to_fractal"] if sparse_params is not None else False
         visual_embed, visual_rope = fractal_flatten(visual_embed, visual_rope, visual_shape, block_mask=to_fractal)
 
+        grad_enabled = torch.is_grad_enabled()
+        text_block_count = len(self.text_transformer_blocks)
+        combined_blocks = list(self.text_transformer_blocks) + list(self.visual_transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, visual_embed.device, grad_enabled)
+
         routes = self._tread_routes or []
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
@@ -777,6 +794,9 @@ class Kandinsky5Transformer3DModel(
         captured_frame_hidden: Optional[torch.Tensor] = None
 
         for layer_idx, visual_transformer_block in enumerate(self.visual_transformer_blocks):
+            global_idx = text_block_count + layer_idx
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(visual_transformer_block, visual_embed.device)
 
             if use_routing and route_ptr < len(routes) and layer_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -825,6 +845,9 @@ class Kandinsky5Transformer3DModel(
                 )
                 if hidden_state_layer is not None and layer_idx == hidden_state_layer:
                     output_hidden_states = False
+
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_out(visual_transformer_block)
 
         visual_embed = fractal_unflatten(visual_embed, visual_shape, block_mask=to_fractal)
         x = self.out_layer(visual_embed, text_embed, time_embed)

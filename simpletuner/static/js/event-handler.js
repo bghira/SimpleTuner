@@ -3,7 +3,6 @@ class EventHandler {
     constructor() {
         this.lastEventIndex = 0;
         this.eventList = document.getElementById('eventList');
-        this.connectionStatus = document.getElementById('connectionStatus');
         this.callbackUrl = null; // Will be set after config detection
         this.isConnected = false;
         this.reconnectAttempts = 0;
@@ -1506,26 +1505,28 @@ class EventHandler {
     }
 
     setConnectionStatus(connected, message = null, showMessage = false) {
-        const connectionStatus = document.getElementById('connectionStatus');
         const eventStatus = document.getElementById('eventStatus');
 
         const statusText = connected ? 'Connected' : (message || 'Disconnected');
         const statusIcon = connected ? 'fa-circle text-success' : 'fa-circle text-danger';
         const statusContent = `<i class="fas ${statusIcon}"></i> ${statusText}`;
 
-        if (connectionStatus) {
-            connectionStatus.innerHTML = statusContent;
-            // Add pulsing animation for disconnected state
-            if (!connected) {
-                connectionStatus.classList.add('connection-error');
-            } else {
-                connectionStatus.classList.remove('connection-error');
-            }
-        }
-
-        // Also update event display status
+        // Update event display status if element exists
         if (eventStatus) {
             eventStatus.innerHTML = statusContent;
+        }
+
+        // Determine the status string
+        let status = 'disconnected';
+        if (connected) {
+            status = 'connected';
+        } else if (message && message.toLowerCase().includes('reconnect')) {
+            status = 'reconnecting';
+        }
+
+        // Update via centralized function (updates Alpine store + dispatches event)
+        if (typeof window.updateConnectionStatus === 'function') {
+            window.updateConnectionStatus(status, connected ? '' : (message || 'Disconnected'));
         }
 
         // Only show message in event list if requested

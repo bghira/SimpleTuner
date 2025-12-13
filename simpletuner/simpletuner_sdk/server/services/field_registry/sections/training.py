@@ -473,6 +473,66 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="musubi_blocks_to_swap",
+            arg_name="--musubi_blocks_to_swap",
+            ui_label="Musubi Blocks To Swap",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="memory_optimization",
+            default_value=0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Blocks to swap must be non-negative"),
+            ],
+            help_text=("Offload the last N LongCat transformer blocks to CPU and stream weights per block during forward."),
+            tooltip="Musubi-style block weight offload; reduces VRAM at a performance cost. Leave at 0 to disable.",
+            importance=ImportanceLevel.ADVANCED,
+            model_specific=[
+                "longcat_video",
+                "wan",
+                "ltxvideo",
+                "kandinsky5-video",
+                "qwen_image",
+                "flux",
+                "flux2",
+                "cosmos2image",
+                "hunyuanvideo",
+            ],
+            order=11,
+            documentation="OPTIONS.md#--musubi_blocks_to_swap",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="musubi_block_swap_device",
+            arg_name="--musubi_block_swap_device",
+            ui_label="Musubi Block Swap Device",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="memory_optimization",
+            default_value="cpu",
+            help_text="Device where swapped LongCat transformer blocks are kept when musubi block swap is enabled.",
+            tooltip="Use CPU by default. Provide a device string like cpu or cuda:0.",
+            importance=ImportanceLevel.ADVANCED,
+            model_specific=[
+                "longcat_video",
+                "wan",
+                "ltxvideo",
+                "kandinsky5-video",
+                "qwen_image",
+                "flux",
+                "flux2",
+                "cosmos2image",
+                "hunyuanvideo",
+            ],
+            order=12,
+            dependencies=[FieldDependency(field="musubi_blocks_to_swap", operator="greater_than", value=0, action="show")],
+            documentation="OPTIONS.md#--musubi_block_swap_device",
+        )
+    )
+
     # Feed-forward chunking (Wan)
     registry._add_field(
         ConfigField(

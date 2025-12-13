@@ -402,17 +402,21 @@
             }
         }
 
-        // Connection monitoring
+        // Connection monitoring - single source of truth for connection status
+        // Updates Alpine store first, then dispatches event for non-Alpine components
         function updateConnectionStatus(status, message) {
-            const statusEl = document.getElementById('connection-status');
-            if (statusEl && statusEl._x_dataStack && statusEl._x_dataStack[0]) {
-                statusEl._x_dataStack[0].status = status;
-                statusEl._x_dataStack[0].message = message;
+            // Update Alpine store (source of truth for badge)
+            const store = window.Alpine && typeof window.Alpine.store === 'function'
+                ? window.Alpine.store('trainer')
+                : null;
+            if (store) {
+                store.connectionStatus = status;
+                store.connectionMessage = message || '';
             }
-            // Broadcast status updates so other components can react (e.g., re-enable buttons on reconnect)
+            // Broadcast status updates so other components can react (e.g., shutdown button)
             try {
                 window.dispatchEvent(new CustomEvent('trainer-connection-status', {
-                    detail: { status, message }
+                    detail: { status, message: message || '' }
                 }));
             } catch (error) {
                 console.warn('Failed to dispatch trainer-connection-status event', error);

@@ -355,6 +355,7 @@ function trainerComponent() {
          showTrainingProgress: false,
         trainingProgress: {},
         connectionStatus: 'connected',
+        connectionMessage: '',
         defaults: null,
         mergeEnvironmentDefaults: (() => {
             try {
@@ -863,6 +864,9 @@ function trainerComponent() {
                     if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_dataset')) {
                         context.requiresConditioningDataset = Boolean(requirementOverrides.requires_conditioning_dataset);
                     }
+                    if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'supports_conditioning_dataset')) {
+                        context.supportsConditioningDataset = Boolean(requirementOverrides.supports_conditioning_dataset);
+                    }
                     if (Object.prototype.hasOwnProperty.call(requirementOverrides, 'requires_conditioning_latents')) {
                         context.requiresConditioningLatents = Boolean(requirementOverrides.requires_conditioning_latents);
                     }
@@ -895,6 +899,7 @@ function trainerComponent() {
                 context.supportsConditioningGenerators
                 || context.controlnetEnabled
                 || context.controlEnabled
+                || context.supportsConditioningDataset
                 || context.requiresConditioningDataset,
             );
 
@@ -910,6 +915,7 @@ function trainerComponent() {
         defaultModelContext() {
             return {
                 requiresConditioningDataset: false,
+                supportsConditioningDataset: false,
                 requiresConditioningLatents: false,
                 requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: false,
@@ -1018,6 +1024,7 @@ function trainerComponent() {
 
             return {
                 requiresConditioningDataset: requiresDataset,
+                supportsConditioningDataset: requiresDataset,
                 requiresConditioningLatents: requiresLatents,
                 requiresConditioningImageEmbeds: false,
                 requiresConditioningValidationInputs: requiresValidationInputs,
@@ -5678,9 +5685,6 @@ function trainerComponent() {
                     <span class="text-muted"
                           x-text="`Step ${trainingProgress.step || 0}`"></span>
                 </div>
-                <div id="connectionStatus" class="connection-status-inline">
-                    <i class="fas fa-circle text-success"></i> Connected
-                </div>
             </div>
         </div>
 
@@ -5935,7 +5939,8 @@ function trainerComponent() {
                               'bg-warning text-dark': connectionStatus === 'reconnecting',
                               'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
                           }"
-                          x-text="connectionStatus"></span>
+                          :title="connectionMessage || ''"
+                          x-text="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"></span>
                 </div>
                 <div class="event-dock-sysstat">
                     <template x-if="hasSystemStatus">

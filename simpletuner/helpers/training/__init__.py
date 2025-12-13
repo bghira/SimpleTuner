@@ -11,6 +11,7 @@ if torch.cuda.is_available():
     quantised_precision_levels.extend(
         [
             "nf4-bnb",
+            "int4-torchao",
             # "fp4-bnb",
             # "fp8-bnb",
             "fp8-quanto",
