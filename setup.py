@@ -109,16 +109,17 @@ def get_cuda_dependencies():
 def get_rocm_dependencies():
     ramtorch_dep = _resolve_ramtorch_dependency()
     rocm_version = os.environ.get("SIMPLETUNER_ROCM_VERSION", "6.4")
-    torch_version = os.environ.get("SIMPLETUNER_ROCM_TORCH_VERSION", "2.9.0")
-    torchvision_version = os.environ.get("SIMPLETUNER_ROCM_TORCHVISION_VERSION", "0.24.0")
-    torchaudio_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "2.4.1")
-    triton_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "3.5.0")
+    torch_version = os.environ.get("SIMPLETUNER_ROCM_TORCH_VERSION", "2.9.1")
+    torchvision_version = os.environ.get("SIMPLETUNER_ROCM_TORCHVISION_VERSION", "0.24.1")
+    torchaudio_version = os.environ.get("SIMPLETUNER_ROCM_TORCHAUDIO_VERSION", "2.9.1")
+    triton_version = os.environ.get("SIMPLETUNER_ROCM_TRITON_VERSION", "3.5.1")
 
     try:
         return [
             build_rocm_wheel_url("torch", torch_version, rocm_version),
             build_rocm_wheel_url("torchvision", torchvision_version, rocm_version),
-            "pytorch_triton_rocm @ https://download.pytorch.org/whl/pytorch_triton_rocm-3.5.0-cp312-cp312-linux_x86_64.whl#sha256=b3a209621d0433367c489e8dce90ebc4c7c9e3bfe1c2b7adc928344f8290d5f5",
+            build_rocm_wheel_url("torchaudio", torchaudio_version, rocm_version),
+            "pytorch_triton_rocm @ https://download.pytorch.org/whl/pytorch_triton_rocm-3.5.1-cp312-cp312-linux_x86_64.whl",
             "torchao>=0.14.1",
             ramtorch_dep,
         ]
@@ -127,6 +128,7 @@ def get_rocm_dependencies():
         return [
             "torch>=2.9.1",
             "torchvision>=0.24.0",
+            "torchaudio>=2.4.1",
             "torchao>=0.14.1",
             ramtorch_dep,
         ]
@@ -136,6 +138,7 @@ def get_apple_dependencies():
     return [
         "torch>=2.9.1",
         "torchvision>=0.24.0",
+        "torchaudio>=2.4.1",
         "torchao>=0.14.1",
     ]
 
@@ -144,6 +147,7 @@ def get_cpu_dependencies():
     return [
         "torch>=2.9.1",
         "torchvision>=0.24.0",
+        "torchaudio>=2.4.1",
         "torchao>=0.14.1",
     ]
 
@@ -231,7 +235,6 @@ base_deps = [
     "optimum-quanto>=0.2.7",
     "lycoris-lora>=3.4.0",
     "torch-optimi>=0.2.1",
-    "torchaudio>=2.4.1",
     "librosa>=0.10.2",
     "loguru>=0.7.2",
     "toml>=0.10.2",
