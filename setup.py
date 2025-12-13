@@ -128,6 +128,7 @@ def get_rocm_dependencies():
         return [
             "torch>=2.9.1",
             "torchvision>=0.24.0",
+            "torchaudio>=2.4.1",
             "torchao>=0.14.1",
             ramtorch_dep,
         ]
@@ -137,6 +138,7 @@ def get_apple_dependencies():
     return [
         "torch>=2.9.1",
         "torchvision>=0.24.0",
+        "torchaudio>=2.4.1",
         "torchao>=0.14.1",
     ]
 
@@ -145,6 +147,7 @@ def get_cpu_dependencies():
     return [
         "torch>=2.9.1",
         "torchvision>=0.24.0",
+        "torchaudio>=2.4.1",
         "torchao>=0.14.1",
     ]
 
