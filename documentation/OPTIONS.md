@@ -172,13 +172,20 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--quantize_via`
 
-- **Choices**: `cpu`, `accelerator`
+- **Choices**: `cpu`, `accelerator`, `pipeline`
   - On `accelerator`, it may work moderately faster at the risk of possibly OOM'ing on 24G cards for a model as large as Flux.
   - On `cpu`, quantisation takes about 30 seconds. (**Default**)
+  - `pipeline` delegates quantization to Diffusers using `--quantization_config` or pipeline-capable presets (e.g., `nf4-bnb`, `int4-torchao`, or `.gguf` checkpoints). Manual Quanto/TorchAO presets are not supported when this mode is enabled.
 
 ### `--base_model_precision`
 
-- **What**: Reduce model precision and train using less memory. There are currently two supported quantisation backends: quanto and torchao.
+- **What**: Reduce model precision and train using less memory. There are three supported quantisation backends: BitsAndBytes (pipeline), TorchAO (pipeline or manual), and Optimum Quanto (manual).
+
+#### Diffusers pipeline presets
+
+- `nf4-bnb` loads through Diffusers with a 4-bit NF4 BitsAndBytes config (CUDA only). Requires `bitsandbytes` and a diffusers build with BnB support.
+- `int4-torchao` uses a TorchAoConfig with `Int4WeightOnlyConfig` via Diffusers (CUDA). Requires `torchao` and `transformers>=4.39`.
+- `.gguf` checkpoints are auto-detected and loaded with `GGUFQuantizationConfig` when available. Install recent diffusers/transformers for GGUF support.
 
 #### Optimum Quanto
 
@@ -214,6 +221,21 @@ A newer library from Pytorch, AO allows us to replace the linears and 2D convolu
 TorchAO includes generally-available 4bit and 8bit optimisers: `ao-adamw8bit`, `ao-adamw4bit`
 
 It also provides two optimisers that are directed toward Hopper (H100 or better) users: `ao-adamfp8`, and `ao-adamwfp8`
+
+### `--quantization_config`
+
+- **What**: JSON object or file path describing Diffusers `quantization_config` overrides when using `--quantize_via=pipeline`.
+- **How**: Accepts inline JSON (or a file) with per-component entries. Keys may include `unet`, `transformer`, `text_encoder`, or `default`.
+- **Examples**:
+
+```json
+{
+  "unet": {"load_in_4bit": true, "bnb_4bit_quant_type": "nf4", "bnb_4bit_compute_dtype": "bfloat16"},
+  "text_encoder": {"quant_type": {"group_size": 128}}
+}
+```
+
+This example enables 4-bit NF4 BnB on the UNet and TorchAO int4 on the text encoder.
 
 #### Torch Dynamo
 
@@ -873,14 +895,15 @@ usage: train.py [-h] --model_family
                 [--vae_cache_ondemand [VAE_CACHE_ONDEMAND]]
                 [--accelerator_cache_clear_interval ACCELERATOR_CACHE_CLEAR_INTERVAL]
                 [--aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}]
-                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
-                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
-                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
-                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
-                [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}]
+                [--base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
+                [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
                 [--offload_during_startup [OFFLOAD_DURING_STARTUP]]
-                [--quantize_via {cpu,accelerator}]
+                [--quantize_via {cpu,accelerator,pipeline}]
+                [--quantization_config QUANTIZATION_CONFIG]
                 [--fuse_qkv_projections [FUSE_QKV_PROJECTIONS]]
                 [--control [CONTROL]]
                 [--controlnet_custom_config CONTROLNET_CUSTOM_CONFIG]
@@ -1162,27 +1185,30 @@ options:
   --aspect_bucket_rounding {1,2,3,4,5,6,7,8,9}
                         Number of decimal places to round aspect ratios to for
                         bucket creation
-  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --base_model_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         Precision for loading the base model. Lower precision
                         saves memory.
-  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --text_encoder_1_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --text_encoder_2_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         Precision for text encoders. Lower precision saves
                         memory.
-  --text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao}
+  --text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-torchao}
                         Precision for text encoders. Lower precision saves
                         memory.
   --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
                         Checkpoint every N transformer blocks
   --offload_during_startup [OFFLOAD_DURING_STARTUP]
                         Offload text encoders to CPU during VAE caching
-  --quantize_via {cpu,accelerator}
+  --quantize_via {cpu,accelerator,pipeline}
                         Where to perform model quantization
+  --quantization_config QUANTIZATION_CONFIG
+                        JSON or file path describing Diffusers quantization
+                        config for pipeline quantization
   --fuse_qkv_projections [FUSE_QKV_PROJECTIONS]
                         Enables Flash Attention 3 when supported; otherwise
                         falls back to PyTorch SDPA.
