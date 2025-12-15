@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime
 from typing import Any, Mapping
 
@@ -20,6 +21,8 @@ from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 from simpletuner.simpletuner_sdk import process_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services import training_service
+
+logger = logging.getLogger(__name__)
 
 
 def _json_default(obj: Any):
