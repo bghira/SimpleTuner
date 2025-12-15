@@ -259,6 +259,9 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
         self.t_block = nn.Sequential(nn.SiLU(), nn.Linear(self.inner_dim, 6 * self.inner_dim, bias=True))
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         # speaker
         self.speaker_embedder = nn.Linear(speaker_embedding_dim, self.inner_dim)
@@ -421,6 +424,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_mask: torch.Tensor,
         timestep: Optional[torch.Tensor],
+        timestep_sign: Optional[torch.Tensor] = None,
         ssl_hidden_states: Optional[List[torch.Tensor]] = None,
         output_length: int = 0,
         block_controlnet_hidden_states: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
@@ -457,6 +461,11 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
                 self._logged_dtype_mismatch = True
 
         embedded_timestep = self.timestep_embedder(self.time_proj(timestep).to(dtype=hidden_states.dtype))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            embedded_timestep = embedded_timestep + self.time_sign_embed(sign_idx).to(
+                dtype=embedded_timestep.dtype, device=hidden_states.device
+            )
         temb = self.t_block(embedded_timestep)
 
         hidden_states = self.proj_in(hidden_states)
@@ -553,6 +562,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         lyric_token_idx: Optional[torch.LongTensor] = None,
         lyric_mask: Optional[torch.LongTensor] = None,
         timestep: Optional[torch.Tensor] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         ssl_hidden_states: Optional[List[torch.Tensor]] = None,
         block_controlnet_hidden_states: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
         controlnet_scale: Union[float, torch.Tensor] = 1.0,
@@ -574,6 +584,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             encoder_hidden_states=encoder_hidden_states,
             encoder_hidden_mask=encoder_hidden_mask,
             timestep=timestep,
+            timestep_sign=timestep_sign,
             ssl_hidden_states=ssl_hidden_states,
             output_length=output_length,
             block_controlnet_hidden_states=block_controlnet_hidden_states,
