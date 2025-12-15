@@ -1146,7 +1146,13 @@ class ModelFoundation(ABC):
             and isinstance(target_device_obj, torch.device)
             and target_device_obj == accelerator_device
         )
-        skip_moving_trained_component = should_configure_offload and self.group_offload_configured
+        skip_moving_trained_component = any(
+            [
+                (should_configure_offload and self.group_offload_configured),
+                self.config.musubi_blocks_to_swap or 0 > 0,
+                self.config.quantize_via == "pipeline",
+            ]
+        )
 
         if self.model is not None and not skip_moving_trained_component:
             model_ref = self.unwrap_model(model=self.model)
