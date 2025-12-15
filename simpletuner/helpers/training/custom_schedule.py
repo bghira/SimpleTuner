@@ -1455,3 +1455,233 @@ class PeRFlowScheduler(SchedulerMixin, ConfigMixin):
 
     def __len__(self):
         return self.config.num_train_timesteps
+
+
+class TwinFlowSchedulerOutput(BaseOutput):
+    """
+    Output class for TwinFlow/UCGM scheduler.
+
+    Args:
+        prev_sample (`torch.FloatTensor`):
+            Computed sample (x_{t-1}) of the previous timestep.
+        pred_original_sample (`torch.FloatTensor`):
+            The predicted denoised sample (x_0).
+    """
+
+    prev_sample: torch.FloatTensor
+    pred_original_sample: Optional[torch.FloatTensor] = None
+
+
+class TwinFlowScheduler(SchedulerMixin, ConfigMixin):
+    """
+    UCGM-style scheduler for TwinFlow distilled models.
+    Based on the Unified Continuous Generative Models sampler (https://arxiv.org/abs/2505.07447).
+
+    This scheduler implements the sampling loop used by TwinFlow for few-step generation,
+    with Kumaraswamy time distribution and configurable stochasticity.
+
+    Args:
+        num_train_timesteps (`int`, defaults to 1000):
+            The number of diffusion steps used during training.
+        prediction_type (`str`, defaults to `flow_matching`):
+            Prediction type (flow_matching for TwinFlow).
+        shift (`float`, defaults to 1.0):
+            Flow schedule shift parameter.
+        time_dist_ctrl (`list`, defaults to [1.0, 1.0, 1.0]):
+            Kumaraswamy distribution parameters [a, b, c] for time step distribution.
+        rfba_gap_start (`float`, defaults to 0.001):
+            Start gap for time schedule (avoids numerical issues at t=0).
+        rfba_gap_end (`float`, defaults to 0.0):
+            End gap for time schedule. For 2-step, use 0.6; for 4-step, use 0.5.
+        stochast_ratio (`float`, defaults to 1.0):
+            Stochastic ratio for noise injection (1.0 = full stochasticity as in TwinFlow paper).
+    """
+
+    _compatibles = []
+    order = 1
+
+    @register_to_config
+    def __init__(
+        self,
+        num_train_timesteps: int = 1000,
+        prediction_type: str = "flow_matching",
+        shift: float = 1.0,
+        time_dist_ctrl: List[float] = None,
+        rfba_gap_start: float = 0.001,
+        rfba_gap_end: float = 0.0,
+        stochast_ratio: float = 1.0,
+    ):
+        self.prediction_type = prediction_type
+        self.shift = shift
+        self.time_dist_ctrl = time_dist_ctrl if time_dist_ctrl is not None else [1.0, 1.0, 1.0]
+        self.rfba_gap_start = rfba_gap_start
+        self.rfba_gap_end = rfba_gap_end
+        self.stochast_ratio = stochast_ratio
+
+        # Standard init
+        self.init_noise_sigma = 1.0
+        self.timesteps = None
+        self.sigmas = None
+        self.num_inference_steps = None
+
+        logger.info(f"Loaded TwinFlow/UCGM scheduler with {num_train_timesteps} train timesteps")
+
+    @staticmethod
+    def _kumaraswamy_transform(t: torch.Tensor, a: float, b: float, c: float) -> torch.Tensor:
+        """Kumaraswamy distribution transform for time step discretization."""
+        return (1 - (1 - t**a) ** b) ** c
+
+    def set_timesteps(self, num_inference_steps: int, device: Union[str, torch.device] = None):
+        """
+        Sets the discrete timesteps used for the diffusion chain.
+        Uses Kumaraswamy-transformed time distribution as in TwinFlow.
+
+        Args:
+            num_inference_steps (`int`):
+                The number of diffusion steps (1-4 recommended for TwinFlow).
+            device: Device to place tensors on.
+        """
+        self.num_inference_steps = num_inference_steps
+        device = device or "cpu"
+
+        # Determine rfba_gap_end based on step count (from TwinFlow defaults)
+        rfba_gap_end = self.rfba_gap_end
+        if rfba_gap_end == 0.0:
+            # Use TwinFlow paper defaults
+            if num_inference_steps <= 2:
+                rfba_gap_end = 0.6
+            elif num_inference_steps <= 4:
+                rfba_gap_end = 0.5
+            else:
+                rfba_gap_end = 0.3
+
+        # Time step discretization with Kumaraswamy transform
+        num_steps = num_inference_steps
+        if rfba_gap_end == 0.0:
+            num_steps = num_steps + 1
+
+        t_steps = torch.linspace(
+            self.rfba_gap_start,
+            1.0 - rfba_gap_end,
+            num_steps,
+            dtype=torch.float64,
+            device=device,
+        )
+
+        if rfba_gap_end == 0.0:
+            t_steps = t_steps[:-1]
+
+        # Apply Kumaraswamy transform
+        a, b, c = self.time_dist_ctrl
+        t_steps = self._kumaraswamy_transform(t_steps, a, b, c)
+
+        # Convert to sigma format: sigma goes from 1 (noise) to 0 (clean)
+        # TwinFlow uses (1 - t_steps) as the "time" coordinate
+        self.sigmas = torch.cat([(1 - t_steps), torch.zeros(1, device=device, dtype=torch.float64)])
+        self.sigmas = self.sigmas.to(dtype=torch.float32)
+
+        # Timesteps for pipeline compatibility (scaled to num_train_timesteps)
+        self.timesteps = (self.sigmas[:-1] * self.config.num_train_timesteps).to(dtype=torch.float32, device=device)
+
+        logger.debug(f"TwinFlow scheduler: {num_inference_steps} steps, sigmas={self.sigmas.tolist()}")
+
+    def scale_model_input(self, sample: torch.FloatTensor, timestep: Optional[int] = None) -> torch.FloatTensor:
+        """
+        Ensures interchangeability with schedulers that need to scale the denoising model input.
+        TwinFlow doesn't require input scaling.
+        """
+        return sample
+
+    def step(
+        self,
+        model_output: torch.FloatTensor,
+        timestep: Union[int, torch.Tensor],
+        sample: torch.FloatTensor,
+        generator: Optional[torch.Generator] = None,
+        return_dict: bool = True,
+    ) -> Union[TwinFlowSchedulerOutput, Tuple]:
+        """
+        Predict the sample from the previous timestep by reversing the ODE.
+        Implements the UCGM sampling step used by TwinFlow.
+
+        Args:
+            model_output (`torch.FloatTensor`):
+                Direct output (velocity field) from the learned diffusion model.
+            timestep (`int` or `torch.Tensor`):
+                Current discrete timestep in the diffusion chain.
+            sample (`torch.FloatTensor`):
+                Current instance of sample being created by diffusion process.
+            generator (`torch.Generator`, *optional*):
+                Random number generator for stochastic sampling.
+            return_dict (`bool`, defaults to `True`):
+                Whether to return a scheduler output or tuple.
+
+        Returns:
+            `TwinFlowSchedulerOutput` or `tuple`:
+                The denoised sample and predicted original sample.
+        """
+        if self.timesteps is None:
+            raise ValueError("Please call `set_timesteps` before running inference.")
+
+        # Get current and next sigma
+        step_idx = (self.timesteps == timestep).nonzero(as_tuple=False)
+        if step_idx.numel() == 0:
+            # Fallback: find closest timestep
+            step_idx = ((self.timesteps - timestep).abs()).argmin()
+        else:
+            step_idx = step_idx[0].item()
+
+        sigma_cur = self.sigmas[step_idx].to(sample.device, sample.dtype)
+        sigma_next = self.sigmas[step_idx + 1].to(sample.device, sample.dtype)
+
+        # UCGM velocity field interpretation:
+        # F_t = model_output is the velocity v_t
+        # x_t = alpha(t) * z + gamma(t) * x where alpha(t) = t, gamma(t) = 1-t
+        # For linear flow: x_hat = x_t - sigma * F_t, z_hat = x_t + (1-sigma) * F_t
+
+        # Reconstruct x_hat (predicted clean) and z_hat (predicted noise)
+        x_hat = sample - sigma_cur * model_output
+        z_hat = sample + (1 - sigma_cur) * model_output
+
+        # Stochastic sampling
+        stochast_ratio = self.stochast_ratio
+        if stochast_ratio > 0:
+            noise = torch.randn(sample.shape, generator=generator, device=sample.device, dtype=sample.dtype)
+        else:
+            noise = 0.0
+
+        # Next sample: x_next = gamma(t_next) * x_hat + alpha(t_next) * (z_hat * sqrt(1-s) + noise * sqrt(s))
+        # where gamma = 1 - sigma, alpha = sigma
+        gamma_next = 1 - sigma_next
+        alpha_next = sigma_next
+
+        prev_sample = gamma_next * x_hat + alpha_next * (
+            z_hat * ((1 - stochast_ratio) ** 0.5) + noise * (stochast_ratio**0.5)
+        )
+
+        if not return_dict:
+            return (prev_sample,)
+
+        return TwinFlowSchedulerOutput(prev_sample=prev_sample, pred_original_sample=x_hat)
+
+    def add_noise(
+        self,
+        original_samples: torch.FloatTensor,
+        noise: torch.FloatTensor,
+        timesteps: torch.IntTensor,
+    ) -> torch.FloatTensor:
+        """
+        Add noise to the original samples following flow matching interpolation.
+        x_t = (1 - sigma) * x + sigma * z
+        """
+        sigmas = timesteps.float() / self.config.num_train_timesteps
+        sigmas = sigmas.to(original_samples.device, original_samples.dtype)
+
+        while len(sigmas.shape) < len(original_samples.shape):
+            sigmas = sigmas.unsqueeze(-1)
+
+        noisy_samples = (1 - sigmas) * original_samples + sigmas * noise
+        return noisy_samples
+
+    def __len__(self):
+        return self.config.num_train_timesteps
