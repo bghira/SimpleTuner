@@ -345,6 +345,7 @@ class TrainingServiceTests(unittest.TestCase):
 
         def fake_terminate(job_id):
             terminated["job_id"] = job_id
+            return True
 
         with patch.object(training_service.process_keeper, "terminate_process", side_effect=fake_terminate):
             training_service.APIState.set_state("current_job_id", "abc123")
