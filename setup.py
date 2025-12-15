@@ -59,6 +59,11 @@ def get_version():
     return "3.0.0"
 
 
+def _python_tag() -> str:
+    """Return the CPython ABI tag for the current interpreter."""
+    return f"cp{sys.version_info.major}{sys.version_info.minor}"
+
+
 def _rocm_platform_tag():
     """Return the ROCm wheel platform tag, overridable via environment."""
     return os.environ.get("SIMPLETUNER_ROCM_PLATFORM_TAG", "manylinux_2_28_x86_64")
@@ -66,11 +71,20 @@ def _rocm_platform_tag():
 
 def build_rocm_wheel_url(package: str, version: str, rocm_version: str) -> str:
     """Build a direct wheel URL for ROCm packages."""
-    py_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+    py_tag = _python_tag()
     platform_tag = _rocm_platform_tag()
     filename = f"{package}-{version}%2Brocm{rocm_version}-{py_tag}-{py_tag}-{platform_tag}.whl"
     base_url = os.environ.get("SIMPLETUNER_ROCM_BASE_URL", f"https://download.pytorch.org/whl/rocm{rocm_version}")
     return f"{package} @ {base_url}/{filename}"
+
+
+def build_rocm_triton_wheel_url(triton_version: str) -> str:
+    """Build a direct wheel URL for Triton ROCm packages."""
+    py_tag = _python_tag()
+    platform_tag = os.environ.get("SIMPLETUNER_ROCM_TRITON_PLATFORM_TAG", "linux_x86_64")
+    filename = f"pytorch_triton_rocm-{triton_version}-{py_tag}-{py_tag}-{platform_tag}.whl"
+    base_url = os.environ.get("SIMPLETUNER_ROCM_TRITON_BASE_URL", "https://download.pytorch.org/whl")
+    return f"pytorch_triton_rocm @ {base_url}/{filename}"
 
 
 def _resolve_ramtorch_dependency() -> str:
@@ -119,7 +133,7 @@ def get_rocm_dependencies():
             build_rocm_wheel_url("torch", torch_version, rocm_version),
             build_rocm_wheel_url("torchvision", torchvision_version, rocm_version),
             build_rocm_wheel_url("torchaudio", torchaudio_version, rocm_version),
-            "pytorch_triton_rocm @ https://download.pytorch.org/whl/pytorch_triton_rocm-3.5.1-cp312-cp312-linux_x86_64.whl",
+            build_rocm_triton_wheel_url(triton_version),
             "torchao>=0.14.1",
             ramtorch_dep,
         ]
