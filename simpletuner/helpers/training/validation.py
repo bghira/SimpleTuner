@@ -1339,11 +1339,18 @@ class Validation:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROL]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
-    def _gather_prompt_embeds(self, validation_prompt: str, validation_shortname: str, validation_input_image=None):
-        # For validation prompts, use shortname as cache key for lookup
+    def _gather_prompt_embeds(
+        self,
+        validation_prompt: str,
+        validation_shortname: str,
+        validation_input_image=None,
+        cache_shortname: str | None = None,
+    ):
+        # For validation prompts, use the cache_shortname (defaults to validation_shortname) as cache key for lookup.
+        cache_key = cache_shortname or validation_shortname
         prompt_record = {
             "prompt": validation_prompt,
-            "key": validation_shortname,
+            "key": cache_key,
         }
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=True)
 
@@ -1978,6 +1985,44 @@ class Validation:
                 "The current pipeline does not support loading LoRA adapters. "
                 "Remove --validation_adapter_path/--validation_adapter_config to continue."
             )
+        def _snapshot_requires_grad(module):
+            snapshot = {}
+            for _, comp in getattr(module, "components", {}).items() if hasattr(module, "components") else []:
+                if not isinstance(comp, torch.nn.Module):
+                    continue
+                for param in comp.parameters():
+                    snapshot[id(param)] = param.requires_grad
+            if isinstance(module, torch.nn.Module):
+                for param in module.parameters():
+                    snapshot.setdefault(id(param), param.requires_grad)
+            return snapshot
+
+        def _restore_requires_grad(module, snapshot: dict[int, bool]):
+            if not snapshot:
+                return
+            for _, comp in getattr(module, "components", {}).items() if hasattr(module, "components") else []:
+                if not isinstance(comp, torch.nn.Module):
+                    continue
+                for param in comp.parameters():
+                    try:
+                        param.requires_grad = snapshot.get(id(param), param.requires_grad)
+                    except Exception:
+                        continue
+            if isinstance(module, torch.nn.Module):
+                for param in module.parameters():
+                    try:
+                        param.requires_grad = snapshot.get(id(param), param.requires_grad)
+                    except Exception:
+                        continue
+
+        try:
+            from simpletuner.helpers.utils import ramtorch as ramtorch_utils
+
+            if ramtorch_utils.is_available():
+                ramtorch_utils.ensure_available()
+        except Exception:
+            pass
+        requires_grad_snapshot = _snapshot_requires_grad(pipeline)
         adapter_names: list[str] = []
         adapter_scales: list[float] = []
         for idx, adapter in enumerate(adapter_run.adapters):
@@ -2000,6 +2045,7 @@ class Validation:
             yield
         finally:
             self._remove_validation_adapters(pipeline, adapter_names)
+            _restore_requires_grad(pipeline, requires_grad_snapshot)
 
     def _set_validation_adapter_weights(self, pipeline, adapter_names: list[str], adapter_scales: list[float]):
         if not adapter_names:
@@ -2245,6 +2291,7 @@ class Validation:
             item.conditioning,
             validation_type,
             adapter_strength=item.adapter_strength,
+            cache_shortname=item.shortname,
         )
         return {
             "index": item.index,
@@ -2714,6 +2761,7 @@ class Validation:
         validation_input_image=None,
         validation_type=None,
         adapter_strength: float | None = None,
+        cache_shortname: str | None = None,
     ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
@@ -2728,6 +2776,8 @@ class Validation:
         resolutions = self.validation_resolutions if not is_audio else [(0, 0)]
         baseline_strength = self._baseline_adapter_strength()
         self._set_adapter_strength(adapter_strength)
+
+        cache_key = cache_shortname or validation_shortname
 
         for resolution in resolutions:
             extra_validation_kwargs = {}
@@ -2786,7 +2836,7 @@ class Validation:
                 extra_validation_kwargs["skip_layer_guidance_scale"] = float(self.config.validation_guidance_skip_scale)
                 extra_validation_kwargs["skip_guidance_layers"] = list(self.config.validation_guidance_skip_layers)
 
-            extra_validation_kwargs["guidance_rescale"] = self.config.validation_guidance_rescale
+                extra_validation_kwargs["guidance_rescale"] = self.config.validation_guidance_rescale
 
             if StateTracker.get_args().validation_using_datasets:
                 extra_validation_kwargs["strength"] = getattr(self.config, "validation_strength", 0.2)
@@ -2799,7 +2849,9 @@ class Validation:
                 checkpoint_validation_images[validation_shortname] = []
                 ema_validation_images[validation_shortname] = []
             try:
-                _embed = self._gather_prompt_embeds(prompt, validation_shortname, validation_input_image)
+                _embed = self._gather_prompt_embeds(
+                    prompt, validation_shortname, validation_input_image, cache_shortname=cache_key
+                )
                 if _embed is not None:
                     extra_validation_kwargs.update(_embed)
                 else:
