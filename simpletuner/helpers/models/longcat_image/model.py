@@ -401,6 +401,7 @@ class LongCatImage(ImageModelFoundation):
         model_pred = self.model(
             hidden_states=hidden_states,
             timestep=timesteps,
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
             guidance=None,
             encoder_hidden_states=prompt_embeds,
             txt_ids=text_ids,

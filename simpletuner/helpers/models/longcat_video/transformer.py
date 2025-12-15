@@ -238,6 +238,8 @@ class TimestepEmbedder(nn.Module):
         super().__init__()
         self.t_embed_dim = t_embed_dim
         self.frequency_embedding_size = frequency_embedding_size
+        self.time_sign_embed = nn.Embedding(2, t_embed_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, t_embed_dim, bias=True),
             nn.SiLU(),
@@ -255,11 +257,14 @@ class TimestepEmbedder(nn.Module):
             embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
         return embedding
 
-    def forward(self, t, dtype):
+    def forward(self, t, dtype, timestep_sign: Optional[torch.Tensor] = None):
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         if t_freq.dtype != dtype:
             t_freq = t_freq.to(dtype)
         t_emb = self.mlp(t_freq)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
+            t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
 
 
@@ -939,6 +944,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self,
         hidden_states,
         timestep,
+        timestep_sign: Optional[torch.Tensor] = None,
         encoder_hidden_states,
         encoder_attention_mask=None,
         num_cond_latents=0,
@@ -958,6 +964,11 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         if len(timestep.shape) == 1:
             timestep = timestep.unsqueeze(1).expand(-1, N_t)
+        sign = timestep_sign
+        if sign is not None:
+            if sign.ndim == 1:
+                sign = sign.unsqueeze(1).expand(-1, N_t)
+            sign = sign.to(device=timestep.device, dtype=timestep.dtype)
 
         dtype = self.x_embedder.proj.weight.dtype
         hidden_states = hidden_states.to(dtype)
@@ -967,7 +978,10 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states = self.x_embedder(hidden_states)
 
         with torch.autocast(device_type=timestep.device.type, dtype=torch.float32, enabled=timestep.device.type == "cuda"):
-            t = self.t_embedder(timestep.float().flatten(), dtype=torch.float32).reshape(B, N_t, -1)
+            sign_flat = sign.reshape(-1) if sign is not None else None
+            t = self.t_embedder(timestep.float().flatten(), dtype=torch.float32, timestep_sign=sign_flat).reshape(
+                B, N_t, -1
+            )
 
         encoder_hidden_states = self.y_embedder(encoder_hidden_states)
 
