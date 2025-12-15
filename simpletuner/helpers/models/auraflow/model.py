@@ -166,6 +166,7 @@ class Auraflow(ImageModelFoundation):
                 dtype=self.config.base_weight_dtype,
             ),
             timestep=timesteps,
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
             return_dict=True,
         ).sample
 
