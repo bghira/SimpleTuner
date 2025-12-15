@@ -825,6 +825,7 @@ class QwenImage(ImageModelFoundation):
             noise_pred = self.model(
                 hidden_states=latent_model_input.to(self.accelerator.device, self.config.weight_dtype),
                 timestep=timesteps,
+                timestep_sign=prepared_batch.get("twinflow_time_sign"),
                 guidance=None,  # Qwen Image doesn't use guidance during training
                 encoder_hidden_states=prompt_embeds,
                 encoder_hidden_states_mask=prompt_embeds_mask,
@@ -962,6 +963,7 @@ class QwenImage(ImageModelFoundation):
             noise_pred = self.model(
                 hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
                 timestep=timesteps,
+                timestep_sign=prepared_batch.get("twinflow_time_sign"),
                 guidance=None,
                 encoder_hidden_states=prompt_embeds,
                 encoder_hidden_states_mask=prompt_embeds_mask,
@@ -1091,6 +1093,7 @@ class QwenImage(ImageModelFoundation):
             noise_pred = self.model(
                 hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
                 timestep=timesteps,
+                timestep_sign=prepared_batch.get("twinflow_time_sign"),
                 guidance=None,
                 encoder_hidden_states=prompt_embeds,
                 encoder_hidden_states_mask=prompt_embeds_mask,

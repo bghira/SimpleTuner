@@ -151,8 +151,11 @@ class QwenTimestepProjEmbeddings(nn.Module):
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, scale=1000)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
         self.timestep_embedder.time_embed_dim = embedding_dim
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, embedding_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
-    def forward(self, timestep, hidden_states):
+    def forward(self, timestep, hidden_states, timestep_sign: Optional[torch.Tensor] = None):
         target_device = hidden_states.device
         target_dtype = hidden_states.dtype
 
@@ -174,6 +177,11 @@ class QwenTimestepProjEmbeddings(nn.Module):
             timesteps_emb = timesteps_emb.to(dtype=target_dtype)
 
         conditioning = timesteps_emb
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=target_device)
+            conditioning = conditioning + self.time_sign_embed(sign_idx).to(
+                dtype=conditioning.dtype, device=target_device
+            )
 
         return conditioning
 
@@ -555,6 +563,7 @@ class QwenImageTransformer2DModel(
         self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True)
 
         self.time_text_embed = QwenTimestepProjEmbeddings(embedding_dim=self.inner_dim)
+        self.time_sign_embed = self.time_text_embed.time_sign_embed
 
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)
 
@@ -674,6 +683,7 @@ class QwenImageTransformer2DModel(
         encoder_hidden_states: torch.Tensor = None,
         encoder_hidden_states_mask: torch.Tensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         img_shapes: Optional[List[Tuple[int, int, int]]] = None,
         txt_seq_lens: Optional[List[int]] = None,
         guidance: torch.Tensor = None,  # TODO: this should probably be removed
@@ -749,9 +759,9 @@ class QwenImageTransformer2DModel(
             guidance = guidance.to(hidden_states.dtype) * 1000
 
         temb = (
-            self.time_text_embed(timestep, hidden_states)
+            self.time_text_embed(timestep, hidden_states, timestep_sign=timestep_sign)
             if guidance is None
-            else self.time_text_embed(timestep, guidance, hidden_states)
+            else self.time_text_embed(timestep, guidance, hidden_states, timestep_sign=timestep_sign)
         )
 
         image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=hidden_states.device)
