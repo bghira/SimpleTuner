@@ -1030,11 +1030,12 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
     if not job_id:
         return False
 
-    process_keeper.terminate_process(job_id)
-    APIState.set_state("training_status", status)
-    if clear_job_id:
-        APIState.set_state("current_job_id", None)
-    return True
+    terminated = process_keeper.terminate_process(job_id)
+    if terminated:
+        APIState.set_state("training_status", status)
+        if clear_job_id:
+            APIState.set_state("current_job_id", None)
+    return terminated
 
 
 def request_manual_validation(job_id: Optional[str] = None) -> str:
