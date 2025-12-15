@@ -486,6 +486,9 @@ class ChromaTransformer2DModel(
             num_channels=approximator_num_channels // 4,
             out_dim=3 * num_single_layers + 2 * 6 * num_layers + 2,
         )
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.distilled_guidance_layer = ChromaApproximator(
             in_dim=approximator_num_channels,
             out_dim=self.inner_dim,
@@ -559,6 +562,7 @@ class ChromaTransformer2DModel(
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         img_ids: torch.Tensor = None,
         txt_ids: torch.Tensor = None,
         attention_mask: torch.Tensor = None,
@@ -590,6 +594,11 @@ class ChromaTransformer2DModel(
 
         input_vec = self.time_text_embed(timestep)
         pooled_temb = self.distilled_guidance_layer(input_vec)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            pooled_temb = pooled_temb + self.time_sign_embed(sign_idx).to(
+                dtype=pooled_temb.dtype, device=hidden_states.device
+            )
 
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
