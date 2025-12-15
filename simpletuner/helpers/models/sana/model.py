@@ -149,6 +149,7 @@ class Sana(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 timestep=prepared_batch["timesteps"],
+                timestep_sign=prepared_batch.get("twinflow_time_sign"),
                 encoder_attention_mask=prepared_batch["encoder_attention_mask"],
                 encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
                     device=self.accelerator.device,

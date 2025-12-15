@@ -181,6 +181,7 @@ class SanaVideo(VideoModelFoundation):
             "encoder_hidden_states": encoder_hidden_states,
             "encoder_attention_mask": encoder_attention_mask,
             "timestep": timesteps,
+            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
             "return_dict": False,
         }
         if capture_hidden:
