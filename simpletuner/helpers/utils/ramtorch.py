@@ -10,6 +10,7 @@ import torch.nn as nn
 logger = logging.getLogger(__name__)
 _peft_lora_config_patched = False
 _peft_lora_model_patched = False
+_peft_inject_patched = False
 
 
 @lru_cache(maxsize=1)
@@ -49,6 +50,7 @@ def ensure_available() -> dict:
         imports = _ramtorch_imports()
         _maybe_patch_peft_lora_config()
         _maybe_patch_peft_lora_model()
+        _maybe_patch_peft_inject()
         return imports
     except ImportError as exc:
         raise ImportError(
@@ -272,6 +274,24 @@ def _maybe_patch_peft_lora_config() -> bool:
             return False
 
         def _wrapped_create_lora_config(*args, **kwargs):
+            state_dict = args[0] if args else kwargs.get("state_dict")
+            if isinstance(state_dict, dict):
+                prefixed = {}
+                for key, value in state_dict.items():
+                    if not isinstance(key, str):
+                        continue
+                    if key.startswith("_orig_mod."):
+                        continue
+                    prefixed[f"_orig_mod.{key}"] = value
+                if prefixed:
+                    merged = dict(state_dict)
+                    merged.update(prefixed)
+                    state_dict = merged
+                    if args:
+                        args = (state_dict,) + tuple(args[1:])
+                    else:
+                        kwargs["state_dict"] = state_dict
+
             config = create_fn(*args, **kwargs)
             try:
                 register_lora_custom_module(config)
@@ -283,6 +303,16 @@ def _maybe_patch_peft_lora_config() -> bool:
                     custom_modules = {}
                     config._custom_modules = custom_modules
                 custom_modules.setdefault(RamTorchLinear, PeftLinear)
+
+                # Handle torch.compile / OptimizedModule name prefixing: add _orig_mod targets.
+                targets = getattr(config, "target_modules", None)
+                if targets:
+                    targets_list = [targets] if isinstance(targets, str) else list(targets)
+                    prefixed_targets = [
+                        f"_orig_mod.{t}" for t in targets_list if isinstance(t, str) and not t.startswith("_orig_mod.")
+                    ]
+                    if prefixed_targets:
+                        config.target_modules = list(dict.fromkeys(targets_list + prefixed_targets))
             except Exception as exc:
                 logger.debug("RamTorch LoRA custom module patch failed for %s.%s: %s", module.__name__, attribute, exc)
             return config
@@ -323,7 +353,7 @@ def _maybe_patch_peft_lora_model() -> bool:
     try:
         import torch
         from peft.tuners.lora.model import LoraModel
-        from peft.tuners.tuners_utils import BaseTunerLayer
+        from peft.tuners.tuners_utils import BaseTunerLayer, BaseTuner
         from peft.tuners.lora.layer import Linear as PeftLinear
         from ramtorch.modules.linear import Linear as RamTorchLinear
     except Exception:
@@ -369,6 +399,22 @@ def _maybe_patch_peft_lora_model() -> bool:
             self._ensure_lora_on_device(x.device if torch.is_tensor(x) else None)
             return super().forward(x, *args, **kwargs)
 
+    # Patch target-module check to ignore _orig_mod. prefixes from torch.compile
+    if not getattr(BaseTuner._check_target_module_exists, "_ramtorch_wrapped", False):
+        orig_check = BaseTuner._check_target_module_exists
+
+        @staticmethod  # type: ignore[misc]
+        def _wrapped_check(peft_config, key: str):
+            result = orig_check(peft_config, key)
+            if result:
+                return result
+            if isinstance(key, str) and key.startswith("_orig_mod."):
+                return orig_check(peft_config, key.removeprefix("_orig_mod."))
+            return result
+
+        _wrapped_check._ramtorch_wrapped = True
+        BaseTuner._check_target_module_exists = _wrapped_check  # type: ignore[assignment]
+
     orig = LoraModel._create_new_module
     if getattr(orig, "_ramtorch_wrapped", False):
         _peft_lora_model_patched = True
@@ -387,6 +433,98 @@ def _maybe_patch_peft_lora_model() -> bool:
     _wrapped_create_new_module._ramtorch_wrapped = True
     LoraModel._create_new_module = staticmethod(_wrapped_create_new_module)
     _peft_lora_model_patched = True
+    return True
+
+
+def _maybe_patch_peft_inject() -> bool:
+    """
+    Patch PEFT inject_adapter_in_model to duplicate LoRA state_dict keys with _orig_mod.
+    This allows adapter loading on torch.compile/OptimizedModule models where module
+    names are prefixed with _orig_mod.
+    """
+
+    global _peft_inject_patched
+    if _peft_inject_patched:
+        return False
+
+    try:
+        import copy
+        from peft.mapping import inject_adapter_in_model as orig_inject
+        from peft.tuners.tuners_utils import BaseTuner
+    except Exception:
+        return False
+
+    if getattr(orig_inject, "_ramtorch_wrapped", False) and getattr(BaseTuner.inject_adapter, "_ramtorch_wrapped", False):
+        _peft_inject_patched = True
+        return False
+
+    def _maybe_prefix_state_dict(state_dict, model):
+        if not isinstance(state_dict, dict):
+            return state_dict
+        # Only act if the compiled prefix exists in the model.
+        try:
+            has_prefixed_modules = any(
+                isinstance(name, str) and name.startswith("_orig_mod.") for name, _ in model.named_modules()
+            )
+        except Exception:
+            has_prefixed_modules = False
+        if not has_prefixed_modules:
+            return state_dict
+        patched = copy.copy(state_dict)
+        for key, value in state_dict.items():
+            if not isinstance(key, str):
+                continue
+            if key.startswith("_orig_mod."):
+                continue
+            prefixed_key = f"_orig_mod.{key}"
+            if prefixed_key not in patched:
+                patched[prefixed_key] = value
+        return patched
+
+    def _wrapped_inject(peft_config, model, adapter_name: str | None = None, *args, **kwargs):
+        state_dict = kwargs.get("state_dict")
+        if state_dict is None and args:
+            # positional signature: (peft_config, model, adapter_name, state_dict, ...)
+            state_dict = args[0]
+            args = args[1:]
+        patched_state = _maybe_prefix_state_dict(state_dict, model)
+        if patched_state is not state_dict:
+            kwargs["state_dict"] = patched_state
+        elif state_dict is not None and "state_dict" not in kwargs:
+            kwargs["state_dict"] = state_dict
+        return orig_inject(peft_config, model, adapter_name=adapter_name, *args, **kwargs)
+
+    _wrapped_inject._ramtorch_wrapped = True
+    import peft.mapping as peft_mapping
+
+    peft_mapping.inject_adapter_in_model = _wrapped_inject  # type: ignore
+
+    orig_base_inject = BaseTuner.inject_adapter
+
+    def _wrapped_base_inject(self, peft_config, model, adapter_name: str = "default", *args, **kwargs):
+        # Prefixed targets for torch.compile
+        targets = getattr(peft_config, "target_modules", None)
+        if targets:
+            targets_list = [targets] if isinstance(targets, str) else list(targets)
+            prefixed_targets = [
+                f"_orig_mod.{t}" for t in targets_list if isinstance(t, str) and not t.startswith("_orig_mod.")
+            ]
+            if prefixed_targets:
+                peft_config.target_modules = list(dict.fromkeys(targets_list + prefixed_targets))
+        # Prefixed state_dict if passed positionally
+        state_dict = kwargs.get("state_dict")
+        if state_dict is None and args:
+            state_dict = args[0]
+            args = args[1:]
+        state_dict = _maybe_prefix_state_dict(state_dict, model)
+        if state_dict is not None:
+            kwargs["state_dict"] = state_dict
+        return orig_base_inject(self, peft_config, model, adapter_name, *args, **kwargs)
+
+    _wrapped_base_inject._ramtorch_wrapped = True
+    BaseTuner.inject_adapter = _wrapped_base_inject  # type: ignore[assignment]
+
+    _peft_inject_patched = True
     return True
 
 
