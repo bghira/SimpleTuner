@@ -1059,6 +1059,7 @@ class Wan(VideoModelFoundation):
             "hidden_states": prepared_batch["noisy_latents"].to(self.config.weight_dtype),
             "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(self.config.weight_dtype),
             "timestep": prepared_batch["timesteps"],
+            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
             "return_dict": False,
         }
 
