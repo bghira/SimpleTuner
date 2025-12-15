@@ -680,6 +680,8 @@ class Flux(ImageModelFoundation):
             "joint_attention_kwargs": None,
             "return_dict": False,
         }
+        if prepared_batch.get("twinflow_time_sign") is not None:
+            flux_transformer_kwargs["timestep_sign"] = prepared_batch["twinflow_time_sign"]
 
         # Add ControlNet outputs to kwargs
         if controlnet_block_samples is not None:

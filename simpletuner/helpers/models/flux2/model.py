@@ -449,6 +449,7 @@ class Flux2(ImageModelFoundation):
             hidden_states=packed_latents,
             encoder_hidden_states=txt,
             timestep=timesteps,
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
             img_ids=img_ids[0] if img_ids.ndim == 3 else img_ids,
             txt_ids=txt_ids[0] if txt_ids.ndim == 3 else txt_ids,
             guidance=guidance,
