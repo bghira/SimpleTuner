@@ -944,7 +944,6 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self,
         hidden_states,
         timestep,
-        timestep_sign: Optional[torch.Tensor] = None,
         encoder_hidden_states,
         encoder_attention_mask=None,
         num_cond_latents=0,
@@ -953,6 +952,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         skip_crs_attn=False,
         offload_kv_cache=False,
         return_dict: bool = True,
+        timestep_sign: Optional[torch.Tensor] = None,
     ):
         if kv_cache_dict is None:
             kv_cache_dict = {}
@@ -979,9 +979,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         with torch.autocast(device_type=timestep.device.type, dtype=torch.float32, enabled=timestep.device.type == "cuda"):
             sign_flat = sign.reshape(-1) if sign is not None else None
-            t = self.t_embedder(timestep.float().flatten(), dtype=torch.float32, timestep_sign=sign_flat).reshape(
-                B, N_t, -1
-            )
+            t = self.t_embedder(timestep.float().flatten(), dtype=torch.float32, timestep_sign=sign_flat).reshape(B, N_t, -1)
 
         encoder_hidden_states = self.y_embedder(encoder_hidden_states)
 

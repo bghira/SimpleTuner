@@ -2594,10 +2594,9 @@ class ModelFoundation(ABC):
         uses_diff2flow = bool(getattr(self.config, "diff2flow_enabled", False))
         if not prediction_is_flow:
             if not (allow_diff2flow and uses_diff2flow):
-                raise ValueError(
-                    "TwinFlow requires flow-matching prediction_type. Enable diff2flow_enabled and "
-                    "twinflow_allow_diff2flow to bridge epsilon/v_prediction models explicitly."
-                )
+                # TwinFlow not applicable; disable and continue.
+                setattr(self.config, "twinflow_enabled", False)
+                return
             self._twinflow_diffusion_bridge = True
 
         if (

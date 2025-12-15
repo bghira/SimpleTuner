@@ -521,7 +521,6 @@ class LTXVideoTransformer3DModel(
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.LongTensor,
-        timestep_sign: Optional[torch.Tensor] = None,
         encoder_attention_mask: torch.Tensor,
         num_frames: Optional[int] = None,
         height: Optional[int] = None,
@@ -533,6 +532,7 @@ class LTXVideoTransformer3DModel(
         return_dict: bool = True,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()

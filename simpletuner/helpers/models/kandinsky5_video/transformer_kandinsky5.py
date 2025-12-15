@@ -194,9 +194,7 @@ class Kandinsky5TimeEmbeddings(nn.Module):
         time_embed = self.out_layer(self.activation(self.in_layer(time_embed)))
         if timestep_sign is not None:
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=time_embed.device)
-            time_embed = time_embed + self.time_sign_embed(sign_idx).to(
-                dtype=time_embed.dtype, device=time_embed.device
-            )
+            time_embed = time_embed + self.time_sign_embed(sign_idx).to(dtype=time_embed.dtype, device=time_embed.device)
         return time_embed
 
 
@@ -699,7 +697,6 @@ class Kandinsky5Transformer3DModel(
         hidden_states: torch.Tensor,  # x
         encoder_hidden_states: torch.Tensor,  # text_embed
         timestep: torch.Tensor,  # time
-        timestep_sign: Optional[torch.Tensor] = None,
         pooled_projections: torch.Tensor,  # pooled_text_embed
         visual_rope_pos: Tuple[int, int, int],
         text_rope_pos: torch.LongTensor,
@@ -709,6 +706,7 @@ class Kandinsky5Transformer3DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
     ) -> Union[Transformer2DModelOutput, torch.FloatTensor]:
         """
         Forward pass of the Kandinsky5 3D Transformer.

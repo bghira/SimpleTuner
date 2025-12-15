@@ -2063,8 +2063,11 @@ class Trainer:
         self.state["first_epoch"] = 1
         self.state["args"] = self.config.__dict__
         self.timesteps_buffer = []
+        self.twinflow_traj_buffer = []
         self._timesteps_scatter_table = None
         self._timesteps_scatter_logged = False
+        self._twinflow_traj_table = None
+        self._twinflow_traj_logged = False
         self.guidance_values_list = []
         self.train_loss = 0.0
         self.bf = None
@@ -4751,6 +4754,22 @@ class Trainer:
                     # Prepare the data for the scatter plot
                     for timestep in prepared_batch["timesteps"].tolist():
                         self.timesteps_buffer.append((self.state["global_step"], timestep))
+                    if getattr(self.config, "twinflow_enabled", False):
+                        sigmas = prepared_batch.get("sigmas")
+                        tt = prepared_batch.get("twinflow_tt")
+                        time_sign = prepared_batch.get("twinflow_time_sign")
+                        if sigmas is not None and tt is not None:
+                            try:
+                                sigma_mean = float(sigmas.detach().float().mean().item())
+                                tt_mean = float(tt.detach().float().mean().item())
+                                sign_val = (
+                                    float(time_sign.detach().float().mean().item())
+                                    if time_sign is not None
+                                    else float(torch.sign(sigmas.detach().float()).mean().item())
+                                )
+                                self.twinflow_traj_buffer.append((self.state["global_step"], sigma_mean, tt_mean, sign_val))
+                            except Exception:
+                                training_logger.debug("TwinFlow trajectory logging skipped due to tensor shape issues.")
 
                     if "encoder_hidden_states" in prepared_batch:
                         encoder_hidden_states = prepared_batch["encoder_hidden_states"]
@@ -5041,9 +5060,26 @@ class Trainer:
                                 self._timesteps_scatter_logged = True
                             else:
                                 wandb_logs["timesteps_scatter_table"] = self._timesteps_scatter_table
+                        # Experimental TwinFlow trajectory map (theory may be inaccurate; for debugging only).
+                        if getattr(self.config, "twinflow_enabled", False) and self.twinflow_traj_buffer:
+                            if self._twinflow_traj_table is None:
+                                self._twinflow_traj_table = wandb.Table(columns=["global_step", "sigma", "tt", "time_sign"])
+                            for step_id, sigma_val, tt_val, sign_val in self.twinflow_traj_buffer:
+                                self._twinflow_traj_table.add_data(step_id, sigma_val, tt_val, sign_val)
+                            if not self._twinflow_traj_logged:
+                                wandb_logs["twinflow_traj_map"] = wandb.plot.scatter(
+                                    self._twinflow_traj_table,
+                                    "sigma",
+                                    "tt",
+                                    title="TwinFlow trajectory map (experimental/theory unverified)",
+                                )
+                                self._twinflow_traj_logged = True
+                            else:
+                                wandb_logs["twinflow_traj_table"] = self._twinflow_traj_table
 
                     # Clear buffers
                     self.timesteps_buffer = []
+                    self.twinflow_traj_buffer = []
 
                     # Average out the luminance values of each batch, so that we can store that in this step.
                     if training_luminance_values:
