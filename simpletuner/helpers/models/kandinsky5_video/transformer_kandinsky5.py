@@ -183,12 +183,20 @@ class Kandinsky5TimeEmbeddings(nn.Module):
         self.in_layer = nn.Linear(model_dim, time_dim, bias=True)
         self.activation = nn.SiLU()
         self.out_layer = nn.Linear(time_dim, time_dim, bias=True)
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, time_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
     @torch.autocast(device_type="cuda", dtype=torch.float32)
-    def forward(self, time):
+    def forward(self, time, timestep_sign: Optional[torch.Tensor] = None):
         args = torch.outer(time, self.freqs.to(device=time.device))
         time_embed = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         time_embed = self.out_layer(self.activation(self.in_layer(time_embed)))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=time_embed.device)
+            time_embed = time_embed + self.time_sign_embed(sign_idx).to(
+                dtype=time_embed.dtype, device=time_embed.device
+            )
         return time_embed
 
 
@@ -691,6 +699,7 @@ class Kandinsky5Transformer3DModel(
         hidden_states: torch.Tensor,  # x
         encoder_hidden_states: torch.Tensor,  # text_embed
         timestep: torch.Tensor,  # time
+        timestep_sign: Optional[torch.Tensor] = None,
         pooled_projections: torch.Tensor,  # pooled_text_embed
         visual_rope_pos: Tuple[int, int, int],
         text_rope_pos: torch.LongTensor,
@@ -727,7 +736,7 @@ class Kandinsky5Transformer3DModel(
         batch_size = x.shape[0]
 
         text_embed = self.text_embeddings(text_embed)
-        time_embed = self.time_embeddings(time)
+        time_embed = self.time_embeddings(time, timestep_sign=timestep_sign)
         time_embed = time_embed + self.pooled_text_embeddings(pooled_text_embed)
         visual_embed = self.visual_embeddings(x)
         text_rope = self.text_rope_embeddings(text_rope_pos)
