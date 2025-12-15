@@ -19,8 +19,8 @@ from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import should_log
-from simpletuner.helpers.training.quantisation import MANUAL_QUANTIZATION_PRESETS, PIPELINE_QUANTIZATION_PRESETS
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
+from simpletuner.helpers.training.quantisation import MANUAL_QUANTIZATION_PRESETS, PIPELINE_QUANTIZATION_PRESETS
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import (
     ConfigField,
@@ -664,7 +664,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                     f"base_model_precision '{base_precision}' cannot be combined with manual text encoder quantization ({te_precision}). "
                     "Use pipeline presets for text encoders or disable manual quantization."
                 )
-    if args.quantization_config is not None and base_precision not in pipeline_quant_precisions and base_precision != "no_change":
+    if (
+        args.quantization_config is not None
+        and base_precision not in pipeline_quant_precisions
+        and base_precision != "no_change"
+    ):
         raise ValueError(
             "quantization_config is intended for pipeline-backed quantization. "
             f"Set base_model_precision to a pipeline preset ({', '.join(sorted(pipeline_quant_precisions))}) or 'no_change'."
