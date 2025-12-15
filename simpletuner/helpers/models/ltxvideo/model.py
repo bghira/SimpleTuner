@@ -15,6 +15,7 @@ from simpletuner.helpers.models.ltxvideo import (
 )
 from simpletuner.helpers.models.ltxvideo.autoencoder import AutoencoderKLLTXVideo
 from simpletuner.helpers.models.ltxvideo.transformer import LTXVideoTransformer3DModel
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import _get_rank
 
 logger = logging.getLogger(__name__)
@@ -304,6 +305,10 @@ class LTXVideo(VideoModelFoundation):
 
         # self.config.vae_enable_tiling = True
         # self.config.vae_enable_slicing = True
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     def custom_model_card_schedule_info(self):
         output_args = []

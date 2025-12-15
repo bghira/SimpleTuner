@@ -29,11 +29,14 @@ from diffusers.models.embeddings import Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
-from diffusers.utils import USE_PEFT_BACKEND, is_torchvision_available, scale_lora_layers, unscale_lora_layers
+from diffusers.utils import USE_PEFT_BACKEND, is_torchvision_available, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
+
+logger = logging.get_logger(__name__)
 
 if is_torchvision_available():
     from torchvision import transforms
@@ -518,6 +521,8 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         rope_scale: Tuple[float, float, float] = (2.0, 1.0, 1.0),
         concat_padding_mask: bool = True,
         extra_pos_embed_type: Optional[str] = "learnable",
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
         self.register_to_config(
@@ -534,6 +539,8 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
             rope_scale=rope_scale,
             concat_padding_mask=concat_padding_mask,
             extra_pos_embed_type=extra_pos_embed_type,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
         hidden_size = num_attention_heads * attention_head_dim
 
@@ -585,6 +592,12 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         )
 
         self.gradient_checkpointing = False
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
         # TREAD support
         self._tread_router = None
@@ -743,6 +756,12 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
+
         for bid, block in enumerate(self.transformer_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -762,6 +781,8 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
                         )
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
+            if musubi_offload_active and musubi_manager.is_managed_block(bid):
+                musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -802,6 +823,9 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
                         )
                         hidden_states = router.end_route(hidden_states, mask_info)
                         break
+
+            if musubi_offload_active and musubi_manager.is_managed_block(bid):
+                musubi_manager.stream_out(block)
 
         # 6. Output norm & projection & unpatchify
         hidden_states = self.norm_out(hidden_states, embedded_timestep, temb)

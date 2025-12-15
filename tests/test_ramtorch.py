@@ -51,6 +51,8 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIsInstance(model.linear1, _StubLinear)
         self.assertIsInstance(model.block[0], _StubLinear)
         self.assertIsInstance(model.block[1], nn.ReLU)
+        self.assertTrue(getattr(model.linear1.weight, "is_ramtorch", False))
+        self.assertTrue(getattr(model.block[0].weight, "is_ramtorch", False))
 
     def test_replace_linear_uses_replace_all_when_no_patterns(self):
         model = _SimpleModel()
@@ -68,6 +70,23 @@ class RamTorchUtilsTests(unittest.TestCase):
         # No replacements performed because replace_all is stubbed.
         self.assertIsInstance(model.linear1, nn.Linear)
         self.assertIsInstance(model.block[0], nn.Linear)
+
+    def test_mark_ddp_ignore_params_marks_ramtorch_names(self):
+        class _IgnoreModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear_a = nn.Linear(2, 2)
+                self.linear_b = nn.Linear(2, 2)
+                setattr(self.linear_b.weight, "is_ramtorch", True)
+                if self.linear_b.bias is not None:
+                    setattr(self.linear_b.bias, "is_ramtorch", True)
+
+        model = _IgnoreModel()
+        ignored = ramtorch_utils.mark_ddp_ignore_params(model)
+        self.assertEqual(ignored, 2)
+        ignore_set = getattr(model, "_ddp_params_and_buffers_to_ignore", set())
+        self.assertIn("linear_b.weight", ignore_set)
+        self.assertIn("linear_b.bias", ignore_set)
 
 
 class RamTorchConfigTests(unittest.TestCase):

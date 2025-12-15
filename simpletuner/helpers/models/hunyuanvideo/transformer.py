@@ -34,6 +34,8 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
@@ -591,6 +593,8 @@ class HunyuanVideo15Transformer3DModel(
         target_size: int = 640,  # did not name sample_size since it is in pixel spaces
         task_type: str = "i2v",
         use_meanflow: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
         self._tread_router = None
@@ -630,6 +634,12 @@ class HunyuanVideo15Transformer3DModel(
         self.proj_out = nn.Linear(inner_dim, patch_size_t * patch_size * patch_size * out_channels)
 
         self.gradient_checkpointing = False
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def forward(
         self,
@@ -768,9 +778,17 @@ class HunyuanVideo15Transformer3DModel(
         encoder_hidden_states = torch.stack(new_encoder_hidden_states)
         encoder_attention_mask = torch.stack(new_encoder_attention_mask)
 
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
+
         # 4. Transformer blocks
         if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for block in self.transformer_blocks:
+            for idx, block in enumerate(self.transformer_blocks):
+                if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                    musubi_manager.stream_in(block, hidden_states.device)
                 hidden_states, encoder_hidden_states = self._gradient_checkpointing_func(
                     block,
                     hidden_states,
@@ -779,9 +797,13 @@ class HunyuanVideo15Transformer3DModel(
                     encoder_attention_mask,
                     image_rotary_emb,
                 )
+                if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                    musubi_manager.stream_out(block)
 
         else:
-            for block in self.transformer_blocks:
+            for idx, block in enumerate(self.transformer_blocks):
+                if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                    musubi_manager.stream_in(block, hidden_states.device)
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
                     encoder_hidden_states,
@@ -789,6 +811,8 @@ class HunyuanVideo15Transformer3DModel(
                     encoder_attention_mask,
                     image_rotary_emb,
                 )
+                if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                    musubi_manager.stream_out(block)
 
         # 5. Output projection
         hidden_states = self.norm_out(hidden_states, temb)
