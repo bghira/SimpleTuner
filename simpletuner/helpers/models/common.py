@@ -2934,7 +2934,8 @@ class ModelFoundation(ABC):
                 beta2 = getattr(self.config, "scheduled_sampling_reflexflow_beta2", 1.0)
                 beta2 = 1.0 if beta2 is None else float(beta2)
                 if clean_pred is not None and biased_pred is not None:
-                    exposure = (biased_pred - clean_pred).detach()
+                    # Weight toward components that vanish in the rollout (clean > biased).
+                    exposure = (clean_pred - biased_pred).detach()
                     norm_dims = tuple(range(1, exposure.dim()))
                     exposure_norm = exposure.abs().sum(dim=norm_dims, keepdim=True).clamp_min(1e-6)
                     alpha = float(getattr(self.config, "scheduled_sampling_reflexflow_alpha", 1.0) or 0.0)
@@ -2949,7 +2950,8 @@ class ModelFoundation(ABC):
                     biased_latents = prepared_batch.get("noisy_latents")
                     clean_latents = prepared_batch.get("latents")
                     if biased_latents is not None and clean_latents is not None:
-                        target_vec = clean_latents - biased_latents
+                        # Align with the flow-matching vector field (clean -> noise).
+                        target_vec = biased_latents - clean_latents
                         flat_target = target_vec.reshape(target_vec.shape[0], -1)
                         flat_pred = model_pred.reshape(model_pred.shape[0], -1)
                         target_norm = torch.norm(flat_target, dim=1, keepdim=True).clamp_min(1e-6)
