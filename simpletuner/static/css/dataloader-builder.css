@@ -1771,6 +1771,7 @@
     font-size: 0.75rem !important;
     white-space: nowrap;
     line-height: 1.3;
+    scrollbar-width: none;
 }
 
 /* Fix resize inside input-group - use CSS Grid instead of Flex
@@ -1801,6 +1802,12 @@
     border-top-left-radius: 0;
     border-bottom-left-radius: 0;
     margin-left: -1px;
+}
+
+/* Hide scrollbars on resizable path inputs to keep the field compact */
+textarea.resizable-path::-webkit-scrollbar {
+    width: 0;
+    height: 0;
 }
 
 /* Form hints - subtle */
