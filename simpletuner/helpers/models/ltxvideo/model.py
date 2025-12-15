@@ -224,6 +224,7 @@ class LTXVideo(VideoModelFoundation):
             "encoder_hidden_states": prepared_batch["encoder_hidden_states"],
             "encoder_attention_mask": prepared_batch["encoder_attention_mask"],
             "timestep": prepared_batch["timesteps"],
+            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
             "return_dict": False,
             "num_frames": num_frames,
             "rope_interpolation_scale": rope_interpolation_scale,
