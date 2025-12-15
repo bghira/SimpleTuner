@@ -3282,7 +3282,9 @@ class Trainer:
         is_fsdp2_run = fsdp_enabled and fsdp_version == 2 and self.accelerator.distributed_type == DistributedType.FSDP
 
         should_log = self.accelerator.is_main_process
-        instantiate_on_rank = should_log or is_fsdp2_run
+        # TwinFlow requires EMA on all ranks for teacher passes; create EMA everywhere when enabled.
+        twinflow_requires_full_rank = bool(getattr(self.config, "twinflow_enabled", False))
+        instantiate_on_rank = should_log or is_fsdp2_run or twinflow_requires_full_rank
         if should_log:
             logger.info("Using EMA. Creating EMAModel.")
 
@@ -3314,6 +3316,8 @@ class Trainer:
 
         self.accelerator.wait_for_everyone()
         # same about running on all processes to ensure alignment.
+        # Pass EMA model reference to the model for TwinFlow teacher access
+        self.model.ema_model = self.ema_model
         self.model.post_ema_creation()
 
     def init_hooks(self):
@@ -3844,9 +3848,7 @@ class Trainer:
         is_accelerator_target = destination == "accelerator"
         fsdp_active = bool(getattr(self.config, "use_fsdp", False))
         fsdp_version = None
-        pipeline_base_quantization = bool(
-            getattr(self.config, "pipeline_quantization_base", False)
-        )
+        pipeline_base_quantization = bool(getattr(self.config, "pipeline_quantization_base", False))
         if self.accelerator and hasattr(self.accelerator, "state"):
             fsdp_plugin = getattr(self.accelerator.state, "fsdp_plugin", None)
             if fsdp_plugin is not None:
@@ -3876,7 +3878,15 @@ class Trainer:
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
         if self.model.get_trained_component() is not None:
             should_move_trained_component = (
-                not any([fsdp_active, group_offload_requested, group_offload_configured, musubi_block_swap_active, ramtorch_enabled])
+                not any(
+                    [
+                        fsdp_active,
+                        group_offload_requested,
+                        group_offload_configured,
+                        musubi_block_swap_active,
+                        ramtorch_enabled,
+                    ]
+                )
                 and is_accelerator_target
                 and not pipeline_base_quantization
             )
