@@ -3873,9 +3873,10 @@ class Trainer:
         group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
         group_offload_configured = getattr(self.model, "group_offload_configured", False)
         musubi_block_swap_active = getattr(self.config, "musubi_blocks_to_swap", 0) or 0 > 0
+        ramtorch_enabled = getattr(self.config, "ramtorch", False)
         if self.model.get_trained_component() is not None:
             should_move_trained_component = (
-                not any([fsdp_active, group_offload_requested, group_offload_configured, musubi_block_swap_active])
+                not any([fsdp_active, group_offload_requested, group_offload_configured, musubi_block_swap_active, ramtorch_enabled])
                 and is_accelerator_target
                 and not pipeline_base_quantization
             )

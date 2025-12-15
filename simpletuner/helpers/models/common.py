@@ -1151,6 +1151,7 @@ class ModelFoundation(ABC):
                 (should_configure_offload and self.group_offload_configured),
                 self.config.musubi_blocks_to_swap or 0 > 0,
                 self.config.quantize_via == "pipeline",
+                self.config.ramtorch,
             ]
         )
 
