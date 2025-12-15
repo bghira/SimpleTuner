@@ -290,19 +290,19 @@ class ReflexFlowLossTests(unittest.TestCase):
     def test_reflexflow_weighting_and_adr(self):
         model = _FlowLossModel()
         latents = torch.zeros((1, 1, 1, 1), dtype=torch.float32)
-        noise = torch.zeros_like(latents)
+        noise = torch.ones_like(latents)
         prepared_batch = {
             "latents": latents,
             "noise": noise,
             "noisy_latents": torch.full_like(latents, 0.3),
             "timesteps": torch.tensor([1.0]),
-            "_reflexflow_clean_pred": torch.full_like(latents, 0.4),
-            "_reflexflow_biased_pred": torch.full_like(latents, 0.6),
+            "_reflexflow_clean_pred": torch.full_like(latents, 0.6),
+            "_reflexflow_biased_pred": torch.full_like(latents, 0.4),
         }
-        model_output = {"model_prediction": torch.full_like(latents, -0.3)}
+        model_output = {"model_prediction": torch.full_like(latents, 0.7)}
 
         loss = model.loss(prepared_batch, model_output, apply_conditioning_mask=False)
-        # Base loss (0.09) is doubled by FC weighting; ADR term is zero when pointing back to the clean sample.
+        # Base loss (0.09) is doubled by FC weighting; ADR term is zero when aligned with the noise-facing flow vector.
         self.assertAlmostEqual(loss.item(), 0.18, places=4)
 
 
