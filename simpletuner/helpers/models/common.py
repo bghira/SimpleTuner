@@ -8,7 +8,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Mapping, Optional
 
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
@@ -49,6 +49,11 @@ from simpletuner.helpers.training.lora_format import (
 )
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.quantisation import (
+    PIPELINE_QUANTIZATION_PRESETS,
+    build_gguf_quantization_config,
+    get_pipeline_quantization_builder,
+)
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
@@ -62,7 +67,17 @@ else:
     logger.setLevel("ERROR")
 
 
-flow_matching_model_families = ["flux", "sana", "ltxvideo", "wan", "sd3", "chroma", "hunyuanvideo", "longcat_image"]
+flow_matching_model_families = [
+    "flux",
+    "sana",
+    "ltxvideo",
+    "wan",
+    "sd3",
+    "chroma",
+    "hunyuanvideo",
+    "longcat_image",
+    "longcat_video",
+]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
     "kolors": "terminusresearch/kwai-kolors-1.0",
@@ -80,12 +95,12 @@ upstream_config_sources = {
 
 
 def get_model_config_path(model_family: str, model_path: str):
-    if model_path is not None and model_path.endswith(".safetensors"):
+    if model_path is not None and model_path.endswith((".safetensors", ".gguf")):
         if model_family in upstream_config_sources:
             return upstream_config_sources[model_family]
         else:
             raise ValueError(
-                "Cannot find noise schedule config for .safetensors file in architecture {}".format(model_family)
+                "Cannot find noise schedule config for single-file checkpoint in architecture {}".format(model_family)
             )
 
     return model_path
@@ -261,6 +276,7 @@ class ModelFoundation(ABC):
         self._maybe_enable_reflexflow_default()
         self.assistant_adapter_name = "assistant"
         self.assistant_lora_loaded = False
+        self.pipeline_quantization_active = False
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -555,6 +571,9 @@ class ModelFoundation(ABC):
                 use_dora=getattr(self.config, "use_dora", False),
                 **lora_config_kwargs,
             )
+
+        if self._ramtorch_enabled():
+            ramtorch_utils.register_lora_custom_module(self.lora_config)
 
         if getattr(self.config, "controlnet", False):
             self.controlnet.add_adapter(self.lora_config)
@@ -1127,7 +1146,14 @@ class ModelFoundation(ABC):
             and isinstance(target_device_obj, torch.device)
             and target_device_obj == accelerator_device
         )
-        skip_moving_trained_component = should_configure_offload and self.group_offload_configured
+        skip_moving_trained_component = any(
+            [
+                (should_configure_offload and self.group_offload_configured),
+                self.config.musubi_blocks_to_swap or 0 > 0,
+                self.config.quantize_via == "pipeline",
+                self.config.ramtorch,
+            ]
+        )
 
         if self.model is not None and not skip_moving_trained_component:
             model_ref = self.unwrap_model(model=self.model)
@@ -1401,6 +1427,7 @@ class ModelFoundation(ABC):
                 text_encoder_precision = getattr(
                     self.config, precision_attr, getattr(self.config, f"{attr_name}_precision", None)
                 )
+                pipeline_preset = text_encoder_precision if text_encoder_precision in PIPELINE_QUANTIZATION_PRESETS else None
                 # load_tes returns a variant and three text encoders
                 signature = inspect.signature(text_encoder_config["model"])
                 extra_kwargs = {}
@@ -1413,13 +1440,27 @@ class ModelFoundation(ABC):
                 if text_encoder_config.get("path", None) is not None:
                     text_encoder_path = text_encoder_config.get("path")
                 requires_quant = text_encoder_config.get("required_quantisation_level", None)
+                quantization_config = None
+                if (
+                    getattr(self.config, "quantize_via", None) == "pipeline"
+                    or pipeline_preset is not None
+                    or getattr(self.config, "quantization_config", None) is not None
+                ):
+                    quantization_config = self._build_component_quantization_config(
+                        component_keys=[attr_name, f"text_encoder_{text_encoder_idx}", "text_encoder"],
+                        preset=pipeline_preset,
+                    )
                 if requires_quant is not None and requires_quant == "int4_weight_only":
                     from torchao.quantization import Int4WeightOnlyConfig
                     from transformers import TorchAoConfig
 
                     extra_kwargs["device_map"] = "auto"
                     quant_config = Int4WeightOnlyConfig(group_size=128)
-                    extra_kwargs["quantization_config"] = TorchAoConfig(quant_type=quant_config)
+                    quantization_config = quantization_config or TorchAoConfig(quant_type=quant_config)
+                if quantization_config is not None:
+                    extra_kwargs["quantization_config"] = quantization_config
+                    self.pipeline_quantization_active = True
+                    setattr(self.config, "pipeline_quantization", True)
 
                 text_encoder_kwargs = {
                     "pretrained_model_name_or_path": text_encoder_path,
@@ -1439,7 +1480,7 @@ class ModelFoundation(ABC):
                 if self._ramtorch_text_encoders_requested():
                     self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
 
-                if move_to_device and text_encoder_precision in ["no_change", None]:
+                if move_to_device and text_encoder_precision in ["no_change", None] and quantization_config is None:
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,
@@ -1513,6 +1554,54 @@ class ModelFoundation(ABC):
         """
         return pretrained_load_args
 
+    def _extract_quantization_entry(self, raw_config, component_keys: list[str]):
+        if raw_config is None:
+            return None
+        try:
+            from diffusers import DiffusersPipelineQuantizationConfig
+
+            if isinstance(raw_config, DiffusersPipelineQuantizationConfig):
+                for key in component_keys:
+                    entry = getattr(raw_config, key, None)
+                    if entry is not None:
+                        return entry
+                return getattr(raw_config, "default", None)
+        except Exception:
+            # Avoid failing when diffusers is unavailable or the config type differs.
+            pass
+
+        if isinstance(raw_config, Mapping):
+            for key in component_keys:
+                if key in raw_config:
+                    return raw_config[key]
+            if "default" in raw_config:
+                return raw_config["default"]
+
+            return None
+
+        return raw_config
+
+    def _build_component_quantization_config(self, component_keys: list[str], preset: Optional[str] = None):
+        raw_config = getattr(self.config, "quantization_config", None)
+        entry = self._extract_quantization_entry(raw_config, component_keys)
+        preset_candidate = preset
+        if isinstance(entry, str):
+            preset_candidate = entry
+
+        builder = get_pipeline_quantization_builder(preset_candidate)
+        if builder is None and isinstance(entry, Mapping):
+            entry_keys = set(entry.keys())
+            if any(key.startswith("bnb_") or key == "load_in_4bit" for key in entry_keys):
+                builder = get_pipeline_quantization_builder("nf4-bnb")
+            elif "quant_type" in entry_keys or "modules_to_not_convert" in entry_keys:
+                builder = get_pipeline_quantization_builder("int4-torchao")
+        # If we have a known preset builder, prefer it and treat mapping entries as overrides.
+        if builder is not None and (entry is None or isinstance(entry, (Mapping, str))):
+            overrides = entry if isinstance(entry, Mapping) else None
+            return builder(getattr(self.config, "weight_dtype", None), overrides)
+
+        return entry
+
     def load_model(self, move_to_device: bool = True):
         self._group_offload_configured = False
         pretrained_load_args = {
@@ -1521,25 +1610,58 @@ class ModelFoundation(ABC):
             "torch_dtype": self.config.weight_dtype,
             "use_safetensors": True,
         }
-        if "nf4-bnb" == self.config.base_model_precision:
-            from diffusers import BitsAndBytesConfig
-
-            pretrained_load_args["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=self.config.weight_dtype,
-            )
         loader_fn = self.MODEL_CLASS.from_pretrained
         model_path = (
             self.config.pretrained_transformer_model_name_or_path
             if self.MODEL_TYPE is ModelTypes.TRANSFORMER
             else self.config.pretrained_unet_model_name_or_path
         ) or self.config.pretrained_model_name_or_path
-        if self.config.pretrained_model_name_or_path.endswith(".safetensors"):
+        is_safetensors = isinstance(model_path, str) and model_path.endswith(".safetensors")
+        is_gguf = isinstance(model_path, str) and model_path.endswith(".gguf")
+        if isinstance(self.config.pretrained_model_name_or_path, str) and self.config.pretrained_model_name_or_path.endswith(
+            (".safetensors", ".gguf")
+        ):
             self.config.pretrained_model_name_or_path = get_model_config_path(self.config.model_family, model_path)
-        if model_path.endswith(".safetensors"):
+        if is_safetensors or is_gguf:
             loader_fn = self.MODEL_CLASS.from_single_file
+        if is_gguf:
+            pretrained_load_args["use_safetensors"] = False
+        if is_gguf:
+            setattr(self.config, "pipeline_quantization", True)
+            setattr(self.config, "pipeline_quantization_base", True)
+        if getattr(self.config, "quantize_via", None) == "pipeline":
+            setattr(self.config, "pipeline_quantization", True)
+
+        base_pipeline_preset = (
+            self.config.base_model_precision if self.config.base_model_precision in PIPELINE_QUANTIZATION_PRESETS else None
+        )
+        if base_pipeline_preset is not None:
+            setattr(self.config, "pipeline_quantization", True)
+            setattr(self.config, "pipeline_quantization_base", True)
+        quantization_config = None
+        if is_gguf:
+            quantization_config = build_gguf_quantization_config(model_path)
+        elif (
+            getattr(self.config, "quantize_via", None) == "pipeline"
+            or base_pipeline_preset is not None
+            or getattr(self.config, "quantization_config", None) is not None
+        ):
+            quantization_config = self._build_component_quantization_config(
+                component_keys=[key for key in [self.MODEL_TYPE.value, "model", self.MODEL_SUBFOLDER] if key],
+                preset=base_pipeline_preset,
+            )
+
+        if quantization_config is not None:
+            pretrained_load_args["quantization_config"] = quantization_config
+            self.pipeline_quantization_active = True
+            setattr(self.config, "pipeline_quantization", True)
+            setattr(self.config, "pipeline_quantization_base", True)
+        elif is_gguf:
+            # Failed to build a quantization_config but a GGUF checkpoint was requested.
+            raise RuntimeError(
+                f"GGUF checkpoint {model_path} requires GGUFQuantizationConfig support but no quantization_config could be constructed."
+            )
+
         pretrained_load_args = self.pretrained_load_args(pretrained_load_args)
         model_subfolder = self.MODEL_SUBFOLDER
         if self.MODEL_TYPE is ModelTypes.TRANSFORMER and self.config.pretrained_transformer_model_name_or_path == model_path:
@@ -1743,6 +1865,12 @@ class ModelFoundation(ABC):
             return self.unwrap_model(model=self.model if base_model else None)
         return self.controlnet if self.config.controlnet and not base_model else self.model
 
+    def _load_processor_for_pipeline(self):
+        """
+        Hook for subclasses to load or return any processor modules required by their pipelines.
+        """
+        return getattr(self, "processor", None)
+
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
@@ -1805,6 +1933,12 @@ class ModelFoundation(ABC):
                     pipeline_kwargs[tokenizer_attr] = None
 
             text_encoder_idx += 1
+
+        if "processor" in pipeline_init_signature.parameters and "processor" not in pipeline_kwargs:
+            processor = self._load_processor_for_pipeline()
+            if processor is None:
+                raise ValueError(f"{pipeline_class.__name__} requires a processor but none was provided or could be loaded.")
+            pipeline_kwargs["processor"] = processor
 
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
             pipeline_kwargs["controlnet"] = self.controlnet
@@ -2800,7 +2934,8 @@ class ModelFoundation(ABC):
                 beta2 = getattr(self.config, "scheduled_sampling_reflexflow_beta2", 1.0)
                 beta2 = 1.0 if beta2 is None else float(beta2)
                 if clean_pred is not None and biased_pred is not None:
-                    exposure = (biased_pred - clean_pred).detach()
+                    # Weight toward components that vanish in the rollout (clean > biased).
+                    exposure = (clean_pred - biased_pred).detach()
                     norm_dims = tuple(range(1, exposure.dim()))
                     exposure_norm = exposure.abs().sum(dim=norm_dims, keepdim=True).clamp_min(1e-6)
                     alpha = float(getattr(self.config, "scheduled_sampling_reflexflow_alpha", 1.0) or 0.0)
@@ -2815,7 +2950,8 @@ class ModelFoundation(ABC):
                     biased_latents = prepared_batch.get("noisy_latents")
                     clean_latents = prepared_batch.get("latents")
                     if biased_latents is not None and clean_latents is not None:
-                        target_vec = clean_latents - biased_latents
+                        # Align with the flow-matching vector field (clean -> noise).
+                        target_vec = biased_latents - clean_latents
                         flat_target = target_vec.reshape(target_vec.shape[0], -1)
                         flat_pred = model_pred.reshape(model_pred.shape[0], -1)
                         target_norm = torch.norm(flat_target, dim=1, keepdim=True).clamp_min(1e-6)

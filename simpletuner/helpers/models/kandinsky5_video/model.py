@@ -14,6 +14,7 @@ from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_i2v import 
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_t2v import Kandinsky5T2VPipeline
 from simpletuner.helpers.models.kandinsky5_video.transformer_kandinsky5 import Kandinsky5Transformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger(__name__)
@@ -566,6 +567,10 @@ class Kandinsky5Video(VideoModelFoundation):
         )
 
         logger.info("TREAD training is enabled for Kandinsky5-Video")
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
 
 Kandinsky5Video.register_config_requirements()

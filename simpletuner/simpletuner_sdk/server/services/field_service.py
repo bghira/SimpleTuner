@@ -1780,7 +1780,7 @@ class FieldService:
                 extra_classes = field.get("extra_classes", "")
                 flag = "danger-mode-target"
                 field["extra_classes"] = f"{extra_classes} {flag}".strip()
-            elif field_id in {"base_model_precision", "text_encoder_1_precision", "quantize_via"}:
+            elif field_id in {"base_model_precision", "text_encoder_1_precision", "quantize_via", "quantization_config"}:
                 if is_lora_type:
                     field.pop("disabled", None)
                     continue

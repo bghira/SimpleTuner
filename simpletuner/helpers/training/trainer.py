@@ -69,6 +69,7 @@ from simpletuner.helpers.training.optimizer_param import (
 )
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.peft_init import init_lokr_network_with_perturbed_normal
+from simpletuner.helpers.training.quantisation import PIPELINE_QUANTIZATION_PRESETS
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
@@ -2076,15 +2077,34 @@ class Trainer:
             self.accelerator, self.config
         )
         self.config.base_weight_dtype = self.config.weight_dtype
+        base_model_precision = getattr(self.config, "base_model_precision", "no_change") or "no_change"
+        quantization_config_present = getattr(self.config, "quantization_config", None) not in (None, "", "None")
+        quantize_via_pipeline = getattr(self.config, "quantize_via", "accelerator") == "pipeline"
+        base_paths = [
+            getattr(self.config, "pretrained_model_name_or_path", None),
+            getattr(self.config, "pretrained_unet_model_name_or_path", None),
+            getattr(self.config, "pretrained_transformer_model_name_or_path", None),
+        ]
+
+        def _is_gguf_path(candidate: object) -> bool:
+            return isinstance(candidate, str) and candidate.endswith(".gguf")
+
+        gguf_requested = any(_is_gguf_path(path) for path in base_paths if path)
+        base_pipeline_precision = base_model_precision in PIPELINE_QUANTIZATION_PRESETS
         self.config.is_quanto = False
         self.config.is_torchao = False
         self.config.is_bnb = False
-        if "quanto" in self.config.base_model_precision:
-            self.config.is_quanto = True
-        elif "torchao" in self.config.base_model_precision:
-            self.config.is_torchao = True
-        elif "bnb" in self.config.base_model_precision:
+        self.config.pipeline_quantization = bool(
+            quantize_via_pipeline or quantization_config_present or base_pipeline_precision or gguf_requested
+        )
+        self.config.pipeline_quantization_base = bool(base_pipeline_precision or gguf_requested)
+        if "bnb" in base_model_precision:
             self.config.is_bnb = True
+        if not base_pipeline_precision:
+            if "quanto" in base_model_precision:
+                self.config.is_quanto = True
+            elif "torchao" in base_model_precision:
+                self.config.is_torchao = True
         # if text_encoder_1_precision -> text_encoder_4_precision has quanto we'll mark that as well
         for i in range(1, 5):
             if isinstance(getattr(self.config, f"text_encoder_{i}_precision", None), str) and getattr(
@@ -2507,9 +2527,11 @@ class Trainer:
 
     def init_precision(self, preprocessing_models_only: bool = False, ema_only: bool = False):
         self.config.enable_adamw_bf16 = True if self.config.weight_dtype == torch.bfloat16 else False
-        quantization_device = "cpu" if self.config.quantize_via == "cpu" else self.accelerator.device
+        quantize_via = getattr(self.config, "quantize_via", "accelerator")
+        quantization_device = "cpu" if quantize_via == "cpu" else self.accelerator.device
+        pipeline_base_quantization = bool(getattr(self.config, "pipeline_quantization_base", False))
 
-        if "bnb" in self.config.base_model_precision:
+        if "bnb" in self.config.base_model_precision or pipeline_base_quantization:
             # can't cast or move bitsandbytes models
             return
 
@@ -2533,21 +2555,27 @@ class Trainer:
         if self.config.is_quanto:
             with self.accelerator.local_main_process_first():
                 if ema_only:
-                    self.quantise_model(ema=self.ema_model, args=self.config)
-
+                    if not pipeline_base_quantization:
+                        self.quantise_model(ema=self.ema_model, args=self.config)
                     return
-                if self.config.controlnet:
-                    # we'll do the base model first
-                    self.quantise_model(
-                        model=(self.model.unwrap_model(model=self.model.model) if not preprocessing_models_only else None),
-                        text_encoders=None,
-                        controlnet=None,
-                        ema=self.ema_model,
-                        args=self.config,
-                    )
+                self.quantise_model(
+                    model=(
+                        None
+                        if preprocessing_models_only or pipeline_base_quantization
+                        else self.model.unwrap_model(model=self.model.model)
+                    ),
+                    text_encoders=None,
+                    controlnet=None,
+                    ema=self.ema_model if not pipeline_base_quantization else None,
+                    args=self.config,
+                )
 
                 self.quantise_model(
-                    model=(self.model.get_trained_component() if not preprocessing_models_only else None),
+                    model=(
+                        None
+                        if preprocessing_models_only or pipeline_base_quantization
+                        else self.model.get_trained_component()
+                    ),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=None,
@@ -2556,7 +2584,8 @@ class Trainer:
         elif self.config.is_torchao:
             with self.accelerator.local_main_process_first():
                 if ema_only:
-                    self.ema_model = self.quantise_model(ema=self.ema_model, args=self.config, return_dict=True)["ema"]
+                    if not pipeline_base_quantization:
+                        self.ema_model = self.quantise_model(ema=self.ema_model, args=self.config, return_dict=True)["ema"]
 
                     return
                 (
@@ -2565,7 +2594,11 @@ class Trainer:
                     self.controlnet,
                     self.ema_model,
                 ) = self.quantise_model(
-                    model=(self.model.get_trained_component(base_model=True) if not preprocessing_models_only else None),
+                    model=(
+                        None
+                        if preprocessing_models_only or pipeline_base_quantization
+                        else self.model.get_trained_component(base_model=True)
+                    ),
                     text_encoders=self.model.text_encoders,
                     controlnet=None,
                     ema=self.ema_model,
@@ -2580,7 +2613,9 @@ class Trainer:
                         _,
                     ) = self.quantise_model(
                         model=(
-                            self.model.get_trained_component(base_model=False) if not preprocessing_models_only else None
+                            None
+                            if preprocessing_models_only or pipeline_base_quantization
+                            else self.model.get_trained_component(base_model=False)
                         ),
                         args=self.config,
                     )
@@ -3809,6 +3844,9 @@ class Trainer:
         is_accelerator_target = destination == "accelerator"
         fsdp_active = bool(getattr(self.config, "use_fsdp", False))
         fsdp_version = None
+        pipeline_base_quantization = bool(
+            getattr(self.config, "pipeline_quantization_base", False)
+        )
         if self.accelerator and hasattr(self.accelerator, "state"):
             fsdp_plugin = getattr(self.accelerator.state, "fsdp_plugin", None)
             if fsdp_plugin is not None:
@@ -3834,14 +3872,18 @@ class Trainer:
 
         group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
         group_offload_configured = getattr(self.model, "group_offload_configured", False)
-        logger.info(
-            f"Moving the {str(self.model.get_trained_component().__class__)} to {target_device} in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
-        )
+        musubi_block_swap_active = getattr(self.config, "musubi_blocks_to_swap", 0) or 0 > 0
+        ramtorch_enabled = getattr(self.config, "ramtorch", False)
         if self.model.get_trained_component() is not None:
-            should_move_trained_component = not (
-                fsdp_active and group_offload_requested and group_offload_configured and is_accelerator_target
+            should_move_trained_component = (
+                not any([fsdp_active, group_offload_requested, group_offload_configured, musubi_block_swap_active, ramtorch_enabled])
+                and is_accelerator_target
+                and not pipeline_base_quantization
             )
             if should_move_trained_component:
+                logger.info(
+                    f"Moving the {str(self.model.get_trained_component().__class__)} to {target_device} in {self.config.weight_dtype if not self.config.is_quantized else self.config.base_model_precision} precision."
+                )
                 if self.config.is_quantized:
                     self.model.get_trained_component(unwrap_model=False).to(target_device)
                 else:
@@ -3878,7 +3920,11 @@ class Trainer:
 
         if self.config.controlnet:
             self.model.get_trained_component(unwrap_model=False).train()
-            self.model.unwrap_model(self.model.model).to(device=target_device, dtype=self.config.weight_dtype)
+            if not pipeline_base_quantization:
+                if self.config.is_quantized:
+                    self.model.unwrap_model(self.model.model).to(device=target_device)
+                else:
+                    self.model.unwrap_model(self.model.model).to(device=target_device, dtype=self.config.weight_dtype)
             if self.config.train_text_encoder:
                 logger.warning("Unknown results will occur when finetuning the text encoder alongside ControlNet.")
 

@@ -323,6 +323,11 @@ class CallbackService:
             self._broadcast_progress_reset(job_id, status=status)
             current_job = APIState.get_state("current_job_id")
             if job_id and current_job == job_id:
+                logger.info(
+                    "Clearing current_job_id=%s due to callback status event: %s",
+                    job_id,
+                    status,
+                )
                 APIState.set_state("current_job_id", None)
         elif status in {"completed", "success"}:
             progress_state = APIState.get_state("training_progress") or {}
@@ -333,6 +338,11 @@ class CallbackService:
             self._clear_startup_stages()  # Clear all stages on completion
             current_job = APIState.get_state("current_job_id")
             if job_id and current_job == job_id:
+                logger.info(
+                    "Clearing current_job_id=%s due to callback status event: %s",
+                    job_id,
+                    status,
+                )
                 APIState.set_state("current_job_id", None)
         elif status == "running":
             # Training has started running - clear initialization lifecycle stages

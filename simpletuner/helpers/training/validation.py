@@ -1339,11 +1339,18 @@ class Validation:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROL]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
-    def _gather_prompt_embeds(self, validation_prompt: str, validation_shortname: str, validation_input_image=None):
-        # For validation prompts, use shortname as cache key for lookup
+    def _gather_prompt_embeds(
+        self,
+        validation_prompt: str,
+        validation_shortname: str,
+        validation_input_image=None,
+        cache_shortname: str | None = None,
+    ):
+        # For validation prompts, use the cache_shortname (defaults to validation_shortname) as cache key for lookup.
+        cache_key = cache_shortname or validation_shortname
         prompt_record = {
             "prompt": validation_prompt,
-            "key": validation_shortname,
+            "key": cache_key,
         }
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=True)
 
@@ -1978,6 +1985,146 @@ class Validation:
                 "The current pipeline does not support loading LoRA adapters. "
                 "Remove --validation_adapter_path/--validation_adapter_config to continue."
             )
+
+        def _snapshot_requires_grad(module):
+            snapshot = {}
+            for _, comp in getattr(module, "components", {}).items() if hasattr(module, "components") else []:
+                if not isinstance(comp, torch.nn.Module):
+                    continue
+                for param in comp.parameters():
+                    snapshot[id(param)] = param.requires_grad
+            if isinstance(module, torch.nn.Module):
+                for param in module.parameters():
+                    snapshot.setdefault(id(param), param.requires_grad)
+            return snapshot
+
+        def _restore_requires_grad(module, snapshot: dict[int, bool]):
+            if not snapshot:
+                return
+            for _, comp in getattr(module, "components", {}).items() if hasattr(module, "components") else []:
+                if not isinstance(comp, torch.nn.Module):
+                    continue
+                for param in comp.parameters():
+                    try:
+                        param.requires_grad = snapshot.get(id(param), param.requires_grad)
+                    except Exception:
+                        continue
+            if isinstance(module, torch.nn.Module):
+                for param in module.parameters():
+                    try:
+                        param.requires_grad = snapshot.get(id(param), param.requires_grad)
+                    except Exception:
+                        continue
+
+        try:
+            from simpletuner.helpers.utils import ramtorch as ramtorch_utils
+
+            if ramtorch_utils.is_available():
+                ramtorch_utils.ensure_available()
+        except Exception:
+            pass
+        # Handle torch.compile OptimizedModules by temporarily unwrapping to _orig_mod for adapter loading.
+        compiled_modules: dict[str, Any] = {}
+
+        def _needs_orig_mod_patch():
+            try:
+                for _, module in pipeline.named_modules():
+                    if isinstance(_, str) and _.startswith("_orig_mod"):
+                        return True
+                    if isinstance(_, str) and "._orig_mod." in _:
+                        return True
+            except Exception:
+                pass
+            return False
+
+        def _patch_peft_for_compiled():
+            if not _needs_orig_mod_patch():
+                return
+            try:
+                import copy
+                import peft.mapping as peft_mapping
+                from peft.tuners.tuners_utils import BaseTuner
+            except Exception:
+                return
+
+            def _dup_state(state_dict):
+                if not isinstance(state_dict, dict):
+                    return state_dict
+                patched = copy.copy(state_dict)
+                for k, v in state_dict.items():
+                    if isinstance(k, str) and not k.startswith("_orig_mod."):
+                        pref = f"_orig_mod.{k}"
+                        if pref not in patched:
+                            patched[pref] = v
+                return patched
+
+            if not getattr(peft_mapping.inject_adapter_in_model, "_orig_mod_patch", False):
+                orig_inject = peft_mapping.inject_adapter_in_model
+
+                def _wrapped_inject(peft_config, model, adapter_name: str | None = None, *a, **kw):
+                    sd = kw.get("state_dict")
+                    if sd is None and a:
+                        sd = a[0]
+                        a = a[1:]
+                    sd = _dup_state(sd)
+                    if sd is not None:
+                        kw["state_dict"] = sd
+                    return orig_inject(peft_config, model, adapter_name=adapter_name, *a, **kw)
+
+                _wrapped_inject._orig_mod_patch = True
+                peft_mapping.inject_adapter_in_model = _wrapped_inject  # type: ignore
+
+            if not getattr(BaseTuner.inject_adapter, "_orig_mod_patch", False):
+                orig_base = BaseTuner.inject_adapter
+
+                def _wrapped_base(self, peft_config, model, adapter_name="default", *a, **kw):
+                    targets = getattr(peft_config, "target_modules", None)
+                    if targets:
+                        tl = [targets] if isinstance(targets, str) else list(targets)
+                        pref = [f"_orig_mod.{t}" for t in tl if isinstance(t, str) and not t.startswith("_orig_mod.")]
+                        if pref:
+                            peft_config.target_modules = list(dict.fromkeys(tl + pref))
+                    sd = kw.get("state_dict")
+                    if sd is None and a:
+                        sd = a[0]
+                        a = a[1:]
+                    sd = _dup_state(sd)
+                    if sd is not None:
+                        kw["state_dict"] = sd
+                    return orig_base(self, peft_config, model, adapter_name, *a, **kw)
+
+                _wrapped_base._orig_mod_patch = True
+                BaseTuner.inject_adapter = _wrapped_base  # type: ignore[assignment]
+
+        def _unwrap_compiled_components():
+            if not hasattr(pipeline, "components") or not isinstance(pipeline.components, dict):
+                return
+            for name, module in list(pipeline.components.items()):
+                if not hasattr(module, "_orig_mod"):
+                    continue
+                compiled_modules[name] = module
+                try:
+                    orig = module._orig_mod
+                    pipeline.components[name] = orig
+                    if hasattr(pipeline, name):
+                        setattr(pipeline, name, orig)
+                except Exception:
+                    continue
+
+        def _restore_compiled_components():
+            if not compiled_modules:
+                return
+            for name, module in compiled_modules.items():
+                try:
+                    pipeline.components[name] = module
+                    if hasattr(pipeline, name):
+                        setattr(pipeline, name, module)
+                except Exception:
+                    continue
+
+        _patch_peft_for_compiled()
+        _unwrap_compiled_components()
+        requires_grad_snapshot = _snapshot_requires_grad(pipeline)
         adapter_names: list[str] = []
         adapter_scales: list[float] = []
         for idx, adapter in enumerate(adapter_run.adapters):
@@ -2000,6 +2147,8 @@ class Validation:
             yield
         finally:
             self._remove_validation_adapters(pipeline, adapter_names)
+            _restore_requires_grad(pipeline, requires_grad_snapshot)
+            _restore_compiled_components()
 
     def _set_validation_adapter_weights(self, pipeline, adapter_names: list[str], adapter_scales: list[float]):
         if not adapter_names:
@@ -2245,6 +2394,7 @@ class Validation:
             item.conditioning,
             validation_type,
             adapter_strength=item.adapter_strength,
+            cache_shortname=item.shortname,
         )
         return {
             "index": item.index,
@@ -2714,6 +2864,7 @@ class Validation:
         validation_input_image=None,
         validation_type=None,
         adapter_strength: float | None = None,
+        cache_shortname: str | None = None,
     ):
         """Generate validation images for a single prompt."""
         # Placeholder for actual image generation and logging
@@ -2728,6 +2879,8 @@ class Validation:
         resolutions = self.validation_resolutions if not is_audio else [(0, 0)]
         baseline_strength = self._baseline_adapter_strength()
         self._set_adapter_strength(adapter_strength)
+
+        cache_key = cache_shortname or validation_shortname
 
         for resolution in resolutions:
             extra_validation_kwargs = {}
@@ -2786,7 +2939,7 @@ class Validation:
                 extra_validation_kwargs["skip_layer_guidance_scale"] = float(self.config.validation_guidance_skip_scale)
                 extra_validation_kwargs["skip_guidance_layers"] = list(self.config.validation_guidance_skip_layers)
 
-            extra_validation_kwargs["guidance_rescale"] = self.config.validation_guidance_rescale
+                extra_validation_kwargs["guidance_rescale"] = self.config.validation_guidance_rescale
 
             if StateTracker.get_args().validation_using_datasets:
                 extra_validation_kwargs["strength"] = getattr(self.config, "validation_strength", 0.2)
@@ -2799,7 +2952,9 @@ class Validation:
                 checkpoint_validation_images[validation_shortname] = []
                 ema_validation_images[validation_shortname] = []
             try:
-                _embed = self._gather_prompt_embeds(prompt, validation_shortname, validation_input_image)
+                _embed = self._gather_prompt_embeds(
+                    prompt, validation_shortname, validation_input_image, cache_shortname=cache_key
+                )
                 if _embed is not None:
                     extra_validation_kwargs.update(_embed)
                 else:

@@ -906,7 +906,7 @@ logger.info("Subprocess exiting")
         except Exception as exc:
             logger.debug(f"Failed to append event for {self.job_id}: {exc}")
 
-    def terminate(self, timeout: int = 5) -> bool:
+    def terminate(self, timeout: int = 10) -> bool:
         """Terminate the subprocess, first gracefully then forcefully."""
         if not self.process:
             return True
@@ -919,6 +919,9 @@ logger.info("Subprocess exiting")
             if self.process.poll() is None:
                 try:
                     self.send_command("abort")
+                    # Give the subprocess a moment to read the abort command
+                    # before sending SIGTERM. The command checker polls every 100ms.
+                    time.sleep(0.2)
                 except Exception:
                     pass  # Process might not be responsive
 
@@ -1040,6 +1043,11 @@ logger.info("Subprocess exiting")
             APIState.set_state("training_startup_stages", {})
             current_job = APIState.get_state("current_job_id")
             if current_job == self.job_id:
+                logger.info(
+                    "Clearing current_job_id=%s due to subprocess status event: %s",
+                    self.job_id,
+                    normalized,
+                )
                 APIState.set_state("current_job_id", None)
         except Exception:
             logger.debug("Failed to update API state for subprocess status '%s'", status, exc_info=True)
@@ -1074,7 +1082,9 @@ logger.info("Subprocess exiting")
             return
 
         pid = self.process.pid
-        grace_timeout = max(0.0, min(timeout, 2))
+        # Allow more grace time for nested subprocesses (e.g., accelerate launch)
+        # to terminate their children before force-killing
+        grace_timeout = max(0.0, min(timeout, 5))
         remaining_timeout = max(0.0, timeout - grace_timeout)
 
         def _kill_with_psutil(proc_pid: int) -> None:
@@ -1272,6 +1282,7 @@ def get_process_status(job_id: str) -> str:
         # Check if process is actually alive
         if not process.is_alive():
             return_code = process.process.returncode if process.process else None
+            previous_status = process.status
 
             if process.status == "running":
                 # Give the event thread a chance to flush remaining events
@@ -1294,6 +1305,13 @@ def get_process_status(job_id: str) -> str:
                     else:
                         process.status = "failed"
                     entry["status"] = process.status
+                    logger.info(
+                        "Process %s: status changed from %s to %s (return_code=%s, process not alive)",
+                        job_id,
+                        previous_status,
+                        process.status,
+                        return_code,
+                    )
             elif process.status not in ["completed", "failed", "terminated", "crashed"]:
                 entry["status"] = process.status
 

@@ -295,6 +295,12 @@ async def get_training_status():
                         APIState.set_state("training_progress", None)
                     if mapped_status in {"error", "cancelled", "completed"}:
                         APIState.set_state("training_startup_stages", {})
+                        logger.info(
+                            "Clearing current_job_id=%s due to terminal status=%s (process_status=%s)",
+                            job_id,
+                            mapped_status,
+                            normalized_status,
+                        )
                         APIState.set_state("current_job_id", None)
                         job_id = None
                     if mapped_status == "completed":

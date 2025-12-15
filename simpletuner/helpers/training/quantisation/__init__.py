@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any, Callable, Mapping, Optional
 
 import torch
 
@@ -11,6 +12,128 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel(logging.ERROR)
+
+PIPELINE_QUANTIZATION_PRESETS = {"nf4-bnb", "int4-torchao"}
+MANUAL_QUANTO_PRESETS = {"int2-quanto", "int4-quanto", "int8-quanto", "fp8-quanto", "fp8uz-quanto"}
+MANUAL_TORCHAO_PRESETS = {"int8-torchao", "fp8-torchao"}
+MANUAL_QUANTIZATION_PRESETS = MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS
+
+
+def _normalize_dtype(weight_dtype: Any):
+    if isinstance(weight_dtype, str):
+        candidate = getattr(torch, weight_dtype, None)
+        if candidate is not None:
+            return candidate
+    return weight_dtype
+
+
+def _bnb_nf4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = None):
+    try:
+        from diffusers import BitsAndBytesConfig
+    except ImportError as exc:
+        raise ImportError(
+            "nf4-bnb quantization requires diffusers[torch] with BitsAndBytes support. Please install diffusers and bitsandbytes."
+        ) from exc
+
+    kwargs = {
+        "load_in_4bit": True,
+        "bnb_4bit_use_double_quant": True,
+        "bnb_4bit_quant_type": "nf4",
+        "bnb_4bit_compute_dtype": _normalize_dtype(weight_dtype),
+    }
+    if isinstance(overrides, Mapping):
+        kwargs.update(overrides)
+    try:
+        return BitsAndBytesConfig(**kwargs)
+    except Exception as exc:
+        # BitsAndBytesConfig.post_init() checks for bitsandbytes package metadata,
+        # which raises PackageNotFoundError if bitsandbytes is not installed.
+        if "bitsandbytes" in str(exc).lower() or "PackageNotFoundError" in type(exc).__name__:
+            raise ImportError(
+                "nf4-bnb quantization requires bitsandbytes to be installed. "
+                "Please install bitsandbytes or choose a different quantization method."
+            ) from exc
+        raise
+
+
+def _torchao_int4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = None):
+    try:
+        from torchao.quantization import Int4WeightOnlyConfig
+        from transformers import TorchAoConfig
+    except ImportError as exc:
+        raise ImportError(
+            "TorchAO int4 quantization requires torchao and transformers with TorchAoConfig. Please install torchao and transformers>=4.39."
+        ) from exc
+
+    override_dict = dict(overrides) if isinstance(overrides, Mapping) else {}
+    quant_type_override = override_dict.pop("quant_type", None)
+    group_size = override_dict.pop("group_size", None)
+    if quant_type_override is None:
+        quant_kwargs = {}
+        if group_size is not None:
+            quant_kwargs["group_size"] = group_size
+        quant_type_override = Int4WeightOnlyConfig(**quant_kwargs)
+    return TorchAoConfig(quant_type=quant_type_override, **override_dict)
+
+
+PIPELINE_PRESET_BUILDERS: dict[str, Callable[[Any, Optional[Mapping[str, Any]]], Any]] = {
+    "nf4-bnb": _bnb_nf4_config,
+    "int4-torchao": _torchao_int4_config,
+}
+
+
+def get_pipeline_quantization_builder(preset: Optional[str]) -> Optional[Callable[[Any, Optional[Mapping[str, Any]]], Any]]:
+    if preset is None:
+        return None
+    return PIPELINE_PRESET_BUILDERS.get(str(preset))
+
+
+def build_gguf_quantization_config(model_path: str):
+    import inspect
+
+    candidates = []
+    try:
+        from diffusers import GGUFQuantizationConfig as DiffusersGGUFQuantizationConfig  # type: ignore
+
+        candidates.append(DiffusersGGUFQuantizationConfig)
+    except Exception:
+        pass
+
+    try:
+        from transformers import GGUFQuantizationConfig as TransformersGGUFQuantizationConfig  # type: ignore
+
+        candidates.append(TransformersGGUFQuantizationConfig)
+    except Exception:
+        pass
+
+    if not candidates:
+        raise ImportError(
+            "Loading GGUF checkpoints requires GGUFQuantizationConfig from diffusers or transformers. "
+            "Please install a recent version of diffusers or transformers with GGUF support."
+        )
+
+    last_error: Exception | None = None
+    for gguf_cls in candidates:
+        try:
+            if hasattr(gguf_cls, "from_pretrained"):
+                return gguf_cls.from_pretrained(model_path)
+        except Exception as exc:  # pragma: no cover - best effort probing
+            last_error = exc
+        try:
+            signature = inspect.signature(gguf_cls)
+        except (TypeError, ValueError):
+            signature = None
+        try:
+            if signature and "model_file" in signature.parameters:
+                return gguf_cls(model_file=model_path)
+            return gguf_cls(model_path)
+        except Exception as exc:  # pragma: no cover - best effort probing
+            last_error = exc
+
+    if last_error is not None:
+        raise RuntimeError(f"Failed to construct GGUF quantization configuration: {last_error}") from last_error
+
+    raise RuntimeError("Unable to construct GGUF quantization configuration for the provided checkpoint.")
 
 
 def _quanto_type_map(model_precision: str):
@@ -118,6 +241,9 @@ def _quanto_model(
 
 
 def _torchao_filter_fn(mod: torch.nn.Module, fqn: str):
+    # Skip RamTorch-offloaded modules; TorchAO expects GPU-resident weights.
+    if any(getattr(p, "is_ramtorch", False) for p in mod.parameters(recurse=False)):
+        return False
     # don't convert the output module
     if fqn == "proj_out":
         return False

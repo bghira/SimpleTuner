@@ -30,9 +30,10 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_npu_available, logging, scale_lora_layers, unscale_lora_layers
 
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
 @dataclass(frozen=True)
@@ -754,6 +755,8 @@ class Flux2Transformer2DModel(
         axes_dims_rope: Tuple[int, ...] = (32, 32, 32, 32),
         rope_theta: int = 2000,
         eps: float = 1e-6,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
@@ -813,6 +816,13 @@ class Flux2Transformer2DModel(
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=False)
 
         self.gradient_checkpointing = False
+        total_layers = num_layers + num_single_layers
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=total_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
         # TREAD router for efficient training
         self._tread_router = None
@@ -961,10 +971,19 @@ class Flux2Transformer2DModel(
         current_pe_txt = text_rotary_emb
 
         num_double = len(self.transformer_blocks)
+        combined_blocks = list(self.transformer_blocks) + list(self.single_transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
         # 4. Double Stream Transformer Blocks
         for index_block, block in enumerate(self.transformer_blocks):
             global_layer_idx = index_block
+
+            if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
 
             # Check for TREAD routing
             if self._tread_router is not None and self.training:
@@ -1023,6 +1042,9 @@ class Flux2Transformer2DModel(
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
 
+            if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
+                musubi_manager.stream_out(block)
+
         # Unroute before concatenation if still active
         if tread_active:
             hidden_states = self._tread_router.unroute(hidden_states, tread_routing_info, num_img_tokens)
@@ -1042,6 +1064,9 @@ class Flux2Transformer2DModel(
         # 5. Single Stream Transformer Blocks
         for index_block, block in enumerate(self.single_transformer_blocks):
             global_layer_idx = num_double + index_block
+
+            if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
 
             # Check for TREAD routing
             if self._tread_router is not None and self.training:
@@ -1104,6 +1129,9 @@ class Flux2Transformer2DModel(
                     image_rotary_emb=current_concat_pe,
                     joint_attention_kwargs=joint_attention_kwargs,
                 )
+
+            if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
+                musubi_manager.stream_out(block)
 
         # Final unroute if still active
         if tread_active:

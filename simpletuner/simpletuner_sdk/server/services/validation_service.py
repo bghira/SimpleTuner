@@ -366,6 +366,12 @@ class ValidationService:
                 "Full model training is incompatible with base model quantisation. "
                 "Set base_model_precision to 'no_change' or switch to LoRA.",
             )
+        quantization_config_raw = self._get_config_value(config, "quantization_config")
+        if model_type == "full" and quantization_config_raw not in (None, "", "None"):
+            result.add_error(
+                "quantization_config",
+                "Full model training is incompatible with pipeline quantization configs. Clear quantization_config or switch to LoRA.",
+            )
 
         deepspeed_raw = self._get_config_value(config, "deepspeed_config")
         if model_type == "lora" and deepspeed_raw not in (None, "", "None", False):

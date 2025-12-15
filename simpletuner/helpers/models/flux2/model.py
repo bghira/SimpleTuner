@@ -26,6 +26,7 @@ from simpletuner.helpers.models.flux2 import pack_latents, pack_text, unpack_lat
 from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.flux2.pipeline import Flux2Pipeline
 from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -619,6 +620,10 @@ class Flux2(ImageModelFoundation):
 - Ensures proper aspect bucket alignment
 - Checks tokenizer max length constraints""",
         )
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     @staticmethod
     def _validate_flux2_specific(config: dict) -> List[ValidationResult]:

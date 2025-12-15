@@ -11,6 +11,7 @@ from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, Predict
 from simpletuner.helpers.models.cosmos.pipeline import Cosmos2TextToImagePipeline
 from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
 from simpletuner.helpers.models.tae.types import VideoTAESpec
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -342,6 +343,10 @@ class Cosmos2Image(VideoModelFoundation):
         latent_width = width // self.vae_scale_factor_spatial
 
         return (latent_height, latent_width)
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
 
     def tread_init(self):
         """
