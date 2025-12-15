@@ -251,6 +251,7 @@ class ZImage(ImageModelFoundation):
             latent_list,
             normalized_t,
             prompt_list,
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
         )[0]
 
         noise_pred = torch.stack([out.float() for out in model_out_list], dim=0)
