@@ -43,7 +43,17 @@ def _bnb_nf4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = 
     }
     if isinstance(overrides, Mapping):
         kwargs.update(overrides)
-    return BitsAndBytesConfig(**kwargs)
+    try:
+        return BitsAndBytesConfig(**kwargs)
+    except Exception as exc:
+        # BitsAndBytesConfig.post_init() checks for bitsandbytes package metadata,
+        # which raises PackageNotFoundError if bitsandbytes is not installed.
+        if "bitsandbytes" in str(exc).lower() or "PackageNotFoundError" in type(exc).__name__:
+            raise ImportError(
+                "nf4-bnb quantization requires bitsandbytes to be installed. "
+                "Please install bitsandbytes or choose a different quantization method."
+            ) from exc
+        raise
 
 
 def _torchao_int4_config(weight_dtype=None, overrides: Optional[Mapping[str, Any]] = None):
