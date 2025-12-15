@@ -565,11 +565,18 @@ textarea.resizable-path {
     font-size: 0.875em;
     white-space: nowrap;
     line-height: 1.4;
+    scrollbar-width: none;
 }
 
 textarea.resizable-path.form-control-sm {
     min-height: 31px;
     padding: 0.25rem 0.5rem;
+}
+
+/* Hide scrollbars on resizable path inputs to keep the field compact */
+textarea.resizable-path::-webkit-scrollbar {
+    width: 0;
+    height: 0;
 }
 
 /* Fix resize inside input-group - use CSS Grid instead of Flex
