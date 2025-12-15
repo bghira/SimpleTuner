@@ -575,6 +575,7 @@ class HunyuanVideo(VideoModelFoundation):
         model_pred = self.model(
             hidden_states=latent_model_input,
             timestep=timesteps,
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             encoder_hidden_states_2=encoder_hidden_states_2,

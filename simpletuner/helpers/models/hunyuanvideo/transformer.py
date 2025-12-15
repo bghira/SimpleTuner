@@ -185,6 +185,8 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.time_sign_embed = nn.Embedding(2, embedding_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         self.use_meanflow = use_meanflow
         self.time_proj_r = None
@@ -197,9 +199,15 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
         self,
         timestep: torch.Tensor,
         timestep_r: Optional[torch.Tensor] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         timesteps_proj = self.time_proj(timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=timestep.dtype))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=timesteps_emb.device)
+            timesteps_emb = timesteps_emb + self.time_sign_embed(sign_idx).to(
+                dtype=timesteps_emb.dtype, device=timesteps_emb.device
+            )
 
         if timestep_r is not None:
             timesteps_proj_r = self.time_proj_r(timestep_r)
@@ -647,6 +655,7 @@ class HunyuanVideo15Transformer3DModel(
         timestep: torch.LongTensor,
         encoder_hidden_states: torch.Tensor,
         encoder_attention_mask: torch.Tensor,
+        timestep_sign: Optional[torch.LongTensor] = None,
         timestep_r: Optional[torch.LongTensor] = None,
         encoder_hidden_states_2: Optional[torch.Tensor] = None,
         encoder_attention_mask_2: Optional[torch.Tensor] = None,
@@ -677,7 +686,7 @@ class HunyuanVideo15Transformer3DModel(
         image_rotary_emb = self.rope(hidden_states)
 
         # 2. Conditional embeddings
-        temb = self.time_embed(timestep, timestep_r=timestep_r)
+        temb = self.time_embed(timestep, timestep_r=timestep_r, timestep_sign=timestep_sign)
 
         hidden_states = self.x_embedder(hidden_states)
 
