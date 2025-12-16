@@ -1046,7 +1046,17 @@ class ModelFoundation(ABC):
             import safetensors.torch
             from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
 
-            comfy_preserve_prefix_families = {"flux", "flux2", "lumina2", "z_image"}
+            comfy_preserve_prefix_families = {
+                "flux",
+                "flux2",
+                "lumina2",
+                "z_image",
+                "sd3",
+                "auraflow",
+                "pixart_sigma",
+                "qwen_image",
+                "hidream",
+            }
             preserve_component_prefixes = (
                 {"transformer"} if self.config.model_family in comfy_preserve_prefix_families else None
             )
