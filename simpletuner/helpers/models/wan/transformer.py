@@ -872,7 +872,16 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 )
                 if hidden_state_layer is not None and i == hidden_state_layer:
                     output_hidden_states = False
-            _store_hidden_state(hidden_states_buffer, f"layer_{i}", hidden_states)
+            if hidden_states_buffer is not None:
+                tokens_view = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+            else:
+                tokens_view = hidden_states
+            _store_hidden_state(hidden_states_buffer, f"layer_{i}", tokens_view)
 
             if musubi_offload_active and musubi_manager.is_managed_block(i):
                 musubi_manager.stream_out(block)

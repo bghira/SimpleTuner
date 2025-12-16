@@ -665,7 +665,16 @@ class LTXVideoTransformer3DModel(
                         hidden_states = router.end_route(hidden_states, mask_info)
                         break
 
-            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            if hidden_states_buffer is not None and post_patch_num_frames is not None:
+                tokens_view = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+            else:
+                tokens_view = hidden_states
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
             capture_idx += 1
             if output_hidden_states and post_patch_num_frames is not None:
                 if hidden_state_layer is None or bid == hidden_state_layer:

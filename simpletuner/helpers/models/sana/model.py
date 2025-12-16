@@ -142,6 +142,7 @@ class Sana(ImageModelFoundation):
         return prompt_embeds, prompt_attention_mask
 
     def model_predict(self, prepared_batch):
+        hidden_states_buffer = self._new_hidden_state_buffer()
         return {
             "model_prediction": self.model(
                 hidden_states=prepared_batch["noisy_latents"].to(
@@ -156,7 +157,9 @@ class Sana(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 return_dict=False,
-            )[0]
+                hidden_states_buffer=hidden_states_buffer,
+            )[0],
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def check_user_config(self):

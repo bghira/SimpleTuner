@@ -237,6 +237,7 @@ class PixartSigma(ImageModelFoundation):
                 f"{self.NAME} requires a latent size of {self.LATENT_CHANNEL_COUNT} channels. Ensure you are using the correct VAE cache path."
             )
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         return {
             "model_prediction": self.model(
                 prepared_batch["noisy_latents"].to(
@@ -252,7 +253,9 @@ class PixartSigma(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 return_dict=False,
-            )[0].chunk(2, dim=1)[0]
+                hidden_states_buffer=hidden_states_buffer,
+            )[0].chunk(2, dim=1)[0],
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:

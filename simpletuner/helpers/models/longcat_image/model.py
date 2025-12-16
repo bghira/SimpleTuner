@@ -341,6 +341,7 @@ class LongCatImage(ImageModelFoundation):
             device=self.accelerator.device,
             dtype=self.config.base_weight_dtype if hasattr(self.config, "base_weight_dtype") else self.config.weight_dtype,
         )
+        hidden_states_buffer = self._new_hidden_state_buffer()
         prompt_length = prompt_embeds.shape[1]
         timesteps = (
             torch.tensor(prepared_batch["timesteps"])
@@ -408,6 +409,7 @@ class LongCatImage(ImageModelFoundation):
             encoder_hidden_states=prompt_embeds,
             txt_ids=text_ids,
             img_ids=img_ids_input,
+            hidden_states_buffer=hidden_states_buffer,
             return_dict=False,
         )[0]
 
@@ -421,7 +423,8 @@ class LongCatImage(ImageModelFoundation):
                 height=prepared_batch["latents"].shape[2] * 8,
                 width=prepared_batch["latents"].shape[3] * 8,
                 vae_scale_factor=16,
-            )
+            ),
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
 

@@ -425,6 +425,7 @@ class Flux2(ImageModelFoundation):
         else:
             guidance = torch.ones(batch_size, device=device, dtype=dtype)
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         # Build force_keep_mask for TREAD if using mask/segmentation conditioning
         force_keep_mask = None
         if (
@@ -456,6 +457,7 @@ class Flux2(ImageModelFoundation):
             guidance=guidance,
             return_dict=True,
             force_keep_mask=force_keep_mask,
+            hidden_states_buffer=hidden_states_buffer,
         )
 
         # Extract sample from output
@@ -464,7 +466,7 @@ class Flux2(ImageModelFoundation):
         # Unpack: (B, S, C) -> (B, C, H, W)
         unpacked = unpack_latents(model_pred, img_ids)
 
-        return {"model_prediction": unpacked}
+        return {"model_prediction": unpacked, "hidden_states_buffer": hidden_states_buffer}
 
     @torch.no_grad()
     def encode_images(self, images: List[Tensor]) -> Tensor:

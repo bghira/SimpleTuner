@@ -405,6 +405,7 @@ class Flux(ImageModelFoundation):
 
     def model_predict(self, prepared_batch):
         # handle guidance
+        hidden_states_buffer = self._new_hidden_state_buffer()
         packed_noisy_latents = pack_latents(
             prepared_batch["noisy_latents"],
             batch_size=prepared_batch["latents"].shape[0],
@@ -502,6 +503,8 @@ class Flux(ImageModelFoundation):
             "joint_attention_kwargs": None,
             "return_dict": False,
         }
+        if hidden_states_buffer is not None:
+            flux_transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
         if self.config.flux_attention_masked_training:
             attention_mask = prepared_batch["encoder_attention_mask"]
             if attention_mask is None:
@@ -545,7 +548,8 @@ class Flux(ImageModelFoundation):
                 height=prepared_batch["latents"].shape[2] * 8,
                 width=prepared_batch["latents"].shape[3] * 8,
                 vae_scale_factor=16,
-            )
+            ),
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:

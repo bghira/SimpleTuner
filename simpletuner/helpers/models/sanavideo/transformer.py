@@ -664,9 +664,7 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                 timestep, guidance=guidance, hidden_dtype=hidden_states.dtype, timestep_sign=timestep_sign
             )
         else:
-            timestep, embedded_timestep = self.time_embed(
-                timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype
-            )
+            timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
             if timestep_sign is not None:
                 sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
                 sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
@@ -706,7 +704,16 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                     )
                     if hidden_state_layer is not None and index_block == hidden_state_layer:
                         output_hidden_states = False
-                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                if hidden_states_buffer is not None:
+                    tokens_view = hidden_states.reshape(
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height * post_patch_width,
+                        -1,
+                    )
+                else:
+                    tokens_view = hidden_states
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
                 capture_idx += 1
 
         else:
@@ -733,7 +740,16 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                     )
                     if hidden_state_layer is not None and index_block == hidden_state_layer:
                         output_hidden_states = False
-                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                if hidden_states_buffer is not None:
+                    tokens_view = hidden_states.reshape(
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height * post_patch_width,
+                        -1,
+                    )
+                else:
+                    tokens_view = hidden_states
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
                 capture_idx += 1
 
         # 3. Normalization

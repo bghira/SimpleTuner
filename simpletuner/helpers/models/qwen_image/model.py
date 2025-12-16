@@ -757,6 +757,7 @@ class QwenImage(ImageModelFoundation):
         latent_model_input = prepared_batch["noisy_latents"]
         timesteps = prepared_batch["timesteps"]
         target_latents = prepared_batch["latents"]
+        hidden_states_buffer = self._new_hidden_state_buffer()
 
         # Handle both 4D and 5D inputs
         if latent_model_input.dim() == 5:
@@ -833,6 +834,8 @@ class QwenImage(ImageModelFoundation):
                 "txt_seq_lens": txt_seq_lens,
                 "return_dict": False,
             }
+            if hidden_states_buffer is not None:
+                call_kwargs["hidden_states_buffer"] = hidden_states_buffer
             if (
                 getattr(self.config, "twinflow_enabled", False)
                 and "timestep_sign" in inspect.signature(self.model.__call__).parameters
@@ -864,7 +867,7 @@ class QwenImage(ImageModelFoundation):
                 f"Noise prediction shape {tuple(noise_pred.shape)} does not match target latents shape {tuple(target_latents.shape)}"
             )
 
-        return {"model_prediction": noise_pred}
+        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
 
     class _EditV1ConditioningImageEmbedder:
         def __init__(self, processor, device, dtype):
@@ -958,6 +961,7 @@ class QwenImage(ImageModelFoundation):
             for _ in range(batch_size)
         ]
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         raw_timesteps = prepared_batch["timesteps"]
         if not torch.is_tensor(raw_timesteps):
             raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
@@ -976,6 +980,8 @@ class QwenImage(ImageModelFoundation):
                 "txt_seq_lens": txt_seq_lens,
                 "return_dict": False,
             }
+            if hidden_states_buffer is not None:
+                call_kwargs["hidden_states_buffer"] = hidden_states_buffer
             if (
                 getattr(self.config, "twinflow_enabled", False)
                 and "timestep_sign" in inspect.signature(self.model.__call__).parameters
@@ -988,7 +994,7 @@ class QwenImage(ImageModelFoundation):
         if noise_pred.dim() == 5:
             noise_pred = noise_pred.squeeze(2)
 
-        return {"model_prediction": noise_pred}
+        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
 
     def _model_predict_edit_plus(self, prepared_batch):
         latent_model_input = prepared_batch["noisy_latents"]
@@ -1093,6 +1099,7 @@ class QwenImage(ImageModelFoundation):
         else:
             txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         raw_timesteps = prepared_batch["timesteps"]
         if not torch.is_tensor(raw_timesteps):
             raw_timesteps = torch.tensor(raw_timesteps, device=self.accelerator.device, dtype=torch.float32)
@@ -1111,6 +1118,8 @@ class QwenImage(ImageModelFoundation):
                 "txt_seq_lens": txt_seq_lens,
                 "return_dict": False,
             }
+            if hidden_states_buffer is not None:
+                call_kwargs["hidden_states_buffer"] = hidden_states_buffer
             if (
                 getattr(self.config, "twinflow_enabled", False)
                 and "timestep_sign" in inspect.signature(self.model.__call__).parameters
@@ -1124,7 +1133,7 @@ class QwenImage(ImageModelFoundation):
         if noise_pred.dim() == 5:
             noise_pred = noise_pred.squeeze(2)
 
-        return {"model_prediction": noise_pred}
+        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
 
     def pre_vae_encode_transform_sample(self, sample):
         """
