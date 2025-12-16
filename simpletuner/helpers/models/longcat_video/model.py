@@ -276,7 +276,9 @@ class LongCatVideo(VideoModelFoundation):
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             timestep=timesteps,
-            timestep_sign=prepared_batch.get("twinflow_time_sign"),
+            timestep_sign=(
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             num_cond_latents=cond_count,
             return_dict=False,
         )[0]

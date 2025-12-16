@@ -686,7 +686,11 @@ class HunyuanVideo15Transformer3DModel(
         image_rotary_emb = self.rope(hidden_states)
 
         # 2. Conditional embeddings
-        temb = self.time_embed(timestep, timestep_r=timestep_r, timestep_sign=timestep_sign)
+        temb = self.time_embed(
+            timestep,
+            timestep_r=timestep_r,
+            timestep_sign=timestep_sign,
+        )
 
         hidden_states = self.x_embedder(hidden_states)
 

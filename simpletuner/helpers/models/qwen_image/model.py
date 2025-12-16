@@ -833,7 +833,10 @@ class QwenImage(ImageModelFoundation):
                 "txt_seq_lens": txt_seq_lens,
                 "return_dict": False,
             }
-            if "timestep_sign" in inspect.signature(self.model.__call__).parameters:
+            if (
+                getattr(self.config, "twinflow_enabled", False)
+                and "timestep_sign" in inspect.signature(self.model.__call__).parameters
+            ):
                 call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
             noise_pred = self.model(**call_kwargs)[0]
 
@@ -973,7 +976,10 @@ class QwenImage(ImageModelFoundation):
                 "txt_seq_lens": txt_seq_lens,
                 "return_dict": False,
             }
-            if "timestep_sign" in inspect.signature(self.model.__call__).parameters:
+            if (
+                getattr(self.config, "twinflow_enabled", False)
+                and "timestep_sign" in inspect.signature(self.model.__call__).parameters
+            ):
                 call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
             noise_pred = self.model(**call_kwargs)[0]
 
@@ -1105,7 +1111,10 @@ class QwenImage(ImageModelFoundation):
                 "txt_seq_lens": txt_seq_lens,
                 "return_dict": False,
             }
-            if "timestep_sign" in inspect.signature(self.model.__call__).parameters:
+            if (
+                getattr(self.config, "twinflow_enabled", False)
+                and "timestep_sign" in inspect.signature(self.model.__call__).parameters
+            ):
                 call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
             noise_pred = self.model(**call_kwargs)[0]
 

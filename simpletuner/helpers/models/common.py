@@ -2582,6 +2582,9 @@ class ModelFoundation(ABC):
         """
         # Mirror reference TwinFlow: always capture/restore RNG around teacher passes.
         self._twinflow_store_rng = True
+        # Default TwinFlow flag off unless explicitly enabled; allow model configs to opt in via attribute.
+        if not hasattr(self.config, "twinflow_enabled"):
+            setattr(self.config, "twinflow_enabled", False)
         self._twinflow_allow_student_teacher = bool(getattr(self.config, "twinflow_allow_no_ema_teacher", False))
         self._twinflow_requires_ema = bool(getattr(self.config, "twinflow_require_ema", True))
         self._twinflow_diffusion_bridge = False

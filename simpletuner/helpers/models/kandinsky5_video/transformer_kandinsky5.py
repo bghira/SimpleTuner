@@ -734,7 +734,10 @@ class Kandinsky5Transformer3DModel(
         batch_size = x.shape[0]
 
         text_embed = self.text_embeddings(text_embed)
-        time_embed = self.time_embeddings(time, timestep_sign=timestep_sign)
+        time_embed = self.time_embeddings(
+            time,
+            timestep_sign=timestep_sign,
+        )
         time_embed = time_embed + self.pooled_text_embeddings(pooled_text_embed)
         visual_embed = self.visual_embeddings(x)
         text_rope = self.text_rope_embeddings(text_rope_pos)

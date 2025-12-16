@@ -408,7 +408,9 @@ class HiDream(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 timesteps=prepared_batch["timesteps"],
-                timestep_sign=prepared_batch.get("twinflow_time_sign"),
+                timestep_sign=(
+                    prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+                ),
                 t5_hidden_states=prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
                 llama_hidden_states=prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
                 pooled_embeds=prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
@@ -510,7 +512,9 @@ class HiDream(ImageModelFoundation):
                 dtype=self.config.base_weight_dtype,
             ),
             "timesteps": prepared_batch["timesteps"],
-            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
+            "timestep_sign": (
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             "t5_hidden_states": prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
             "llama_hidden_states": prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
             "pooled_embeds": prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],

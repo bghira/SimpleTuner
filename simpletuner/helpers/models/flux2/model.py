@@ -445,11 +445,12 @@ class Flux2(ImageModelFoundation):
 
         # Forward pass using diffusers interface
         # img_ids and txt_ids need to be 2D (S, 4) for the diffusers transformer
+        timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
         output = self.model(
             hidden_states=packed_latents,
             encoder_hidden_states=txt,
             timestep=timesteps,
-            timestep_sign=prepared_batch.get("twinflow_time_sign"),
+            timestep_sign=timestep_sign,
             img_ids=img_ids[0] if img_ids.ndim == 3 else img_ids,
             txt_ids=txt_ids[0] if txt_ids.ndim == 3 else txt_ids,
             guidance=guidance,

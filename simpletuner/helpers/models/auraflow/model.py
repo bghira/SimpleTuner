@@ -156,6 +156,7 @@ class Auraflow(ImageModelFoundation):
             prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=torch.float32) / 1000.0
         )  # normalize to [0, 1]
 
+        timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
         model_output = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -166,7 +167,7 @@ class Auraflow(ImageModelFoundation):
                 dtype=self.config.base_weight_dtype,
             ),
             timestep=timesteps,
-            timestep_sign=prepared_batch.get("twinflow_time_sign"),
+            timestep_sign=timestep_sign,
             return_dict=True,
         ).sample
 
