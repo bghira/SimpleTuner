@@ -1646,7 +1646,20 @@ class TwinFlowScheduler(SchedulerMixin, ConfigMixin):
         # Stochastic sampling
         stochast_ratio = self.stochast_ratio
         if stochast_ratio > 0:
-            noise = torch.randn(sample.shape, generator=generator, device=sample.device, dtype=sample.dtype)
+            if isinstance(generator, (list, tuple)):
+                if len(generator) != sample.shape[0]:
+                    raise ValueError(
+                        "TwinFlowScheduler received a list of generators whose length does not match the batch size."
+                    )
+                noise = torch.stack(
+                    [
+                        torch.randn(sample[i].shape, generator=gen, device=sample.device, dtype=sample.dtype)
+                        for i, gen in enumerate(generator)
+                    ],
+                    dim=0,
+                )
+            else:
+                noise = torch.randn(sample.shape, generator=generator, device=sample.device, dtype=sample.dtype)
         else:
             noise = 0.0
 

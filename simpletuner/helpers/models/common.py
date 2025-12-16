@@ -2597,9 +2597,10 @@ class ModelFoundation(ABC):
         uses_diff2flow = bool(getattr(self.config, "diff2flow_enabled", False))
         if not prediction_is_flow:
             if not (allow_diff2flow and uses_diff2flow):
-                # TwinFlow not applicable; disable and continue.
-                setattr(self.config, "twinflow_enabled", False)
-                return
+                raise ValueError(
+                    "TwinFlow requires flow-matching prediction_type. Enable diff2flow_enabled and "
+                    "twinflow_allow_diff2flow to bridge epsilon/v_prediction models explicitly."
+                )
             self._twinflow_diffusion_bridge = True
 
         if (
@@ -2730,6 +2731,21 @@ class ModelFoundation(ABC):
         while time_tensor.dim() < like.dim():
             time_tensor = time_tensor.unsqueeze(-1)
         return time_tensor
+
+    @staticmethod
+    def _twinflow_diffusion_xt(
+        bridge,
+        latents: torch.Tensor,
+        noise: torch.Tensor,
+        sigma: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Reconstruct diffusion-style x_t for a given flow sigma using the bridge's alphas.
+        """
+        timesteps = bridge.sigma_to_timesteps(sigma.view(sigma.shape[0], -1)[:, 0])
+        sqrt_alpha = bridge._extract(bridge.sqrt_alphas_cumprod, timesteps, latents.shape)
+        sqrt_one_minus = bridge._extract(bridge.sqrt_one_minus_alphas_cumprod, timesteps, latents.shape)
+        return sqrt_alpha * latents + sqrt_one_minus * noise
 
     @contextlib.contextmanager
     def _twinflow_teacher_context(
@@ -2932,6 +2948,9 @@ class ModelFoundation(ABC):
         settings: dict,
         teacher_forward,
         use_diff2flow_bridge: bool = False,
+        rcgm_latents: Optional[torch.Tensor] = None,
+        latents: Optional[torch.Tensor] = None,
+        noise: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Approximate the recursive consistency target (RCGM) used by TwinFlow.
@@ -2947,7 +2966,7 @@ class ModelFoundation(ABC):
         steps = max(1, int(settings.get("estimate_order", 1)))
         t_anchor = torch.maximum(tt_b, sigma_b - delta)
 
-        x_t = noisy_latents
+        x_t = rcgm_latents if rcgm_latents is not None else noisy_latents
         pred_accum = torch.zeros_like(base_pred)
         t_prev = sigma_b
 
@@ -2961,8 +2980,12 @@ class ModelFoundation(ABC):
             time_schedule.append(tt_b)
 
         for t_next in time_schedule:
+            # Teacher runs on diffusion-style noisy latents; flow RC-GM operates on flow-style x_t.
+            teacher_input = x_t
+            if use_diff2flow_bridge and self.diff2flow_bridge is not None and latents is not None and noise is not None:
+                teacher_input = self._twinflow_diffusion_xt(self.diff2flow_bridge, latents, noise, t_prev)
             # Pass t_prev as sigma so the bridge can derive matching diffusion timesteps
-            F_c = teacher_forward(x_t, t_prev, tt=t_next, use_diff2flow_bridge=use_diff2flow_bridge)
+            F_c = teacher_forward(teacher_input, t_prev, tt=t_next, use_diff2flow_bridge=use_diff2flow_bridge)
             x_hat, z_hat = self._twinflow_reconstruct_states(x_t, t_prev, F_c)
             x_t = t_next * z_hat + (1 - t_next) * x_hat
             pred_accum = pred_accum + F_c * (t_prev - t_next)
@@ -3522,6 +3545,10 @@ class ModelFoundation(ABC):
         eps = torch.finfo(sigmas.dtype).eps if torch.is_floating_point(sigmas) else 1e-4
         tt = torch.minimum(tt, sigmas - eps)
         noisy_latents = noisy_latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        # For diffusion-bridged models, RC-GM operates in flow space; build a flow-consistent x_t trajectory.
+        rcgm_latents = noisy_latents
+        if self._twinflow_diffusion_bridge:
+            rcgm_latents = (1 - sigmas) * latents + sigmas * noise
         prepared_batch["twinflow_tt"] = tt
 
         target = (noise - latents).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
@@ -3561,6 +3588,9 @@ class ModelFoundation(ABC):
                 settings=settings,
                 teacher_forward=teacher_forward,
                 use_diff2flow_bridge=use_diff2flow_bridge,
+                rcgm_latents=rcgm_latents,
+                latents=latents,
+                noise=noise,
             )
 
         twin_losses: list[torch.Tensor] = []
