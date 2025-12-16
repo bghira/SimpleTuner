@@ -249,6 +249,8 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.time_sign_embed = nn.Embedding(2, embedding_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         self.guidance_condition_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.guidance_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
@@ -256,13 +258,24 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
         self.silu = nn.SiLU()
         self.linear = nn.Linear(embedding_dim, 6 * embedding_dim, bias=True)
 
-    def forward(self, timestep: torch.Tensor, guidance: torch.Tensor = None, hidden_dtype: torch.dtype = None):
+    def forward(
+        self,
+        timestep: torch.Tensor,
+        guidance: torch.Tensor = None,
+        hidden_dtype: torch.dtype = None,
+        timestep_sign: Optional[torch.Tensor] = None,
+    ):
         timesteps_proj = self.time_proj(timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))  # (N, D)
 
         guidance_proj = self.guidance_condition_proj(guidance)
         guidance_emb = self.guidance_embedder(guidance_proj.to(dtype=hidden_dtype))
         conditioning = timesteps_emb + guidance_emb
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=conditioning.device)
+            conditioning = conditioning + self.time_sign_embed(sign_idx).to(
+                dtype=conditioning.dtype, device=conditioning.device
+            )
 
         return self.linear(self.silu(conditioning)), conditioning
 
@@ -536,8 +549,11 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         # 2. Additional condition embeddings
         if guidance_embeds:
             self.time_embed = SanaCombinedTimestepGuidanceEmbeddings(inner_dim)
+            self.time_sign_embed = self.time_embed.time_sign_embed
         else:
             self.time_embed = AdaLayerNormSingle(inner_dim)
+            self.time_sign_embed = nn.Embedding(2, inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
         self.caption_norm = RMSNorm(inner_dim, eps=1e-5, elementwise_affine=True)
@@ -575,6 +591,7 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.Tensor,
+        timestep_sign: Optional[torch.Tensor] = None,
         guidance: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -633,9 +650,17 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         hidden_states = hidden_states.flatten(2).transpose(1, 2)
 
         if guidance is not None:
-            timestep, embedded_timestep = self.time_embed(timestep, guidance=guidance, hidden_dtype=hidden_states.dtype)
+            timestep, embedded_timestep = self.time_embed(
+                timestep, guidance=guidance, hidden_dtype=hidden_states.dtype, timestep_sign=timestep_sign
+            )
         else:
-            timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
+            timestep, embedded_timestep = self.time_embed(
+                timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype
+            )
+            if timestep_sign is not None:
+                sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+                sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+                embedded_timestep = embedded_timestep + sign_emb
 
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])

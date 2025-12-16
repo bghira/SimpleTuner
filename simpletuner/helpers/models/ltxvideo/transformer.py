@@ -495,6 +495,9 @@ class LTXVideoTransformer3DModel(
 
         self.norm_out = nn.LayerNorm(inner_dim, eps=1e-6, elementwise_affine=False)
         self.proj_out = nn.Linear(inner_dim, out_channels)
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         self.gradient_checkpointing = False
 
@@ -529,6 +532,7 @@ class LTXVideoTransformer3DModel(
         return_dict: bool = True,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -570,6 +574,11 @@ class LTXVideoTransformer3DModel(
 
         temb = temb.view(batch_size, -1, temb.size(-1))
         embedded_timestep = embedded_timestep.view(batch_size, -1, embedded_timestep.size(-1))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+            sign_emb = sign_emb.view(batch_size, 1, -1).expand_as(embedded_timestep)
+            embedded_timestep = embedded_timestep + sign_emb
 
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.size(-1))

@@ -1,6 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
+from simpletuner.helpers.models.registry import ModelRegistry
+
 from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
@@ -332,5 +334,62 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=17,
             documentation="OPTIONS.md#--crepa_spatial_align",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="twinflow_enabled",
+            arg_name="--twinflow_enabled",
+            ui_label="Enable TwinFlow (RCGM)",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            model_specific=[
+                name
+                for name, cls in ModelRegistry.model_families().items()
+                if hasattr(cls, "PREDICTION_TYPE")
+                and getattr(getattr(cls, "PREDICTION_TYPE"), "value", getattr(cls, "PREDICTION_TYPE")) == "flow_matching"
+            ],
+            dependencies=[
+                FieldDependency(field="distillation_method", operator="equals", value=None),
+                FieldDependency(field="scheduled_sampling_max_step_offset", operator="equals", value=0),
+            ],
+            help_text="Enable RCGM-based consistency training for few-step generation. Uses recursive consistency gradient matching to train models for 1-4 step inference with CFG baked in.",
+            tooltip="Adds RCGM consistency loss for flow-matching models. Validation uses the target step count with zero CFG. Based on TwinFlow/RCGM paper.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=18,
+            documentation="OPTIONS.md#--twinflow_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="twinflow_target_step_count",
+            arg_name="--twinflow_target_step_count",
+            ui_label="TwinFlow Target Steps",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, 1, "Must be at least 1 step"),
+                ValidationRule(ValidationRuleType.MAX, 8, "Maximum 8 steps recommended"),
+            ],
+            model_specific=[
+                name
+                for name, cls in ModelRegistry.model_families().items()
+                if hasattr(cls, "PREDICTION_TYPE")
+                and getattr(getattr(cls, "PREDICTION_TYPE"), "value", getattr(cls, "PREDICTION_TYPE")) == "flow_matching"
+            ],
+            dependencies=[
+                FieldDependency(field="twinflow_enabled", operator="equals", value=True),
+            ],
+            help_text="Target number of inference steps. Validation will run with this many steps using the UCGM sampler. Recommended: 1-4 NFE.",
+            tooltip="1 = one-step generation, 2-4 = few-step generation (better quality). Validation uses zero CFG since guidance is baked in during training.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=19,
+            documentation="OPTIONS.md#--twinflow_target_step_count",
         )
     )

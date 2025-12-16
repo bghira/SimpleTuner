@@ -769,6 +769,9 @@ class Flux2Transformer2DModel(
         self.time_guidance_embed = Flux2TimestepGuidanceEmbeddings(
             in_channels=timestep_guidance_channels, embedding_dim=self.inner_dim, bias=False
         )
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         # 3. Modulation (double stream and single stream blocks share modulation parameters, resp.)
         # Two sets of shift/scale/gate modulation parameters for the double stream attn and FF sub-blocks
@@ -876,6 +879,7 @@ class Flux2Transformer2DModel(
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         img_ids: torch.Tensor = None,
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
@@ -933,6 +937,9 @@ class Flux2Transformer2DModel(
         guidance = guidance.to(hidden_states.dtype) * 1000
 
         temb = self.time_guidance_embed(timestep, guidance)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
 
         double_stream_mod_img = self.double_stream_modulation_img(temb)
         double_stream_mod_txt = self.double_stream_modulation_txt(temb)

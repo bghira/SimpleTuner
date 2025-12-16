@@ -119,6 +119,7 @@ class EMAModel:
             min_decay = kwargs["min_value"]
 
         parameters = list(parameters)
+        self._tracked_param_ids = [id(param) for param in parameters]
         self.shadow_params = [p.clone().detach() for p in parameters]
 
         if kwargs.get("device", None) is not None:
@@ -127,6 +128,7 @@ class EMAModel:
             self.to(device=kwargs["device"])
 
         self.temp_stored_params = None
+        self._temp_stored_param_ids: Optional[list[int]] = None
 
         self.decay = decay
         self.min_decay = min_decay
@@ -143,6 +145,83 @@ class EMAModel:
         self.args = args
         self.accelerator = accelerator
         self.training = True  # To emulate nn.Module's training mode
+
+    def _should_use_foreach(
+        self, primary_tensors: list[torch.Tensor], secondary_tensors: Optional[list[torch.Tensor]] = None
+    ) -> bool:
+        """
+        Decide whether foreach ops are safe for the provided tensors.
+
+        Foreach kernels require homogeneous devices and dtypes and do not support DTensors.
+        """
+        if not self.foreach:
+            return False
+        if not primary_tensors:
+            return False
+        if any(self._is_dtensor(tensor) for tensor in primary_tensors):
+            return False
+        if secondary_tensors is not None:
+            if len(secondary_tensors) != len(primary_tensors):
+                return False
+            if any(self._is_dtensor(tensor) for tensor in secondary_tensors):
+                return False
+
+        primary_devices = {tensor.device for tensor in primary_tensors}
+        secondary_devices = primary_devices if secondary_tensors is None else {tensor.device for tensor in secondary_tensors}
+        if len(primary_devices) != 1 or len(secondary_devices) != 1 or primary_devices != secondary_devices:
+            return False
+
+        primary_dtypes = {tensor.dtype for tensor in primary_tensors}
+        secondary_dtypes = primary_dtypes if secondary_tensors is None else {tensor.dtype for tensor in secondary_tensors}
+        if len(primary_dtypes) != 1 or len(secondary_dtypes) != 1 or primary_dtypes != secondary_dtypes:
+            return False
+
+        return True
+
+    def _align_shadow_params(
+        self, parameters: Iterable[torch.nn.Parameter], *, allow_subset: bool = False
+    ) -> list[tuple[torch.nn.Parameter, torch.nn.Parameter]]:
+        params = list(parameters)
+        if not allow_subset and len(params) != len(self.shadow_params):
+            raise RuntimeError(
+                f"EMA parameter count mismatch: expected {len(self.shadow_params)} parameters but received {len(params)}."
+            )
+
+        if not allow_subset and all(id(param) == tracked for param, tracked in zip(params, self._tracked_param_ids)):
+            return list(zip(self.shadow_params, params))
+
+        id_to_shadow = {tracked: shadow for tracked, shadow in zip(self._tracked_param_ids, self.shadow_params)}
+        aligned: list[tuple[torch.nn.Parameter, torch.nn.Parameter]] = []
+        missing_tracked = 0
+
+        for param in params:
+            shadow = id_to_shadow.get(id(param))
+            if shadow is None:
+                # Ignore untracked parameters when allow_subset=True; otherwise treat as an error.
+                if not allow_subset:
+                    missing_tracked += 1
+                continue
+            aligned.append((shadow, param))
+
+        if not allow_subset:
+            if missing_tracked > 0:
+                raise RuntimeError(
+                    f"EMA parameter mapping failed: received {missing_tracked} untracked parameter(s). "
+                    "This usually means the model parameters were recreated after EMA initialization."
+                )
+            if len(aligned) != len(self.shadow_params):
+                raise RuntimeError(
+                    f"EMA parameter alignment incomplete: aligned {len(aligned)} of {len(self.shadow_params)} parameters."
+                )
+        else:
+            if len(aligned) != len(self.shadow_params):
+                logger.warning(
+                    "EMA copy received %s tracked parameter(s) but EMA tracks %s. Applying EMA to the tracked subset only.",
+                    len(aligned),
+                    len(self.shadow_params),
+                )
+
+        return aligned
 
     def save_state_dict(self, path: str) -> None:
         """
@@ -217,7 +296,16 @@ class EMAModel:
         state_dict.pop("shadow_params", None)
 
         model.register_to_config(**state_dict)
-        self.copy_to(model.parameters())
+        # Copy shadow params to the new model by position (not by ID).
+        # from_config creates an identical architecture, so param order matches.
+        model_params = list(model.parameters())
+        if len(model_params) != len(self.shadow_params):
+            raise RuntimeError(
+                f"EMA save_pretrained failed: model has {len(model_params)} parameters "
+                f"but EMA tracks {len(self.shadow_params)}."
+            )
+        for param, shadow in zip(model_params, self.shadow_params):
+            param.data.copy_(shadow.to(device=param.device, dtype=param.dtype))
         model.save_pretrained(path, max_shard_size=max_shard_size)
 
     def get_decay(self, optimization_step: int = None) -> float:
@@ -264,8 +352,10 @@ class EMAModel:
             parameters = parameters.parameters()
 
         parameters = list(parameters)
-        has_dtensor_params = any(self._is_dtensor(param) for param in parameters)
-        use_foreach = self.foreach and not has_dtensor_params
+        aligned = self._align_shadow_params(parameters)
+        params_grad = [param for _, param in aligned if param.requires_grad]
+        s_params_grad = [s_param for s_param, param in aligned if param.requires_grad]
+        use_foreach = self._should_use_foreach(params_grad, s_params_grad)
 
         if global_step is not None:
             # When we're updating the EMA periodically, we can't trust the counter.
@@ -287,13 +377,10 @@ class EMAModel:
                 context_manager = deepspeed.zero.GatheredParameters(parameters, modifier_rank=None)
 
             with context_manager():
-                params_grad = [param for param in parameters if param.requires_grad]
-                s_params_grad = [s_param for s_param, param in zip(self.shadow_params, parameters) if param.requires_grad]
-
-                if len(params_grad) < len(parameters):
+                if len(params_grad) < len(aligned):
                     torch._foreach_copy_(
-                        [s_param for s_param, param in zip(self.shadow_params, parameters) if not param.requires_grad],
-                        [param for param in parameters if not param.requires_grad],
+                        [s_param for s_param, param in aligned if not param.requires_grad],
+                        [param for _, param in aligned if not param.requires_grad],
                         non_blocking=True,
                     )
 
@@ -304,7 +391,7 @@ class EMAModel:
                 )
 
         else:
-            for s_param, param in zip(self.shadow_params, parameters):
+            for s_param, param in aligned:
                 if is_transformers_available() and transformers.integrations.deepspeed.is_deepspeed_zero3_enabled():
                     context_manager = deepspeed.zero.GatheredParameters(param, modifier_rank=None)
 
@@ -337,19 +424,19 @@ class EMAModel:
                 `ExponentialMovingAverage` was initialized will be used.
         """
         parameters = list(parameters)
-        use_foreach = self.foreach and all(
-            not self._is_dtensor(param) and not self._is_dtensor(s_param)
-            for s_param, param in zip(self.shadow_params, parameters)
-        )
+        aligned = self._align_shadow_params(parameters, allow_subset=True)
+        params_only = [param for _, param in aligned]
+        shadows_only = [s_param for s_param, _ in aligned]
+        use_foreach = self._should_use_foreach(params_only, shadows_only)
 
         if use_foreach:
             torch._foreach_copy_(
-                [param.data for param in parameters],
-                [s_param.to(param.device).data for s_param, param in zip(self.shadow_params, parameters)],
+                [param.data for param in params_only],
+                [s_param.to(param.device).data for s_param, param in aligned],
             )
             return
 
-        for s_param, param in zip(self.shadow_params, parameters):
+        for s_param, param in aligned:
             source = s_param
             if self._is_dtensor(param):
                 if not self._is_dtensor(source):
@@ -426,6 +513,7 @@ class EMAModel:
             else:
                 clones.append(param.detach().cpu().clone())
         self.temp_stored_params = clones
+        self._temp_stored_param_ids = [id(param) for param in parameters]
 
     def restore(self, parameters: Iterable[torch.nn.Parameter]) -> None:
         r"""
@@ -434,19 +522,48 @@ class EMAModel:
         if self.temp_stored_params is None:
             raise RuntimeError("This ExponentialMovingAverage has no `store()`ed weights " "to `restore()`")
         parameters = list(parameters)
-        use_foreach = (
-            self.foreach
-            and all(not self._is_dtensor(param) for param in parameters)
-            and all(not self._is_dtensor(c_param) for c_param in self.temp_stored_params)
+
+        if len(parameters) != len(self.temp_stored_params):
+            raise RuntimeError(
+                f"EMA restore parameter count mismatch: expected {len(self.temp_stored_params)} parameters but received {len(parameters)}."
+            )
+
+        if self._temp_stored_param_ids and all(
+            id(param) == stored_id for param, stored_id in zip(parameters, self._temp_stored_param_ids)
+        ):
+            aligned_temp = list(zip(self.temp_stored_params, parameters))
+        else:
+            id_to_temp = (
+                {stored_id: temp for stored_id, temp in zip(self._temp_stored_param_ids or [], self.temp_stored_params)}
+                if self._temp_stored_param_ids
+                else None
+            )
+            aligned_temp = []
+            missing = []
+            for param in parameters:
+                if id_to_temp is not None and id(param) in id_to_temp:
+                    aligned_temp.append((id_to_temp[id(param)], param))
+                else:
+                    missing.append(param)
+
+            if missing:
+                raise RuntimeError(
+                    f"EMA restore failed: received {len(missing)} untracked parameter(s). "
+                    "This usually means the model parameters were recreated after EMA.store()."
+                )
+
+        use_foreach = self._should_use_foreach(
+            [param for _, param in aligned_temp],
+            [temp_param for temp_param, _ in aligned_temp],
         )
 
         if use_foreach:
             torch._foreach_copy_(
-                [param.data for param in parameters],
-                [c_param.data for c_param in self.temp_stored_params],
+                [param.data for _, param in aligned_temp],
+                [c_param.data for c_param, _ in aligned_temp],
             )
         else:
-            for c_param, param in zip(self.temp_stored_params, parameters):
+            for c_param, param in aligned_temp:
                 source = c_param
                 if self._is_dtensor(param):
                     if not self._is_dtensor(source):
@@ -463,6 +580,7 @@ class EMAModel:
 
         # Better memory-wise.
         self.temp_stored_params = None
+        self._temp_stored_param_ids = None
 
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.shadow_params)

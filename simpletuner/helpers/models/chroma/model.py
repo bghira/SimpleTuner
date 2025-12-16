@@ -386,6 +386,7 @@ class Chroma(ImageModelFoundation):
             "img_ids": img_ids,
             "attention_mask": attention_mask,
             "joint_attention_kwargs": None,
+            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
             "return_dict": False,
         }
 

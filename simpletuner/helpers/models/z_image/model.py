@@ -1,3 +1,4 @@
+import inspect
 import logging
 from typing import List
 
@@ -247,10 +248,14 @@ class ZImage(ImageModelFoundation):
             timesteps = timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         normalized_t = (1000.0 - timesteps) / 1000.0
 
+        call_kwargs = {}
+        if "timestep_sign" in inspect.signature(self.model.__call__).parameters:
+            call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
         model_out_list = self.model(
             latent_list,
             normalized_t,
             prompt_list,
+            **call_kwargs,
         )[0]
 
         noise_pred = torch.stack([out.float() for out in model_out_list], dim=0)

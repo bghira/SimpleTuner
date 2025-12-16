@@ -985,6 +985,9 @@ class ACEStep(AudioModelFoundation):
             lyric_token_idx=lyric_token_ids,
             lyric_mask=lyric_mask,
             timestep=timesteps,
+            timestep_sign=(
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             ssl_hidden_states=ssl_hidden_states,
             return_dict=True,
         )

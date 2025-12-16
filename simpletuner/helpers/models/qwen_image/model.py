@@ -1,5 +1,6 @@
 import contextlib
 import functools
+import inspect
 import logging
 import math
 import os
@@ -822,16 +823,22 @@ class QwenImage(ImageModelFoundation):
 
         # Forward pass through transformer
         with self._force_packed_transformer_output(self.model):
-            noise_pred = self.model(
-                hidden_states=latent_model_input.to(self.accelerator.device, self.config.weight_dtype),
-                timestep=timesteps,
-                guidance=None,  # Qwen Image doesn't use guidance during training
-                encoder_hidden_states=prompt_embeds,
-                encoder_hidden_states_mask=prompt_embeds_mask,
-                img_shapes=img_shapes,
-                txt_seq_lens=txt_seq_lens,
-                return_dict=False,
-            )[0]
+            call_kwargs = {
+                "hidden_states": latent_model_input.to(self.accelerator.device, self.config.weight_dtype),
+                "timestep": timesteps,
+                "guidance": None,  # Qwen Image doesn't use guidance during training
+                "encoder_hidden_states": prompt_embeds,
+                "encoder_hidden_states_mask": prompt_embeds_mask,
+                "img_shapes": img_shapes,
+                "txt_seq_lens": txt_seq_lens,
+                "return_dict": False,
+            }
+            if (
+                getattr(self.config, "twinflow_enabled", False)
+                and "timestep_sign" in inspect.signature(self.model.__call__).parameters
+            ):
+                call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+            noise_pred = self.model(**call_kwargs)[0]
 
         target_ndim = target_latents.dim()
 
@@ -959,16 +966,22 @@ class QwenImage(ImageModelFoundation):
         timesteps = raw_timesteps.expand(batch_size) / 1000.0
 
         with self._force_packed_transformer_output(self.model):
-            noise_pred = self.model(
-                hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
-                timestep=timesteps,
-                guidance=None,
-                encoder_hidden_states=prompt_embeds,
-                encoder_hidden_states_mask=prompt_embeds_mask,
-                img_shapes=img_shapes,
-                txt_seq_lens=txt_seq_lens,
-                return_dict=False,
-            )[0]
+            call_kwargs = {
+                "hidden_states": transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
+                "timestep": timesteps,
+                "guidance": None,
+                "encoder_hidden_states": prompt_embeds,
+                "encoder_hidden_states_mask": prompt_embeds_mask,
+                "img_shapes": img_shapes,
+                "txt_seq_lens": txt_seq_lens,
+                "return_dict": False,
+            }
+            if (
+                getattr(self.config, "twinflow_enabled", False)
+                and "timestep_sign" in inspect.signature(self.model.__call__).parameters
+            ):
+                call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+            noise_pred = self.model(**call_kwargs)[0]
 
         noise_pred = noise_pred[:, : packed_latents.size(1)]
         noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
@@ -1088,16 +1101,22 @@ class QwenImage(ImageModelFoundation):
         timesteps = raw_timesteps.expand(batch_size) / 1000.0
 
         with self._force_packed_transformer_output(self.model):
-            noise_pred = self.model(
-                hidden_states=transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
-                timestep=timesteps,
-                guidance=None,
-                encoder_hidden_states=prompt_embeds,
-                encoder_hidden_states_mask=prompt_embeds_mask,
-                img_shapes=img_shapes,
-                txt_seq_lens=txt_seq_lens,
-                return_dict=False,
-            )[0]
+            call_kwargs = {
+                "hidden_states": transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
+                "timestep": timesteps,
+                "guidance": None,
+                "encoder_hidden_states": prompt_embeds,
+                "encoder_hidden_states_mask": prompt_embeds_mask,
+                "img_shapes": img_shapes,
+                "txt_seq_lens": txt_seq_lens,
+                "return_dict": False,
+            }
+            if (
+                getattr(self.config, "twinflow_enabled", False)
+                and "timestep_sign" in inspect.signature(self.model.__call__).parameters
+            ):
+                call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+            noise_pred = self.model(**call_kwargs)[0]
 
         noise_pred = noise_pred[:, : base_packed_tokens.size(1)]
 

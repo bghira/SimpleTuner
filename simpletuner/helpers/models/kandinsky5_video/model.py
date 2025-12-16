@@ -452,6 +452,9 @@ class Kandinsky5Video(VideoModelFoundation):
             "encoder_hidden_states": encoder_hidden_states.to(dtype),
             "pooled_projections": pooled.to(dtype),
             "timestep": timesteps,
+            "timestep_sign": (
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             "visual_rope_pos": visual_rope_pos,
             "text_rope_pos": text_rope_pos,
             "scale_factor": (1, 2, 2),

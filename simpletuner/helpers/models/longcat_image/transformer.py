@@ -23,10 +23,17 @@ class TimestepEmbeddings(nn.Module):
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, embedding_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
-    def forward(self, timestep, hidden_dtype):
+    def forward(self, timestep, hidden_dtype, timestep_sign: Optional[torch.Tensor] = None):
         timesteps_proj = self.time_proj(timestep)
-        return self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+        temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
+            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
+        return temb
 
 
 class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
@@ -96,6 +103,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         img_ids: torch.Tensor = None,
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
@@ -117,7 +125,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         timestep = timestep.to(hidden_states.dtype) * 1000
         guidance = guidance.to(hidden_states.dtype) * 1000 if guidance is not None else None
 
-        temb = self.time_embed(timestep, hidden_states.dtype)
+        temb = self.time_embed(timestep, hidden_states.dtype, timestep_sign=timestep_sign)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         if txt_ids.ndim == 3:

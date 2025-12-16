@@ -112,6 +112,9 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
             embedding_dim=self.inner_dim,
             pooled_projection_dim=self.config.pooled_projection_dim,
         )
+        # Signed-time embedding for TwinFlow adversarial branch; row 0 = positive/zero, row 1 = negative.
+        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.config.caption_projection_dim)
 
         # `attention_head_dim` is doubled to account for the mixing.
@@ -295,6 +298,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         encoder_hidden_states: torch.FloatTensor = None,
         pooled_projections: torch.FloatTensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         block_controlnet_hidden_states: List = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
@@ -349,7 +353,14 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         height, width = hidden_states.shape[-2:]
 
         hidden_states = self.pos_embed(hidden_states)  # takes care of adding positional embeddings too.
+        sign_emb = None
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_emb = self.time_sign_embed(sign_idx)
+
         temb = self.time_text_embed(timestep, pooled_projections)
+        if sign_emb is not None:
+            temb = temb + sign_emb.to(device=hidden_states.device, dtype=temb.dtype)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         # TREAD initialization

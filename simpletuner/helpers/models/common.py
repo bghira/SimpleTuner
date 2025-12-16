@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import inspect
 import json
@@ -69,6 +70,7 @@ else:
 
 flow_matching_model_families = [
     "flux",
+    "flux2",
     "sana",
     "ltxvideo",
     "wan",
@@ -77,6 +79,9 @@ flow_matching_model_families = [
     "hunyuanvideo",
     "longcat_image",
     "longcat_video",
+    "auraflow",
+    "qwen_image",
+    "z_image",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -277,6 +282,12 @@ class ModelFoundation(ABC):
         self.assistant_adapter_name = "assistant"
         self.assistant_lora_loaded = False
         self.pipeline_quantization_active = False
+        self._twinflow_prediction_warning = False
+        self._twinflow_diffusion_bridge = False
+        self._twinflow_store_rng = False
+        self._twinflow_allow_student_teacher = False
+        self._twinflow_requires_ema = False
+        self._validate_twinflow_config()
 
     def pack_text_embeddings_for_cache(self, embeddings):
         """
@@ -2565,6 +2576,43 @@ class ModelFoundation(ABC):
         timesteps = sigmas * 1000.0
         return sigmas, timesteps
 
+    def _validate_twinflow_config(self) -> None:
+        """
+        Validate TwinFlow configuration and record common flags.
+        """
+        # Mirror reference TwinFlow: always capture/restore RNG around teacher passes.
+        self._twinflow_store_rng = True
+        # Default TwinFlow flag off unless explicitly enabled; allow model configs to opt in via attribute.
+        if not hasattr(self.config, "twinflow_enabled"):
+            setattr(self.config, "twinflow_enabled", False)
+        self._twinflow_allow_student_teacher = bool(getattr(self.config, "twinflow_allow_no_ema_teacher", False))
+        self._twinflow_requires_ema = bool(getattr(self.config, "twinflow_require_ema", True))
+        self._twinflow_diffusion_bridge = False
+
+        if not getattr(self.config, "twinflow_enabled", False):
+            return
+
+        prediction_is_flow = self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
+        allow_diff2flow = bool(getattr(self.config, "twinflow_allow_diff2flow", False))
+        uses_diff2flow = bool(getattr(self.config, "diff2flow_enabled", False))
+        if not prediction_is_flow:
+            if not (allow_diff2flow and uses_diff2flow):
+                raise ValueError(
+                    "TwinFlow requires flow-matching prediction_type. Enable diff2flow_enabled and "
+                    "twinflow_allow_diff2flow to bridge epsilon/v_prediction models explicitly."
+                )
+            self._twinflow_diffusion_bridge = True
+
+        if (
+            self._twinflow_requires_ema
+            and not getattr(self.config, "use_ema", False)
+            and not self._twinflow_allow_student_teacher
+        ):
+            raise ValueError(
+                "TwinFlow requires an EMA teacher; enable use_ema or set twinflow_allow_no_ema_teacher "
+                "to fall back to student weights explicitly."
+            )
+
     def _maybe_enable_reflexflow_default(self) -> bool:
         """
         Enable ReflexFlow automatically when scheduled sampling is active on flow-matching models
@@ -2587,6 +2635,368 @@ class ModelFoundation(ABC):
 
         setattr(self.config, "scheduled_sampling_reflexflow", True)
         return True
+
+    def _twinflow_active(self) -> bool:
+        """
+        Guard TwinFlow/RCGM auxiliary losses to flow-matching models with an explicit opt-in flag.
+        """
+        if not getattr(self.config, "twinflow_enabled", False):
+            return False
+        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING and not self._twinflow_diffusion_bridge:
+            raise ValueError(
+                "TwinFlow is only supported for flow-matching models. Enable diff2flow bridging explicitly "
+                "to run with epsilon/v_prediction targets."
+            )
+        return True
+
+    def _twinflow_settings(self) -> dict:
+        """
+        Collect TwinFlow hyperparameters with sensible defaults.
+        Following the original TwinFlow paper, all loss components are enabled by default.
+        """
+        return {
+            "estimate_order": max(1, int(getattr(self.config, "twinflow_estimate_order", 2) or 2)),
+            "enhanced_ratio": float(getattr(self.config, "twinflow_enhanced_ratio", 0.5) or 0.5),
+            "target_step_count": max(1, int(getattr(self.config, "twinflow_target_step_count", 1) or 1)),
+            "delta_t": float(getattr(self.config, "twinflow_delta_t", 0.01) or 0.01),
+            "clamp_target": float(getattr(self.config, "twinflow_target_clamp", 1.0) or 1.0),
+            "require_ema": bool(getattr(self.config, "twinflow_require_ema", True)),
+            "use_rng_state": True,
+        }
+
+    @staticmethod
+    def _twinflow_restore_rng_state(rng_state: Optional[Mapping[str, torch.Tensor]]) -> None:
+        """
+        Restore RNG state captured during batch preparation.
+        """
+        if rng_state is None:
+            return
+        try:
+            cpu_state = rng_state.get("cpu")
+            if cpu_state is not None:
+                torch.random.set_rng_state(cpu_state)
+            cuda_state = rng_state.get("cuda")
+            if cuda_state is not None and torch.cuda.is_available():
+                try:
+                    torch.cuda.set_rng_state_all(cuda_state)
+                except Exception:
+                    torch.cuda.set_rng_state(cuda_state)
+        except Exception:
+            logger.debug("Unable to restore RNG state for TwinFlow teacher run.", exc_info=True)
+
+    @staticmethod
+    def _twinflow_sample_tt(sigmas: torch.Tensor) -> torch.Tensor:
+        """
+        Sample a secondary time tt for TwinFlow such that tt < t.
+        """
+        tt = sigmas - torch.rand_like(sigmas) * sigmas
+        eps = torch.finfo(sigmas.dtype).eps if torch.is_floating_point(sigmas) else 1e-4
+        # Use torch.minimum/maximum to handle tensor bounds (clamp doesn't mix scalar and tensor)
+        tt = torch.maximum(tt, torch.zeros_like(tt))
+        tt = torch.minimum(tt, sigmas - eps)
+        return tt
+
+    def _prepare_twinflow_metadata(self, batch: dict) -> None:
+        """
+        Prepare TwinFlow-specific batch entries (tt and optional RNG state).
+        """
+        sigmas = batch.get("sigmas")
+        if sigmas is None:
+            return
+
+        tt = batch.get("twinflow_tt")
+        if tt is None:
+            tt = self._twinflow_sample_tt(sigmas)
+        else:
+            eps = torch.finfo(sigmas.dtype).eps if torch.is_floating_point(sigmas) else 1e-4
+            tt = torch.clamp(tt, min=0.0, max=sigmas - eps)
+        batch["twinflow_tt"] = tt
+
+        if self._twinflow_store_rng:
+            try:
+                rng_state = {"cpu": torch.random.get_rng_state()}
+                if torch.cuda.is_available():
+                    rng_state["cuda"] = torch.cuda.get_rng_state_all()
+                batch["twinflow_rng_state"] = rng_state
+            except Exception:
+                logger.debug("Unable to snapshot RNG state for TwinFlow dual passes.", exc_info=True)
+
+    @staticmethod
+    def _twinflow_match_time_shape(time_tensor: torch.Tensor, like: torch.Tensor) -> torch.Tensor:
+        """
+        Broadcast a per-sample time tensor to match latent or prediction shapes.
+        """
+        if time_tensor is None:
+            return None
+        while time_tensor.dim() < like.dim():
+            time_tensor = time_tensor.unsqueeze(-1)
+        return time_tensor
+
+    @staticmethod
+    def _twinflow_diffusion_xt(
+        bridge,
+        latents: torch.Tensor,
+        noise: torch.Tensor,
+        sigma: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Reconstruct diffusion-style x_t for a given flow sigma using the bridge's alphas.
+        """
+        timesteps = bridge.sigma_to_timesteps(sigma.view(sigma.shape[0], -1)[:, 0])
+        sqrt_alpha = bridge._extract(bridge.sqrt_alphas_cumprod, timesteps, latents.shape)
+        sqrt_one_minus = bridge._extract(bridge.sqrt_one_minus_alphas_cumprod, timesteps, latents.shape)
+        return sqrt_alpha * latents + sqrt_one_minus * noise
+
+    @contextlib.contextmanager
+    def _twinflow_teacher_context(
+        self,
+        prepared_batch: dict,
+        settings: Mapping[str, object],
+        rng_state: Optional[Mapping[str, torch.Tensor]],
+    ):
+        """
+        Swap EMA weights in for teacher predictions when available.
+        """
+        ema_model = getattr(self, "ema_model", None)
+        has_ema = ema_model is not None and getattr(self.config, "use_ema", False)
+        require_ema = bool(settings.get("require_ema", True))
+        teacher_parameters = None
+
+        if require_ema and not has_ema and not self._twinflow_allow_student_teacher:
+            raise ValueError("TwinFlow requires EMA teacher weights; enable use_ema or allow student fallback explicitly.")
+
+        if has_ema:
+            teacher_component = self.get_trained_component(unwrap_model=False)
+            if teacher_component is None:
+                raise ValueError("TwinFlow teacher unavailable because no trainable component was found.")
+            teacher_parameters = list(teacher_component.parameters())
+            ema_model.store(teacher_parameters)
+            ema_model.copy_to(teacher_parameters)
+
+        try:
+
+            def _teacher_forward(
+                noisy_latents: torch.Tensor,
+                sigma: torch.Tensor,
+                tt: Optional[torch.Tensor] = None,
+                batch: Optional[dict] = None,
+                use_diff2flow_bridge: bool = False,
+            ) -> torch.Tensor:
+                if rng_state is not None:
+                    self._twinflow_restore_rng_state(rng_state)
+                target_batch = batch if batch is not None else prepared_batch
+                return self._twinflow_forward(
+                    prepared_batch=target_batch,
+                    noisy_latents=noisy_latents,
+                    sigmas=sigma,
+                    tt=tt,
+                    use_grad=False,
+                    use_diff2flow_bridge=use_diff2flow_bridge,
+                )
+
+            yield _teacher_forward
+        finally:
+            if has_ema and teacher_parameters is not None:
+                try:
+                    ema_model.restore(teacher_parameters)
+                except Exception:
+                    logger.exception("Failed to restore student weights after TwinFlow teacher swap.")
+
+    def _twinflow_cfg_batches(self, prepared_batch: dict) -> Optional[list[dict]]:
+        """
+        Build conditional/unconditional batch copies when CFG target enhancement is requested.
+        """
+        negative = prepared_batch.get("negative_prompt_embeds")
+        if negative is None:
+            negative = prepared_batch.get("uncond_prompt_embeds")
+        positive = prepared_batch.get("prompt_embeds")
+        if positive is None:
+            positive = prepared_batch.get("encoder_hidden_states")
+        if negative is None or positive is None:
+            return None
+        cond_batch = dict(prepared_batch)
+        uncond_batch = dict(prepared_batch)
+        if "prompt_embeds" in cond_batch:
+            cond_batch["prompt_embeds"] = positive
+            uncond_batch["prompt_embeds"] = negative
+        if "encoder_hidden_states" in cond_batch:
+            cond_batch["encoder_hidden_states"] = positive
+            uncond_batch["encoder_hidden_states"] = negative
+        return [cond_batch, uncond_batch]
+
+    def _twinflow_enhance_target(
+        self,
+        prepared_batch: dict,
+        teacher_forward,
+        target: torch.Tensor,
+        noisy_latents: torch.Tensor,
+        sigmas: torch.Tensor,
+        tt: torch.Tensor,
+        settings: Mapping[str, object],
+        use_diff2flow_bridge: bool = False,
+    ) -> torch.Tensor:
+        """
+        Optionally refine the target using CFG teacher predictions.
+
+        For diff2flow bridge mode, set use_diff2flow_bridge=True so timesteps are
+        derived from the current sigma, keeping UNet conditioning in sync.
+        """
+        ratio = float(settings.get("enhanced_ratio", 0.0) or 0.0)
+        if ratio <= 0.0:
+            return target
+
+        cfg_batches = self._twinflow_cfg_batches(prepared_batch)
+        if not cfg_batches or len(cfg_batches) < 2:
+            return target
+
+        try:
+            teacher_cond = teacher_forward(
+                noisy_latents=noisy_latents,
+                sigma=sigmas,
+                tt=tt,
+                batch=cfg_batches[0],
+                use_diff2flow_bridge=use_diff2flow_bridge,
+            )
+            teacher_uncond = teacher_forward(
+                noisy_latents=noisy_latents,
+                sigma=sigmas,
+                tt=tt,
+                batch=cfg_batches[1],
+                use_diff2flow_bridge=use_diff2flow_bridge,
+            )
+        except Exception:
+            logger.debug("TwinFlow CFG target enhancement failed; using base target.", exc_info=True)
+            return target
+        return target + ratio * (teacher_cond - teacher_uncond)
+
+    def _twinflow_forward(
+        self,
+        prepared_batch: dict,
+        noisy_latents: torch.Tensor,
+        sigmas: torch.Tensor,
+        tt: Optional[torch.Tensor] = None,
+        use_grad: bool = True,
+        use_diff2flow_bridge: bool = False,
+    ) -> torch.Tensor:
+        """
+        Run a forward pass with custom noisy latents and sigma/tt values.
+
+        For diff2flow bridge mode (use_diff2flow_bridge=True), timesteps are derived
+        from the current sigma using the bridge's sigma_to_timesteps(), ensuring the
+        UNet receives timestep conditioning that matches the noise level of noisy_latents.
+        The prediction is then converted to flow.
+        """
+        twin_batch = dict(prepared_batch)
+        twin_batch["noisy_latents"] = noisy_latents
+        # Split sigma into magnitude and sign for models that can consume signed time.
+        sigma_flat = sigmas.view(sigmas.shape[0], -1)[:, 0]
+        sigma_sign = torch.sign(sigma_flat)
+        sigma_sign = torch.where(sigma_sign == 0, torch.ones_like(sigma_sign), sigma_sign)
+        sigma_abs = sigmas.abs()
+        twin_batch["sigmas"] = sigma_abs
+        if tt is not None:
+            twin_batch["twinflow_tt"] = tt
+        twin_batch["twinflow_time_sign"] = sigma_sign
+
+        # Derive timesteps from sigma
+        if use_diff2flow_bridge and self.diff2flow_bridge is not None:
+            # Convert current flow sigma to matching diffusion timestep
+            diffusion_timesteps = self.diff2flow_bridge.sigma_to_timesteps(sigma_abs.view(sigma_abs.shape[0], -1)[:, 0])
+            twin_batch["timesteps"] = diffusion_timesteps.to(dtype=sigmas.dtype)
+        else:
+            # Native flow mode: derive timesteps from |sigma| (scale to [0, 1000]).
+            # Negative-time semantics are carried by twinflow_time_sign.
+            twin_batch["timesteps"] = sigma_abs.view(sigmas.shape[0], -1)[:, 0] * 1000.0
+            diffusion_timesteps = None
+
+        if use_grad:
+            pred = self.model_predict(prepared_batch=twin_batch)["model_prediction"]
+        else:
+            with torch.no_grad():
+                pred = self.model_predict(prepared_batch=twin_batch)["model_prediction"]
+
+        # Convert prediction to flow if using diff2flow bridge
+        if use_diff2flow_bridge and self.diff2flow_bridge is not None and diffusion_timesteps is not None:
+            pred = self.diff2flow_bridge.prediction_to_flow(
+                pred.float(),
+                noisy_latents.float(),
+                diffusion_timesteps,
+                prediction_type=self.PREDICTION_TYPE.value,
+            )
+
+        return pred
+
+    @staticmethod
+    def _twinflow_reconstruct_states(x_t: torch.Tensor, sigma: torch.Tensor, flow_pred: torch.Tensor):
+        """
+        Recover x_hat and z_hat from the predicted flow under linear interpolation x_t = t*z + (1-t)*x.
+        """
+        sigma_b = ModelFoundation._twinflow_match_time_shape(sigma, x_t)
+        gamma = 1 - sigma_b
+        x_hat = x_t - sigma_b * flow_pred
+        z_hat = x_t + gamma * flow_pred
+        return x_hat, z_hat
+
+    def _twinflow_rcgm_target(
+        self,
+        prepared_batch: dict,
+        base_pred: torch.Tensor,
+        target: torch.Tensor,
+        noisy_latents: torch.Tensor,
+        sigma: torch.Tensor,
+        tt: torch.Tensor,
+        settings: dict,
+        teacher_forward,
+        use_diff2flow_bridge: bool = False,
+        rcgm_latents: Optional[torch.Tensor] = None,
+        latents: Optional[torch.Tensor] = None,
+        noise: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Approximate the recursive consistency target (RCGM) used by TwinFlow.
+
+        For diff2flow bridge mode, set use_diff2flow_bridge=True so each teacher
+        call derives timesteps from the current sigma (t_prev), keeping UNet
+        conditioning in sync as x_t evolves through the integration loop.
+        """
+        delta = settings.get("delta_t", 0.01)
+        sigma_b = self._twinflow_match_time_shape(sigma, base_pred)
+        tt_b = self._twinflow_match_time_shape(tt, base_pred)
+        clamp_val = settings.get("clamp_target", 1.0)
+        steps = max(1, int(settings.get("estimate_order", 1)))
+        t_anchor = torch.maximum(tt_b, sigma_b - delta)
+
+        x_t = rcgm_latents if rcgm_latents is not None else noisy_latents
+        pred_accum = torch.zeros_like(base_pred)
+        t_prev = sigma_b
+
+        time_schedule = []
+        if steps == 1:
+            time_schedule.append(tt_b)
+        else:
+            for i in range(steps - 1):
+                frac = float(i + 1) / float(steps)
+                time_schedule.append(t_anchor * frac + sigma_b * (1 - frac))
+            time_schedule.append(tt_b)
+
+        for t_next in time_schedule:
+            # Teacher runs on diffusion-style noisy latents; flow RC-GM operates on flow-style x_t.
+            teacher_input = x_t
+            if use_diff2flow_bridge and self.diff2flow_bridge is not None and latents is not None and noise is not None:
+                teacher_input = self._twinflow_diffusion_xt(self.diff2flow_bridge, latents, noise, t_prev)
+            # Pass t_prev as sigma so the bridge can derive matching diffusion timesteps
+            F_c = teacher_forward(teacher_input, t_prev, tt=t_next, use_diff2flow_bridge=use_diff2flow_bridge)
+            x_hat, z_hat = self._twinflow_reconstruct_states(x_t, t_prev, F_c)
+            x_t = t_next * z_hat + (1 - t_next) * x_hat
+            pred_accum = pred_accum + F_c * (t_prev - t_next)
+            t_prev = t_next
+
+        # Detach base_pred to avoid self-referential gradients in the target.
+        # Reference: TwinFlow MNIST uses F_th_t.data (equivalent to detach).
+        base_pred_detached = base_pred.detach()
+        rcgm_raw = base_pred_detached - pred_accum - target
+        rcgm = base_pred_detached - rcgm_raw.clamp(min=-clamp_val, max=clamp_val)
+        return rcgm
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         """
@@ -2688,6 +3098,8 @@ class ModelFoundation(ABC):
             batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
             self.expand_sigmas(batch)
             batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
+            if self._twinflow_active():
+                self._prepare_twinflow_metadata(batch)
         else:
             weights = generate_timestep_weights(self.config, self.noise_schedule.config.num_train_timesteps).to(
                 self.accelerator.device
@@ -2707,6 +3119,15 @@ class ModelFoundation(ABC):
                 batch["input_noise"].float(),
                 batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+            if self._twinflow_active() and self._twinflow_diffusion_bridge:
+                if self.diff2flow_bridge is None:
+                    raise ValueError("TwinFlow diff2flow bridge requested but unavailable.")
+                sigmas = self.diff2flow_bridge.timesteps_to_sigma(
+                    batch["timesteps"].to(device=self.accelerator.device).long(),
+                    broadcast_shape=batch["noisy_latents"].shape,
+                ).to(dtype=self.config.weight_dtype)
+                batch["sigmas"] = sigmas
+                self._prepare_twinflow_metadata(batch)
 
         self._maybe_enable_reflexflow_default()
         if getattr(self.config, "scheduled_sampling_max_step_offset", 0) > 0:
@@ -3073,7 +3494,143 @@ class ModelFoundation(ABC):
         Computes an auxiliary loss if needed.
         This is a stub and can be optionally implemented in subclasses.
         """
-        return loss, None
+        aux_logs = None
+        if not self._twinflow_active():
+            return loss, aux_logs
+
+        try:
+            twin_loss, twin_logs = self._compute_twinflow_losses(
+                prepared_batch=prepared_batch,
+                base_pred=model_output.get("model_prediction"),
+            )
+            loss = loss + twin_loss
+            if twin_logs:
+                aux_logs = twin_logs
+        except Exception:
+            logger.exception("TwinFlow auxiliary loss failed; stopping because TwinFlow is explicitly enabled.")
+            raise
+        return loss, aux_logs
+
+    def _compute_twinflow_losses(self, prepared_batch: dict, base_pred: torch.Tensor) -> tuple[torch.Tensor, dict]:
+        """
+        Calculate TwinFlow/RCGM auxiliary losses using existing batch fields.
+        """
+        settings = self._twinflow_settings()
+        latents = prepared_batch.get("latents")
+        noise = prepared_batch.get("noise")
+        sigmas = prepared_batch.get("sigmas")
+        tt = prepared_batch.get("twinflow_tt")
+        noisy_latents = prepared_batch.get("noisy_latents")
+        rng_state = prepared_batch.get("twinflow_rng_state") if settings.get("use_rng_state") else None
+
+        if base_pred is None:
+            raise ValueError("TwinFlow requires a model_prediction tensor.")
+        if latents is None or noise is None or noisy_latents is None:
+            raise ValueError("TwinFlow requires latents, noise, sigmas, and noisy_latents in the prepared batch.")
+
+        # For diff2flow bridge mode, derive flow-equivalent sigma from the scheduler's alpha_cumprod.
+        # Teacher/forward calls will dynamically convert sigma back to timesteps as x_t evolves.
+        use_diff2flow_bridge = False
+        if sigmas is None:
+            if self._twinflow_diffusion_bridge:
+                timesteps = prepared_batch.get("timesteps")
+                if timesteps is None:
+                    raise ValueError("TwinFlow bridging requires timesteps for sigma computation.")
+                if self.diff2flow_bridge is None:
+                    raise ValueError("TwinFlow diff2flow bridge requested but unavailable.")
+                use_diff2flow_bridge = True
+                # Use proper flow-equivalent sigma derived from alpha_cumprod
+                sigmas = self.diff2flow_bridge.timesteps_to_sigma(
+                    timesteps.to(device=self.accelerator.device).long(),
+                    broadcast_shape=noisy_latents.shape,
+                ).to(dtype=self.config.weight_dtype)
+            else:
+                raise ValueError("TwinFlow requires sigmas in the prepared batch.")
+
+        sigmas = sigmas.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        tt = tt if tt is not None else self._twinflow_sample_tt(sigmas)
+        sigmas = self._twinflow_match_time_shape(sigmas, noisy_latents)
+        tt = self._twinflow_match_time_shape(tt, sigmas)
+        eps = torch.finfo(sigmas.dtype).eps if torch.is_floating_point(sigmas) else 1e-4
+        tt = torch.minimum(tt, sigmas - eps)
+        noisy_latents = noisy_latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        # For diffusion-bridged models, RC-GM operates in flow space; build a flow-consistent x_t trajectory.
+        rcgm_latents = noisy_latents
+        if self._twinflow_diffusion_bridge:
+            rcgm_latents = (1 - sigmas) * latents + sigmas * noise
+        prepared_batch["twinflow_tt"] = tt
+
+        target = (noise - latents).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+
+        if self._twinflow_diffusion_bridge:
+            if self.diff2flow_bridge is None:
+                raise ValueError("TwinFlow diff2flow bridge requested but unavailable.")
+            # Convert student's base prediction to flow (prediction only, not latents)
+            base_pred = self.diff2flow_bridge.prediction_to_flow(
+                base_pred.float(),
+                prepared_batch["noisy_latents"].float(),
+                prepared_batch["timesteps"],
+                prediction_type=self.PREDICTION_TYPE.value,
+            )
+            # Keep original diffusion noisy_latents - do NOT rewrite with flow interpolation.
+            # The UNet was trained on diffusion-style x_t, so we must preserve it.
+            # Teacher passes will derive timesteps dynamically from sigma via the bridge.
+
+        with self._twinflow_teacher_context(prepared_batch, settings, rng_state) as teacher_forward:
+            target = self._twinflow_enhance_target(
+                prepared_batch=prepared_batch,
+                teacher_forward=teacher_forward,
+                target=target,
+                noisy_latents=noisy_latents,
+                sigmas=sigmas,
+                tt=tt,
+                settings=settings,
+                use_diff2flow_bridge=use_diff2flow_bridge,
+            )
+            rcgm_target = self._twinflow_rcgm_target(
+                prepared_batch=prepared_batch,
+                base_pred=base_pred,
+                target=target,
+                noisy_latents=noisy_latents,
+                sigma=sigmas,
+                tt=tt,
+                settings=settings,
+                teacher_forward=teacher_forward,
+                use_diff2flow_bridge=use_diff2flow_bridge,
+                rcgm_latents=rcgm_latents,
+                latents=latents,
+                noise=noise,
+            )
+
+        twin_losses: list[torch.Tensor] = []
+        log_payload: dict[str, float] = {}
+
+        # 1. RCGM Base Loss (L_base) - always enabled
+        # This is the core consistency loss that enables few-step generation
+        loss_base = F.mse_loss(base_pred.float(), rcgm_target.float(), reduction="mean")
+        twin_losses.append(loss_base)
+        log_payload["twinflow_base"] = loss_base.detach().float().mean().item()
+
+        # 2. Real Velocity Loss - helps learn the real velocity field well
+        loss_real = F.mse_loss(base_pred.float(), target.float(), reduction="mean")
+        twin_losses.append(loss_real)
+        log_payload["twinflow_realvel"] = loss_real.detach().float().mean().item()
+
+        # NOTE: Self-adversarial branch (L_adv, L_rectify, L_consistency) is disabled.
+        #
+        # The original TwinFlow paper uses an auxiliary time embedding (aux_time_embed) to
+        # distinguish the "fake" trajectory (t ∈ [-1, 0]) from the "real" trajectory (t ∈ [0, 1]).
+        # The model receives |σ| for the main time embedding and the sign via a separate embedding.
+        #
+        # Without modifying transformer architectures to add this dual embedding, the adversarial
+        # losses won't work correctly - the model has no way to distinguish fake from real.
+        #
+        # The RCGM-based consistency training (L_base + L_realvel) still provides significant
+        # few-step generation capability. Full TwinFlow would require architecture changes to
+        # add target_timestep/aux_time_embed support to Flux, SD3, Sana, etc.
+
+        total_twin_loss = torch.stack(twin_losses).sum()
+        return total_twin_loss, log_payload
 
 
 class ImageModelFoundation(ModelFoundation):
