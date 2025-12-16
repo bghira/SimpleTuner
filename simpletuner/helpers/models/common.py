@@ -1049,6 +1049,11 @@ class ModelFoundation(ABC):
             import safetensors.torch
             from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
 
+            comfy_preserve_prefix_families = {"flux", "flux2", "lumina2", "z_image"}
+            preserve_component_prefixes = (
+                {"transformer"} if self.config.model_family in comfy_preserve_prefix_families else None
+            )
+
             def comfyui_save_function(weights, filename):
                 metadata = {"format": "pt"}
                 if adapter_metadata:
@@ -1056,7 +1061,11 @@ class ModelFoundation(ABC):
                         metadata[LORA_ADAPTER_METADATA_KEY] = json.dumps(adapter_metadata, indent=2, sort_keys=True)
                     except Exception:
                         pass
-                converted = convert_diffusers_to_comfyui(weights, adapter_metadata=adapter_metadata)
+                converted = convert_diffusers_to_comfyui(
+                    weights,
+                    adapter_metadata=adapter_metadata,
+                    preserve_component_prefixes=preserve_component_prefixes,
+                )
                 safetensors.torch.save_file(converted, filename, metadata=metadata)
 
             kwargs["save_function"] = comfyui_save_function
