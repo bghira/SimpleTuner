@@ -31,6 +31,15 @@ from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class GLUMBConv(PatchableModule):
     def __init__(
         self,
@@ -521,6 +530,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         attention_kwargs: Optional[dict] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[Tuple[torch.Tensor, ...], Transformer2DModelOutput]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -584,6 +594,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
+        capture_idx = 0
         for i, block in enumerate(self.transformer_blocks):
             mask_info = None
             original_hidden_states = None
@@ -645,6 +656,8 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             if mask_info is not None and router is not None:
                 hidden_states = router.end_route(hidden_states, mask_info, original_x=original_hidden_states)
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
         tokens = hidden_states.shape[1]
         expected_tokens = post_patch_height * post_patch_width
         if tokens != expected_tokens:

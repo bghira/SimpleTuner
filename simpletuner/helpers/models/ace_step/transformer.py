@@ -34,6 +34,15 @@ from .lyrics_utils.lyric_encoder import ConformerEncoder as LyricEncoder
 logger = logging.getLogger(__name__)
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def cross_norm(hidden_states, controlnet_input):
     # input N x T x c
     mean_hidden_states, std_hidden_states = hidden_states.mean(dim=(1, 2), keepdim=True), hidden_states.std(
@@ -430,6 +439,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         block_controlnet_hidden_states: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
         controlnet_scale: Union[float, torch.Tensor] = 1.0,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ):
 
         param_dtype = next(self.parameters()).dtype
@@ -480,6 +490,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         rotary_freqs_cis = self.rotary_emb(hidden_states, seq_len=hidden_states.shape[1])
         encoder_rotary_freqs_cis = self.rotary_emb(encoder_hidden_states, seq_len=encoder_hidden_states.shape[1])
 
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
 
             if self.training and self.gradient_checkpointing:
@@ -506,6 +517,9 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
                     rotary_freqs_cis_cross=encoder_rotary_freqs_cis,
                     temb=temb,
                 )
+
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
             for ssl_encoder_depth in self.ssl_encoder_depths:
                 if index_block == ssl_encoder_depth:
@@ -567,6 +581,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         block_controlnet_hidden_states: Optional[Union[List[torch.Tensor], torch.Tensor]] = None,
         controlnet_scale: Union[float, torch.Tensor] = 1.0,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         encoder_hidden_states, encoder_hidden_mask = self.encode(
             encoder_text_hidden_states=encoder_text_hidden_states,
@@ -590,6 +605,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
             block_controlnet_hidden_states=block_controlnet_hidden_states,
             controlnet_scale=controlnet_scale,
             return_dict=return_dict,
+            hidden_states_buffer=hidden_states_buffer,
         )
 
         return output

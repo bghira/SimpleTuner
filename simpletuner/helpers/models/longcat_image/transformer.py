@@ -18,6 +18,15 @@ from diffusers.models.transformers.transformer_flux import (
 logger = get_logger(__name__, log_level="INFO")
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class TimestepEmbeddings(nn.Module):
     def __init__(self, embedding_dim):
         super().__init__()
@@ -108,6 +117,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         Args:
@@ -142,6 +152,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         ids = torch.cat((txt_ids, img_ids), dim=0)
         image_rotary_emb = self.pos_embed(ids)
 
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_checkpoint[index_block]:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
@@ -158,6 +169,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                 )
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         for index_block, block in enumerate(self.single_transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_single_checkpoint[index_block]:
@@ -175,6 +188,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                 )
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         hidden_states = self.norm_out(hidden_states, temb)
         output = self.proj_out(hidden_states)

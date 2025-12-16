@@ -39,6 +39,15 @@ from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class HunyuanVideo15AttnProcessor2_0:
     _attention_backend = None
     _parallel_config = None
@@ -798,6 +807,7 @@ class HunyuanVideo15Transformer3DModel(
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
         # 4. Transformer blocks
+        capture_idx = 0
         if torch.is_grad_enabled() and self.gradient_checkpointing:
             for idx, block in enumerate(self.transformer_blocks):
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
@@ -812,6 +822,8 @@ class HunyuanVideo15Transformer3DModel(
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                capture_idx += 1
 
         else:
             for idx, block in enumerate(self.transformer_blocks):
@@ -826,6 +838,8 @@ class HunyuanVideo15Transformer3DModel(
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                capture_idx += 1
 
         # 5. Output projection
         hidden_states = self.norm_out(hidden_states, temb)

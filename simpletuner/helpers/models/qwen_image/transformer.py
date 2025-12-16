@@ -41,6 +41,15 @@ from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModul
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def get_timestep_embedding(
     timesteps: torch.Tensor,
     embedding_dim: int,
@@ -691,6 +700,7 @@ class QwenImageTransformer2DModel(
         controlnet_block_samples=None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         The [`QwenTransformer2DModel`] forward method.
@@ -777,6 +787,7 @@ class QwenImageTransformer2DModel(
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -818,6 +829,8 @@ class QwenImageTransformer2DModel(
                     joint_attention_kwargs=attention_kwargs,
                 )
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
             # TREAD end routing for this layer
             if use_routing:
                 # Check if this layer should end routing
