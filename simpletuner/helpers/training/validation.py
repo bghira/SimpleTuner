@@ -1800,8 +1800,10 @@ class Validation:
                 self.model.pipeline.scheduler = distillation_scheduler
                 return distillation_scheduler
 
-        # TwinFlow uses its own UCGM-style scheduler
-        if getattr(self.config, "twinflow_enabled", False) and self.model.PREDICTION_TYPE.value == "flow_matching":
+        # TwinFlow uses its own UCGM-style scheduler (supports flow and diff2flow bridge)
+        if getattr(self.config, "twinflow_enabled", False) and (
+            self.model.PREDICTION_TYPE.value == "flow_matching" or getattr(self.model, "_twinflow_diffusion_bridge", False)
+        ):
             twinflow_steps = int(getattr(self.config, "twinflow_target_step_count", 1) or 1)
             scheduler = TwinFlowScheduler(
                 num_train_timesteps=1000,
