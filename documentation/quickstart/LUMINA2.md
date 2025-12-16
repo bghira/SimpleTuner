@@ -201,6 +201,8 @@ Lumina2 benefits from high-quality training data. Create a `--data_backend_confi
 ]
 ```
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 Create your dataset directory. Be sure to update this path with your actual location.
 
 ```bash

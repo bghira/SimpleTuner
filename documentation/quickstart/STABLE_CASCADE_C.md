@@ -154,6 +154,8 @@ Create `config/stable_cascade/multidatabackend.json`:
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 Tips:
 
 - Stage C latents are derived from an autoencoder, so stick to 1024×1024 (or a tight range of portrait/landscape buckets). The decoder expects ~24×24 latent grids from a 1024px input.

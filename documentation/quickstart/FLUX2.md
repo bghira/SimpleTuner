@@ -234,6 +234,8 @@ Create `config/multidatabackend.json`:
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 ### LoRA Targets
 
 Available LoRA target presets:

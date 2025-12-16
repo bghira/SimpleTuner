@@ -123,6 +123,8 @@ The main dataset should reference one conditioning dataset **and** a conditionin
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 - `conditioning_type=reference_strict` guarantees that crops match the edit image. Use `reference_loose` only if the reference can be aspect-mismatched.
 - The `conditioning_image_embeds` entry stores the Qwen2.5-VL visual tokens produced for each reference. If omitted, SimpleTuner will create a default cache under `cache/conditioning_image_embeds/<dataset_id>`.
 

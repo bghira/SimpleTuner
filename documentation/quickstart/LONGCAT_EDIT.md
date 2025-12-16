@@ -69,6 +69,8 @@ Use two aligned datasets: **edit images** (caption = edit instruction) and **ref
 ]
 ```
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 Notes:
 - Aspect buckets: keep on the 64px grid.
 - Reference captions are optional; if present they replace edit captions (usually undesired).
