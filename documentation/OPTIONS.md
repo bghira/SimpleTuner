@@ -809,6 +809,18 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **Default**: `dinov2_vitg14`
 - **Choices**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`
 
+### `--crepa_use_backbone_features`
+
+- **What**: Skip the external encoder and align a student block to a teacher block inside the diffusion model.
+- **Why**: Avoids loading DINOv2 when the backbone already has a stronger semantic layer to supervise from.
+- **Default**: `false`
+
+### `--crepa_teacher_block_index`
+
+- **What**: Teacher block index when using backbone features.
+- **Why**: Lets you align an earlier student block to a later teacher block without an external encoder. Falls back to the student block when unset.
+- **Default**: Uses `crepa_block_index` if not provided.
+
 ### `--crepa_encoder_image_size`
 
 - **What**: Input resolution for the encoder.
@@ -828,6 +840,9 @@ crepa_cumulative_neighbors = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"
+crepa_use_backbone_features = false
+# crepa_teacher_block_index = 16
+crepa_encoder_image_size = 518
 ```
 
 ---
@@ -838,6 +853,37 @@ crepa_model = "dinov2_vitg14"
 
 - **What**: Interval at which training state checkpoints are saved (in steps).
 - **Why**: Useful for resuming training and for inference. Every *n* iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
+
+---
+
+## 🔁 LayerSync (Hidden State Self-Alignment)
+
+LayerSync encourages a "student" layer to match a stronger "teacher" layer inside the same transformer, using cosine similarity over hidden tokens.
+
+### `--layersync_enabled`
+
+- **What**: Enable LayerSync regularization during training.
+- **Default**: `false`
+
+### `--layersync_student_block`
+
+- **What**: Transformer block index to treat as the student.
+- **Required**: Yes, when LayerSync is enabled.
+
+### `--layersync_teacher_block`
+
+- **What**: Transformer block index to treat as the teacher.
+- **Default**: Uses the student block when omitted.
+
+### `--layersync_lambda`
+
+- **What**: Weight for the LayerSync loss relative to the main loss.
+- **Default**: `0.0` (set >0 to activate when enabled).
+
+### `--layersync_detach_teacher`
+
+- **What**: Detach the teacher layer to prevent gradients from flowing into it.
+- **Default**: `true`
 
 ### `--checkpoint_epoch_interval`
 
