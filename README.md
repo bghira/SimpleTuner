@@ -117,6 +117,7 @@ SimpleTuner provides comprehensive training support across multiple diffusion mo
 
 Detailed quickstart guides are available for all supported models:
 
+- **[TwinFlow Few-Step (RCGM) Guide](/documentation/distillation/TWINFLOW.md)** - Enable RCGM auxiliary loss for few-step/one-step generation (flow models or diffusion via diff2flow)
 - **[Flux.1 Guide](/documentation/quickstart/FLUX.md)** - Includes Kontext editing support and QKV fusion
 - **[Flux.2 Guide](/documentation/quickstart/FLUX2.md)** - **NEW!** Latest enormous Flux model with Mistral-3 text encoder
 - **[Z-Image Guide](/documentation/quickstart/ZIMAGE.md)** - Base/Turbo LoRA with assistant adapter + TREAD acceleration
