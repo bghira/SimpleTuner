@@ -266,6 +266,42 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="crepa_use_backbone_features",
+            arg_name="--crepa_use_backbone_features",
+            ui_label="CREPA: Use Backbone Features",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Align student/teacher transformer layers instead of an external vision encoder.",
+            tooltip="Skips loading DINO when a stronger semantic layer exists inside the backbone.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=14,
+            documentation="OPTIONS.md#--crepa_use_backbone_features",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_teacher_block_index",
+            arg_name="--crepa_teacher_block_index",
+            ui_label="CREPA Teacher Block",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Teacher block index when using backbone features (defaults to the student block).",
+            tooltip="Pick a later/stronger layer to supervise the student when skipping DINO.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=15,
+            documentation="OPTIONS.md#--crepa_teacher_block_index",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="crepa_encoder_image_size",
             arg_name="--crepa_encoder_image_size",
             ui_label="CREPA Encoder Resolution",
@@ -278,7 +314,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Input resolution for the vision encoder preprocessing.",
             tooltip="Set to the pretrained encoder's default (518 for DINOv2-G/14; 224 for ViT-S/14).",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=14,
+            order=16,
             documentation="OPTIONS.md#--crepa_encoder_image_size",
         )
     )
@@ -296,7 +332,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Release VAE encoder/quant_conv after load to save memory when only decoding latents.",
             tooltip="Enable only if latents come from caches or elsewhere; encoding new pixels will no longer work.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=15,
+            order=17,
             documentation="OPTIONS.md#--crepa_drop_vae_encoder",
         )
     )
@@ -314,7 +350,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Divide alignment similarity by the number of frames to keep loss scale stable.",
             tooltip="Turn off to let longer clips contribute proportionally more alignment signal.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=16,
+            order=18,
             documentation="OPTIONS.md#--crepa_normalize_by_frames",
         )
     )
@@ -332,7 +368,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Interpolate patch tokens to match encoder/DiT token counts instead of global pooling.",
             tooltip="Disable to pool both sides before similarity if memory is tight.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=17,
+            order=19,
             documentation="OPTIONS.md#--crepa_spatial_align",
         )
     )
@@ -359,7 +395,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Enable RCGM-based consistency training for few-step generation. Uses recursive consistency gradient matching to train models for 1-4 step inference with CFG baked in.",
             tooltip="Adds RCGM consistency loss for flow-matching models. Validation uses the target step count with zero CFG. Based on TwinFlow/RCGM paper.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=18,
+            order=20,
             documentation="OPTIONS.md#--twinflow_enabled",
         )
     )
@@ -389,7 +425,97 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Target number of inference steps. Validation will run with this many steps using the UCGM sampler. Recommended: 1-4 NFE.",
             tooltip="1 = one-step generation, 2-4 = few-step generation (better quality). Validation uses zero CFG since guidance is baked in during training.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=19,
+            order=21,
             documentation="OPTIONS.md#--twinflow_target_step_count",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="layersync_enabled",
+            arg_name="--layersync_enabled",
+            ui_label="Enable LayerSync",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            help_text="Enable LayerSync self-alignment between two transformer blocks.",
+            tooltip="Adds a cosine-similarity regularizer between student/teacher layers captured from the backbone.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=22,
+            documentation="OPTIONS.md#--layersync_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="layersync_student_block",
+            arg_name="--layersync_student_block",
+            ui_label="LayerSync Student Block",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
+            help_text="Block index to treat as the student for LayerSync.",
+            tooltip="Pick an earlier/weaker layer to receive guidance.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=23,
+            documentation="OPTIONS.md#--layersync_student_block",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="layersync_teacher_block",
+            arg_name="--layersync_teacher_block",
+            ui_label="LayerSync Teacher Block",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
+            help_text="Teacher block index; defaults to the student block when omitted.",
+            tooltip="Use a later/stronger layer to supervise the student.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=24,
+            documentation="OPTIONS.md#--layersync_teacher_block",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="layersync_lambda",
+            arg_name="--layersync_lambda",
+            ui_label="LayerSync Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
+            help_text="Strength multiplier for LayerSync alignment loss.",
+            tooltip="Set >0 to activate LayerSync when enabled.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=25,
+            documentation="OPTIONS.md#--layersync_lambda",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="layersync_detach_teacher",
+            arg_name="--layersync_detach_teacher",
+            ui_label="LayerSync Detach Teacher",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=True,
+            dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
+            help_text="Detach the teacher layer when computing LayerSync loss.",
+            tooltip="Keep enabled to avoid backpropagating through the teacher layer.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=26,
+            documentation="OPTIONS.md#--layersync_detach_teacher",
         )
     )

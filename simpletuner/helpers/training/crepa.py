@@ -36,6 +36,8 @@ class CrepaRegularizer:
         # Cumulative mode (opt-in): use all distances from 1 to d for smoother alignment
         self.cumulative_neighbors = bool(getattr(config, "crepa_cumulative_neighbors", False))
 
+        self.use_backbone_features = bool(getattr(config, "crepa_use_backbone_features", False))
+        self.teacher_block_index = getattr(config, "crepa_teacher_block_index", None)
         self.encoder: Optional[torch.nn.Module] = None
         self.encoder_dim: Optional[int] = None
         self.projector: Optional[torch.nn.Module] = None
@@ -50,10 +52,14 @@ class CrepaRegularizer:
         if self.block_index is None:
             raise ValueError("crepa_block_index must be set when CREPA is enabled.")
 
-        self._load_encoder()
-        target_dim = self.encoder_dim
-        if target_dim is None:
-            raise RuntimeError("CREPA failed to determine encoder output dimension.")
+        if self.use_backbone_features:
+            target_dim = self.hidden_size
+            self.encoder_dim = target_dim
+        else:
+            self._load_encoder()
+            target_dim = self.encoder_dim
+            if target_dim is None:
+                raise RuntimeError("CREPA failed to determine encoder output dimension.")
 
         if self.projector is None:
             self.projector = nn.Sequential(
@@ -74,22 +80,32 @@ class CrepaRegularizer:
         hidden_states: Optional[torch.Tensor],
         latents: Optional[torch.Tensor],
         vae: Optional[nn.Module],
+        *,
+        frame_features: Optional[torch.Tensor] = None,
     ) -> Tuple[Optional[torch.Tensor], Optional[dict]]:
         if not self.enabled:
             return None, None
         if hidden_states is None:
             raise ValueError("CREPA is enabled but no intermediate hidden states were provided.")
-        if latents is None:
-            raise ValueError("CREPA requires access to clean latents for decoding.")
-        if vae is None:
-            raise ValueError("CREPA requires a VAE to decode latents back to pixel space.")
+        if not self.use_backbone_features:
+            if latents is None:
+                raise ValueError("CREPA requires access to clean latents for decoding.")
+            if vae is None:
+                raise ValueError("CREPA requires a VAE to decode latents back to pixel space.")
+        else:
+            if frame_features is None:
+                raise ValueError("CREPA backbone feature mode requires frame_features from the model.")
         if self.projector is None:
             raise RuntimeError("CREPA projector was not initialised on the diffusion model.")
         if self.weight == 0:
             return None, None
 
-        video_pixels = self._decode_latents(latents, vae)
-        frame_features = self._encode_frames(video_pixels)  # (B, T_pixel, N_enc, D_enc)
+        if not self.use_backbone_features:
+            video_pixels = self._decode_latents(latents, vae)
+            frame_features = self._encode_frames(video_pixels)  # (B, T_pixel, N_enc, D_enc)
+        else:
+            frame_features = self._normalize_frame_features(frame_features)
+
         projected = self._project_hidden_states(hidden_states)  # (B, T_dit, N_dit, D_enc)
 
         # Temporal alignment: match frame count between projected and frame_features
@@ -311,6 +327,16 @@ class CrepaRegularizer:
         tokens = self._forward_encoder(frames)  # (BT, N_tokens, D)
         tokens = tokens.view(b, t, tokens.shape[1], -1)
         return tokens
+
+    def _normalize_frame_features(self, frame_features: torch.Tensor) -> torch.Tensor:
+        """
+        Ensure backbone-provided frame features are in (B, T, N, D) format.
+        """
+        if frame_features.ndim == 3:
+            frame_features = frame_features.unsqueeze(1)
+        if frame_features.ndim != 4:
+            raise ValueError(f"Unexpected frame feature shape: {frame_features.shape}")
+        return frame_features
 
     def _resolve_encoder_name(self, value: Optional[str]) -> str:
         if not value:
