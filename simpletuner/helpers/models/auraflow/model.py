@@ -142,6 +142,7 @@ class Auraflow(ImageModelFoundation):
             f"\n{prepared_batch['timesteps'].shape}"
             f"\n{prepared_batch['encoder_hidden_states'].shape}"
         )
+        hidden_states_buffer = self._new_hidden_state_buffer()
         batch, channels, height, width = prepared_batch["noisy_latents"].shape
         if channels != self.LATENT_CHANNEL_COUNT:
             raise ValueError(
@@ -169,9 +170,10 @@ class Auraflow(ImageModelFoundation):
             timestep=timesteps,
             timestep_sign=timestep_sign,
             return_dict=True,
+            hidden_states_buffer=hidden_states_buffer,
         ).sample
 
-        return {"model_prediction": model_output}
+        return {"model_prediction": model_output, "hidden_states_buffer": hidden_states_buffer}
 
     def check_user_config(self):
         if self.config.base_model_precision == "fp8-quanto":

@@ -24,6 +24,15 @@ from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def find_multiple(n: int, k: int) -> int:
     if n % k == 0:
         return n
@@ -555,6 +564,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         return_dict: bool = True,
         skip_layers: Optional[List[int]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The AuraFlowTransformer2DModel forward method with additional support for skip_layers and controlnet.
@@ -637,6 +647,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
         # Total number of blocks for ControlNet integration
         total_blocks = len(self.joint_transformer_blocks) + len(self.single_transformer_blocks)
+        capture_idx = 0
 
         # MMDiT blocks.
         for index_block, block in enumerate(self.joint_transformer_blocks):
@@ -692,6 +703,8 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                 interval_control = total_blocks // len(block_controlnet_hidden_states)
                 hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
             # TREAD: END the current route?
             if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
                 hidden_states = router.end_route(
@@ -794,6 +807,13 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     )
                     combined_hidden_states = combined_hidden_states + controlnet_hidden
 
+                _store_hidden_state(
+                    hidden_states_buffer,
+                    f"layer_{capture_idx}",
+                    combined_hidden_states,
+                    image_tokens_start=encoder_seq_len,
+                )
+                capture_idx += 1
                 # TREAD: END the current route?
                 if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
                     img_tokens_r = combined_hidden_states[:, encoder_seq_len:]

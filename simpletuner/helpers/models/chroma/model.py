@@ -319,6 +319,7 @@ class Chroma(ImageModelFoundation):
 
     def model_predict(self, prepared_batch):
         batch_size, _, height, width = prepared_batch["latents"].shape
+        hidden_states_buffer = self._new_hidden_state_buffer()
         packed_noisy_latents = pack_latents(
             prepared_batch["noisy_latents"],
             batch_size=batch_size,
@@ -389,6 +390,8 @@ class Chroma(ImageModelFoundation):
             "timestep_sign": prepared_batch.get("twinflow_time_sign"),
             "return_dict": False,
         }
+        if hidden_states_buffer is not None:
+            transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
         if (
             getattr(self.config, "tread_config", None) is not None
@@ -414,7 +417,8 @@ class Chroma(ImageModelFoundation):
                 height=prepared_batch["latents"].shape[2] * 8,
                 width=prepared_batch["latents"].shape[3] * 8,
                 vae_scale_factor=16,
-            )
+            ),
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:

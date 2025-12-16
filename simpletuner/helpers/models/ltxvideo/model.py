@@ -219,6 +219,7 @@ class LTXVideo(VideoModelFoundation):
         ]
         # rope_interpolation_scale = [1 / 25, 32, 32]
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
         transformer_kwargs = {
             "encoder_hidden_states": prepared_batch["encoder_hidden_states"],
@@ -236,6 +237,8 @@ class LTXVideo(VideoModelFoundation):
         if capture_hidden:
             transformer_kwargs["output_hidden_states"] = True
             transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+        if hidden_states_buffer is not None:
+            transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
         model_output = self.model(
             packed_noisy_latents,
@@ -269,6 +272,7 @@ class LTXVideo(VideoModelFoundation):
         return {
             "model_prediction": model_pred,
             "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def check_user_config(self):

@@ -21,6 +21,15 @@ _BSA_ATTENTION_FN = None
 _BSA_IMPORT_CHECKED = False
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 @functools.lru_cache(maxsize=1)
 def _load_optional_triton_attention():
     module_candidates = [
@@ -953,6 +962,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         offload_kv_cache=False,
         return_dict: bool = True,
         timestep_sign: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         if kv_cache_dict is None:
             kv_cache_dict = {}
@@ -1032,6 +1042,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             musubi_offload_active = musubi_manager.activate(self.blocks, hidden_states.device, grad_enabled)
 
         kv_cache_dict_ret = {}
+        capture_idx = 0
         for i, block in enumerate(self.blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(i):
                 musubi_manager.stream_in(block, hidden_states.device)
@@ -1073,6 +1084,8 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
             if musubi_offload_active and musubi_manager.is_managed_block(i):
                 musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         hidden_states = self.final_layer(hidden_states, t, (N_t, N_h, N_w))
 

@@ -36,6 +36,15 @@ from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_l
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 @dataclass(frozen=True)
 class ContextParallelInput:
     """
@@ -886,6 +895,7 @@ class Flux2Transformer2DModel(
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         The [`FluxTransformer2DModel`] forward method.
@@ -986,6 +996,7 @@ class Flux2Transformer2DModel(
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
         # 4. Double Stream Transformer Blocks
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             global_layer_idx = index_block
 
@@ -1051,6 +1062,8 @@ class Flux2Transformer2DModel(
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
                 musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         # Unroute before concatenation if still active
         if tread_active:
@@ -1139,6 +1152,8 @@ class Flux2Transformer2DModel(
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
                 musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states, image_tokens_start=num_txt_tokens)
+            capture_idx += 1
 
         # Final unroute if still active
         if tread_active:

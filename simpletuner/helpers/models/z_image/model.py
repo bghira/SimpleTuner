@@ -248,9 +248,12 @@ class ZImage(ImageModelFoundation):
             timesteps = timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         normalized_t = (1000.0 - timesteps) / 1000.0
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         call_kwargs = {}
         if "timestep_sign" in inspect.signature(self.model.__call__).parameters:
             call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+        if hidden_states_buffer is not None:
+            call_kwargs["hidden_states_buffer"] = hidden_states_buffer
         model_out_list = self.model(
             latent_list,
             normalized_t,
@@ -263,7 +266,7 @@ class ZImage(ImageModelFoundation):
             noise_pred = noise_pred.squeeze(2)
         noise_pred = -noise_pred
 
-        return {"model_prediction": noise_pred}
+        return {"model_prediction": noise_pred, "hidden_states_buffer": hidden_states_buffer}
 
 
 ModelRegistry.register("z-image", ZImage)

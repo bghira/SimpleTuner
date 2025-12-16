@@ -40,6 +40,15 @@ def get_load_balancing_loss():
     return _LOAD_BALANCING_LOSS.copy()
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 from typing import List, Optional
 
 import torch
@@ -1183,6 +1192,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         controlnet_single_block_samples: Optional[List[torch.Tensor]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         """
         Forward pass for the HiDreamImageTransformer2DModel.
@@ -1199,6 +1209,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             joint_attention_kwargs: Additional attention parameters
             controlnet_block_samples: ControlNet features for double stream blocks
             controlnet_single_block_samples: ControlNet features for single stream blocks
+            hidden_states_buffer: Optional buffer to capture intermediate hidden states for regularizers
             return_dict: Whether to return as a dict
 
         Returns:
@@ -1408,6 +1419,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         initial_encoder_hidden_states_seq_len = initial_encoder_hidden_states.shape[1]
 
         # Process through double stream blocks
+        capture_idx = 0
         for bid, block in enumerate(self.double_stream_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -1499,6 +1511,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 hidden_states = hidden_states + controlnet_block_samples[control_idx]
 
             block_id += 1
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         # 6. Prepare for single stream blocks
         image_tokens_seq_len = hidden_states.shape[1]
@@ -1627,6 +1641,10 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 )
 
             block_id += 1
+            _store_hidden_state(
+                hidden_states_buffer, f"layer_{capture_idx}", hidden_states, image_tokens_start=image_tokens_seq_len
+            )
+            capture_idx += 1
 
         # 8. Final processing with optional checkpointing
         hidden_states = hidden_states[:, :image_tokens_seq_len, ...]

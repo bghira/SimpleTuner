@@ -306,6 +306,7 @@ class SD3(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds
 
     def model_predict(self, prepared_batch):
+        hidden_states_buffer = self._new_hidden_state_buffer()
         return {
             "model_prediction": self.model(
                 hidden_states=prepared_batch["noisy_latents"].to(
@@ -323,7 +324,9 @@ class SD3(ImageModelFoundation):
                     dtype=self.config.weight_dtype,
                 ),
                 return_dict=False,
-            )[0]
+                hidden_states_buffer=hidden_states_buffer,
+            )[0],
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def prepare_controlnet_conditioning(self, conditioning_latents: torch.Tensor) -> torch.Tensor:

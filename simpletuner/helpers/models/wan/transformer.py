@@ -39,6 +39,15 @@ WAN_FEED_FORWARD_CHUNK_SIZE = int(os.getenv("WAN_FEED_FORWARD_CHUNK_SIZE", "0") 
 WAN_FEED_FORWARD_CHUNK_DIM = int(os.getenv("WAN_FEED_FORWARD_CHUNK_DIM", "0") or 0)
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def _apply_rotary_emb_anyshape(x, rotary_emb, use_real=False):
     """
     Apply rotary embeddings that may be batched.
@@ -717,6 +726,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         force_keep_mask: Optional[torch.Tensor] = None,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -862,6 +872,16 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 )
                 if hidden_state_layer is not None and i == hidden_state_layer:
                     output_hidden_states = False
+            if hidden_states_buffer is not None:
+                tokens_view = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+            else:
+                tokens_view = hidden_states
+            _store_hidden_state(hidden_states_buffer, f"layer_{i}", tokens_view)
 
             if musubi_offload_active and musubi_manager.is_managed_block(i):
                 musubi_manager.stream_out(block)

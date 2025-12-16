@@ -1055,6 +1055,7 @@ class Wan(VideoModelFoundation):
         """
         Modify the existing model_predict to support TREAD with masked training.
         """
+        hidden_states_buffer = self._new_hidden_state_buffer()
         wan_transformer_kwargs = {
             "hidden_states": prepared_batch["noisy_latents"].to(self.config.weight_dtype),
             "encoder_hidden_states": prepared_batch["encoder_hidden_states"].to(self.config.weight_dtype),
@@ -1069,6 +1070,8 @@ class Wan(VideoModelFoundation):
         if capture_hidden:
             wan_transformer_kwargs["output_hidden_states"] = True
             wan_transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+        if hidden_states_buffer is not None:
+            wan_transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
         if prepared_batch.get("conditioning_image_embeds") is not None:
             wan_transformer_kwargs["encoder_hidden_states_image"] = prepared_batch["conditioning_image_embeds"].to(
@@ -1133,6 +1136,7 @@ class Wan(VideoModelFoundation):
         return {
             "model_prediction": model_pred,
             "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def check_user_config(self):

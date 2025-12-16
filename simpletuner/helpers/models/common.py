@@ -41,6 +41,7 @@ from simpletuner.helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
+from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     convert_comfyui_to_diffusers,
@@ -57,6 +58,7 @@ from simpletuner.helpers.training.quantisation import (
 )
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
+from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
@@ -287,6 +289,7 @@ class ModelFoundation(ABC):
         self._twinflow_store_rng = False
         self._twinflow_allow_student_teacher = False
         self._twinflow_requires_ema = False
+        self.layersync_regularizer: Optional[LayerSyncRegularizer] = None
         self._validate_twinflow_config()
 
     def pack_text_embeddings_for_cache(self, embeddings):
@@ -1782,7 +1785,7 @@ class ModelFoundation(ABC):
         based on the loaded model weights. SDXL uses this to update the user config to reflect refiner training.
 
         """
-        pass
+        self._init_layersync_regularizer()
 
     def fuse_qkv_projections(self):
         if self.config.fuse_qkv_projections:
@@ -2692,6 +2695,34 @@ class ModelFoundation(ABC):
                 "to fall back to student weights explicitly."
             )
 
+    def _init_layersync_regularizer(self):
+        if not getattr(self.config, "layersync_enabled", False):
+            self.layersync_regularizer = None
+            return
+        self.layersync_regularizer = LayerSyncRegularizer(self.config)
+
+    def _needs_hidden_state_buffer(self) -> bool:
+        layersync = getattr(self, "layersync_regularizer", None)
+        ls_needed = bool(layersync and layersync.wants_hidden_states())
+        crepa = getattr(self, "crepa_regularizer", None)
+        crepa_buffer = bool(crepa and crepa.enabled and getattr(crepa, "use_backbone_features", False))
+        return ls_needed or crepa_buffer
+
+    def _new_hidden_state_buffer(self) -> Optional[HiddenStateBuffer]:
+        return HiddenStateBuffer() if self._needs_hidden_state_buffer() else None
+
+    def _apply_layersync_regularizer(
+        self, loss: torch.Tensor, aux_logs: Optional[dict], hidden_states_buffer: Optional[dict]
+    ) -> tuple[torch.Tensor, Optional[dict]]:
+        layersync = getattr(self, "layersync_regularizer", None)
+        if layersync and layersync.wants_hidden_states():
+            ls_loss, ls_logs = layersync.compute_loss(hidden_states_buffer)
+            if ls_loss is not None:
+                loss = loss + ls_loss
+            if ls_logs:
+                aux_logs = (aux_logs or {}) | ls_logs
+        return loss, aux_logs
+
     def _maybe_enable_reflexflow_default(self) -> bool:
         """
         Enable ReflexFlow automatically when scheduled sampling is active on flow-matching models
@@ -3568,26 +3599,41 @@ class ModelFoundation(ABC):
         loss = loss.mean()
         return loss
 
-    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+    def auxiliary_loss(
+        self,
+        model_output,
+        prepared_batch: dict,
+        loss: torch.Tensor,
+        *,
+        apply_layersync: bool = True,
+        clear_hidden_state_buffer: bool = True,
+    ):
         """
-        Computes an auxiliary loss if needed.
-        This is a stub and can be optionally implemented in subclasses.
+        Computes auxiliary losses (TwinFlow + optional LayerSync).
         """
         aux_logs = None
-        if not self._twinflow_active():
-            return loss, aux_logs
+        hidden_states_buffer = model_output.get("hidden_states_buffer")
 
         try:
-            twin_loss, twin_logs = self._compute_twinflow_losses(
-                prepared_batch=prepared_batch,
-                base_pred=model_output.get("model_prediction"),
-            )
-            loss = loss + twin_loss
-            if twin_logs:
-                aux_logs = twin_logs
-        except Exception:
-            logger.exception("TwinFlow auxiliary loss failed; stopping because TwinFlow is explicitly enabled.")
-            raise
+            if self._twinflow_active():
+                try:
+                    twin_loss, twin_logs = self._compute_twinflow_losses(
+                        prepared_batch=prepared_batch,
+                        base_pred=model_output.get("model_prediction"),
+                    )
+                    loss = loss + twin_loss
+                    if twin_logs:
+                        aux_logs = twin_logs
+                except Exception:
+                    logger.exception("TwinFlow auxiliary loss failed; stopping because TwinFlow is explicitly enabled.")
+                    raise
+
+            if apply_layersync:
+                loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
+        finally:
+            if clear_hidden_state_buffer and hidden_states_buffer is not None:
+                hidden_states_buffer.clear()
+
         return loss, aux_logs
 
     def _compute_twinflow_losses(self, prepared_batch: dict, base_pred: torch.Tensor) -> tuple[torch.Tensor, dict]:
@@ -3970,19 +4016,51 @@ class VideoModelFoundation(ImageModelFoundation):
         return None
 
     def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
-        loss, aux_logs = super().auxiliary_loss(model_output=model_output, prepared_batch=prepared_batch, loss=loss)
+        hidden_states_buffer = model_output.get("hidden_states_buffer")
+
+        # Run base auxiliary losses (TwinFlow) but keep the buffer intact and defer LayerSync.
+        loss, aux_logs = super().auxiliary_loss(
+            model_output=model_output,
+            prepared_batch=prepared_batch,
+            loss=loss,
+            apply_layersync=False,
+            clear_hidden_state_buffer=False,
+        )
 
         crepa = getattr(self, "crepa_regularizer", None)
         if crepa and crepa.enabled:
+            crepa_hidden = model_output.get("crepa_hidden_states")
+            crepa_frame_features = model_output.get("crepa_frame_features")
+            if getattr(crepa, "use_backbone_features", False):
+                if hidden_states_buffer is None:
+                    raise ValueError("CREPA backbone feature mode requested but no hidden state buffer was provided.")
+                if crepa_hidden is None:
+                    crepa_hidden = hidden_states_buffer.get(f"layer_{crepa.block_index}")
+                teacher_idx = crepa.teacher_block_index if crepa.teacher_block_index is not None else crepa.block_index
+                if crepa_frame_features is None and teacher_idx is not None:
+                    crepa_frame_features = hidden_states_buffer.get(f"layer_{teacher_idx}")
+                if crepa_hidden is None:
+                    raise ValueError(f"CREPA requested hidden states from layer {crepa.block_index} but none were stored.")
+                if crepa_frame_features is None:
+                    raise ValueError(
+                        f"CREPA backbone feature mode could not find layer_{teacher_idx} in the hidden state buffer."
+                    )
+
             crepa_loss, crepa_logs = crepa.compute_loss(
-                hidden_states=model_output.get("crepa_hidden_states"),
+                hidden_states=crepa_hidden,
                 latents=prepared_batch.get("latents"),
                 vae=self.get_vae(),
+                frame_features=crepa_frame_features,
             )
             if crepa_loss is not None:
                 loss = loss + crepa_loss
             if crepa_logs:
                 aux_logs = (aux_logs or {}) | crepa_logs
+
+        # Apply LayerSync (if requested) after CREPA so both can share the buffer.
+        loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
+        if hidden_states_buffer is not None:
+            hidden_states_buffer.clear()
 
         return loss, aux_logs
 

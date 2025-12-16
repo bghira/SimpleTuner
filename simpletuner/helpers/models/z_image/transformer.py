@@ -35,6 +35,15 @@ ADALN_EMBED_DIM = 256
 SEQ_MULTI_OF = 32
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 # Clamp NaN/Inf that can appear when running in float16. Ported from ComfyUI commit daaceac769a1355ab975758ede064317ea7514b4.
 def clamp_fp16(x: torch.Tensor) -> torch.Tensor:
     if x.dtype == torch.float16:
@@ -598,6 +607,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         skip_layers: Optional[List[int]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         assert patch_size in self.all_patch_size
         assert f_patch_size in self.all_f_patch_size
@@ -721,6 +731,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             return layer_module(h, attn_mask, freqs, adaln_input)
 
         skip_set = set(skip_layers) if skip_layers is not None else set()
+        capture_idx = 0
 
         for idx, layer in enumerate(self.layers):
             if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
@@ -744,6 +755,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             else:
                 layer_out = apply_layer(layer, unified, unified_attn_mask, unified_freqs_cis)
             unified = layer_out
+            img_tokens = unified[:, :x_max_item_seqlen, ...]
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", img_tokens, image_tokens_start=0)
+            capture_idx += 1
 
             if routing_now and route_ptr < len(routes) and idx == routes[route_ptr]["end_layer_idx"]:
                 unified = router.end_route(unified, tread_mask_info, original_x=saved_tokens)

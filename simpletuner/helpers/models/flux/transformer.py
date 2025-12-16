@@ -39,6 +39,15 @@ from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def _apply_rotary_emb_anyshape(x, freqs_cis, use_real=True, use_real_unbind_dim=-1):
     """
     Same API as the original, but also works when `freqs_cis` is
@@ -605,6 +614,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         attention_mask: Optional[torch.Tensor] = None,
         controlnet_blocks_repeat: bool = False,
         force_keep_mask=None,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The [`FluxTransformer2DModel`] forward method.
@@ -716,6 +726,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 for r in routes
             ]
 
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
@@ -804,6 +815,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
             global_idx += 1  # advance global layer counter
 
         # Flux places the text tokens in front of the image tokens in the
@@ -922,6 +935,8 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states, image_tokens_start=txt_len)
+            capture_idx += 1
             global_idx += 1
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]

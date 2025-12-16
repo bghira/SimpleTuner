@@ -26,6 +26,15 @@ from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_l
 from simpletuner.helpers.training.tread import TREADRouter
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def adjust_rotary_embedding_dim(
     rotary_emb: Tuple[torch.Tensor, torch.Tensor],
     target_dim: int,
@@ -572,6 +581,7 @@ class ChromaTransformer2DModel(
         return_dict: bool = True,
         controlnet_blocks_repeat: bool = False,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
         skip_layers: Optional[List[int]] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         if joint_attention_kwargs is not None:
@@ -758,6 +768,7 @@ class ChromaTransformer2DModel(
                 route_ptr += 1
                 current_rope = image_rotary_emb
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", hidden_states)
             global_idx += 1
 
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -833,19 +844,19 @@ class ChromaTransformer2DModel(
                     routing_now = False
                     route_ptr += 1
 
-                    if attention_mask is not None:
-                        pad = torch.zeros(
-                            attention_mask.size(0),
-                            img_tok.size(1),
-                            device=attention_mask.device,
-                            dtype=attention_mask.dtype,
-                        )
-                        attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
+                if attention_mask is not None:
+                    pad = torch.zeros(
+                        attention_mask.size(0),
+                        img_tok.size(1),
+                        device=attention_mask.device,
+                        dtype=attention_mask.dtype,
+                    )
+                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
 
-                    current_rope = image_rotary_emb
+                current_rope = image_rotary_emb
 
-                global_idx += 1
-                continue
+            global_idx += 1
+            continue
 
             use_checkpoint = (
                 torch.is_grad_enabled()
@@ -903,6 +914,7 @@ class ChromaTransformer2DModel(
 
                 current_rope = image_rotary_emb
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", hidden_states, image_tokens_start=txt_len)
             global_idx += 1
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]

@@ -255,6 +255,7 @@ class SDXL(ImageModelFoundation):
             f"\n{prepared_batch['add_text_embeds'].shape}"
             f"\n{prepared_batch['added_cond_kwargs']['text_embeds'].shape}"
         )
+        hidden_states_buffer = self._new_hidden_state_buffer()
         return {
             "model_prediction": self.model(
                 prepared_batch["noisy_latents"].to(
@@ -272,7 +273,9 @@ class SDXL(ImageModelFoundation):
                 ),
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
                 return_dict=False,
-            )[0]
+                hidden_states_buffer=hidden_states_buffer,
+            )[0],
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def post_model_load_setup(self):
