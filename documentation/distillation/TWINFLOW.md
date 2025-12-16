@@ -55,6 +55,18 @@ For diffusion models (epsilon/v prediction) opt in explicitly:
 
 ---
 
+## What to expect (paper data)
+
+From arXiv:2512.05150 (PDF text):
+* Inference benchmarks were measured on a **single A100 (BF16)** with throughput (batch=10) and latency (batch=1) at 1024×1024. Exact numbers were not in the text, just the hardware setting.
+* A **GPU memory comparison** (1024×1024) for Qwen-Image-20B (LoRA) and SANA-1.6B shows TwinFlow fitting where DMD2 / SANA-Sprint can OOM.
+* Training configs (Table 6) list **batch sizes 128/64/32/24** and **training steps 30k–60k (or 7k–10k shorter runs)**; constant LR, EMA decay often 0.99.
+* The PDF does **not** report total GPU counts, node layouts, or wall-clock time.
+
+Treat these as directional expectations, not guarantees. For exact hardware/runtime, you’d need author confirmation.
+
+---
+
 ## Key Options
 
 * `twinflow_enabled`: Turns on the RCGM auxiliary loss; keep `distillation_method` empty and scheduled sampling disabled. Defaults to `false` if missing from the config.
