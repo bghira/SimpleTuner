@@ -21,6 +21,7 @@ class MockAudioModel(AudioModelFoundation):
         config = MagicMock()
         config.model_family = "ace_step"
         config.pretrained_model_name_or_path = "dummy_path"
+        config.twinflow_enabled = False  # audio mock uses epsilon prediction; disable TwinFlow guard
         super().__init__(config=config, accelerator=MagicMock())
         self.pipeline = MagicMock()
         self.controlnet = None
