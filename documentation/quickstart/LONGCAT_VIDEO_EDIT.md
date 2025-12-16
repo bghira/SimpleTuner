@@ -91,6 +91,8 @@ Example `multidatabackend.json`:
 ]
 ```
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 ---
 
 ## 4) Validation specifics

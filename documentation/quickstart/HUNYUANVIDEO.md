@@ -201,6 +201,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ]
 ```
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 - **Text Embed Caching**: Highly recommended. Hunyuan uses a large LLM text encoder. Caching saves significant VRAM during training.
 
 #### Login to WandB and Huggingface Hub

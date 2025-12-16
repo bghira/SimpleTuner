@@ -234,6 +234,8 @@ Create `config/multidatabackend.json`:
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 ### Optional edit / reference conditioning
 
 FLUX.2 can train either **plain text-to-image** (no conditioning) or with **paired reference/edit images**. To add conditioning, pair your main dataset to one or more `conditioning` datasets using [`conditioning_data`](../DATALOADER.md#conditioning_data) and choose a [`conditioning_type`](../DATALOADER.md#conditioning_type):
