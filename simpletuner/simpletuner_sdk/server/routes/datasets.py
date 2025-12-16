@@ -65,6 +65,49 @@ class DatasetPlanResponse(BaseModel):
     backupPath: Optional[str] = None
 
 
+def _ensure_text_embed_dataset(
+    datasets: List[Dict[str, Any]], *, model_family: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Guarantee at least one text_embeds dataset exists and a single default is selected."""
+    seen_ids = {str(ds.get("id", "")) for ds in datasets if ds.get("id")}
+    text_embeds = [ds for ds in datasets if str(ds.get("dataset_type", "")).lower() == "text_embeds"]
+    enabled_text_embeds = [ds for ds in text_embeds if not ds.get("disabled") and not ds.get("disable")]
+
+    if not enabled_text_embeds:
+        base_id = "text-embeds"
+        candidate = base_id
+        suffix = 1
+        while candidate in seen_ids:
+            candidate = f"{base_id}-{suffix}"
+            suffix += 1
+        cache_dir = f"{{output_dir}}/cache/text/{model_family or 'base'}"
+        datasets.append(
+            {
+                "id": candidate,
+                "type": "local",
+                "dataset_type": "text_embeds",
+                "cache_dir": cache_dir,
+                "default": True,
+                "write_batch_size": 128,
+            }
+        )
+        text_embeds = [ds for ds in datasets if str(ds.get("dataset_type", "")).lower() == "text_embeds"]
+        enabled_text_embeds = [ds for ds in text_embeds if not ds.get("disabled") and not ds.get("disable")]
+
+    # Ensure only one default flag
+    default_assigned = False
+    for ds in text_embeds:
+        if bool(ds.get("default")) and not default_assigned:
+            ds["default"] = True
+            default_assigned = True
+        else:
+            ds["default"] = False
+    if not default_assigned and enabled_text_embeds:
+        enabled_text_embeds[0]["default"] = True
+
+    return datasets
+
+
 def _store() -> DatasetPlanStore:
     """Create a dataset plan store using current environment settings."""
     env_path = os.environ.get("SIMPLETUNER_DATASET_PLAN_PATH")
@@ -184,6 +227,8 @@ def _persist_plan(payload: DatasetPlanPayload) -> DatasetPlanResponse:
         distillation_method = config_blob.get("distillation_method") or config_blob.get("--distillation_method")
     except Exception:
         pass
+
+    datasets = _ensure_text_embed_dataset(datasets, model_family=model_family)
 
     validations = compute_validations(
         datasets,

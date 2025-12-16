@@ -293,6 +293,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 > ℹ️ Running 512px and 1024px datasets concurrently is supported, and could result in better convergence for Sana.
 
 Then, create a `datasets` directory:

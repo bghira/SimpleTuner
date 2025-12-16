@@ -36,6 +36,9 @@
         <option value="text_embeds">Text Embeds</option>
         <option value="image_embeds">Image Embeds</option>
     </select>
+    <span class="badge bg-primary ms-2"
+          x-show="dataset.dataset_type === 'text_embeds' && dataset.default"
+          title="Default text embed backend">Default</span>
 
     <!-- Path (truncated) - hide for embed types -->
     <div class="list-item-path small"
