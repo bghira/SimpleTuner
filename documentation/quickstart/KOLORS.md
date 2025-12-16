@@ -206,6 +206,8 @@ In your `OUTPUT_DIR` directory, create a multidatabackend.json:
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 Then, create a `datasets` directory:
 
 ```bash

@@ -64,12 +64,13 @@
             // Separate cache dataset configs
             textEmbedsDataset: {
                 id: 'text-embeds',
-                cache_dir: 'cache/text',
+                cache_dir: '{output_dir}/cache/text/{model_family}',
                 type: 'local'
             },
             vaeCacheDataset: {
                 id: 'vae-cache',
                 type: 'local',  // Backend type: local or aws
+                cache_dir: '{output_dir}/cache/vae/{model_family}/{id}',
                 // AWS-specific fields
                 aws_bucket_name: '',
                 aws_region_name: null,
@@ -388,8 +389,8 @@
                     instance_prompt: '',
                     prepend_instance_prompt: false,
                     metadata_backend: 'discovery',
-                    cache_dir_vae: 'cache/vae',
-                    cache_dir_text: 'cache/text',
+                    cache_dir_vae: '{output_dir}/cache/vae/{model_family}/{id}',
+                    cache_dir_text: '{output_dir}/cache/text/{model_family}/{id}',
                     probability: 1,
                     repeats: 0,
                     parquet: {
@@ -508,13 +509,17 @@
             },
 
             updateVaeCacheDir() {
-                // Only update if it's still the default or empty
-                if (!this.currentDataset.cache_dir_vae || this.currentDataset.cache_dir_vae === 'cache/vae') {
-                    this.currentDataset.cache_dir_vae = `cache/vae/${this.currentDataset.id}`;
+                const defaultVaeTemplate = '{output_dir}/cache/vae/{model_family}/{id}';
+                const defaultTextTemplate = '{output_dir}/cache/text/{model_family}/{id}';
+
+                const currentVae = this.currentDataset.cache_dir_vae || '';
+                if (!currentVae || currentVae === 'cache/vae' || currentVae.startsWith('cache/vae/')) {
+                    this.currentDataset.cache_dir_vae = defaultVaeTemplate;
                 }
-                // Also update text cache dir if needed
-                if (!this.currentDataset.cache_dir_text || this.currentDataset.cache_dir_text === 'cache/text') {
-                    this.currentDataset.cache_dir_text = `cache/text/${this.currentDataset.id}`;
+
+                const currentText = this.currentDataset.cache_dir_text || '';
+                if (!currentText || currentText === 'cache/text' || currentText.startsWith('cache/text/')) {
+                    this.currentDataset.cache_dir_text = defaultTextTemplate;
                 }
             },
 
@@ -1004,6 +1009,24 @@
                     addCandidate(this.existingTextEmbeds.cache_dir);
                 }
                 addCandidate(this.getTrainerTextCacheDir());
+                try {
+                    const trainerStore = Alpine.store('trainer');
+                    if (trainerStore && trainerStore.configValues) {
+                        const outputDir = [
+                            trainerStore.configValues['--output_dir'],
+                            trainerStore.configValues.output_dir
+                        ].map(val => (typeof val === 'string' ? val.trim() : '')).find(val => val);
+                        const modelFamily = [
+                            trainerStore.configValues['--model_family'],
+                            trainerStore.configValues.model_family
+                        ].map(val => (typeof val === 'string' ? val.trim() : '')).find(val => val) || 'base';
+                        if (outputDir) {
+                            addCandidate(`${outputDir}/cache/text/${modelFamily}`);
+                        }
+                    }
+                } catch (error) {
+                    console.warn('[WIZARD] Unable to derive default text cache path from trainer config:', error);
+                }
                 if (this.textEmbedsDataset?.cache_dir) {
                     addCandidate(this.textEmbedsDataset.cache_dir);
                 }

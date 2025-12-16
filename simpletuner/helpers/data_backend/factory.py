@@ -964,22 +964,36 @@ def fill_variables_in_config_paths(args: dict, config: list[dict]) -> dict:
     This is useful for paths that contain variables like {cache_dir}, {model_name}, etc.
     """
     model_family = args.get("model_family") if isinstance(args, dict) else getattr(args, "model_family", "")
-    mapping = {
-        "{model_family}": model_family,
-    }
+    output_dir = args.get("output_dir") if isinstance(args, dict) else getattr(args, "output_dir", "")
+    if not output_dir:
+        output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
 
-    def _fill(value):
+    def _fill(value, mapping):
         if isinstance(value, str):
             for var_name, var_value in mapping.items():
                 value = value.replace(var_name, str(var_value))
             return value
         if isinstance(value, dict):
-            return {key: _fill(val) for key, val in value.items()}
+            return {key: _fill(val, mapping) for key, val in value.items()}
         if isinstance(value, list):
-            return [_fill(item) for item in value]
+            return [_fill(item, mapping) for item in value]
         return value
 
-    return [_fill(backend) for backend in config]
+    filled_config: list[dict] = []
+    for backend in config:
+        dataset_id = ""
+        try:
+            dataset_id = str(backend.get("id", "") or "")
+        except Exception:
+            dataset_id = ""
+        mapping = {
+            "{model_family}": model_family,
+            "{output_dir}": output_dir,
+            "{id}": dataset_id,
+        }
+        filled_config.append(_fill(backend, mapping))
+
+    return filled_config
 
 
 def get_local_backend(accelerator, identifier: str, compress_cache: bool = False) -> LocalDataBackend:
@@ -1221,11 +1235,13 @@ class FactoryRegistry:
 
     def _default_vae_cache_dir(self, dataset_id: str, dataset_type: DatasetType) -> str:
         """Return a cache directory path namespaced per media type to avoid collisions."""
-        cache_root = getattr(self.args, "cache_dir", os.path.join(os.getcwd(), "cache"))
+        output_dir = _get_arg_value(self.args, "output_dir", None)
+        if not output_dir:
+            output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
         model_family = getattr(self.args, "model_family", "unknown_model") or "unknown_model"
         if dataset_type is DatasetType.AUDIO:
-            return os.path.join(cache_root, "audio", "vae", dataset_id)
-        return os.path.join(cache_root, "vae", model_family, dataset_id)
+            return os.path.join(str(output_dir), "cache", "audio", "vae", model_family, dataset_id)
+        return os.path.join(str(output_dir), "cache", "vae", model_family, dataset_id)
 
     def _attach_audio_backend(self, init_backend: Dict[str, Any], dataset_type: DatasetType) -> None:
         """Attach audio-specific runtime helpers when configuring audio datasets."""
@@ -1615,12 +1631,61 @@ class FactoryRegistry:
 
         return data_backend_config
 
+    def _ensure_text_embed_backends_present(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Ensure at least one text_embed backend exists and a single default is selected."""
+        text_backends = [
+            backend for backend in data_backend_config if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
+        ]
+        enabled_text_backends = [
+            backend for backend in text_backends if not backend.get("disabled", False) and not backend.get("disable", False)
+        ]
+        if not enabled_text_backends:
+            existing_ids = {backend.get("id") for backend in data_backend_config if backend.get("id")}
+            base_id = "text-embeds"
+            candidate_id = base_id
+            suffix = 1
+            while candidate_id in existing_ids:
+                candidate_id = f"{base_id}-{suffix}"
+                suffix += 1
+
+            model_family = str(getattr(self.args, "model_family", "base") or "base")
+            output_dir = _get_arg_value(self.args, "output_dir", None)
+            if not output_dir:
+                output_dir = os.path.join(os.getcwd(), ".simpletuner_output")
+            cache_dir = os.path.join(str(output_dir), "cache", "text", model_family)
+
+            auto_backend: Dict[str, Any] = {
+                "id": candidate_id,
+                "type": "local",
+                "dataset_type": "text_embeds",
+                "cache_dir": cache_dir,
+                "default": True,
+                "write_batch_size": getattr(self.args, "write_batch_size", None) or 128,
+            }
+            info_log(
+                f"No text_embeds dataset provided; generating default text embed backend '{candidate_id}' at {cache_dir}."
+            )
+            data_backend_config.append(auto_backend)
+            text_backends = [auto_backend]
+            enabled_text_backends = text_backends
+
+        default_capable = [backend for backend in enabled_text_backends if backend.get("default") is True]
+        if len(default_capable) > 1:
+            raise ValueError("Only one text embed backend can be marked as default.")
+        elif len(default_capable) == 0 and enabled_text_backends:
+            chosen = enabled_text_backends[0]
+            chosen["default"] = True
+            info_log(f"Marking text embed backend {chosen.get('id', 'unknown')} as default.")
+
+        return data_backend_config
+
     def configure_text_embed_backends(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """Configure text embedding backends."""
         self._log_performance_metrics("text_embed_config_start")
         text_embed_cache_dir_paths = []
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         text_embed_count = 0
+        data_backend_config = self._ensure_text_embed_backends_present(data_backend_config)
 
         total_text_backends = sum(
             1
@@ -1790,17 +1855,14 @@ class FactoryRegistry:
             )
 
         if not self.default_text_embed_backend_id and len(self.text_embed_backends) > 1:
-            raise ValueError(
-                f"You have {len(self.text_embed_backends)} text_embed dataset{'s' if len(self.text_embed_backends) > 1 else ''}, but no default text embed was defined."
-                "\nPlease set default: true on one of the text_embed datasets, as this will be the location of global embeds (validation prompts, etc)."
-                "\nSee this link for more information on how to configure a default text embed dataset: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
-            )
-        elif not self.default_text_embed_backend_id:
+            raise ValueError("Only one text embed backend can be marked as default.")
+        if not self.default_text_embed_backend_id:
+            chosen_id = list(self.text_embed_backends.keys())[0]
+            self.default_text_embed_backend_id = chosen_id
             warning_log(
-                f"No default text embed was defined, using {list(self.text_embed_backends.keys())[0]} as the default."
+                f"No default text embed was defined, using {chosen_id} as the default."
                 " See this page for information about the default text embed backend: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
             )
-            self.default_text_embed_backend_id = list(self.text_embed_backends.keys())[0]
 
         info_log("Completed loading text embed services.")
 
@@ -3205,6 +3267,11 @@ class FactoryRegistry:
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
         dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
+        if (
+            dataset_type_enum in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING}
+            and "cache_dir_vae" not in backend
+        ):
+            backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_enum)
         if init_backend.get("bucket_report"):
             StateTracker.attach_bucket_report(init_backend["id"], init_backend["bucket_report"])
         StateTracker.set_data_backend_config(

@@ -324,6 +324,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many frames of data we'll train on.
   - `min_frames` (optional, int) determines the minimum length of a video that will be considered for training.

@@ -23,6 +23,7 @@
                 <div class="input-group input-group-sm resizable-input-group">
                     <textarea rows="1"
                               class="form-control form-control-sm resizable-path"
+                              :class="{'is-invalid': hasFieldError(editingDataset.id, 'instance_data_dir')}"
                               x-model.lazy="editingDataset.instance_data_dir"
                               @input="markAsUnsaved()"
                               placeholder="/path/to/data"></textarea>
@@ -33,30 +34,45 @@
                         <i class="fas fa-folder-open"></i>
                     </button>
                 </div>
+                <div class="invalid-feedback d-block"
+                     x-show="hasFieldError(editingDataset.id, 'instance_data_dir')"
+                     x-text="getFieldError(editingDataset.id, 'instance_data_dir')"></div>
             </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
                 <label class="form-label small">VAE Cache Directory</label>
                 <textarea rows="1"
                           class="form-control form-control-sm resizable-path"
+                          :class="{'is-invalid': hasFieldError(editingDataset.id, 'cache_dir_vae')}"
                           x-model.lazy="editingDataset.cache_dir_vae"
                           @input="markAsUnsaved()"
-                          placeholder="/path/to/cache/vae"></textarea>
+                          placeholder="{output_dir}/cache/vae/{model_family}/{id}"></textarea>
+                <div class="invalid-feedback d-block"
+                     x-show="hasFieldError(editingDataset.id, 'cache_dir_vae')"
+                     x-text="getFieldError(editingDataset.id, 'cache_dir_vae')"></div>
             </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds'">
                 <label class="form-label small">Text Embed Cache</label>
                 <textarea rows="1"
                           class="form-control form-control-sm resizable-path"
+                          :class="{'is-invalid': hasFieldError(editingDataset.id, 'cache_dir')}"
                           x-model.lazy="editingDataset.cache_dir"
                           @input="markAsUnsaved()"
-                          placeholder="/path/to/cache"></textarea>
+                          placeholder="{output_dir}/cache/text/{model_family}"></textarea>
+                <div class="invalid-feedback d-block"
+                     x-show="hasFieldError(editingDataset.id, 'cache_dir')"
+                     x-text="getFieldError(editingDataset.id, 'cache_dir')"></div>
             </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type === 'image_embeds'">
                 <label class="form-label small">Image Embed Cache</label>
                 <textarea rows="1"
                           class="form-control form-control-sm resizable-path"
+                          :class="{'is-invalid': hasFieldError(editingDataset.id, 'cache_dir')}"
                           x-model.lazy="editingDataset.cache_dir"
                           @input="markAsUnsaved()"
                           placeholder="/path/to/cache"></textarea>
+                <div class="invalid-feedback d-block"
+                     x-show="hasFieldError(editingDataset.id, 'cache_dir')"
+                     x-text="getFieldError(editingDataset.id, 'cache_dir')"></div>
             </div>
         </div>
     </div>

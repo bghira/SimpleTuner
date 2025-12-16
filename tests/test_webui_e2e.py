@@ -906,8 +906,8 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             datasets_tab.add_dataset("video")
             datasets_tab.add_dataset("text_embeds")
 
-            # All should be visible initially
-            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 3)
+            # All should be visible initially (auto text embed + 3 added)
+            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 4)
 
             # Search for "image"
             datasets_tab.search_datasets("image")
@@ -915,7 +915,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
             # Clear search
             datasets_tab.clear_dataset_search()
-            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 3)
+            self.assertEqual(datasets_tab.get_filtered_dataset_count(), 4)
 
             # Search for "video"
             datasets_tab.search_datasets("video")

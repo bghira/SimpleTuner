@@ -120,6 +120,8 @@ The `conditioning_data` field in the edit dataset should point to the reference 
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 *Every edit image **must** have 1‑to‑1 matching file names and extensions in both dataset folders. SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
 
 A prepared example [Kontext Max derived demo dataset](https://huggingface.co/datasets/terminusresearch/KontextMax-Edit-smol) which contains reference and edit images along with their caption textfiles is available for browsing to get a better idea of how to set it up.

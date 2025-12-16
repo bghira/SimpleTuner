@@ -150,6 +150,8 @@ In your `/home/user/simpletuner/config` directory, create a multidatabackend.jso
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 Then, create a `datasets` directory:
 
 ```bash

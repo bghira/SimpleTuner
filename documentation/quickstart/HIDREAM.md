@@ -400,6 +400,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 </details>
 
 > ℹ️ Use `caption_strategy=textfile` if you have `.txt` files containing captions.
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
 Then, create a `datasets` directory:
 

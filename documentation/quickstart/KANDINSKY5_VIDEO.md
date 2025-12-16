@@ -151,6 +151,8 @@ Video datasets require careful setup. Create `config/multidatabackend.json`:
 ]
 ```
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 #### Directory setup
 
 ```bash
