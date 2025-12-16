@@ -862,28 +862,36 @@ LayerSync encourages a "student" layer to match a stronger "teacher" layer insid
 
 ### `--layersync_enabled`
 
-- **What**: Enable LayerSync regularization during training.
+- **What**: Enable LayerSync hidden-state alignment between two transformer blocks inside the same model.
+- **Notes**: Allocates a hidden-state buffer; raises at startup if required flags are missing.
 - **Default**: `false`
 
 ### `--layersync_student_block`
 
-- **What**: Transformer block index to treat as the student.
-- **Required**: Yes, when LayerSync is enabled.
+- **What**: Transformer block index to treat as the student anchor.
+- **Indexing**: Accepts LayerSync paper-style 1-based depths or 0-based layer ids; the implementation tries `idx-1` first, then `idx`.
+- **Required**: Yes when LayerSync is enabled.
 
 ### `--layersync_teacher_block`
 
-- **What**: Transformer block index to treat as the teacher.
-- **Default**: Uses the student block when omitted.
+- **What**: Transformer block index to treat as the teacher target (can be deeper than the student).
+- **Indexing**: Same 1-based-first, then 0-based fallback as the student block.
+- **Default**: Uses the student block when omitted so the loss becomes self-similarity.
 
 ### `--layersync_lambda`
 
-- **What**: Weight for the LayerSync loss relative to the main loss.
-- **Default**: `0.0` (set >0 to activate when enabled).
+- **What**: Weight for the LayerSync cosine alignment loss between the student and teacher hidden states (negative cosine similarity).
+- **Effect**: Scales the auxiliary regularizer added on top of the base loss; higher values push the student tokens to align more strongly with the teacher tokens.
+- **Upstream name**: `--reg-weight` in the original LayerSync codebase.
+- **Required**: Must be > 0 when LayerSync is enabled (otherwise training aborts).
+- **Default**: `0.2` when LayerSync is enabled (matches the reference repo), `0.0` otherwise.
 
-### `--layersync_detach_teacher`
+Upstream option mapping (LayerSync → SimpleTuner):
+- `--encoder-depth` → `--layersync_student_block` (accepts 1-based depth as in upstream, or 0-based layer index)
+- `--gt-encoder-depth` → `--layersync_teacher_block` (1-based preferred; defaults to student when omitted)
+- `--reg-weight` → `--layersync_lambda`
 
-- **What**: Detach the teacher layer to prevent gradients from flowing into it.
-- **Default**: `true`
+> Notes: LayerSync always detaches the teacher hidden state before similarity, matching the reference implementation. It relies on models that expose transformer hidden states (most transformer backbones in SimpleTuner) and adds per-step memory for the hidden-state buffer; disable if VRAM is tight.
 
 ### `--checkpoint_epoch_interval`
 

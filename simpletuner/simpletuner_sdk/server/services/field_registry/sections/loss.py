@@ -457,8 +457,8 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             section="loss_functions",
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
-            help_text="Block index to treat as the student for LayerSync.",
-            tooltip="Pick an earlier/weaker layer to receive guidance.",
+            help_text="Block index to treat as the student for LayerSync (1-based depths accepted).",
+            tooltip="Pick an earlier/weaker layer to receive guidance; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=23,
             documentation="OPTIONS.md#--layersync_student_block",
@@ -475,8 +475,8 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             section="loss_functions",
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
-            help_text="Teacher block index; defaults to the student block when omitted.",
-            tooltip="Use a later/stronger layer to supervise the student.",
+            help_text="Teacher block index; defaults to the student block when omitted (1-based depths accepted).",
+            tooltip="Use a later/stronger layer to supervise the student; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=24,
             documentation="OPTIONS.md#--layersync_teacher_block",
@@ -491,7 +491,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             field_type=FieldType.NUMBER,
             tab="training",
             section="loss_functions",
-            default_value=0.0,
+            default_value=0.2,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
             dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
             help_text="Strength multiplier for LayerSync alignment loss.",
@@ -499,23 +499,5 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=25,
             documentation="OPTIONS.md#--layersync_lambda",
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="layersync_detach_teacher",
-            arg_name="--layersync_detach_teacher",
-            ui_label="LayerSync Detach Teacher",
-            field_type=FieldType.CHECKBOX,
-            tab="training",
-            section="loss_functions",
-            default_value=True,
-            dependencies=[FieldDependency(field="layersync_enabled", operator="equals", value=True)],
-            help_text="Detach the teacher layer when computing LayerSync loss.",
-            tooltip="Keep enabled to avoid backpropagating through the teacher layer.",
-            importance=ImportanceLevel.EXPERIMENTAL,
-            order=26,
-            documentation="OPTIONS.md#--layersync_detach_teacher",
         )
     )
