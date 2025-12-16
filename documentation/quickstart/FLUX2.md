@@ -234,6 +234,42 @@ Create `config/multidatabackend.json`:
 ```
 </details>
 
+### Optional edit / reference conditioning
+
+FLUX.2 can train either **plain text-to-image** (no conditioning) or with **paired reference/edit images**. To add conditioning, pair your main dataset to one or more `conditioning` datasets using [`conditioning_data`](../DATALOADER.md#conditioning_data) and choose a [`conditioning_type`](../DATALOADER.md#conditioning_type):
+
+<details>
+<summary>View example config</summary>
+
+```jsonc
+[
+  {
+    "id": "flux2-edits",
+    "type": "local",
+    "instance_data_dir": "/datasets/flux2/edits",
+    "caption_strategy": "textfile",
+    "resolution": 1024,
+    "conditioning_data": ["flux2-references"],
+    "cache_dir_vae": "cache/vae/flux2/edits"
+  },
+  {
+    "id": "flux2-references",
+    "type": "local",
+    "dataset_type": "conditioning",
+    "instance_data_dir": "/datasets/flux2/references",
+    "conditioning_type": "reference_strict",
+    "resolution": 1024,
+    "cache_dir_vae": "cache/vae/flux2/references"
+  }
+]
+```
+</details>
+
+- Use `conditioning_type=reference_strict` when you need crops aligned 1:1 with the edit image. `reference_loose` allows mismatched aspect ratios.
+- File names must match between edit and reference datasets; each edit image should have a corresponding reference file.
+- When supplying multiple conditioning datasets, set `conditioning_multidataset_sampling` (`combined` vs `random`) as needed; see [OPTIONS](../OPTIONS.md#--conditioning_multidataset_sampling-combinedrandom).
+- Without `conditioning_data`, FLUX.2 falls back to standard text-to-image training.
+
 ### LoRA Targets
 
 Available LoRA target presets:
