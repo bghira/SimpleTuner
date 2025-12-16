@@ -54,7 +54,7 @@
             resolution_type: "pixel_area",
             caption_strategy: "textfile",
             metadata_backend: "discovery",
-            cache_dir_vae: "cache/vae",
+            cache_dir_vae: "{output_dir}/cache/vae/{model_family}/{id}",
             minimum_image_size: 256,
             maximum_image_size: 4096,
             target_downsample_size: 1024,
@@ -328,6 +328,7 @@
     }
 
     syncToJSON() {
+        this.ensureTextEmbedDefault();
         const json = JSON.stringify(this.datasets, null, 4);
         this.jsonEditor.value = json;
     }
@@ -388,7 +389,7 @@
                 crop: true,
                 crop_style: 'random',
                 crop_aspect: 'square',
-                cache_dir_vae: 'cache/vae',
+                cache_dir_vae: '{output_dir}/cache/vae/{model_family}/{id}',
                 repeats: 0,
                 disabled: false,
                 hash_filenames: true
@@ -398,7 +399,7 @@
                 type: 'local',
                 dataset_type: 'text_embeds',
                 default: false,
-                cache_dir: 'cache/text',
+                cache_dir: '{output_dir}/cache/text/{model_family}',
                 write_batch_size: 128,
                 disabled: false
             },
@@ -415,7 +416,7 @@
                 dataset_type: 'conditioning',
                 conditioning_type: 'controlnet',
                 instance_data_dir: '/path/to/conditioning',
-                cache_dir_vae: 'cache/vae/conditioning',
+                cache_dir_vae: '{output_dir}/cache/vae/{model_family}/{id}',
                 disabled: false,
                 hash_filenames: true
             },
@@ -428,7 +429,7 @@
                 resolution_type: 'pixel_area',
                 caption_strategy: 'textfile',
                 metadata_backend: 'discovery',
-                cache_dir_vae: 'cache/vae/video',
+                cache_dir_vae: '{output_dir}/cache/vae/{model_family}/{id}',
                 crop: false,
                 video: {
                     num_frames: 125,
@@ -548,12 +549,32 @@
 
     render() {
         if (!this.container) return;
+        this.ensureTextEmbedDefault();
 
         this.container.innerHTML = '';
         this.datasets.forEach((dataset, index) => {
             const element = this.createDatasetElement(dataset, index);
             this.container.appendChild(element);
         });
+    }
+
+    ensureTextEmbedDefault() {
+        const textDatasets = this.datasets.filter(dataset => dataset.dataset_type === 'text_embeds');
+        if (textDatasets.length === 0) {
+            return;
+        }
+        let defaultSet = false;
+        textDatasets.forEach(dataset => {
+            if (dataset.default && !defaultSet) {
+                dataset.default = true;
+                defaultSet = true;
+            } else {
+                dataset.default = false;
+            }
+        });
+        if (!defaultSet) {
+            textDatasets[0].default = true;
+        }
     }
 
     createDatasetElement(dataset, index) {
