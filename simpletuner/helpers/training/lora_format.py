@@ -121,6 +121,7 @@ def convert_diffusers_to_comfyui(
     *,
     diffusion_prefix: str = "diffusion_model",
     adapter_metadata: Optional[dict] = None,
+    preserve_component_prefixes: Optional[set[str]] = None,
 ) -> Dict[str, Any]:
     """
     Convert a Diffusers/PEFT-style LoRA state dict to ComfyUI style with diffusion_model.* prefixes,
@@ -128,12 +129,14 @@ def convert_diffusers_to_comfyui(
     """
     converted: Dict[str, Any] = {}
     alpha_entries: Dict[str, torch.Tensor] = {}
+    preserve_component_prefixes = preserve_component_prefixes or set()
 
     for key, weight in state_dict.items():
         new_key = key
         for component_prefix in ("unet.", "transformer.", "controlnet."):
             if new_key.startswith(component_prefix):
-                new_key = new_key.replace(component_prefix, f"{diffusion_prefix}.", 1)
+                if component_prefix.removesuffix(".") not in preserve_component_prefixes:
+                    new_key = new_key.replace(component_prefix, f"{diffusion_prefix}.", 1)
                 break
 
         if ".lora.down." in new_key:
