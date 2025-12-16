@@ -898,3 +898,29 @@
     border-radius: 4px;
     z-index: -1;
 }
+
+/* Toggle button highlighting (for expanded sections) */
+.search-highlighted-toggle {
+    outline: 3px solid #a78bfa !important;
+    outline-offset: 2px !important;
+    background-color: rgba(167, 139, 250, 0.25) !important;
+    border-color: #a78bfa !important;
+    box-shadow: 0 0 0 6px rgba(167, 139, 250, 0.3), 0 0 15px rgba(167, 139, 250, 0.4) !important;
+    animation: toggleHighlightPulse 1.5s ease-in-out 2;
+    position: relative;
+    z-index: 10;
+}
+
+.search-highlighted-toggle .fa-chevron-right,
+.search-highlighted-toggle .fa-chevron-down {
+    color: #a78bfa !important;
+}
+
+@keyframes toggleHighlightPulse {
+    0%, 100% {
+        box-shadow: 0 0 0 6px rgba(167, 139, 250, 0.3), 0 0 15px rgba(167, 139, 250, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 10px rgba(167, 139, 250, 0.2), 0 0 25px rgba(167, 139, 250, 0.5);
+    }
+}
