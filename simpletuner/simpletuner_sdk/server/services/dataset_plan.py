@@ -246,8 +246,8 @@ def compute_validations(
         validations.append(
             ValidationMessage(
                 field="text_embeds",
-                message="text embed datasets are required for caption guidance",
-                level="error",
+                message="no text embed dataset provided - a default cache dataset will be created automatically",
+                level="info",
             )
         )
     else:
@@ -256,22 +256,24 @@ def compute_validations(
             validations.append(
                 ValidationMessage(
                     field="text_embeds",
-                    message="mark one text embed dataset as default",
-                    level="error",
+                    message="no default text embed dataset set - the first entry will be used automatically",
+                    level="info",
                 )
             )
         elif default_count > 1:
             validations.append(
                 ValidationMessage(
                     field="text_embeds",
-                    message="only one text embed dataset can be default",
-                    level="error",
+                    message="multiple text embed datasets marked default - only the first will be used as default",
+                    level="warning",
                 )
             )
 
     # Check for orphaned text_embeds and image_embeds references
     text_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.TEXT_EMBEDS}
     image_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE_EMBEDS}
+    conditioning_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.CONDITIONING}
+    image_video_datasets = [dataset for dataset in datasets if _dataset_type(dataset) in {DatasetType.IMAGE, DatasetType.VIDEO}]
 
     for dataset in datasets:
         dataset_id = dataset.get("id", "unknown")
@@ -297,6 +299,48 @@ def compute_validations(
                     level="error",
                 )
             )
+
+    # Conditioning linkage warnings
+    conditioning_links: set[str] = set()
+    for dataset in image_video_datasets:
+        raw_links = dataset.get("conditioning_data") or []
+        if isinstance(raw_links, str):
+            raw_links = [link.strip() for link in raw_links.split(",") if link.strip()]
+        if isinstance(raw_links, list):
+            conditioning_links.update(str(link) for link in raw_links if link)
+
+    if conditioning_ids and image_video_datasets and not (conditioning_links & conditioning_ids):
+        validations.append(
+            ValidationMessage(
+                field="conditioning",
+                message="conditioning dataset present but not linked to any image/video dataset",
+                level="warning",
+            )
+        )
+    if conditioning_ids and not image_video_datasets:
+        validations.append(
+            ValidationMessage(
+                field="conditioning",
+                message="conditioning dataset configured without any image/video dataset",
+                level="warning",
+            )
+        )
+
+    # Edit model guidance
+    model_family_lc = str(model_family or "").lower()
+    model_flavour_lc = str(model_flavour or "").lower()
+    is_edit_model = (
+        (model_family_lc == "qwen_image" and "edit" in model_flavour_lc)
+        or (model_family_lc == "flux" and "kontext" in model_flavour_lc)
+    )
+    if is_edit_model and not conditioning_ids:
+        validations.append(
+            ValidationMessage(
+                field="conditioning",
+                message="edit model detected but no conditioning dataset configured",
+                level="warning",
+            )
+        )
 
     if blueprints is None:
         blueprints = get_dataset_blueprints()
