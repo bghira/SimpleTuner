@@ -81,6 +81,7 @@ class FieldService:
         "flow_beta_schedule_beta",
         "flow_schedule_shift",
         "flow_schedule_auto_shift",
+        "flow_custom_timesteps",
     }
     _SOFT_MIN_SNR_FIELDS = {
         "use_soft_min_snr",

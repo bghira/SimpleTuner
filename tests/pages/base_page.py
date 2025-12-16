@@ -2,7 +2,12 @@
 
 import time
 
-from selenium.common.exceptions import ElementNotInteractableException, StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import (
+    ElementClickInterceptedException,
+    ElementNotInteractableException,
+    StaleElementReferenceException,
+    TimeoutException,
+)
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -64,7 +69,11 @@ class BasePage:
             value: Locator value
         """
         element = self.wait.until(EC.element_to_be_clickable((by, value)))
-        element.click()
+        try:
+            element.click()
+        except ElementClickInterceptedException:
+            # Element is obscured by another element, use JavaScript click as fallback
+            self.driver.execute_script("arguments[0].click();", element)
 
     def send_keys(self, by, value, text, clear=True):
         """Send keys to an input element.

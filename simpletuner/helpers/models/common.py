@@ -2543,6 +2543,47 @@ class ModelFoundation(ABC):
             scheduler_config.max_shift,
         )
 
+    def _normalize_flow_custom_timesteps(self, raw_value) -> Optional[torch.Tensor]:
+        """
+        Parse user-specified custom flow timesteps/sigmas into a 1D tensor on the current device.
+        Accepts comma-separated strings, JSON-style lists, or tensor/array inputs.
+        """
+        if raw_value in (None, "", "None"):
+            return None
+
+        candidate = raw_value
+        if isinstance(candidate, str):
+            stripped = candidate.strip()
+            if stripped == "":
+                return None
+            try:
+                candidate = json.loads(stripped)
+            except Exception:
+                segments = [seg for seg in stripped.replace(";", ",").split(",") if seg.strip()]
+                try:
+                    candidate = [float(seg.strip()) for seg in segments]
+                except Exception:
+                    return None
+
+        if isinstance(candidate, np.ndarray):
+            candidate = candidate.tolist()
+
+        try:
+            tensor = torch.as_tensor(candidate, device=self.accelerator.device, dtype=torch.float32).flatten()
+        except Exception:
+            return None
+
+        if tensor.numel() == 0:
+            return None
+
+        finite_mask = torch.isfinite(tensor)
+        if not torch.all(finite_mask):
+            tensor = tensor[finite_mask]
+        if tensor.numel() == 0:
+            return None
+
+        return tensor
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
@@ -2550,6 +2591,25 @@ class ModelFoundation(ABC):
         Subclasses can override to implement model-specific sampling strategies.
         """
         bsz = batch["latents"].shape[0]
+        custom_timesteps = self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None))
+        if custom_timesteps is not None:
+            # Interpret values <=1.0 as sigmas, otherwise as timesteps in [0, 1000].
+            if torch.max(custom_timesteps) <= 1.0:
+                base_sigmas = custom_timesteps.clamp(0.0, 1.0)
+                base_timesteps = base_sigmas * 1000.0
+            else:
+                base_timesteps = custom_timesteps.clamp(0.0, 1000.0)
+                base_sigmas = (base_timesteps / 1000.0).clamp(0.0, 1.0)
+
+            if base_timesteps.numel() == 1:
+                sigmas = base_sigmas.expand(bsz)
+                timesteps = base_timesteps.expand(bsz)
+            else:
+                indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
+                sigmas = base_sigmas[indices]
+                timesteps = base_timesteps[indices]
+            return sigmas, timesteps
+
         if not self.config.flux_fast_schedule and not any(
             [
                 self.config.flow_use_beta_schedule,
