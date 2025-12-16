@@ -1417,6 +1417,7 @@ class FactoryRegistry:
 
         active_at_start: list[str] = []
         scheduled_later: list[tuple[str, int, int]] = []
+        training_seen = False
         for backend in data_backend_config:
             if backend.get("disabled", False) or backend.get("disable", False):
                 continue
@@ -1426,6 +1427,7 @@ class FactoryRegistry:
                 continue
             if dataset_type is DatasetType.EVAL or dataset_type not in training_types:
                 continue
+            training_seen = True
             start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
             start_step = normalize_start_step(backend.get("start_step", 0))
             backend_id = backend.get("id", "unknown")
@@ -1433,6 +1435,9 @@ class FactoryRegistry:
                 active_at_start.append(backend_id)
             else:
                 scheduled_later.append((backend_id, start_epoch, start_step))
+
+        if not training_seen:
+            return
 
         if not active_at_start:
             raise ValueError(
