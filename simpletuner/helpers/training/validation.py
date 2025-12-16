@@ -59,7 +59,7 @@ from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler
+from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler, TwinFlowScheduler
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.script_runner import build_script_command, run_hook_script
@@ -93,6 +93,7 @@ SCHEDULER_NAME_MAP = {
     "sana": FlowMatchEulerDiscreteScheduler,
     "rectified_flow_ab2": RectifiedFlowAB2Scheduler,
     "perflow": PeRFlowScheduler,
+    "twinflow": TwinFlowScheduler,
 }
 
 import logging
@@ -1158,6 +1159,7 @@ class Validation:
         self.fsdp = is_fsdp
         self._epoch_validations_completed: set[int] = set()
         self._pending_epoch_validation: int | None = None
+        self._active_validation_adapter_run: ValidationAdapterRun | None = None
         if is_deepspeed:
             if args.use_ema:
                 if args.ema_validation != "none":
@@ -1797,6 +1799,23 @@ class Validation:
             if distillation_scheduler is not None:
                 self.model.pipeline.scheduler = distillation_scheduler
                 return distillation_scheduler
+
+        # TwinFlow uses its own UCGM-style scheduler (supports flow and diff2flow bridge)
+        if getattr(self.config, "twinflow_enabled", False) and (
+            self.model.PREDICTION_TYPE.value == "flow_matching" or getattr(self.model, "_twinflow_diffusion_bridge", False)
+        ):
+            twinflow_steps = int(getattr(self.config, "twinflow_target_step_count", 1) or 1)
+            scheduler = TwinFlowScheduler(
+                num_train_timesteps=1000,
+                prediction_type="flow_matching",
+                shift=getattr(self.config, "flow_schedule_shift", 1.0) or 1.0,
+                stochast_ratio=1.0,  # Full stochasticity as in TwinFlow paper
+            )
+            if self.model.pipeline is not None:
+                self.model.pipeline.scheduler = scheduler
+            logger.info(f"TwinFlow validation using UCGM scheduler for {twinflow_steps}-step generation")
+            return scheduler
+
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
         }
@@ -1848,6 +1867,8 @@ class Validation:
             scheduler_args.setdefault("order", getattr(self.model, "sigma_schedule_order", 7.0))
             scheduler = scheduler_cls(**scheduler_args)
         elif scheduler_cls is PeRFlowScheduler:
+            scheduler = scheduler_cls(**scheduler_args)
+        elif scheduler_cls is TwinFlowScheduler:
             scheduler = scheduler_cls(**scheduler_args)
         else:
             scheduler = scheduler_cls.from_pretrained(
@@ -2042,6 +2063,7 @@ class Validation:
                 return
             try:
                 import copy
+
                 import peft.mapping as peft_mapping
                 from peft.tuners.tuners_utils import BaseTuner
             except Exception:
@@ -2144,8 +2166,10 @@ class Validation:
             adapter_scales.append(adapter.strength)
         self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales)
         try:
+            self._active_validation_adapter_run = adapter_run
             yield
         finally:
+            self._active_validation_adapter_run = None
             self._remove_validation_adapters(pipeline, adapter_names)
             _restore_requires_grad(pipeline, requires_grad_snapshot)
             _restore_compiled_components()
@@ -2968,12 +2992,23 @@ class Validation:
                 continue
 
             try:
+                # Determine inference parameters (TwinFlow overrides defaults)
+                num_inference_steps = self.config.validation_num_inference_steps
+                guidance_scale = self.config.validation_guidance
+                if getattr(self.config, "twinflow_enabled", False):
+                    # TwinFlow bakes CFG in during training; use zero guidance at inference
+                    guidance_scale = 0.0
+                    # Use target step count for TwinFlow validation
+                    twinflow_steps = int(getattr(self.config, "twinflow_target_step_count", 1) or 1)
+                    num_inference_steps = twinflow_steps
+                    logger.info(f"TwinFlow validation: {twinflow_steps} steps, guidance_scale=0.0")
+
                 pipeline_kwargs = {
                     "prompt": None,
                     "negative_prompt": None,
                     "num_images_per_prompt": self.config.num_validation_images,
-                    "num_inference_steps": self.config.validation_num_inference_steps,
-                    "guidance_scale": self.config.validation_guidance,
+                    "num_inference_steps": num_inference_steps,
+                    "guidance_scale": guidance_scale,
                     **extra_validation_kwargs,
                 }
                 if not is_audio:
@@ -3312,6 +3347,14 @@ class Validation:
     def enable_ema_for_inference(self, pipeline=None):
         if self.ema_enabled:
             logger.debug("EMA already enabled. Not enabling EMA.")
+            return
+        if self._active_validation_adapter_run is not None and not getattr(
+            self._active_validation_adapter_run, "is_base", True
+        ):
+            logger.info(
+                "Skipping EMA weights for validation adapter run '%s' to avoid mismatched parameter sets.",
+                self._active_validation_adapter_run.label,
+            )
             return
         if self.config.use_ema:
             logger.debug("Enabling EMA.")

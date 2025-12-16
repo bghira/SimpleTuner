@@ -331,6 +331,7 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ```
 
 > ℹ️ Use `caption_strategy=textfile` if you have `.txt` files containing captions.
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 > ℹ️ Note the reduced `write_batch_size` for text embeds to avoid OOM issues.
 
 Then, create a `datasets` directory:

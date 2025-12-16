@@ -389,6 +389,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 - In the `video` subsection, we have the following keys we can set:
   - `num_frames` (optional, int) is how many seconds of data we'll train on.
     - At 25 fps, 125 frames is 5 seconds of video, standard output. This should be your target.

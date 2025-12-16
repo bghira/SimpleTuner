@@ -40,6 +40,15 @@ def get_load_balancing_loss():
     return _LOAD_BALANCING_LOSS.copy()
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 from typing import List, Optional
 
 import torch
@@ -140,6 +149,9 @@ class TimestepEmbed(nn.Module):
             downscale_freq_shift=0,
         )
         self.timestep_embedder = TimestepEmbedding(in_channels=frequency_embedding_size, time_embed_dim=hidden_size)
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, hidden_size)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -148,9 +160,12 @@ class TimestepEmbed(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, timesteps, wdtype):
+    def forward(self, timesteps, wdtype, timestep_sign: Optional[torch.Tensor] = None):
         t_emb = self.time_proj(timesteps).to(dtype=wdtype)
         t_emb = self.timestep_embedder(t_emb)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
+            t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
 
 
@@ -1166,6 +1181,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         self,
         hidden_states: torch.Tensor,
         timesteps: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         t5_hidden_states: torch.Tensor = None,
         llama_hidden_states: torch.Tensor = None,
         pooled_embeds: torch.Tensor = None,
@@ -1176,6 +1192,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         controlnet_single_block_samples: Optional[List[torch.Tensor]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         """
         Forward pass for the HiDreamImageTransformer2DModel.
@@ -1192,6 +1209,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             joint_attention_kwargs: Additional attention parameters
             controlnet_block_samples: ControlNet features for double stream blocks
             controlnet_single_block_samples: ControlNet features for single stream blocks
+            hidden_states_buffer: Optional buffer to capture intermediate hidden states for regularizers
             return_dict: Whether to return as a dict
 
         Returns:
@@ -1219,9 +1237,9 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         # Apply gradient checkpointing to this step if enabled
         if self.training and self.gradient_checkpointing:
 
-            def create_custom_forward_timestep(timesteps):
+            def create_custom_forward_timestep(timesteps, timestep_sign=None):
                 def custom_forward(t_embedder):
-                    return t_embedder(timesteps, hidden_states_type)
+                    return t_embedder(timesteps, hidden_states_type, timestep_sign=timestep_sign)
 
                 return custom_forward
 
@@ -1234,8 +1252,11 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             ckpt_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
             timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
+            sign = timestep_sign
+            if sign is not None:
+                sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype).view(timesteps.shape[0])
             timesteps_emb = torch.utils.checkpoint.checkpoint(
-                create_custom_forward_timestep(timesteps),
+                create_custom_forward_timestep(timesteps, sign),
                 self.t_embedder,
                 **ckpt_kwargs,
             )
@@ -1249,7 +1270,10 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         else:
             # Standard processing without checkpointing
             timesteps = self.expand_timesteps(timesteps, batch_size, hidden_states.device)
-            timesteps = self.t_embedder(timesteps, hidden_states_type)
+            sign = timestep_sign
+            if sign is not None:
+                sign = sign.to(device=hidden_states.device, dtype=timesteps.dtype).view(timesteps.shape[0])
+            timesteps = self.t_embedder(timesteps, hidden_states_type, timestep_sign=sign)
             p_embedder = self.p_embedder(pooled_embeds)
             adaln_input = timesteps + p_embedder
 
@@ -1395,6 +1419,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         initial_encoder_hidden_states_seq_len = initial_encoder_hidden_states.shape[1]
 
         # Process through double stream blocks
+        capture_idx = 0
         for bid, block in enumerate(self.double_stream_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -1486,6 +1511,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 hidden_states = hidden_states + controlnet_block_samples[control_idx]
 
             block_id += 1
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         # 6. Prepare for single stream blocks
         image_tokens_seq_len = hidden_states.shape[1]
@@ -1614,6 +1641,10 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 )
 
             block_id += 1
+            _store_hidden_state(
+                hidden_states_buffer, f"layer_{capture_idx}", hidden_states, image_tokens_start=image_tokens_seq_len
+            )
+            capture_idx += 1
 
         # 8. Final processing with optional checkpointing
         hidden_states = hidden_states[:, :image_tokens_seq_len, ...]

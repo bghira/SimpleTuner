@@ -558,6 +558,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 - Wan 2.2 image-to-video runs create CLIP conditioning caches. In the **video** dataset entry, point at a dedicated backend and (optionally) override the cache path:
 
 <details>

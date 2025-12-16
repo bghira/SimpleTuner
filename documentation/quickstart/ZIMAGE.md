@@ -353,6 +353,8 @@ Example multi-backend config (`config/multidatabackend.json`):
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 Running 512px and 1024px datasets concurrently is supported and can improve convergence.
 
 Create the datasets directory:

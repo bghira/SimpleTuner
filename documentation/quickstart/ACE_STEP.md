@@ -118,6 +118,8 @@ Create `config/acestep-training-demo/multidatabackend.json`:
 ```
 </details>
 
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
+
 ### Option 2: Local Audio Files
 
 Create `config/acestep-training-demo/multidatabackend.json`:

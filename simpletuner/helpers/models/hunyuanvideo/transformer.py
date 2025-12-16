@@ -39,6 +39,15 @@ from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class HunyuanVideo15AttnProcessor2_0:
     _attention_backend = None
     _parallel_config = None
@@ -185,6 +194,8 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        self.time_sign_embed = nn.Embedding(2, embedding_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         self.use_meanflow = use_meanflow
         self.time_proj_r = None
@@ -197,9 +208,15 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
         self,
         timestep: torch.Tensor,
         timestep_r: Optional[torch.Tensor] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         timesteps_proj = self.time_proj(timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=timestep.dtype))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=timesteps_emb.device)
+            timesteps_emb = timesteps_emb + self.time_sign_embed(sign_idx).to(
+                dtype=timesteps_emb.dtype, device=timesteps_emb.device
+            )
 
         if timestep_r is not None:
             timesteps_proj_r = self.time_proj_r(timestep_r)
@@ -647,6 +664,7 @@ class HunyuanVideo15Transformer3DModel(
         timestep: torch.LongTensor,
         encoder_hidden_states: torch.Tensor,
         encoder_attention_mask: torch.Tensor,
+        timestep_sign: Optional[torch.LongTensor] = None,
         timestep_r: Optional[torch.LongTensor] = None,
         encoder_hidden_states_2: Optional[torch.Tensor] = None,
         encoder_attention_mask_2: Optional[torch.Tensor] = None,
@@ -677,7 +695,11 @@ class HunyuanVideo15Transformer3DModel(
         image_rotary_emb = self.rope(hidden_states)
 
         # 2. Conditional embeddings
-        temb = self.time_embed(timestep, timestep_r=timestep_r)
+        temb = self.time_embed(
+            timestep,
+            timestep_r=timestep_r,
+            timestep_sign=timestep_sign,
+        )
 
         hidden_states = self.x_embedder(hidden_states)
 
@@ -785,6 +807,7 @@ class HunyuanVideo15Transformer3DModel(
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
         # 4. Transformer blocks
+        capture_idx = 0
         if torch.is_grad_enabled() and self.gradient_checkpointing:
             for idx, block in enumerate(self.transformer_blocks):
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
@@ -799,6 +822,8 @@ class HunyuanVideo15Transformer3DModel(
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                capture_idx += 1
 
         else:
             for idx, block in enumerate(self.transformer_blocks):
@@ -813,6 +838,8 @@ class HunyuanVideo15Transformer3DModel(
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                capture_idx += 1
 
         # 5. Output projection
         hidden_states = self.norm_out(hidden_states, temb)

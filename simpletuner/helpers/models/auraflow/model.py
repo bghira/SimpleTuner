@@ -142,6 +142,7 @@ class Auraflow(ImageModelFoundation):
             f"\n{prepared_batch['timesteps'].shape}"
             f"\n{prepared_batch['encoder_hidden_states'].shape}"
         )
+        hidden_states_buffer = self._new_hidden_state_buffer()
         batch, channels, height, width = prepared_batch["noisy_latents"].shape
         if channels != self.LATENT_CHANNEL_COUNT:
             raise ValueError(
@@ -156,6 +157,7 @@ class Auraflow(ImageModelFoundation):
             prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=torch.float32) / 1000.0
         )  # normalize to [0, 1]
 
+        timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
         model_output = self.model(
             prepared_batch["noisy_latents"].to(
                 device=self.accelerator.device,
@@ -166,10 +168,12 @@ class Auraflow(ImageModelFoundation):
                 dtype=self.config.base_weight_dtype,
             ),
             timestep=timesteps,
+            timestep_sign=timestep_sign,
             return_dict=True,
+            hidden_states_buffer=hidden_states_buffer,
         ).sample
 
-        return {"model_prediction": model_output}
+        return {"model_prediction": model_output, "hidden_states_buffer": hidden_states_buffer}
 
     def check_user_config(self):
         if self.config.base_model_precision == "fp8-quanto":

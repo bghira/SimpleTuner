@@ -534,6 +534,23 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="flow_custom_timesteps",
+            arg_name="--flow_custom_timesteps",
+            ui_label="Custom Flow Timesteps",
+            field_type=FieldType.TEXT,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=None,
+            help_text="Override flow-matching timestep sampling with a fixed list (comma-separated). Values >1 are treated as timesteps [0,1000]; values in [0,1] are treated as sigmas.",
+            tooltip="Skips CDF/Uniform/Beta sampling and randomly picks from your provided list each step.",
+            importance=ImportanceLevel.ADVANCED,
+            order=26.5,
+        )
+    )
+
     # Flux Guidance Configuration
     registry._add_field(
         ConfigField(

@@ -18,15 +18,31 @@ from diffusers.models.transformers.transformer_flux import (
 logger = get_logger(__name__, log_level="INFO")
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class TimestepEmbeddings(nn.Module):
     def __init__(self, embedding_dim):
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, embedding_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
-    def forward(self, timestep, hidden_dtype):
+    def forward(self, timestep, hidden_dtype, timestep_sign: Optional[torch.Tensor] = None):
         timesteps_proj = self.time_proj(timestep)
-        return self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+        temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
+            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
+        return temb
 
 
 class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
@@ -96,10 +112,12 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         img_ids: torch.Tensor = None,
         txt_ids: torch.Tensor = None,
         guidance: torch.Tensor = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         Args:
@@ -117,7 +135,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         timestep = timestep.to(hidden_states.dtype) * 1000
         guidance = guidance.to(hidden_states.dtype) * 1000 if guidance is not None else None
 
-        temb = self.time_embed(timestep, hidden_states.dtype)
+        temb = self.time_embed(timestep, hidden_states.dtype, timestep_sign=timestep_sign)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         if txt_ids.ndim == 3:
@@ -134,6 +152,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         ids = torch.cat((txt_ids, img_ids), dim=0)
         image_rotary_emb = self.pos_embed(ids)
 
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_checkpoint[index_block]:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
@@ -150,6 +169,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                 )
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         for index_block, block in enumerate(self.single_transformer_blocks):
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_single_checkpoint[index_block]:
@@ -167,6 +188,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                 )
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         hidden_states = self.norm_out(hidden_states, temb)
         output = self.proj_out(hidden_states)

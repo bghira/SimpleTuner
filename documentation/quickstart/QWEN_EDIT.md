@@ -85,6 +85,8 @@ SimpleTuner includes experimental features that can significantly improve traini
 
 Both flavours expect **paired datasets**: an edit image, optional edit caption, and one or more control/reference images that share the **exact same filenames**.
 
+For field details, see [`conditioning_type`](../DATALOADER.md#conditioning_type) and [`conditioning_data`](../DATALOADER.md#conditioning_data). If you provide multiple conditioning datasets, choose how they’re sampled with `conditioning_multidataset_sampling` in [OPTIONS](../OPTIONS.md#--conditioning_multidataset_sampling-combinedrandom).
+
 ### 3.1 edit‑v1 (single control image)
 
 The main dataset should reference one conditioning dataset **and** a conditioning-image-embed cache:
@@ -122,6 +124,8 @@ The main dataset should reference one conditioning dataset **and** a conditionin
 ]
 ```
 </details>
+
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
 - `conditioning_type=reference_strict` guarantees that crops match the edit image. Use `reference_loose` only if the reference can be aspect-mismatched.
 - The `conditioning_image_embeds` entry stores the Qwen2.5-VL visual tokens produced for each reference. If omitted, SimpleTuner will create a default cache under `cache/conditioning_image_embeds/<dataset_id>`.

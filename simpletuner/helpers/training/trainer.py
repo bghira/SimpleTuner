@@ -2063,8 +2063,11 @@ class Trainer:
         self.state["first_epoch"] = 1
         self.state["args"] = self.config.__dict__
         self.timesteps_buffer = []
+        self.twinflow_traj_buffer = []
         self._timesteps_scatter_table = None
         self._timesteps_scatter_logged = False
+        self._twinflow_traj_table = None
+        self._twinflow_traj_logged = False
         self.guidance_values_list = []
         self.train_loss = 0.0
         self.bf = None
@@ -3282,7 +3285,9 @@ class Trainer:
         is_fsdp2_run = fsdp_enabled and fsdp_version == 2 and self.accelerator.distributed_type == DistributedType.FSDP
 
         should_log = self.accelerator.is_main_process
-        instantiate_on_rank = should_log or is_fsdp2_run
+        # TwinFlow requires EMA on all ranks for teacher passes; create EMA everywhere when enabled.
+        twinflow_requires_full_rank = bool(getattr(self.config, "twinflow_enabled", False))
+        instantiate_on_rank = should_log or is_fsdp2_run or twinflow_requires_full_rank
         if should_log:
             logger.info("Using EMA. Creating EMAModel.")
 
@@ -3314,6 +3319,8 @@ class Trainer:
 
         self.accelerator.wait_for_everyone()
         # same about running on all processes to ensure alignment.
+        # Pass EMA model reference to the model for TwinFlow teacher access
+        self.model.ema_model = self.ema_model
         self.model.post_ema_creation()
 
     def init_hooks(self):
@@ -3844,9 +3851,7 @@ class Trainer:
         is_accelerator_target = destination == "accelerator"
         fsdp_active = bool(getattr(self.config, "use_fsdp", False))
         fsdp_version = None
-        pipeline_base_quantization = bool(
-            getattr(self.config, "pipeline_quantization_base", False)
-        )
+        pipeline_base_quantization = bool(getattr(self.config, "pipeline_quantization_base", False))
         if self.accelerator and hasattr(self.accelerator, "state"):
             fsdp_plugin = getattr(self.accelerator.state, "fsdp_plugin", None)
             if fsdp_plugin is not None:
@@ -3876,7 +3881,15 @@ class Trainer:
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
         if self.model.get_trained_component() is not None:
             should_move_trained_component = (
-                not any([fsdp_active, group_offload_requested, group_offload_configured, musubi_block_swap_active, ramtorch_enabled])
+                not any(
+                    [
+                        fsdp_active,
+                        group_offload_requested,
+                        group_offload_configured,
+                        musubi_block_swap_active,
+                        ramtorch_enabled,
+                    ]
+                )
                 and is_accelerator_target
                 and not pipeline_base_quantization
             )
@@ -4741,6 +4754,22 @@ class Trainer:
                     # Prepare the data for the scatter plot
                     for timestep in prepared_batch["timesteps"].tolist():
                         self.timesteps_buffer.append((self.state["global_step"], timestep))
+                    if getattr(self.config, "twinflow_enabled", False):
+                        sigmas = prepared_batch.get("sigmas")
+                        tt = prepared_batch.get("twinflow_tt")
+                        time_sign = prepared_batch.get("twinflow_time_sign")
+                        if sigmas is not None and tt is not None:
+                            try:
+                                sigma_mean = float(sigmas.detach().float().mean().item())
+                                tt_mean = float(tt.detach().float().mean().item())
+                                sign_val = (
+                                    float(time_sign.detach().float().mean().item())
+                                    if time_sign is not None
+                                    else float(torch.sign(sigmas.detach().float()).mean().item())
+                                )
+                                self.twinflow_traj_buffer.append((self.state["global_step"], sigma_mean, tt_mean, sign_val))
+                            except Exception:
+                                training_logger.debug("TwinFlow trajectory logging skipped due to tensor shape issues.")
 
                     if "encoder_hidden_states" in prepared_batch:
                         encoder_hidden_states = prepared_batch["encoder_hidden_states"]
@@ -5031,9 +5060,26 @@ class Trainer:
                                 self._timesteps_scatter_logged = True
                             else:
                                 wandb_logs["timesteps_scatter_table"] = self._timesteps_scatter_table
+                        # Experimental TwinFlow trajectory map (theory may be inaccurate; for debugging only).
+                        if getattr(self.config, "twinflow_enabled", False) and self.twinflow_traj_buffer:
+                            if self._twinflow_traj_table is None:
+                                self._twinflow_traj_table = wandb.Table(columns=["global_step", "sigma", "tt", "time_sign"])
+                            for step_id, sigma_val, tt_val, sign_val in self.twinflow_traj_buffer:
+                                self._twinflow_traj_table.add_data(step_id, sigma_val, tt_val, sign_val)
+                            if not self._twinflow_traj_logged:
+                                wandb_logs["twinflow_traj_map"] = wandb.plot.scatter(
+                                    self._twinflow_traj_table,
+                                    "sigma",
+                                    "tt",
+                                    title="TwinFlow trajectory map (experimental/theory unverified)",
+                                )
+                                self._twinflow_traj_logged = True
+                            else:
+                                wandb_logs["twinflow_traj_table"] = self._twinflow_traj_table
 
                     # Clear buffers
                     self.timesteps_buffer = []
+                    self.twinflow_traj_buffer = []
 
                     # Average out the luminance values of each batch, so that we can store that in this step.
                     if training_luminance_values:

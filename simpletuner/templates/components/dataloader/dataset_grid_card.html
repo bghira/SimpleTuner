@@ -38,6 +38,9 @@
             <span class="badge grid-card-type-badge bg-warning text-dark"
                   x-show="dataset.is_regularisation_data"
                   title="Regularisation/prior preservation data to prevent model drift">REG</span>
+            <span class="badge grid-card-type-badge bg-primary"
+                  x-show="dataset.dataset_type === 'text_embeds' && dataset.default"
+                  title="Default text embed backend">Default</span>
         </div>
 
         <!-- Repeats -->

@@ -218,6 +218,7 @@ class Cosmos2Image(VideoModelFoundation):
         device = self.accelerator.device
         dtype = self.config.weight_dtype
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         inv = 1.0 / (sigmas + 1.0)  # == c_in == c_skip
         cout = -sigmas * inv
 
@@ -231,12 +232,13 @@ class Cosmos2Image(VideoModelFoundation):
             encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(dtype),
             padding_mask=pad_mask,
             return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
         )[
             0
         ]  # transformer output
 
         x0_pred = inv * xt + cout * r_pred.float()  # behaviour identical to NVIDIA loop
-        return {"model_prediction": x0_pred}
+        return {"model_prediction": x0_pred, "hidden_states_buffer": hidden_states_buffer}
 
     def loss(self, prepared_batch, model_output, apply_conditioning_mask=True):
         x0 = prepared_batch["latents"].float()

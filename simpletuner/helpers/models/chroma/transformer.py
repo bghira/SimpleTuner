@@ -26,6 +26,15 @@ from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_l
 from simpletuner.helpers.training.tread import TREADRouter
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def adjust_rotary_embedding_dim(
     rotary_emb: Tuple[torch.Tensor, torch.Tensor],
     target_dim: int,
@@ -486,6 +495,9 @@ class ChromaTransformer2DModel(
             num_channels=approximator_num_channels // 4,
             out_dim=3 * num_single_layers + 2 * 6 * num_layers + 2,
         )
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.distilled_guidance_layer = ChromaApproximator(
             in_dim=approximator_num_channels,
             out_dim=self.inner_dim,
@@ -559,6 +571,7 @@ class ChromaTransformer2DModel(
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         img_ids: torch.Tensor = None,
         txt_ids: torch.Tensor = None,
         attention_mask: torch.Tensor = None,
@@ -568,6 +581,7 @@ class ChromaTransformer2DModel(
         return_dict: bool = True,
         controlnet_blocks_repeat: bool = False,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
         skip_layers: Optional[List[int]] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         if joint_attention_kwargs is not None:
@@ -590,6 +604,11 @@ class ChromaTransformer2DModel(
 
         input_vec = self.time_text_embed(timestep)
         pooled_temb = self.distilled_guidance_layer(input_vec)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            pooled_temb = pooled_temb + self.time_sign_embed(sign_idx).to(
+                dtype=pooled_temb.dtype, device=hidden_states.device
+            )
 
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
@@ -749,6 +768,7 @@ class ChromaTransformer2DModel(
                 route_ptr += 1
                 current_rope = image_rotary_emb
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", hidden_states)
             global_idx += 1
 
         hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -824,19 +844,19 @@ class ChromaTransformer2DModel(
                     routing_now = False
                     route_ptr += 1
 
-                    if attention_mask is not None:
-                        pad = torch.zeros(
-                            attention_mask.size(0),
-                            img_tok.size(1),
-                            device=attention_mask.device,
-                            dtype=attention_mask.dtype,
-                        )
-                        attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
+                if attention_mask is not None:
+                    pad = torch.zeros(
+                        attention_mask.size(0),
+                        img_tok.size(1),
+                        device=attention_mask.device,
+                        dtype=attention_mask.dtype,
+                    )
+                    attention_mask = torch.cat([attention_mask[:, :txt_len], pad], dim=1)
 
-                    current_rope = image_rotary_emb
+                current_rope = image_rotary_emb
 
-                global_idx += 1
-                continue
+            global_idx += 1
+            continue
 
             use_checkpoint = (
                 torch.is_grad_enabled()
@@ -894,6 +914,7 @@ class ChromaTransformer2DModel(
 
                 current_rope = image_rotary_emb
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", hidden_states, image_tokens_start=txt_len)
             global_idx += 1
 
         hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]

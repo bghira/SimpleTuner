@@ -270,14 +270,19 @@ class LongCatVideo(VideoModelFoundation):
         timesteps = prepared_batch["timesteps"]
 
         cond_count = int(prepared_batch.get("conditioning_latent_count", 0) or 0)
+        hidden_states_buffer = self._new_hidden_state_buffer()
 
         model_pred = self.model(
             noisy_latents,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             timestep=timesteps,
+            timestep_sign=(
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             num_cond_latents=cond_count,
             return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
         )[0]
 
         if cond_count > 0 and model_pred.dim() == 5 and model_pred.shape[2] > cond_count:
@@ -285,6 +290,7 @@ class LongCatVideo(VideoModelFoundation):
 
         return {
             "model_prediction": model_pred,
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
 

@@ -32,6 +32,15 @@ from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin):
     r"""
     A 2D Transformer model as introduced in PixArt family of models (https://huggingface.co/papers/2310.00426,
@@ -343,6 +352,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         controlnet_conditioning_scale: float = 1.0,
         return_dict: bool = True,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         """
         The [`PixArtTransformer2DModel`] forward method.
@@ -441,6 +451,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             ]
 
         # 2. Blocks
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
@@ -496,6 +507,8 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 routing_now = False
                 route_ptr += 1
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
             global_idx += 1
 
         shift, scale = (self.scale_shift_table[None] + embedded_timestep[:, None].to(self.scale_shift_table.device)).chunk(

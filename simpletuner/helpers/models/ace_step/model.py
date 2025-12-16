@@ -965,6 +965,7 @@ class ACEStep(AudioModelFoundation):
         if transformer is None:
             raise ValueError("ACE-Step transformer has not been loaded before model_predict was invoked.")
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         noise_latents = prepared_batch["noisy_latents"]
         attention_mask = prepared_batch["attention_mask"]
         text_hidden_states = prepared_batch["encoder_hidden_states"]
@@ -985,8 +986,12 @@ class ACEStep(AudioModelFoundation):
             lyric_token_idx=lyric_token_ids,
             lyric_mask=lyric_mask,
             timestep=timesteps,
+            timestep_sign=(
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             ssl_hidden_states=ssl_hidden_states,
             return_dict=True,
+            hidden_states_buffer=hidden_states_buffer,
         )
 
         # Precondition velocity to data prediction: x0_hat = noisy - sigma * v_theta(noisy, sigma)
@@ -999,6 +1004,7 @@ class ACEStep(AudioModelFoundation):
         return {
             "model_prediction": data_pred,
             "proj_losses": output.proj_losses,
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
@@ -1037,12 +1043,13 @@ class ACEStep(AudioModelFoundation):
 
         return loss
 
-    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor, **kwargs):
+        loss, base_logs = super().auxiliary_loss(model_output=model_output, prepared_batch=prepared_batch, loss=loss)
         proj_losses = model_output.get("proj_losses")
         if not proj_losses:
-            return loss, None
+            return loss, base_logs
 
-        logs = {}
+        logs = base_logs or {}
         collected = []
         for entry in proj_losses:
             if not isinstance(entry, (list, tuple)) or len(entry) != 2:

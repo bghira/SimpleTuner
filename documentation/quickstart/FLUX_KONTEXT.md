@@ -28,6 +28,8 @@ Two `conditioning_type` modes are available for Kontext:
   - Originally required `--vae_cache_ondemand` and some increased VRAM usage, but no longer does.
   - Duplicates the crop / aspect bucket metadata from the source dataset at startup, so you don't have to.
 
+For field definitions, see [`conditioning_type`](../DATALOADER.md#conditioning_type) and [`conditioning_data`](../DATALOADER.md#conditioning_data). To control how multiple conditioning sets are sampled, use `conditioning_multidataset_sampling` as described in [OPTIONS](../OPTIONS.md#--conditioning_multidataset_sampling-combinedrandom).
+
 
 ---
 
@@ -117,6 +119,8 @@ The `conditioning_data` field in the edit dataset should point to the reference 
 ]
 ```
 </details>
+
+> See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
 *Every edit image **must** have 1‑to‑1 matching file names and extensions in both dataset folders. SimpleTuner will automatically staple the reference embedding to the edit’s conditioning.
 

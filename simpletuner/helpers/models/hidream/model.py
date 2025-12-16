@@ -343,6 +343,7 @@ class HiDream(ImageModelFoundation):
         Returns:
             Dictionary containing model predictions
         """
+        hidden_states_buffer = self._new_hidden_state_buffer()
         logger.debug(f"Prompt embeds: {prepared_batch['text_encoder_output']}")
         logger.debug(
             "Input shapes:"
@@ -408,14 +409,19 @@ class HiDream(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 timesteps=prepared_batch["timesteps"],
+                timestep_sign=(
+                    prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+                ),
                 t5_hidden_states=prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
                 llama_hidden_states=prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
                 pooled_embeds=prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
                 img_sizes=img_sizes,
                 img_ids=img_ids,
                 return_dict=False,
+                hidden_states_buffer=hidden_states_buffer,
             )[0]
-            * -1  # the model is trained with inverted velocity :(
+            * -1,  # the model is trained with inverted velocity :(
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:
@@ -509,6 +515,9 @@ class HiDream(ImageModelFoundation):
                 dtype=self.config.base_weight_dtype,
             ),
             "timesteps": prepared_batch["timesteps"],
+            "timestep_sign": (
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             "t5_hidden_states": prepared_batch["text_encoder_output"]["t5_prompt_embeds"],
             "llama_hidden_states": prepared_batch["text_encoder_output"]["llama_prompt_embeds"],
             "pooled_embeds": prepared_batch["text_encoder_output"]["pooled_prompt_embeds"],
@@ -601,9 +610,10 @@ class HiDream(ImageModelFoundation):
 
         return output_str
 
-    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor):
+    def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor, **kwargs):
+        loss, base_logs = super().auxiliary_loss(model_output=model_output, prepared_batch=prepared_batch, loss=loss)
         aux_losses = get_load_balancing_loss()
-        aux_log_info = {}
+        aux_log_info = base_logs or {}
 
         if aux_losses:
             # Extract and accumulate the actual loss values (first element of each tuple)
@@ -634,7 +644,7 @@ class HiDream(ImageModelFoundation):
                 total_loss = loss
         else:
             total_loss = loss
-            aux_log_info = {"total": 0.0, "count": 0}
+            aux_log_info = (aux_log_info or {}) | {"total": 0.0, "count": 0}
 
         # Always clear the global list after processing to prevent memory buildup
         clear_load_balancing_loss()

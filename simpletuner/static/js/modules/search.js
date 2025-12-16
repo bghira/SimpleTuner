@@ -270,30 +270,9 @@ function searchComponent() {
             // First switch to the correct tab
             this.selectTab(fieldResult.context.tab);
 
-            // Then focus and highlight the specific field after a short delay
-            setTimeout(() => {
-                console.log('🔍 LOOKING FOR FIELD ELEMENTS WITH NAME:', fieldResult.name);
-                const fieldElements = this.findFieldElements(fieldResult.name);
-                console.log('  - Found', fieldElements.length, 'elements');
-
-                if (fieldElements.length > 0) {
-                    // Set flag to indicate primary highlight was set by search result click
-                    this.hasPrimaryHighlight = true;
-
-                    // Scroll to and highlight the field
-                    this.scrollToElement(fieldElements[0]);
-                    this.highlightPrimaryField(fieldElements[0]);
-
-                    // Focus the field
-                    try {
-                        this.focusField(fieldElements[0]);
-                    } catch (focusError) {
-                        console.warn('Failed to focus field:', focusError);
-                    }
-                } else {
-                    console.warn('❌ NO FIELD ELEMENTS FOUND FOR:', fieldResult.name);
-                }
-            }, 200);
+            // Wait for HTMX to settle before highlighting
+            // HTMX replaces DOM content after tab switch, so we need to wait
+            this.waitForHtmxAndHighlight(fieldResult.name);
 
             // Hide search results after selection
             this.showResults = false;
@@ -419,13 +398,43 @@ function searchComponent() {
 
                 // Strategy 6: Try with -- prefix for command line arguments
                 () => document.querySelectorAll(`[name="--${fieldName}"]`),
-                () => document.querySelectorAll(`[data-field-name="--${fieldName}"]`)
+                () => document.querySelectorAll(`[data-field-name="--${fieldName}"]`),
+
+                // Strategy 7: x-model attribute match (for Alpine.js bound fields like dataloaders)
+                () => document.querySelectorAll(`[x-model="dataset.${fieldName}"]`),
+                () => document.querySelectorAll(`[x-model*="${fieldName}"]`),
+                () => document.querySelectorAll(`[x-model\\.number\\.lazy="dataset.${fieldName}"]`),
+
+                // Strategy 8: Partial x-model match with common patterns
+                () => {
+                    // Try variations like dataset.field_name, dataset._fieldText, etc.
+                    const variations = [
+                        `[x-model="dataset.${fieldName}"]`,
+                        `[x-model="dataset._${fieldName}"]`,
+                        `[x-model="dataset.${fieldName}Text"]`,
+                        `[x-model="dataset._${fieldName}Text"]`,
+                    ];
+                    for (const selector of variations) {
+                        try {
+                            const elements = document.querySelectorAll(selector);
+                            if (elements.length > 0) return elements;
+                        } catch (e) {
+                            // Invalid selector, skip
+                        }
+                    }
+                    return [];
+                }
             ];
 
             for (const strategy of strategies) {
-                const elements = strategy();
-                if (elements.length > 0) {
-                    return Array.from(elements);
+                try {
+                    const elements = strategy();
+                    if (elements && elements.length > 0) {
+                        return Array.from(elements);
+                    }
+                } catch (e) {
+                    console.debug('Field search strategy error:', e);
+                    // Continue to next strategy
                 }
             }
 
@@ -451,6 +460,249 @@ function searchComponent() {
             }
 
             return matchingFields;
+        },
+
+        /**
+         * Wait for HTMX to settle after tab switch, then highlight the field.
+         * This handles the race condition where HTMX replaces DOM content after we try to highlight.
+         */
+        waitForHtmxAndHighlight(fieldName) {
+            console.log('⏳ WAITING FOR HTMX TO SETTLE before highlighting:', fieldName);
+
+            // Track if we've already handled this (to avoid double-handling)
+            let handled = false;
+
+            const doHighlight = () => {
+                if (handled) return;
+                handled = true;
+
+                console.log('🔍 HTMX SETTLED - NOW LOOKING FOR FIELD:', fieldName);
+                const fieldElements = this.findFieldElements(fieldName);
+                console.log('  - Found', fieldElements.length, 'elements');
+
+                if (fieldElements.length > 0) {
+                    const targetElement = fieldElements[0];
+                    let expandedToggles = [];
+
+                    try {
+                        // Expand any collapsed sections containing this field
+                        console.log('🔓 CHECKING FOR COLLAPSED SECTIONS...');
+                        expandedToggles = this.expandCollapsedSections(targetElement);
+
+                        if (expandedToggles.length > 0) {
+                            console.log(`🔓 EXPANDED ${expandedToggles.length} COLLAPSED SECTION(S)`);
+                            // Highlight the toggle buttons that were expanded
+                            this.highlightToggleButtons(expandedToggles);
+                        }
+                    } catch (expandError) {
+                        console.warn('⚠️ Error expanding collapsed sections:', expandError);
+                    }
+
+                    // Wait a bit for expansion animation to complete before scrolling
+                    setTimeout(() => {
+                        try {
+                            // Re-find element in case DOM changed during expansion
+                            const freshElements = this.findFieldElements(fieldName);
+                            const element = freshElements.length > 0 ? freshElements[0] : targetElement;
+
+                            // Set flag to indicate primary highlight was set by search result click
+                            this.hasPrimaryHighlight = true;
+
+                            // Scroll to and highlight the field
+                            this.scrollToElement(element);
+                            this.highlightPrimaryField(element);
+
+                            // Focus the field
+                            try {
+                                this.focusField(element);
+                            } catch (focusError) {
+                                console.warn('Failed to focus field:', focusError);
+                            }
+
+                            console.log('✅ FIELD HIGHLIGHTED SUCCESSFULLY:', fieldName);
+                        } catch (highlightError) {
+                            console.warn('⚠️ Error highlighting field:', highlightError);
+                        }
+                    }, expandedToggles.length > 0 ? 200 : 50);
+                } else {
+                    console.warn('❌ NO FIELD ELEMENTS FOUND FOR:', fieldName);
+                }
+            };
+
+            // Listen for HTMX afterSettle event (fires when content is fully loaded)
+            const htmxHandler = (event) => {
+                console.log('📡 HTMX afterSettle event received');
+                document.removeEventListener('htmx:afterSettle', htmxHandler);
+                // Small additional delay to ensure all form initialization is complete
+                setTimeout(doHighlight, 100);
+            };
+
+            document.addEventListener('htmx:afterSettle', htmxHandler);
+
+            // Fallback: if HTMX doesn't fire within 1 second, proceed anyway
+            // This handles cases where the tab is already loaded (no HTMX request)
+            setTimeout(() => {
+                if (!handled) {
+                    console.log('⚠️ HTMX timeout - proceeding with highlight');
+                    document.removeEventListener('htmx:afterSettle', htmxHandler);
+                    doHighlight();
+                }
+            }, 1000);
+        },
+
+        /**
+         * Expand all collapsed sections containing an element.
+         * Handles:
+         * 1. Bootstrap collapse (form tabs with data-bs-toggle="collapse")
+         * 2. formSectionComponent (Alpine.js x-show="expanded")
+         * 3. dataloader sections (sectionIsExpanded/toggleSectionCollapsed)
+         * Returns an array of toggle buttons that were used to expand sections.
+         */
+        expandCollapsedSections(element) {
+            const expandedToggles = [];
+
+            try {
+                let current = element;
+
+                while (current && current !== document.body) {
+                    try {
+                        // Check for Bootstrap collapse pattern (form tabs)
+                        // These have class "collapse" and use "show" class when expanded
+                        if (current.classList && current.classList.contains('collapse')) {
+                            const isCollapsed = !current.classList.contains('show');
+
+                            if (isCollapsed) {
+                                console.log('🔓 FOUND COLLAPSED BOOTSTRAP SECTION:', current.id);
+
+                                // Find the toggle button that controls this section
+                                const sectionId = current.id;
+                                const toggleBtn = document.querySelector(`[data-bs-target="#${sectionId}"]`);
+
+                                if (toggleBtn) {
+                                    console.log('🔓 EXPANDING BOOTSTRAP SECTION via toggle button:', toggleBtn);
+
+                                    // Use Bootstrap's Collapse API if available
+                                    if (typeof bootstrap !== 'undefined' && bootstrap.Collapse) {
+                                        const bsCollapse = bootstrap.Collapse.getInstance(current) ||
+                                                          new bootstrap.Collapse(current, { toggle: false });
+                                        bsCollapse.show();
+                                    } else {
+                                        // Fallback: click the toggle button
+                                        toggleBtn.click();
+                                    }
+
+                                    expandedToggles.push(toggleBtn);
+                                }
+                            }
+                        }
+
+                        // Check for dataloader section pattern (dataset-section-body with x-show)
+                        if (current.classList && (current.classList.contains('dataset-section-body') ||
+                            current.classList.contains('dataset-subgroup-body'))) {
+                            // Check if this section is collapsed (not visible)
+                            // Use multiple methods to detect hidden state
+                            const computedStyle = window.getComputedStyle(current);
+                            const isHidden = computedStyle.display === 'none' ||
+                                             computedStyle.visibility === 'hidden' ||
+                                             current.offsetParent === null ||
+                                             current.hasAttribute('x-cloak');
+
+                            if (isHidden) {
+                                // Find the toggle button - look for header as previous sibling or in parent
+                                let header = current.previousElementSibling;
+
+                                // Sometimes there might be whitespace text nodes
+                                if (!header || (!header.classList.contains('dataset-section-header') &&
+                                               !header.classList.contains('dataset-subgroup-header') &&
+                                               !header.classList.contains('collapse-header'))) {
+                                    // Try finding header in parent container
+                                    const parent = current.parentElement;
+                                    if (parent) {
+                                        header = parent.querySelector('.dataset-section-header, .dataset-subgroup-header, .collapse-header');
+                                    }
+                                }
+
+                                if (header) {
+                                    const toggleBtn = header.querySelector('.dataset-section-toggle');
+                                    if (toggleBtn) {
+                                        console.log('🔓 EXPANDING DATALOADER SECTION via toggle button');
+                                        toggleBtn.click();
+                                        expandedToggles.push(toggleBtn);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Check for dataloader subgroup pattern (parent div with is-collapsed class)
+                        if (current.classList && current.classList.contains('dataset-subgroup')) {
+                            const isCollapsed = current.classList.contains('is-collapsed');
+                            if (isCollapsed) {
+                                const header = current.querySelector('.dataset-subgroup-header, .collapse-header');
+                                if (header) {
+                                    const toggleBtn = header.querySelector('.dataset-section-toggle');
+                                    if (toggleBtn) {
+                                        console.log('🔓 EXPANDING DATALOADER SUBGROUP via toggle button');
+                                        toggleBtn.click();
+                                        expandedToggles.push(toggleBtn);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Check for formSectionComponent pattern (card-body with x-show="expanded")
+                        if (current.classList && current.classList.contains('card-body')) {
+                            const parentCard = current.closest('.config-card');
+                            if (parentCard) {
+                                // Get Alpine.js data safely
+                                const alpineData = parentCard._x_dataStack?.[0];
+                                if (alpineData && alpineData.expanded === false) {
+                                    console.log('🔓 EXPANDING FORM SECTION via Alpine data');
+                                    alpineData.expanded = true;
+
+                                    // Find the header chevron to highlight
+                                    const header = parentCard.querySelector('.card-header');
+                                    if (header) {
+                                        const chevron = header.querySelector('.fa-chevron-down');
+                                        if (chevron) {
+                                            expandedToggles.push(chevron.parentElement || header);
+                                        } else {
+                                            expandedToggles.push(header);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (innerError) {
+                        console.debug('Error checking element for collapsed state:', innerError);
+                    }
+
+                    current = current.parentElement;
+                }
+            } catch (error) {
+                console.warn('Error in expandCollapsedSections:', error);
+            }
+
+            return expandedToggles;
+        },
+
+        /**
+         * Highlight toggle buttons that were used to expand sections.
+         */
+        highlightToggleButtons(toggleButtons) {
+            toggleButtons.forEach(btn => {
+                btn.classList.add('search-highlighted-toggle');
+                console.log('✨ HIGHLIGHTED TOGGLE BUTTON:', btn);
+            });
+        },
+
+        /**
+         * Clear toggle button highlighting.
+         */
+        clearToggleHighlights() {
+            const highlightedToggles = document.querySelectorAll('.search-highlighted-toggle');
+            highlightedToggles.forEach(btn => {
+                btn.classList.remove('search-highlighted-toggle');
+            });
         },
 
         highlightField(element) {
@@ -559,6 +811,9 @@ function searchComponent() {
 
             // Clear persistent primary field storage
             this.primarySelectedField = null;
+
+            // Clear toggle button highlights
+            this.clearToggleHighlights();
         },
 
         clearSecondaryHighlights() {
@@ -624,7 +879,10 @@ function searchComponent() {
             console.log('📋 MATCHING FIELD DETAILS:', matchingFields);
 
             // Highlight ALL matching fields with secondary highlighting first
+            // Also expand any collapsed sections containing matching fields
             let highlightedCount = 0;
+            const allExpandedToggles = [];
+
             for (const fieldResult of matchingFields) {
                 console.log(`🔍 PROCESSING FIELD: ${fieldResult.name} (${fieldResult.title})`);
                 const fieldElements = this.findFieldElements(fieldResult.name);
@@ -633,15 +891,32 @@ function searchComponent() {
 
                 if (fieldElements.length > 0) {
                     fieldElements.forEach(element => {
-                        console.log(`  ✨ HIGHLIGHTING ELEMENT (SECONDARY):`, element);
-                        console.log(`    - Element classes before:`, element.className);
-                        this.highlightField(element);
-                        console.log(`    - Element classes after:`, element.className);
-                        highlightedCount++;
+                        try {
+                            // Expand any collapsed sections containing this field
+                            const expandedToggles = this.expandCollapsedSections(element);
+                            if (expandedToggles.length > 0) {
+                                console.log(`  🔓 EXPANDED ${expandedToggles.length} SECTION(S) FOR FIELD: ${fieldResult.name}`);
+                                allExpandedToggles.push(...expandedToggles);
+                            }
+
+                            console.log(`  ✨ HIGHLIGHTING ELEMENT (SECONDARY):`, element);
+                            console.log(`    - Element classes before:`, element.className);
+                            this.highlightField(element);
+                            console.log(`    - Element classes after:`, element.className);
+                            highlightedCount++;
+                        } catch (highlightError) {
+                            console.warn(`  ⚠️ Error highlighting field ${fieldResult.name}:`, highlightError);
+                        }
                     });
                 } else {
                     console.warn(`  ❌ NO ELEMENTS FOUND FOR FIELD: ${fieldResult.name}`);
                 }
+            }
+
+            // Highlight all expanded toggle buttons
+            if (allExpandedToggles.length > 0) {
+                console.log(`🔓 TOTAL EXPANDED TOGGLES: ${allExpandedToggles.length}`);
+                this.highlightToggleButtons(allExpandedToggles);
             }
 
             console.log(`📊 HIGHLIGHTED ${highlightedCount} FIELDS OUT OF ${matchingFields.length} MATCHING FIELDS`);

@@ -38,6 +38,14 @@ from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModul
 
 logger = logging.get_logger(__name__)
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
 if is_torchvision_available():
     from torchvision import transforms
 
@@ -620,6 +628,7 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         padding_mask: Optional[torch.Tensor] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> torch.Tensor:
         if joint_attention_kwargs is not None:
             joint_attention_kwargs = joint_attention_kwargs.copy()
@@ -762,6 +771,7 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
+        capture_idx = 0
         for bid, block in enumerate(self.transformer_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -826,6 +836,8 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
 
             if musubi_offload_active and musubi_manager.is_managed_block(bid):
                 musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
 
         # 6. Output norm & projection & unpatchify
         hidden_states = self.norm_out(hidden_states, embedded_timestep, temb)

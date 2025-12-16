@@ -176,16 +176,20 @@ class SanaVideo(VideoModelFoundation):
         # noisy_latents shape: [B, C, F, H, W]
         # encoder_hidden_states: [B, Seq, Dim]
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
         transformer_kwargs = {
             "encoder_hidden_states": encoder_hidden_states,
             "encoder_attention_mask": encoder_attention_mask,
             "timestep": timesteps,
+            "timestep_sign": prepared_batch.get("twinflow_time_sign"),
             "return_dict": False,
         }
         if capture_hidden:
             transformer_kwargs["output_hidden_states"] = True
             transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+        if hidden_states_buffer is not None:
+            transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
         model_output = self.model(
             noisy_latents,
@@ -209,6 +213,7 @@ class SanaVideo(VideoModelFoundation):
         return {
             "model_prediction": model_pred,
             "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:

@@ -31,6 +31,15 @@ from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class GLUMBConv(PatchableModule):
     def __init__(
         self,
@@ -381,6 +390,9 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         # condition embeddings
         self.time_embed = AdaLayerNormSingle(inner_dim)
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
         self.caption_norm = RMSNorm(inner_dim, eps=1e-5, elementwise_affine=True)
@@ -512,11 +524,13 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         hidden_states: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         timestep: torch.LongTensor,
+        timestep_sign: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         attention_kwargs: Optional[dict] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[Tuple[torch.Tensor, ...], Transformer2DModelOutput]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -561,6 +575,10 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         hidden_states = self.patch_embed(hidden_states)
 
         timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+            embedded_timestep = embedded_timestep + sign_emb.view(batch_size, -1)
 
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
@@ -576,6 +594,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
+        capture_idx = 0
         for i, block in enumerate(self.transformer_blocks):
             mask_info = None
             original_hidden_states = None
@@ -637,6 +656,8 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             if mask_info is not None and router is not None:
                 hidden_states = router.end_route(hidden_states, mask_info, original_x=original_hidden_states)
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
         tokens = hidden_states.shape[1]
         expected_tokens = post_patch_height * post_patch_width
         if tokens != expected_tokens:

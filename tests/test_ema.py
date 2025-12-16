@@ -93,6 +93,162 @@ class TestEMAModel(unittest.TestCase):
             for shadow_param, new_shadow_param in zip(self.ema_model.shadow_params, new_ema_model.shadow_params):
                 self.assertTrue(torch.equal(shadow_param, new_shadow_param))
 
+    def test_copy_to_handles_reordered_parameters(self):
+        class MixedParamModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight_a = torch.nn.Parameter(torch.zeros(2, 2))
+                self.weight_b = torch.nn.Parameter(torch.zeros(1, 1, 1, 3))
+
+        model = MixedParamModule()
+        args = type(
+            "Args",
+            (),
+            {"ema_update_interval": None, "ema_device": "cpu", "ema_cpu_only": True},
+        )
+        ema_model = EMAModel(
+            args=args,
+            accelerator=None,
+            parameters=model.parameters(),
+            decay=0.5,
+            foreach=True,
+            update_after_step=-1,
+        )
+
+        with torch.no_grad():
+            ema_model.shadow_params[0].fill_(3.0)
+            ema_model.shadow_params[1].fill_(7.0)
+
+        ema_model.copy_to(reversed(list(model.parameters())))
+
+        self.assertTrue(torch.allclose(model.weight_a, torch.full_like(model.weight_a, 3.0)))
+        self.assertTrue(torch.allclose(model.weight_b, torch.full_like(model.weight_b, 7.0)))
+
+    def test_copy_to_subset_of_parameters(self):
+        class SmallModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight_a = torch.nn.Parameter(torch.zeros(2, 2))
+                self.weight_b = torch.nn.Parameter(torch.zeros(1, 1, 1, 3))
+
+        model = SmallModule()
+        args = type(
+            "Args",
+            (),
+            {"ema_update_interval": None, "ema_device": "cpu", "ema_cpu_only": True},
+        )
+        ema_model = EMAModel(
+            args=args,
+            accelerator=None,
+            parameters=model.parameters(),
+            decay=0.5,
+            foreach=False,
+            update_after_step=-1,
+        )
+
+        with torch.no_grad():
+            ema_model.shadow_params[0].fill_(5.0)
+            ema_model.shadow_params[1].fill_(9.0)
+
+        # Only copy the second parameter (subset of tracked params).
+        ema_model.copy_to([model.weight_b])
+
+        self.assertTrue(torch.allclose(model.weight_a, torch.zeros_like(model.weight_a)))
+        self.assertTrue(torch.allclose(model.weight_b, torch.full_like(model.weight_b, 9.0)))
+
+    def test_copy_to_ignores_untracked_superset_parameters(self):
+        class PartialModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight_a = torch.nn.Parameter(torch.zeros(2, 2))
+                self.weight_b = torch.nn.Parameter(torch.zeros(1, 1, 1, 3))
+
+        model = PartialModule()
+        args = type(
+            "Args",
+            (),
+            {"ema_update_interval": None, "ema_device": "cpu", "ema_cpu_only": True},
+        )
+
+        # Track only one parameter in EMA (simulating LoRA-only or frozen base weights).
+        ema_model = EMAModel(
+            args=args,
+            accelerator=None,
+            parameters=[model.weight_a],
+            decay=0.5,
+            foreach=False,
+            update_after_step=-1,
+        )
+
+        with torch.no_grad():
+            ema_model.shadow_params[0].fill_(4.0)
+
+        # Pass the full parameter list (tracked + untracked); only tracked params should update.
+        ema_model.copy_to(model.parameters())
+
+        self.assertTrue(torch.allclose(model.weight_a, torch.full_like(model.weight_a, 4.0)))
+        self.assertTrue(torch.allclose(model.weight_b, torch.zeros_like(model.weight_b)))
+
+    def test_store_and_restore_with_reordered_parameters(self):
+        class SmallModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight_a = torch.nn.Parameter(torch.ones(2, 2))
+                self.weight_b = torch.nn.Parameter(torch.ones(1, 1, 1, 3))
+
+        model = SmallModule()
+        original_params = [param.clone() for param in model.parameters()]
+        args = type(
+            "Args",
+            (),
+            {"ema_update_interval": None, "ema_device": "cpu", "ema_cpu_only": True},
+        )
+        ema_model = EMAModel(
+            args=args,
+            accelerator=None,
+            parameters=model.parameters(),
+            decay=0.5,
+            foreach=False,
+            update_after_step=-1,
+        )
+
+        ema_model.store(model.parameters())
+        with torch.no_grad():
+            for param in model.parameters():
+                param.add_(5.0)
+
+        ema_model.restore(reversed(list(model.parameters())))
+
+        for param, expected in zip(model.parameters(), original_params):
+            self.assertTrue(torch.equal(param, expected))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "Requires CUDA for mixed-device EMA handling.")
+    def test_mixed_device_parameters_disable_foreach(self):
+        mixed_model = torch.nn.Module()
+        mixed_model.register_parameter("cpu_weight", torch.nn.Parameter(torch.ones(2, 2, device="cpu")))
+        mixed_model.register_parameter("cuda_weight", torch.nn.Parameter(torch.ones(2, 2, device="cuda")))
+
+        args = type(
+            "Args",
+            (),
+            {"ema_update_interval": None, "ema_device": "cpu", "ema_cpu_only": True},
+        )
+        ema_model = EMAModel(
+            args=args,
+            accelerator=None,
+            parameters=mixed_model.parameters(),
+            decay=0.5,
+            foreach=True,
+            update_after_step=-1,
+        )
+        ema_model.to(device="cpu")
+
+        # Ensure the EMA step does not raise due to mixed CPU/CUDA parameters.
+        ema_model.step(mixed_model.parameters(), global_step=2)
+
+        self.assertIsNotNone(ema_model.cur_decay_value)
+        self.assertTrue(all(param.device.type == "cpu" for param in ema_model.shadow_params))
+
 
 if __name__ == "__main__":
     unittest.main()

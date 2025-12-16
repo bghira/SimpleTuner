@@ -306,6 +306,7 @@ class SD3(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds
 
     def model_predict(self, prepared_batch):
+        hidden_states_buffer = self._new_hidden_state_buffer()
         return {
             "model_prediction": self.model(
                 hidden_states=prepared_batch["noisy_latents"].to(
@@ -313,6 +314,7 @@ class SD3(ImageModelFoundation):
                     dtype=self.config.base_weight_dtype,
                 ),
                 timestep=prepared_batch["timesteps"],
+                timestep_sign=prepared_batch.get("twinflow_time_sign"),
                 encoder_hidden_states=prepared_batch["encoder_hidden_states"].to(
                     device=self.accelerator.device,
                     dtype=self.config.base_weight_dtype,
@@ -322,7 +324,9 @@ class SD3(ImageModelFoundation):
                     dtype=self.config.weight_dtype,
                 ),
                 return_dict=False,
-            )[0]
+                hidden_states_buffer=hidden_states_buffer,
+            )[0],
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def prepare_controlnet_conditioning(self, conditioning_latents: torch.Tensor) -> torch.Tensor:
@@ -428,6 +432,7 @@ class SD3(ImageModelFoundation):
                 device=self.accelerator.device,
                 dtype=self.config.weight_dtype,
             ),
+            timestep_sign=prepared_batch.get("twinflow_time_sign"),
             block_controlnet_hidden_states=control_block_samples,
             joint_attention_kwargs=None,
             return_dict=False,

@@ -486,6 +486,7 @@ class HunyuanVideo(VideoModelFoundation):
         if latents.dim() != 5:
             raise ValueError(f"Expected 5D video latents, got shape {latents.shape}")
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         encoder_hidden_states = prepared_batch["encoder_hidden_states"].to(self.config.weight_dtype)
         encoder_attention_mask = prepared_batch.get("encoder_attention_mask")
         if encoder_attention_mask is not None:
@@ -575,15 +576,20 @@ class HunyuanVideo(VideoModelFoundation):
         model_pred = self.model(
             hidden_states=latent_model_input,
             timestep=timesteps,
+            timestep_sign=(
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             encoder_hidden_states_2=encoder_hidden_states_2,
             encoder_attention_mask_2=encoder_attention_mask_2,
             image_embeds=image_embeds,
             return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
         )[0]
         return {
             "model_prediction": model_pred,
+            "hidden_states_buffer": hidden_states_buffer,
         }
 
     def save_lora_weights(self, *args, **kwargs):

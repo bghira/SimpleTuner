@@ -809,6 +809,18 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **Default**: `dinov2_vitg14`
 - **Choices**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`
 
+### `--crepa_use_backbone_features`
+
+- **What**: Skip the external encoder and align a student block to a teacher block inside the diffusion model.
+- **Why**: Avoids loading DINOv2 when the backbone already has a stronger semantic layer to supervise from.
+- **Default**: `false`
+
+### `--crepa_teacher_block_index`
+
+- **What**: Teacher block index when using backbone features.
+- **Why**: Lets you align an earlier student block to a later teacher block without an external encoder. Falls back to the student block when unset.
+- **Default**: Uses `crepa_block_index` if not provided.
+
 ### `--crepa_encoder_image_size`
 
 - **What**: Input resolution for the encoder.
@@ -828,6 +840,9 @@ crepa_cumulative_neighbors = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"
+crepa_use_backbone_features = false
+# crepa_teacher_block_index = 16
+crepa_encoder_image_size = 518
 ```
 
 ---
@@ -838,6 +853,45 @@ crepa_model = "dinov2_vitg14"
 
 - **What**: Interval at which training state checkpoints are saved (in steps).
 - **Why**: Useful for resuming training and for inference. Every *n* iterations, a partial checkpoint will be saved in the `.safetensors` format, via the Diffusers filesystem layout.
+
+---
+
+## 🔁 LayerSync (Hidden State Self-Alignment)
+
+LayerSync encourages a "student" layer to match a stronger "teacher" layer inside the same transformer, using cosine similarity over hidden tokens.
+
+### `--layersync_enabled`
+
+- **What**: Enable LayerSync hidden-state alignment between two transformer blocks inside the same model.
+- **Notes**: Allocates a hidden-state buffer; raises at startup if required flags are missing.
+- **Default**: `false`
+
+### `--layersync_student_block`
+
+- **What**: Transformer block index to treat as the student anchor.
+- **Indexing**: Accepts LayerSync paper-style 1-based depths or 0-based layer ids; the implementation tries `idx-1` first, then `idx`.
+- **Required**: Yes when LayerSync is enabled.
+
+### `--layersync_teacher_block`
+
+- **What**: Transformer block index to treat as the teacher target (can be deeper than the student).
+- **Indexing**: Same 1-based-first, then 0-based fallback as the student block.
+- **Default**: Uses the student block when omitted so the loss becomes self-similarity.
+
+### `--layersync_lambda`
+
+- **What**: Weight for the LayerSync cosine alignment loss between the student and teacher hidden states (negative cosine similarity).
+- **Effect**: Scales the auxiliary regularizer added on top of the base loss; higher values push the student tokens to align more strongly with the teacher tokens.
+- **Upstream name**: `--reg-weight` in the original LayerSync codebase.
+- **Required**: Must be > 0 when LayerSync is enabled (otherwise training aborts).
+- **Default**: `0.2` when LayerSync is enabled (matches the reference repo), `0.0` otherwise.
+
+Upstream option mapping (LayerSync → SimpleTuner):
+- `--encoder-depth` → `--layersync_student_block` (accepts 1-based depth as in upstream, or 0-based layer index)
+- `--gt-encoder-depth` → `--layersync_teacher_block` (1-based preferred; defaults to student when omitted)
+- `--reg-weight` → `--layersync_lambda`
+
+> Notes: LayerSync always detaches the teacher hidden state before similarity, matching the reference implementation. It relies on models that expose transformer hidden states (most transformer backbones in SimpleTuner) and adds per-step memory for the hidden-state buffer; disable if VRAM is tight.
 
 ### `--checkpoint_epoch_interval`
 

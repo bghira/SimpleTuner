@@ -39,6 +39,15 @@ WAN_FEED_FORWARD_CHUNK_SIZE = int(os.getenv("WAN_FEED_FORWARD_CHUNK_SIZE", "0") 
 WAN_FEED_FORWARD_CHUNK_DIM = int(os.getenv("WAN_FEED_FORWARD_CHUNK_DIM", "0") or 0)
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 def _apply_rotary_emb_anyshape(x, rotary_emb, use_real=False):
     """
     Apply rotary embeddings that may be batched.
@@ -210,6 +219,8 @@ class WanTimeTextImageEmbedding(nn.Module):
 
         self.timesteps_proj = Timesteps(num_channels=time_freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.time_embedder = TimestepEmbedding(in_channels=time_freq_dim, time_embed_dim=dim)
+        self.time_sign_embed = nn.Embedding(2, dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.act_fn = nn.SiLU()
         self.time_proj = nn.Linear(dim, time_proj_dim)
         self.text_embedder = PixArtAlphaTextProjection(text_embed_dim, dim, act_fn="gelu_tanh")
@@ -223,6 +234,7 @@ class WanTimeTextImageEmbedding(nn.Module):
         timestep: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
     ):
         timestep = self.timesteps_proj(timestep)
 
@@ -230,6 +242,9 @@ class WanTimeTextImageEmbedding(nn.Module):
         if timestep.dtype != time_embedder_dtype and time_embedder_dtype != torch.int8:
             timestep = timestep.to(time_embedder_dtype)
         temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
+            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
         timestep_proj = self.time_proj(self.act_fn(temb))
 
         encoder_hidden_states = self.text_embedder(encoder_hidden_states)
@@ -704,12 +719,14 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         timestep: torch.LongTensor,
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         skip_layers: Optional[List[int]] = None,
         return_dict: bool = True,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -740,7 +757,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             timestep = timestep[..., 0].contiguous()
 
         temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image = self.condition_embedder(
-            timestep, encoder_hidden_states, encoder_hidden_states_image
+            timestep, encoder_hidden_states, encoder_hidden_states_image, timestep_sign=timestep_sign
         )
         timestep_proj = timestep_proj.unflatten(1, (6, -1))
 
@@ -855,6 +872,16 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 )
                 if hidden_state_layer is not None and i == hidden_state_layer:
                     output_hidden_states = False
+            if hidden_states_buffer is not None:
+                tokens_view = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+            else:
+                tokens_view = hidden_states
+            _store_hidden_state(hidden_states_buffer, f"layer_{i}", tokens_view)
 
             if musubi_offload_active and musubi_manager.is_managed_block(i):
                 musubi_manager.stream_out(block)

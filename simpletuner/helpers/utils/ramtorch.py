@@ -352,9 +352,9 @@ def _maybe_patch_peft_lora_model() -> bool:
 
     try:
         import torch
-        from peft.tuners.lora.model import LoraModel
-        from peft.tuners.tuners_utils import BaseTunerLayer, BaseTuner
         from peft.tuners.lora.layer import Linear as PeftLinear
+        from peft.tuners.lora.model import LoraModel
+        from peft.tuners.tuners_utils import BaseTuner, BaseTunerLayer
         from ramtorch.modules.linear import Linear as RamTorchLinear
     except Exception:
         return False
@@ -449,6 +449,7 @@ def _maybe_patch_peft_inject() -> bool:
 
     try:
         import copy
+
         from peft.mapping import inject_adapter_in_model as orig_inject
         from peft.tuners.tuners_utils import BaseTuner
     except Exception:

@@ -447,11 +447,15 @@ class Kandinsky5Video(VideoModelFoundation):
         if raw_force_keep is not None and getattr(self.config, "tread_config", None):
             force_keep_mask = self._prepare_force_keep_mask(latents, raw_force_keep)
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         capture_hidden = bool(getattr(self, "crepa_regularizer", None) and self.crepa_regularizer.wants_hidden_states())
         transformer_kwargs = {
             "encoder_hidden_states": encoder_hidden_states.to(dtype),
             "pooled_projections": pooled.to(dtype),
             "timestep": timesteps,
+            "timestep_sign": (
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
             "visual_rope_pos": visual_rope_pos,
             "text_rope_pos": text_rope_pos,
             "scale_factor": (1, 2, 2),
@@ -462,6 +466,8 @@ class Kandinsky5Video(VideoModelFoundation):
         if capture_hidden:
             transformer_kwargs["output_hidden_states"] = True
             transformer_kwargs["hidden_state_layer"] = self.crepa_regularizer.block_index
+        if hidden_states_buffer is not None:
+            transformer_kwargs["hidden_states_buffer"] = hidden_states_buffer
 
         model_output = self.model(
             hidden_states=latents.to(dtype),
@@ -479,7 +485,11 @@ class Kandinsky5Video(VideoModelFoundation):
         # Restore to (B, C, T, H, W)
         model_pred = model_pred.permute(0, 4, 1, 2, 3)
 
-        return {"model_prediction": model_pred, "crepa_hidden_states": crepa_hidden}
+        return {
+            "model_prediction": model_pred,
+            "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
     def _prepare_force_keep_mask(self, latents: torch.Tensor, mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
         """

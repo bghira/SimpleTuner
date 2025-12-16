@@ -22,7 +22,7 @@ from simpletuner.helpers.configuration.registry import (
     make_override_rule,
 )
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
-from simpletuner.helpers.models.flux2 import pack_latents, pack_text, unpack_latents
+from simpletuner.helpers.models.flux2 import build_flux2_conditioning_inputs, pack_latents, pack_text, unpack_latents
 from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.flux2.pipeline import Flux2Pipeline
 from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
@@ -372,6 +372,55 @@ class Flux2(ImageModelFoundation):
             "negative_attention_mask": attention_mask,
         }
 
+    def requires_conditioning_latents(self) -> bool:
+        """
+        FLUX.2 reference image conditioning uses latents (not pixels).
+        This returns True so that when a conditioning dataset is configured,
+        collate.py will collect VAE-encoded latents instead of pixel values.
+        """
+        # Always return True because FLUX.2 reference conditioning uses latents.
+        # If no conditioning dataset is configured, this has no effect.
+        # If controlnet is configured, base class already returns True.
+        return True
+
+    def prepare_batch_conditions(self, batch: dict, state: dict):
+        """
+        Prepare conditioning inputs for FLUX.2 reference image conditioning.
+
+        This builds packed conditioning latents with time-offset position IDs
+        when conditioning_latents are present in the batch.
+        """
+        cond = batch.get("conditioning_latents")
+        if cond is None:
+            logger.debug("No conditioning latents found for FLUX.2")
+            return super().prepare_batch_conditions(batch=batch, state=state)
+
+        # Check sampling mode
+        sampling_mode = state.get("args", {}).get("conditioning_multidataset_sampling", "random")
+
+        if sampling_mode == "random" and isinstance(cond, list) and len(cond) >= 1:
+            # Random mode should have selected just one conditioning set
+            cond = cond[0]
+
+        if isinstance(cond, list):
+            logger.debug(f"FLUX.2 conditioning inputs shapes: {[d.shape for d in cond]} {cond[0].dtype}")
+        else:
+            logger.debug(f"FLUX.2 conditioning inputs shape: {cond.shape} {cond.dtype}")
+
+        # Build FLUX.2 conditioning inputs with time-offset position IDs
+        packed_cond, cond_ids = build_flux2_conditioning_inputs(
+            cond if isinstance(cond, list) else [cond],
+            dtype=self.config.weight_dtype,
+            device=self.accelerator.device,
+            latent_channels=self.LATENT_CHANNEL_COUNT,
+        )
+        logger.debug(f"FLUX.2 packed conditioning shape: {packed_cond.shape} {packed_cond.dtype}")
+
+        batch["conditioning_packed_latents"] = packed_cond
+        batch["conditioning_ids"] = cond_ids
+
+        return super().prepare_batch_conditions(batch=batch, state=state)
+
     def model_predict(self, prepared_batch: dict) -> dict:
         """
         Forward pass through FLUX.2 transformer.
@@ -425,6 +474,7 @@ class Flux2(ImageModelFoundation):
         else:
             guidance = torch.ones(batch_size, device=device, dtype=dtype)
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
         # Build force_keep_mask for TREAD if using mask/segmentation conditioning
         force_keep_mask = None
         if (
@@ -443,26 +493,48 @@ class Flux2(ImageModelFoundation):
                 mask_lat = torch.nn.functional.interpolate(mask_img, size=(h_tokens, w_tokens), mode="area")
                 force_keep_mask = mask_lat.flatten(2).squeeze(1) > 0.5  # (B, S)
 
+        # Pull optional reference image conditioning inputs
+        cond_seq = prepared_batch.get("conditioning_packed_latents")
+        cond_ids = prepared_batch.get("conditioning_ids")
+        use_cond = cond_seq is not None
+        logger.debug(f"FLUX.2 using conditioning: {use_cond}")
+
+        # Concatenate conditioning with noisy latents if present
+        if use_cond:
+            lat_in = torch.cat([packed_latents, cond_seq], dim=1)
+            id_in = torch.cat([img_ids, cond_ids], dim=1)
+        else:
+            lat_in = packed_latents
+            id_in = img_ids
+
         # Forward pass using diffusers interface
         # img_ids and txt_ids need to be 2D (S, 4) for the diffusers transformer
+        timestep_sign = prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
         output = self.model(
-            hidden_states=packed_latents,
+            hidden_states=lat_in,
             encoder_hidden_states=txt,
             timestep=timesteps,
-            img_ids=img_ids[0] if img_ids.ndim == 3 else img_ids,
+            timestep_sign=timestep_sign,
+            img_ids=id_in[0] if id_in.ndim == 3 else id_in,
             txt_ids=txt_ids[0] if txt_ids.ndim == 3 else txt_ids,
             guidance=guidance,
             return_dict=True,
             force_keep_mask=force_keep_mask,
+            hidden_states_buffer=hidden_states_buffer,
         )
 
         # Extract sample from output
         model_pred = output.sample
 
+        # Drop reference image tokens from output before unpacking
+        if use_cond:
+            scene_seq_len = packed_latents.shape[1]  # tokens that belong to the main image
+            model_pred = model_pred[:, :scene_seq_len, :]  # (B, S_scene, C)
+
         # Unpack: (B, S, C) -> (B, C, H, W)
         unpacked = unpack_latents(model_pred, img_ids)
 
-        return {"model_prediction": unpacked}
+        return {"model_prediction": unpacked, "hidden_states_buffer": hidden_states_buffer}
 
     @torch.no_grad()
     def encode_images(self, images: List[Tensor]) -> Tensor:

@@ -33,6 +33,15 @@ from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     """
     The Transformer model introduced in Stable Diffusion 3.
@@ -112,6 +121,9 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
             embedding_dim=self.inner_dim,
             pooled_projection_dim=self.config.pooled_projection_dim,
         )
+        # Signed-time embedding for TwinFlow adversarial branch; row 0 = positive/zero, row 1 = negative.
+        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.config.caption_projection_dim)
 
         # `attention_head_dim` is doubled to account for the mixing.
@@ -295,11 +307,13 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         encoder_hidden_states: torch.FloatTensor = None,
         pooled_projections: torch.FloatTensor = None,
         timestep: torch.LongTensor = None,
+        timestep_sign: Optional[torch.Tensor] = None,
         block_controlnet_hidden_states: List = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
         skip_layers: Optional[List[int]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
         """
         The [`SD3Transformer2DModel`] forward method.
@@ -349,7 +363,14 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         height, width = hidden_states.shape[-2:]
 
         hidden_states = self.pos_embed(hidden_states)  # takes care of adding positional embeddings too.
+        sign_emb = None
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_emb = self.time_sign_embed(sign_idx)
+
         temb = self.time_text_embed(timestep, pooled_projections)
+        if sign_emb is not None:
+            temb = temb + sign_emb.to(device=hidden_states.device, dtype=temb.dtype)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         # TREAD initialization
@@ -378,6 +399,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                 for r in routes
             ]
 
+        capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
@@ -433,6 +455,8 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                 interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
                 hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
 
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
             # TREAD: END the current route?
             if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
                 hidden_states = router.end_route(

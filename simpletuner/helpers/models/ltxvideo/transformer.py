@@ -37,6 +37,15 @@ from simpletuner.helpers.training.tread import TREADRouter
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 class LTXVideoAttentionProcessor2_0:
     def __new__(cls, *args, **kwargs):
         deprecation_message = "`LTXVideoAttentionProcessor2_0` is deprecated and this will be removed in a future version. Please use `LTXVideoAttnProcessor`"
@@ -495,6 +504,9 @@ class LTXVideoTransformer3DModel(
 
         self.norm_out = nn.LayerNorm(inner_dim, eps=1e-6, elementwise_affine=False)
         self.proj_out = nn.Linear(inner_dim, out_channels)
+        # Signed-time embedding for TwinFlow-style negative time handling.
+        self.time_sign_embed = nn.Embedding(2, inner_dim)
+        nn.init.zeros_(self.time_sign_embed.weight)
 
         self.gradient_checkpointing = False
 
@@ -529,6 +541,8 @@ class LTXVideoTransformer3DModel(
         return_dict: bool = True,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        timestep_sign: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> torch.Tensor:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -570,6 +584,11 @@ class LTXVideoTransformer3DModel(
 
         temb = temb.view(batch_size, -1, temb.size(-1))
         embedded_timestep = embedded_timestep.view(batch_size, -1, embedded_timestep.size(-1))
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
+            sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
+            sign_emb = sign_emb.view(batch_size, 1, -1).expand_as(embedded_timestep)
+            embedded_timestep = embedded_timestep + sign_emb
 
         encoder_hidden_states = self.caption_projection(encoder_hidden_states)
         encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.size(-1))
@@ -587,6 +606,7 @@ class LTXVideoTransformer3DModel(
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
+        capture_idx = 0
         for bid, block in enumerate(self.transformer_blocks):
             # TREAD routing for this layer
             if use_routing:
@@ -645,6 +665,17 @@ class LTXVideoTransformer3DModel(
                         hidden_states = router.end_route(hidden_states, mask_info)
                         break
 
+            if hidden_states_buffer is not None and post_patch_num_frames is not None:
+                tokens_view = hidden_states.reshape(
+                    batch_size,
+                    post_patch_num_frames,
+                    post_patch_height * post_patch_width,
+                    -1,
+                )
+            else:
+                tokens_view = hidden_states
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
+            capture_idx += 1
             if output_hidden_states and post_patch_num_frames is not None:
                 if hidden_state_layer is None or bid == hidden_state_layer:
                     captured_frame_hidden = hidden_states.reshape(

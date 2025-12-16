@@ -35,6 +35,15 @@ ADALN_EMBED_DIM = 256
 SEQ_MULTI_OF = 32
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
+    if buffer is None:
+        return
+    if image_tokens_start is not None and hidden_states.dim() >= 3:
+        buffer[key] = hidden_states[:, image_tokens_start:, ...]
+    else:
+        buffer[key] = hidden_states
+
+
 # Clamp NaN/Inf that can appear when running in float16. Ported from ComfyUI commit daaceac769a1355ab975758ede064317ea7514b4.
 def clamp_fp16(x: torch.Tensor) -> torch.Tensor:
     if x.dtype == torch.float16:
@@ -52,6 +61,8 @@ class TimestepEmbedder(nn.Module):
         super().__init__()
         if mid_size is None:
             mid_size = out_size
+        self.time_sign_embed = nn.Embedding(2, out_size)
+        nn.init.zeros_(self.time_sign_embed.weight)
         self.mlp = nn.Sequential(
             nn.Linear(
                 frequency_embedding_size,
@@ -81,12 +92,15 @@ class TimestepEmbedder(nn.Module):
                 embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
             return embedding
 
-    def forward(self, t):
+    def forward(self, t, timestep_sign: Optional[torch.Tensor] = None):
         t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         weight_dtype = self.mlp[0].weight.dtype
         if weight_dtype.is_floating_point:
             t_freq = t_freq.to(weight_dtype)
         t_emb = self.mlp(t_freq)
+        if timestep_sign is not None:
+            sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
+            t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
 
 
@@ -587,11 +601,13 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         x: List[torch.Tensor],
         t,
         cap_feats: List[torch.Tensor],
+        timestep_sign: Optional[torch.Tensor] = None,
         patch_size=2,
         f_patch_size=1,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         skip_layers: Optional[List[int]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         assert patch_size in self.all_patch_size
         assert f_patch_size in self.all_f_patch_size
@@ -599,7 +615,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         bsz = len(x)
         device = x[0].device
         t = t * self.t_scale
-        t = self.t_embedder(t)
+        t = self.t_embedder(t, timestep_sign=timestep_sign)
 
         (
             x,
@@ -715,6 +731,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             return layer_module(h, attn_mask, freqs, adaln_input)
 
         skip_set = set(skip_layers) if skip_layers is not None else set()
+        capture_idx = 0
 
         for idx, layer in enumerate(self.layers):
             if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
@@ -738,6 +755,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             else:
                 layer_out = apply_layer(layer, unified, unified_attn_mask, unified_freqs_cis)
             unified = layer_out
+            img_tokens = unified[:, :x_max_item_seqlen, ...]
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", img_tokens, image_tokens_start=0)
+            capture_idx += 1
 
             if routing_now and route_ptr < len(routes) and idx == routes[route_ptr]["end_layer_idx"]:
                 unified = router.end_route(unified, tread_mask_info, original_x=saved_tokens)
