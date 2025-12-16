@@ -1,7 +1,7 @@
 # FLUX.2 model implementation for SimpleTuner
 # Based on Black Forest Labs FLUX.2-dev architecture
 
-from typing import Tuple
+from typing import List, Tuple, Union
 
 import torch
 from einops import rearrange
@@ -118,3 +118,96 @@ def pack_text(text_embeds: Tensor) -> Tuple[Tensor, Tensor]:
 
     ids = torch.stack(results)
     return text_embeds, ids
+
+
+def build_flux2_conditioning_inputs(
+    cond_latents: Union[List[Tensor], Tensor],
+    dtype: torch.dtype,
+    device: torch.device,
+    latent_channels: int,
+    scale: int = 10,
+) -> Tuple[Tensor, Tensor]:
+    """
+    Build packed conditioning inputs for FLUX.2 with time-offset position IDs.
+
+    Unlike FLUX.1 Kontext which uses spatial offset IDs, FLUX.2 uses time-offset IDs
+    (T coordinate) to distinguish between multiple reference images. This matches
+    the FLUX.2 inference pipeline implementation.
+
+    Args:
+        cond_latents: List of (B, C, H, W) tensors or single (B, C, H, W) tensor.
+                      Each tensor represents a conditioning/reference image batch.
+        dtype: Target dtype for the output tensors.
+        device: Target device for the output tensors.
+        latent_channels: Expected number of latent channels (128 for FLUX.2 after patchify).
+        scale: Time offset scale factor. T-coordinate for the i-th reference is
+               (scale + scale * i). Default is 10 to match inference pipeline.
+
+    Returns:
+        packed_cond: (B, S, C) - flattened patch sequence of all reference images
+        cond_ids: (B, S, 4) - position IDs with time offset encoding (T, H, W, L)
+    """
+    # Handle different input formats
+    if isinstance(cond_latents, Tensor):
+        cond_latents = [cond_latents]
+    elif isinstance(cond_latents, list) and len(cond_latents) == 0:
+        raise ValueError("cond_latents list cannot be empty")
+
+    # Validate and get batch size from first tensor
+    first_tensor = cond_latents[0]
+    if first_tensor.dim() == 3:
+        # Shape is (C, H, W) - add batch dimension
+        if first_tensor.shape[0] == latent_channels:
+            first_tensor = first_tensor.unsqueeze(0)
+            cond_latents[0] = first_tensor
+        else:
+            raise ValueError(f"Unexpected 3D tensor shape: {first_tensor.shape}")
+
+    batch_size = first_tensor.shape[0]
+
+    # Verify all tensors have consistent batch size
+    for i, latent in enumerate(cond_latents):
+        if latent.dim() == 3:
+            if latent.shape[0] == latent_channels:
+                latent = latent.unsqueeze(0)
+                cond_latents[i] = latent
+            else:
+                raise ValueError(f"Unexpected 3D tensor shape at index {i}: {latent.shape}")
+        if latent.shape[0] != batch_size:
+            raise ValueError(
+                f"Batch size mismatch: expected {batch_size}, got {latent.shape[0]} at index {i}. "
+                f"All conditioning latents must have the same batch size."
+            )
+        if latent.shape[1] != latent_channels:
+            raise ValueError(f"Channel mismatch at index {i}: expected {latent_channels}, got {latent.shape[1]}")
+
+    packed_cond = []
+    packed_ids = []
+
+    # Process each conditioning tensor with time-offset position IDs
+    for ref_idx, latent in enumerate(cond_latents):
+        B, C, H, W = latent.shape
+
+        # Pack latents: (B, C, H, W) -> (B, H*W, C)
+        packed = rearrange(latent, "b c h w -> b (h w) c")
+        packed_cond.append(packed.to(device=device, dtype=dtype))
+
+        # Create time-offset position IDs
+        # T-coordinate: scale + scale * ref_idx (to distinguish reference images)
+        t_coord = torch.tensor([scale + scale * ref_idx], device=device)
+        h_coords = torch.arange(H, device=device)
+        w_coords = torch.arange(W, device=device)
+        l_coord = torch.arange(1, device=device)  # L is always 0 for image tokens
+
+        # Create position IDs: (H*W, 4) with (T, H, W, L) coordinates
+        ids = torch.cartesian_prod(t_coord, h_coords, w_coords, l_coord)
+
+        # Expand to batch: (B, H*W, 4)
+        ids = ids.unsqueeze(0).expand(B, -1, -1).to(device=device, dtype=torch.int64)
+        packed_ids.append(ids)
+
+    # Concatenate all reference images along sequence dimension
+    packed_cond = torch.cat(packed_cond, dim=1)  # (B, total_seq, C)
+    packed_ids = torch.cat(packed_ids, dim=1)  # (B, total_seq, 4)
+
+    return packed_cond, packed_ids
