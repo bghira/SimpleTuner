@@ -1192,6 +1192,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         controlnet_single_block_samples: Optional[List[torch.Tensor]] = None,
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ):
         """
         Forward pass for the HiDreamImageTransformer2DModel.
@@ -1208,6 +1209,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             joint_attention_kwargs: Additional attention parameters
             controlnet_block_samples: ControlNet features for double stream blocks
             controlnet_single_block_samples: ControlNet features for single stream blocks
+            hidden_states_buffer: Optional buffer to capture intermediate hidden states for regularizers
             return_dict: Whether to return as a dict
 
         Returns:

@@ -2623,7 +2623,8 @@ class ModelFoundation(ABC):
         self.layersync_regularizer = LayerSyncRegularizer(self.config)
 
     def _needs_hidden_state_buffer(self) -> bool:
-        ls_needed = bool(self.layersync_regularizer and self.layersync_regularizer.wants_hidden_states())
+        layersync = getattr(self, "layersync_regularizer", None)
+        ls_needed = bool(layersync and layersync.wants_hidden_states())
         crepa = getattr(self, "crepa_regularizer", None)
         crepa_buffer = bool(crepa and crepa.enabled and getattr(crepa, "use_backbone_features", False))
         return ls_needed or crepa_buffer
@@ -2634,8 +2635,9 @@ class ModelFoundation(ABC):
     def _apply_layersync_regularizer(
         self, loss: torch.Tensor, aux_logs: Optional[dict], hidden_states_buffer: Optional[dict]
     ) -> tuple[torch.Tensor, Optional[dict]]:
-        if self.layersync_regularizer and self.layersync_regularizer.wants_hidden_states():
-            ls_loss, ls_logs = self.layersync_regularizer.compute_loss(hidden_states_buffer)
+        layersync = getattr(self, "layersync_regularizer", None)
+        if layersync and layersync.wants_hidden_states():
+            ls_loss, ls_logs = layersync.compute_loss(hidden_states_buffer)
             if ls_loss is not None:
                 loss = loss + ls_loss
             if ls_logs:
