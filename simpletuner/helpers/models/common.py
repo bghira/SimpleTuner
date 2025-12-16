@@ -3119,6 +3119,15 @@ class ModelFoundation(ABC):
                 batch["input_noise"].float(),
                 batch["timesteps"],
             ).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+            if self._twinflow_active() and self._twinflow_diffusion_bridge:
+                if self.diff2flow_bridge is None:
+                    raise ValueError("TwinFlow diff2flow bridge requested but unavailable.")
+                sigmas = self.diff2flow_bridge.timesteps_to_sigma(
+                    batch["timesteps"].to(device=self.accelerator.device).long(),
+                    broadcast_shape=batch["noisy_latents"].shape,
+                ).to(dtype=self.config.weight_dtype)
+                batch["sigmas"] = sigmas
+                self._prepare_twinflow_metadata(batch)
 
         self._maybe_enable_reflexflow_default()
         if getattr(self.config, "scheduled_sampling_max_step_offset", 0) > 0:
