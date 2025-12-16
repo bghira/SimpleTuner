@@ -1214,18 +1214,19 @@ function trainerComponent() {
             if (!Array.isArray(datasets)) {
                 return [];
             }
-            const hasText = datasets.some((dataset) => (dataset?.dataset_type || '').toLowerCase() === 'text_embeds');
+            const working = datasets.map((dataset) => ({ ...dataset }));
+            const hasText = working.some((dataset) => (dataset?.dataset_type || '').toLowerCase() === 'text_embeds');
             if (hasText) {
-                return datasets;
+                return working;
             }
-            const existingIds = new Set(datasets.map((d) => d.id).filter(Boolean));
+            const existingIds = new Set(working.map((d) => d.id).filter(Boolean));
             const baseId = 'text-embeds';
             let candidate = baseId;
             let suffix = 1;
             while (existingIds.has(candidate)) {
                 candidate = `${baseId}-${suffix++}`;
             }
-            datasets.push({
+            working.push({
                 id: candidate,
                 type: 'local',
                 dataset_type: 'text_embeds',
@@ -1233,15 +1234,16 @@ function trainerComponent() {
                 default: true,
                 write_batch_size: 128,
             });
-            return datasets;
+            return working;
         },
         ensureTextEmbedDefaults(datasets) {
             if (!Array.isArray(datasets) || datasets.length === 0) {
-                return Array.isArray(datasets) ? datasets : [];
+                return Array.isArray(datasets) ? datasets.slice() : [];
             }
-            const textDatasets = datasets.filter((dataset) => (dataset?.dataset_type || '').toLowerCase() === 'text_embeds');
+            const working = datasets.map((dataset) => ({ ...dataset }));
+            const textDatasets = working.filter((dataset) => (dataset?.dataset_type || '').toLowerCase() === 'text_embeds');
             if (textDatasets.length === 0) {
-                return datasets;
+                return working;
             }
 
             const enabled = textDatasets.filter((dataset) => !this.normalizeBoolean(dataset.disabled) && !this.normalizeBoolean(dataset.disable));
@@ -1263,7 +1265,7 @@ function trainerComponent() {
                 defaultAssigned = true;
             }
 
-            return datasets;
+            return working;
         },
         detectDuplicateIds(datasets) {
             // Comprehensive client-side validation for immediate feedback
@@ -1831,12 +1833,11 @@ function trainerComponent() {
             }
         },
         prepareDatasetsForSave(datasets = null) {
-            const source = Array.isArray(datasets) ? datasets : this.datasets;
+            let source = Array.isArray(datasets) ? datasets : this.datasets;
             if (!Array.isArray(source)) {
                 return [];
             }
-            this.ensureTextEmbedPresence(source);
-            this.ensureTextEmbedDefaults(source);
+            source = this.ensureTextEmbedDefaults(this.ensureTextEmbedPresence(source));
 
             const sanitizeCaptions = (entry) => {
                 const mode = entry._captionsMode || 'inherit';

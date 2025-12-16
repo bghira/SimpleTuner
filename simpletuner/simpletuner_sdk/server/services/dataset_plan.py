@@ -264,8 +264,8 @@ def compute_validations(
             validations.append(
                 ValidationMessage(
                     field="text_embeds",
-                    message="multiple text embed datasets marked default - only the first will be used as default",
-                    level="warning",
+                    message="multiple text embed datasets marked default - only one is allowed",
+                    level="error",
                 )
             )
 
@@ -273,7 +273,9 @@ def compute_validations(
     text_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.TEXT_EMBEDS}
     image_embed_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE_EMBEDS}
     conditioning_ids = {dataset.get("id") for dataset in datasets if _dataset_type(dataset) is DatasetType.CONDITIONING}
-    image_video_datasets = [dataset for dataset in datasets if _dataset_type(dataset) in {DatasetType.IMAGE, DatasetType.VIDEO}]
+    image_video_datasets = [
+        dataset for dataset in datasets if _dataset_type(dataset) in {DatasetType.IMAGE, DatasetType.VIDEO}
+    ]
 
     for dataset in datasets:
         dataset_id = dataset.get("id", "unknown")
@@ -329,9 +331,8 @@ def compute_validations(
     # Edit model guidance
     model_family_lc = str(model_family or "").lower()
     model_flavour_lc = str(model_flavour or "").lower()
-    is_edit_model = (
-        (model_family_lc == "qwen_image" and "edit" in model_flavour_lc)
-        or (model_family_lc == "flux" and "kontext" in model_flavour_lc)
+    is_edit_model = (model_family_lc == "qwen_image" and "edit" in model_flavour_lc) or (
+        model_family_lc == "flux" and "kontext" in model_flavour_lc
     )
     if is_edit_model and not conditioning_ids:
         validations.append(

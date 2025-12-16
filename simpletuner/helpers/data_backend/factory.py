@@ -1634,9 +1634,7 @@ class FactoryRegistry:
     def _ensure_text_embed_backends_present(self, data_backend_config: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Ensure at least one text_embed backend exists and a single default is selected."""
         text_backends = [
-            backend
-            for backend in data_backend_config
-            if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
+            backend for backend in data_backend_config if _backend_dataset_type(backend) is DatasetType.TEXT_EMBEDS
         ]
         enabled_text_backends = [
             backend for backend in text_backends if not backend.get("disabled", False) and not backend.get("disable", False)
@@ -1671,18 +1669,9 @@ class FactoryRegistry:
             text_backends = [auto_backend]
             enabled_text_backends = text_backends
 
-        default_capable = [
-            backend
-            for backend in enabled_text_backends
-            if backend.get("default") is True
-        ]
+        default_capable = [backend for backend in enabled_text_backends if backend.get("default") is True]
         if len(default_capable) > 1:
-            primary = default_capable[0]
-            for backend in default_capable[1:]:
-                backend["default"] = False
-            warning_log(
-                f"Multiple text_embeds datasets marked as default; using {primary.get('id', 'unknown')} as default."
-            )
+            raise ValueError("Only one text embed backend can be marked as default.")
         elif len(default_capable) == 0 and enabled_text_backends:
             chosen = enabled_text_backends[0]
             chosen["default"] = True
@@ -1865,6 +1854,8 @@ class FactoryRegistry:
                 " See this link for more information about dataset_type: https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#configuration-options"
             )
 
+        if not self.default_text_embed_backend_id and len(self.text_embed_backends) > 1:
+            raise ValueError("Only one text embed backend can be marked as default.")
         if not self.default_text_embed_backend_id:
             chosen_id = list(self.text_embed_backends.keys())[0]
             self.default_text_embed_backend_id = chosen_id
@@ -3276,7 +3267,10 @@ class FactoryRegistry:
 
         init_backend = init_backend_config(backend, self.args, self.accelerator)
         dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
-        if dataset_type_enum in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING} and "cache_dir_vae" not in backend:
+        if (
+            dataset_type_enum in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING}
+            and "cache_dir_vae" not in backend
+        ):
             backend["cache_dir_vae"] = self._default_vae_cache_dir(backend["id"], dataset_type_enum)
         if init_backend.get("bucket_report"):
             StateTracker.attach_bucket_report(init_backend["id"], init_backend["bucket_report"])
