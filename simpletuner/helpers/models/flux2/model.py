@@ -150,26 +150,6 @@ class Flux2(ImageModelFoundation):
         bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + self.vae.config.batch_norm_eps)
         return (latents - bn_mean) / bn_std
 
-    def load_model(self, move_to_device: bool = True):
-        """Load the FLUX.2 transformer using diffusers from_pretrained."""
-        dtype = self.config.weight_dtype
-        model_path = self.config.pretrained_model_name_or_path
-
-        logger.info("Loading FLUX.2 transformer...")
-
-        transformer = Flux2Transformer2DModel.from_pretrained(
-            model_path,
-            subfolder=self.MODEL_SUBFOLDER,
-            torch_dtype=dtype,
-        )
-
-        if move_to_device:
-            transformer.to(self.accelerator.device, dtype=dtype)
-
-        self.model = transformer
-        logger.info("FLUX.2 transformer loaded successfully")
-        return transformer
-
     def load_vae(self, move_to_device: bool = True):
         """Load the FLUX.2 custom VAE using diffusers from_pretrained."""
         dtype = self.config.weight_dtype
