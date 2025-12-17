@@ -675,7 +675,10 @@ class Flux2(ImageModelFoundation):
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)
-        return apply_musubi_pretrained_defaults(self.config, args)
+        args = apply_musubi_pretrained_defaults(self.config, args)
+        if getattr(self.config, "twinflow_enabled", False):
+            args.setdefault("enable_time_sign_embed", True)
+        return args
 
     @staticmethod
     def _validate_flux2_specific(config: dict) -> List[ValidationResult]:
