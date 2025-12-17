@@ -254,12 +254,14 @@ class SanaModulatedNorm(nn.Module):
 
 
 class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
-    def __init__(self, embedding_dim):
+    def __init__(self, embedding_dim: int, enable_time_sign_embed: bool = False):
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
-        self.time_sign_embed = nn.Embedding(2, embedding_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, embedding_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         self.guidance_condition_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.guidance_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
@@ -281,6 +283,11 @@ class SanaCombinedTimestepGuidanceEmbeddings(nn.Module):
         guidance_emb = self.guidance_embedder(guidance_proj.to(dtype=hidden_dtype))
         conditioning = timesteps_emb + guidance_emb
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=conditioning.device)
             conditioning = conditioning + self.time_sign_embed(sign_idx).to(
                 dtype=conditioning.dtype, device=conditioning.device
@@ -545,6 +552,7 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         guidance_embeds_scale: float = 0.1,
         qk_norm: Optional[str] = "rms_norm_across_heads",
         rope_max_seq_len: int = 1024,
+        enable_time_sign_embed: bool = False,
     ) -> None:
         super().__init__()
 
@@ -557,12 +565,17 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
         # 2. Additional condition embeddings
         if guidance_embeds:
-            self.time_embed = SanaCombinedTimestepGuidanceEmbeddings(inner_dim)
+            self.time_embed = SanaCombinedTimestepGuidanceEmbeddings(
+                inner_dim,
+                enable_time_sign_embed=enable_time_sign_embed,
+            )
             self.time_sign_embed = self.time_embed.time_sign_embed
         else:
             self.time_embed = AdaLayerNormSingle(inner_dim)
-            self.time_sign_embed = nn.Embedding(2, inner_dim)
-            nn.init.zeros_(self.time_sign_embed.weight)
+            self.time_sign_embed: Optional[nn.Embedding] = None
+            if enable_time_sign_embed:
+                self.time_sign_embed = nn.Embedding(2, inner_dim)
+                nn.init.zeros_(self.time_sign_embed.weight)
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
         self.caption_norm = RMSNorm(inner_dim, eps=1e-5, elementwise_affine=True)
@@ -666,6 +679,11 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         else:
             timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
             if timestep_sign is not None:
+                if self.time_sign_embed is None:
+                    raise ValueError(
+                        "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                        "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                    )
                 sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
                 sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
                 embedded_timestep = embedded_timestep + sign_emb

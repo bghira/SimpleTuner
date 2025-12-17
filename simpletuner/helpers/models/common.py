@@ -1583,8 +1583,22 @@ class ModelFoundation(ABC):
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         """
-        A stub method for child classes to augment pretrained class load arguments with.
+        Augment `from_pretrained` kwargs before loading the base model.
+
+        This is commonly used by child classes, but we also handle shared feature flags here when safe.
         """
+        if getattr(self.config, "twinflow_enabled", False):
+            model_cls = getattr(self, "MODEL_CLASS", None)
+            if model_cls is not None:
+                try:
+                    import inspect
+
+                    signature = inspect.signature(model_cls.__init__)
+                    if "enable_time_sign_embed" in signature.parameters:
+                        pretrained_load_args.setdefault("enable_time_sign_embed", True)
+                except (TypeError, ValueError):
+                    # Some callables may not have introspectable signatures (e.g., C-extensions).
+                    pass
         return pretrained_load_args
 
     def _extract_quantization_entry(self, raw_config, component_keys: list[str]):

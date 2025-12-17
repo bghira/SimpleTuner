@@ -137,10 +137,11 @@ class HiDream(ImageModelFoundation):
         return False
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
         if self.config.hidream_load_balancing_loss_weight is not None and self.config.hidream_load_balancing_loss_weight > 0:
-            pretrained_load_args["aux_loss_alpha"] = self.config.hidream_load_balancing_loss_weight
+            args["aux_loss_alpha"] = self.config.hidream_load_balancing_loss_weight
 
-        return pretrained_load_args
+        return args
 
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """

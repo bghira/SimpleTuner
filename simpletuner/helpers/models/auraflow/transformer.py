@@ -349,6 +349,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         caption_projection_dim: int = 3072,
         out_channels: int = 4,
         pos_embed_max_size: int = 1024,
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
         default_out_channels = in_channels
@@ -365,6 +366,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             caption_projection_dim=caption_projection_dim,
             out_channels=effective_out_channels,
             pos_embed_max_size=pos_embed_max_size,
+            enable_time_sign_embed=enable_time_sign_embed,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -386,8 +388,10 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         self.time_step_embed = Timesteps(num_channels=256, downscale_freq_shift=0, scale=1000, flip_sin_to_cos=True)
         self.time_step_proj = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         self.joint_transformer_blocks = MutableModuleList(
             [
@@ -608,6 +612,11 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         temb = self.time_step_embed(timestep).to(dtype=next(self.parameters()).dtype)
         temb = self.time_step_proj(temb)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
             temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
         encoder_hidden_states = self.context_embedder(encoder_hidden_states)

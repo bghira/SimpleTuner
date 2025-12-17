@@ -28,18 +28,25 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tok
 
 
 class TimestepEmbeddings(nn.Module):
-    def __init__(self, embedding_dim):
+    def __init__(self, embedding_dim: int, enable_time_sign_embed: bool = False):
         super().__init__()
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, embedding_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, embedding_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
     def forward(self, timestep, hidden_dtype, timestep_sign: Optional[torch.Tensor] = None):
         timesteps_proj = self.time_proj(timestep)
         temb = self.timestep_embedder(timesteps_proj.to(dtype=hidden_dtype))
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
             temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
         return temb
@@ -64,6 +71,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         joint_attention_dim: int = 3584,
         pooled_projection_dim: int = 3584,
         axes_dims_rope: List[int] = [16, 56, 56],
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
         self.out_channels = in_channels
@@ -71,7 +79,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self.pooled_projection_dim = pooled_projection_dim
 
         self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
-        self.time_embed = TimestepEmbeddings(embedding_dim=self.inner_dim)
+        self.time_embed = TimestepEmbeddings(embedding_dim=self.inner_dim, enable_time_sign_embed=enable_time_sign_embed)
 
         self.context_embedder = nn.Linear(joint_attention_dim, self.inner_dim)
         self.x_embedder = torch.nn.Linear(in_channels, self.inner_dim)

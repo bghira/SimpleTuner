@@ -226,6 +226,7 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         patch_size: List[int] = [16, 1],
         max_height: int = 16,
         max_width: int = 4096,
+        enable_time_sign_embed: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -269,8 +270,10 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=self.inner_dim)
         self.t_block = nn.Sequential(nn.SiLU(), nn.Linear(self.inner_dim, 6 * self.inner_dim, bias=True))
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         # speaker
         self.speaker_embedder = nn.Linear(speaker_embedding_dim, self.inner_dim)
@@ -472,6 +475,11 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         embedded_timestep = self.timestep_embedder(self.time_proj(timestep).to(dtype=hidden_states.dtype))
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
             embedded_timestep = embedded_timestep + self.time_sign_embed(sign_idx).to(
                 dtype=embedded_timestep.dtype, device=hidden_states.device

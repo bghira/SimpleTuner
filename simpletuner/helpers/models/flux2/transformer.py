@@ -764,6 +764,7 @@ class Flux2Transformer2DModel(
         axes_dims_rope: Tuple[int, ...] = (32, 32, 32, 32),
         rope_theta: int = 2000,
         eps: float = 1e-6,
+        enable_time_sign_embed: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
     ):
@@ -779,8 +780,10 @@ class Flux2Transformer2DModel(
             in_channels=timestep_guidance_channels, embedding_dim=self.inner_dim, bias=False
         )
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         # 3. Modulation (double stream and single stream blocks share modulation parameters, resp.)
         # Two sets of shift/scale/gate modulation parameters for the double stream attn and FF sub-blocks
@@ -948,6 +951,11 @@ class Flux2Transformer2DModel(
 
         temb = self.time_guidance_embed(timestep, guidance)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
             temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=hidden_states.device)
 

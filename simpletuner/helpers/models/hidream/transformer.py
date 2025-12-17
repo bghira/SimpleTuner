@@ -141,7 +141,7 @@ class PooledEmbed(nn.Module):
 
 
 class TimestepEmbed(nn.Module):
-    def __init__(self, hidden_size, frequency_embedding_size=256):
+    def __init__(self, hidden_size, frequency_embedding_size=256, enable_time_sign_embed: bool = False):
         super().__init__()
         self.time_proj = Timesteps(
             num_channels=frequency_embedding_size,
@@ -150,8 +150,10 @@ class TimestepEmbed(nn.Module):
         )
         self.timestep_embedder = TimestepEmbedding(in_channels=frequency_embedding_size, time_embed_dim=hidden_size)
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, hidden_size)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, hidden_size)
+            nn.init.zeros_(self.time_sign_embed.weight)
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -164,6 +166,11 @@ class TimestepEmbed(nn.Module):
         t_emb = self.time_proj(timesteps).to(dtype=wdtype)
         t_emb = self.timestep_embedder(t_emb)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
             t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
@@ -883,6 +890,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         max_resolution: Tuple[int, int] = (128, 128),
         llama_layers: List[int] = None,
         aux_loss_alpha: float = 0.0,
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -902,12 +910,13 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             max_resolution=max_resolution,
             llama_layers=llama_layers,
             aux_loss_alpha=aux_loss_alpha,
+            enable_time_sign_embed=enable_time_sign_embed,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
         self.llama_layers = llama_layers
 
-        self.t_embedder = TimestepEmbed(self.inner_dim)
+        self.t_embedder = TimestepEmbed(self.inner_dim, enable_time_sign_embed=enable_time_sign_embed)
         self.p_embedder = PooledEmbed(text_emb_dim, self.inner_dim)
         self.x_embedder = PatchEmbed(
             patch_size=patch_size,

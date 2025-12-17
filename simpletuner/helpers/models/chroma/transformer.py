@@ -469,6 +469,7 @@ class ChromaTransformer2DModel(
         approximator_num_channels: int = 64,
         approximator_hidden_dim: int = 5120,
         approximator_layers: int = 5,
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -485,6 +486,7 @@ class ChromaTransformer2DModel(
             approximator_num_channels=approximator_num_channels,
             approximator_hidden_dim=approximator_hidden_dim,
             approximator_layers=approximator_layers,
+            enable_time_sign_embed=enable_time_sign_embed,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = num_attention_heads * attention_head_dim
@@ -496,8 +498,10 @@ class ChromaTransformer2DModel(
             out_dim=3 * num_single_layers + 2 * 6 * num_layers + 2,
         )
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
         self.distilled_guidance_layer = ChromaApproximator(
             in_dim=approximator_num_channels,
             out_dim=self.inner_dim,
@@ -605,6 +609,11 @@ class ChromaTransformer2DModel(
         input_vec = self.time_text_embed(timestep)
         pooled_temb = self.distilled_guidance_layer(input_vec)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
             pooled_temb = pooled_temb + self.time_sign_embed(sign_idx).to(
                 dtype=pooled_temb.dtype, device=hidden_states.device
