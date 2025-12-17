@@ -518,6 +518,19 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
             printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
             printed_state.append(f"- Total number of aspect buckets: {len(self.buckets)}")
+            schedule_state = StateTracker.get_dataset_schedule(self.id) or {}
+            start_epoch = schedule_state.get("start_epoch", 1)
+            start_step = schedule_state.get("start_step", 0)
+            reached = schedule_state.get("reached", False)
+            reached_epoch = schedule_state.get("reached_at_epoch")
+            reached_step = schedule_state.get("reached_at_step")
+            if start_epoch > 1 or start_step > 0 or not reached:
+                status = "not reached"
+                if reached:
+                    epoch_str = reached_epoch if reached_epoch is not None else "?"
+                    step_str = reached_step if reached_step is not None else "?"
+                    status = f"reached at epoch {epoch_str}, step {step_str}"
+                printed_state.append(f"- Schedule: start_epoch={start_epoch}, start_step={start_step} ({status})")
             if self.sample_type_strs == "images":
                 printed_state.append(
                     f"- Resolution: {self.resolution} {'megapixels' if self.resolution_type == 'area' else 'px'}"
