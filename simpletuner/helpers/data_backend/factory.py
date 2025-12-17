@@ -85,7 +85,9 @@ from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
+from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active, normalize_start_epoch, normalize_start_step
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
     EMPTY_PROFILE,
     DistillerRequirementProfile,
@@ -262,6 +264,11 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     dataset_type = _backend_dataset_type(backend)
     output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
     is_audio_dataset = dataset_type is DatasetType.AUDIO
+
+    start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
+    start_step = normalize_start_step(backend.get("start_step", 0))
+    output["config"]["start_epoch"] = start_epoch
+    output["config"]["start_step"] = start_step
 
     def _prepare_audio_settings(source: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize audio configuration settings from backend definitions."""
@@ -1378,12 +1385,81 @@ class FactoryRegistry:
             for dataset_type in (DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO)
         )
 
+    def _caption_batches_supported(self) -> bool:
+        """
+        Return True if the active distillation flow can consume caption-only datasets.
+        """
+        profile = self.distiller_requirement_profile or EMPTY_PROFILE
+        if profile.requires_dataset_type(DatasetType.CAPTION):
+            return True
+
+        method = self.distillation_method or getattr(self.args, "distillation_method", None)
+        if method:
+            try:
+                method_profile = DistillationRegistry.get_requirement_profile(method)
+                if method_profile.requires_dataset_type(DatasetType.CAPTION):
+                    return True
+            except Exception:
+                return False
+        return False
+
     def _finalize_metrics(self) -> None:
         """Finalize performance metrics."""
         self.metrics["initialization_time"] = time.time() - self.start_time
         self.metrics["memory_usage"]["end"] = self._get_memory_usage()
 
         metrics_logger.info(f"Factory metrics: {self.metrics}")
+
+    def _validate_schedule_windows(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """Ensure at least one dataset is available at training start and warn about unreachable schedules."""
+        caption_supported = self._caption_batches_supported()
+        training_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}
+        if caption_supported:
+            training_types.add(DatasetType.CAPTION)
+
+        active_at_start: list[str] = []
+        scheduled_later: list[tuple[str, int, int]] = []
+        training_seen = False
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            try:
+                dataset_type = _backend_dataset_type(backend, default=DatasetType.IMAGE)
+            except ValueError:
+                continue
+            if dataset_type is DatasetType.EVAL or dataset_type not in training_types:
+                continue
+            training_seen = True
+            start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
+            start_step = normalize_start_step(backend.get("start_step", 0))
+            backend_id = backend.get("id", "unknown")
+            if start_epoch <= 1 and start_step <= 1:
+                active_at_start.append(backend_id)
+            else:
+                scheduled_later.append((backend_id, start_epoch, start_step))
+
+        if not training_seen:
+            return
+
+        if not active_at_start:
+            raise ValueError(
+                "At least one dataset must be available at the start of training. "
+                "Set start_epoch<=1 and start_step<=1 for one or more datasets."
+            )
+
+        target_epochs = getattr(self.args, "num_train_epochs", None)
+        target_steps = getattr(self.args, "max_train_steps", None)
+        for backend_id, start_epoch, start_step in scheduled_later:
+            if target_epochs not in (None, 0) and start_epoch > target_epochs:
+                warning_log(
+                    f"(id={backend_id}) Scheduled to start at epoch {start_epoch}, "
+                    f"but training ends at epoch {target_epochs}. It will never sample."
+                )
+            if target_steps not in (None, 0) and start_step > target_steps:
+                warning_log(
+                    f"(id={backend_id}) Scheduled to start at step {start_step}, "
+                    f"but training stops at step {target_steps}. It will never sample."
+                )
 
     def load_configuration(self) -> List[Dict[str, Any]]:
         """Load and process the data backend configuration file."""
@@ -1402,7 +1478,25 @@ class FactoryRegistry:
         if len(data_backend_config) == 0:
             raise ValueError("Must provide at least one data backend in the data backend config file.")
 
-        self._declared_data_backends = sum(1 for backend in data_backend_config if _is_primary_training_backend(backend))
+        caption_supported = self._caption_batches_supported()
+        training_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}
+        if caption_supported:
+            training_types.add(DatasetType.CAPTION)
+
+        def _is_training_backend(entry: Dict[str, Any]) -> bool:
+            try:
+                dataset_type = _backend_dataset_type(entry, default=DatasetType.IMAGE)
+            except ValueError:
+                return False
+            if dataset_type is DatasetType.EVAL:
+                return False
+            return dataset_type in training_types
+
+        self._declared_data_backends = sum(
+            1
+            for backend in data_backend_config
+            if not backend.get("disabled", False) and not backend.get("disable", False) and _is_training_backend(backend)
+        )
 
         self._log_performance_metrics(
             "config_loaded",
@@ -1413,6 +1507,7 @@ class FactoryRegistry:
         self._log_performance_metrics("config_sorted")
 
         data_backend_config = fill_variables_in_config_paths(args=self.args, config=data_backend_config)
+        self._validate_schedule_windows(data_backend_config)
 
         model_family = getattr(self.args, "model_family", "base")
         try:
@@ -3418,6 +3513,11 @@ class FactoryRegistry:
             data_backend_id=init_backend["id"],
             config=init_backend["config"],
         )
+        StateTracker.set_dataset_schedule(
+            data_backend_id=init_backend["id"],
+            start_epoch=init_backend["config"].get("start_epoch"),
+            start_step=init_backend["config"].get("start_step"),
+        )
 
         preserve_data_backend_cache = backend.get("preserve_data_backend_cache", False)
         if not preserve_data_backend_cache and self.accelerator.is_local_main_process:
@@ -3894,6 +3994,10 @@ def get_backend_weight(backend_id, backend, step):
     if not isinstance(sampling_method, str):
         sampling_method = "uniform"
 
+    is_active, _ = dataset_is_active(backend_id, backend_config, step_hint=step)
+    if not is_active:
+        return 0.0
+
     if sampling_method == "uniform":
         return prob
     elif sampling_method == "auto-weighting":
@@ -3911,11 +4015,17 @@ def get_backend_weight(backend_id, backend, step):
         adjusted_prob = prob * length_factor
 
         disable_step = backend_config.get("disable_after_epoch_step", None)
-        if disable_step:
-            disable_step = int(disable_step)
-        else:
+        try:
+            disable_step = int(disable_step) if disable_step else None
+        except (TypeError, ValueError):
+            disable_step = None
+        if disable_step is None:
             disable_step = float("inf")
-        adjusted_prob = 0 if int(step) > disable_step else max(0, adjusted_prob * (1 - step / disable_step))
+        try:
+            current_step = int(step)
+        except Exception:
+            current_step = 0
+        adjusted_prob = 0 if current_step > disable_step else max(0, adjusted_prob * (1 - current_step / disable_step))
 
         return adjusted_prob
     else:

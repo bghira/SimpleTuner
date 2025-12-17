@@ -514,6 +514,14 @@ This is particularly useful when:
 - Without oversubscription: Error raised
 - With `--allow_dataset_oversubscription`: Repeats automatically set to 1 (25 × 2 = 50 samples)
 
+### `start_epoch` / `start_step`
+
+- Schedule when a dataset begins sampling.
+- `start_epoch` (default: `1`) gates by epoch number; `start_step` (default: `0`) gates by optimizer step (after gradient accumulation). Both conditions must be satisfied before samples are drawn.
+- At least one dataset must have `start_epoch<=1` **and** `start_step<=1`; otherwise training will error because no data is available at startup.
+- Datasets that never meet their start condition (for example, `start_epoch` beyond `--num_train_epochs`) will be skipped and noted in the model card.
+- Progress-bar step estimates are approximate when scheduled datasets activate mid-run because epoch length can increase once new data comes online.
+
 ### `is_regularisation_data`
 
 - Also may be spelt `is_regularization_data`
@@ -630,6 +638,8 @@ In order, the lines behave as follows:
     "vae_cache_clear_each_epoch": true,
     "probability": 1.0,
     "repeats": 0,
+    "start_epoch": 1,
+    "start_step": 0,
     "text_embeds": "alt-embed-cache",
     "image_embeds": "vae-embeds-example",
     "conditioning_image_embeds": "conditioning-embeds-example"
