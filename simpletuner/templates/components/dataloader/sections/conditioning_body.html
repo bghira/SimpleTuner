@@ -7,7 +7,7 @@
         <select class="form-select form-select-sm"
                 x-model="editingDataset.conditioning_type"
                 @change="markAsUnsaved()">
-            <option value="controlnet">ControlNet</option>
+            <option value="controlnet" x-show="modelContext.controlnetEnabled">ControlNet</option>
             <option value="mask">Inpainting Mask</option>
             <option value="reference_strict">Reference (Strict Alignment)</option>
             <option value="reference_loose">Reference (Loose Alignment)</option>
