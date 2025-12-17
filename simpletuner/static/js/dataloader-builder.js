@@ -414,7 +414,9 @@
                 id: `conditioning-${Date.now()}`,
                 type: 'local',
                 dataset_type: 'conditioning',
-                conditioning_type: 'controlnet',
+                // Default to reference_strict for non-ControlNet models (most common use case)
+                // ControlNet training will set this appropriately via modelContext
+                conditioning_type: 'reference_strict',
                 instance_data_dir: '/path/to/conditioning',
                 cache_dir_vae: '{output_dir}/cache/vae/{model_family}/{id}',
                 disabled: false,
