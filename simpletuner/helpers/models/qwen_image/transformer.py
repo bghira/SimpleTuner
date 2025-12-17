@@ -154,15 +154,17 @@ def apply_rotary_emb_qwen(
 
 
 class QwenTimestepProjEmbeddings(nn.Module):
-    def __init__(self, embedding_dim):
+    def __init__(self, embedding_dim: int, enable_time_sign_embed: bool = False):
         super().__init__()
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0, scale=1000)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
         self.timestep_embedder.time_embed_dim = embedding_dim
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, embedding_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, embedding_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
     def forward(self, timestep, hidden_states, timestep_sign: Optional[torch.Tensor] = None):
         target_device = hidden_states.device
@@ -187,10 +189,13 @@ class QwenTimestepProjEmbeddings(nn.Module):
 
         conditioning = timesteps_emb
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=target_device)
-            conditioning = conditioning + self.time_sign_embed(sign_idx).to(
-                dtype=conditioning.dtype, device=target_device
-            )
+            conditioning = conditioning + self.time_sign_embed(sign_idx).to(dtype=conditioning.dtype, device=target_device)
 
         return conditioning
 
@@ -564,6 +569,7 @@ class QwenImageTransformer2DModel(
         axes_dims_rope: Tuple[int, int, int] = (16, 56, 56),
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
         self.out_channels = out_channels or in_channels
@@ -571,7 +577,10 @@ class QwenImageTransformer2DModel(
 
         self.pos_embed = QwenEmbedRope(theta=10000, axes_dim=list(axes_dims_rope), scale_rope=True)
 
-        self.time_text_embed = QwenTimestepProjEmbeddings(embedding_dim=self.inner_dim)
+        self.time_text_embed = QwenTimestepProjEmbeddings(
+            embedding_dim=self.inner_dim,
+            enable_time_sign_embed=enable_time_sign_embed,
+        )
         self.time_sign_embed = self.time_text_embed.time_sign_embed
 
         self.txt_norm = RMSNorm(joint_attention_dim, eps=1e-6)

@@ -333,6 +333,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         norm_elementwise_affine: bool = False,
         norm_eps: float = 1e-6,
         interpolation_scale: Optional[int] = None,
+        enable_time_sign_embed: bool = False,
     ) -> None:
         super().__init__()
 
@@ -369,6 +370,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             norm_elementwise_affine=norm_elementwise_affine,
             norm_eps=norm_eps,
             interpolation_scale=interpolation_scale,
+            enable_time_sign_embed=enable_time_sign_embed,
         )
 
         out_channels = effective_out_channels
@@ -391,8 +393,10 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         # condition embeddings
         self.time_embed = AdaLayerNormSingle(inner_dim)
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, inner_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         self.caption_projection = PixArtAlphaTextProjection(in_features=caption_channels, hidden_size=inner_dim)
         self.caption_norm = RMSNorm(inner_dim, eps=1e-5, elementwise_affine=True)
@@ -576,6 +580,11 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         timestep, embedded_timestep = self.time_embed(timestep, batch_size=batch_size, hidden_dtype=hidden_states.dtype)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
             sign_emb = self.time_sign_embed(sign_idx).to(dtype=embedded_timestep.dtype, device=hidden_states.device)
             embedded_timestep = embedded_timestep + sign_emb.view(batch_size, -1)
