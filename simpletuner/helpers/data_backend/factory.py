@@ -1461,6 +1461,41 @@ class FactoryRegistry:
                     f"but training stops at step {target_steps}. It will never sample."
                 )
 
+    def _validate_dataset_paths(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Validate that all dataset paths exist before proceeding with configuration.
+
+        This catches missing directories early rather than silently skipping them
+        during cache discovery, which would lead to confusing behavior.
+        """
+        missing_paths: list[tuple[str, str, str]] = []
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+
+            backend_id = backend.get("id", "unknown")
+            backend_type = backend.get("type", "local")
+
+            # Only validate local backends - cloud backends don't have local paths
+            if backend_type != "local":
+                continue
+
+            # Check instance_data_dir for all local backends
+            instance_data_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
+            if instance_data_dir and isinstance(instance_data_dir, str):
+                instance_data_dir = instance_data_dir.strip()
+                if instance_data_dir and not os.path.exists(instance_data_dir):
+                    missing_paths.append((backend_id, "instance_data_dir", instance_data_dir))
+
+        if missing_paths:
+            error_lines = ["The following dataset directories do not exist:"]
+            for backend_id, path_type, path in missing_paths:
+                error_lines.append(f"  - (id={backend_id}) {path_type}: {path}")
+            error_lines.append("")
+            error_lines.append("Please ensure all dataset paths exist before starting training.")
+            raise FileNotFoundError("\n".join(error_lines))
+
     def load_configuration(self) -> List[Dict[str, Any]]:
         """Load and process the data backend configuration file."""
         config_start_time = time.time()
@@ -1507,6 +1542,7 @@ class FactoryRegistry:
         self._log_performance_metrics("config_sorted")
 
         data_backend_config = fill_variables_in_config_paths(args=self.args, config=data_backend_config)
+        self._validate_dataset_paths(data_backend_config)
         self._validate_schedule_windows(data_backend_config)
 
         model_family = getattr(self.args, "model_family", "base")
