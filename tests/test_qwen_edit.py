@@ -222,13 +222,14 @@ class QwenEditTests(unittest.TestCase):
         vae = DummyVAE()
         model = TestableQwenImage(pipeline, transformer, vae, model_flavour="edit-v2")
 
-        cond_a = torch.zeros(2, 3, 4, 4)
-        cond_b = torch.ones(2, 3, 4, 4)
+        # Edit-v2 uses cached conditioning latents (already VAE-encoded)
+        cond_latent_a = torch.zeros(2, 16, 4, 4)  # Latent shape, not pixel shape
+        cond_latent_b = torch.ones(2, 16, 4, 4)
         # Edit-v2 uses cached prompt embeddings (text encoder is unloaded during training)
         batch = {
             "prompts": ["a", "b"],
             "latents": torch.zeros(2, 16, 8, 8),
-            "conditioning_pixel_values_multi": [cond_a, cond_b],
+            "conditioning_latents": [cond_latent_a, cond_latent_b],
             "prompt_embeds": prompt_embeds.clone(),
             "encoder_attention_mask": prompt_mask.clone(),
         }
@@ -238,10 +239,10 @@ class QwenEditTests(unittest.TestCase):
         # Verify cached embeddings are preserved
         self.assertEqual(updated["prompt_embeds"].shape, torch.Size([2, 4, 8]))
         self.assertEqual(updated["encoder_attention_mask"].shape, torch.Size([2, 4]))
-        # Verify control_tensor_list is built correctly
-        self.assertIn("control_tensor_list", updated)
-        self.assertEqual(len(updated["control_tensor_list"]), 2)
-        self.assertEqual(len(updated["control_tensor_list"][0]), 2)
+        # Verify control_latent_list is built correctly from cached latents
+        self.assertIn("control_latent_list", updated)
+        self.assertEqual(len(updated["control_latent_list"]), 2)
+        self.assertEqual(len(updated["control_latent_list"][0]), 2)
 
     def test_model_predict_edit_plus_restores_latent_shape(self):
         prompt_embeds = torch.randn(1, 4, 8)
@@ -252,10 +253,11 @@ class QwenEditTests(unittest.TestCase):
         model = TestableQwenImage(pipeline, transformer, vae, model_flavour="edit-v2")
 
         latents = torch.randn(1, 16, 8, 8)
-        control_tensor_list = [[torch.zeros(3, 4, 4)]]
+        # control_latent_list uses pre-cached latents (already VAE-encoded)
+        control_latent_list = [[torch.zeros(16, 4, 4)]]
         prepared_batch = {
             "noisy_latents": latents.clone(),
-            "control_tensor_list": control_tensor_list,
+            "control_latent_list": control_latent_list,
             "prompt_embeds": prompt_embeds.clone(),
             "encoder_attention_mask": prompt_mask.clone(),
             "timesteps": torch.tensor([250.0]),
