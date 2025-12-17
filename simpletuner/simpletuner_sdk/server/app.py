@@ -274,6 +274,7 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.configs import router as configs_router
     from .routes.datasets import router as datasets_router
     from .routes.fields import router as fields_router
+    from .routes.git import router as git_router
     from .routes.hardware import router as hardware_router
     from .routes.lycoris import router as lycoris_router
     from .routes.models import router as models_router
@@ -301,6 +302,7 @@ def _add_trainer_routes(app: FastAPI):
         fields_router,
         publishing_router,
         hardware_router,
+        git_router,
         system_router,
         version_router,
     ):

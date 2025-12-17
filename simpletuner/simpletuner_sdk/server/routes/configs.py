@@ -8,6 +8,12 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.configs_service import CONFIGS_SERVICE, ConfigServiceError
+from simpletuner.simpletuner_sdk.server.services.git_config_service import (
+    GIT_CONFIG_SERVICE,
+    GitConfigError,
+    SnapshotPreferences,
+)
+from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 
 router = APIRouter(prefix="/api/configs", tags=["configurations"])
 
@@ -105,6 +111,60 @@ def _normalize_conditioning_payload(payload: Any) -> Any:
     return payload
 
 
+def _git_preferences() -> tuple[bool, SnapshotPreferences]:
+    """Load git-related WebUI defaults."""
+    try:
+        defaults = WebUIStateStore().load_defaults()
+    except Exception:
+        return False, SnapshotPreferences()
+
+    enabled = bool(getattr(defaults, "git_mirror_enabled", False))
+    prefs = SnapshotPreferences(
+        auto_commit=bool(getattr(defaults, "git_auto_commit", False)),
+        require_clean=bool(getattr(defaults, "git_require_clean", False)),
+        include_untracked=bool(getattr(defaults, "git_include_untracked", False)),
+        push_on_snapshot=bool(getattr(defaults, "git_push_on_snapshot", False)),
+        default_message=None,
+    )
+    return enabled, prefs
+
+
+def _enforce_git_requirements(config_type: str, enabled: bool, prefs: SnapshotPreferences) -> None:
+    if not enabled or not prefs.require_clean:
+        return
+    status = GIT_CONFIG_SERVICE.is_git_ready(config_type)
+    if not status.repo_present:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Git repository is not initialized for the configs directory.",
+        )
+    if status.dirty_paths:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Working tree has uncommitted changes. Commit or stash before saving.",
+        )
+
+
+def _maybe_snapshot_on_save(
+    name: str,
+    config_type: str,
+    enabled: bool,
+    prefs: SnapshotPreferences,
+    response: Dict[str, Any],
+    action: str = "update",
+) -> Dict[str, Any]:
+    if not enabled or not prefs.auto_commit:
+        return response
+    message = f"env:{name} {action}"
+    try:
+        snapshot = GIT_CONFIG_SERVICE.snapshot_on_save(name, config_type, prefs, message=message)
+        if snapshot:
+            response["git_snapshot"] = snapshot
+    except GitConfigError as exc:
+        response["git_error"] = exc.message
+    return response
+
+
 @router.get("/")
 async def list_configs(config_type: str = "model") -> Dict[str, Any]:
     """List all available configurations."""
@@ -151,7 +211,9 @@ async def get_config(name: str, config_type: str = "model") -> Dict[str, Any]:
 @router.post("/")
 async def create_config(request: ConfigRequest, config_type: str = "model") -> Dict[str, Any]:
     """Create a new configuration."""
-    return _call_service(
+    git_enabled, prefs = _git_preferences()
+    _enforce_git_requirements(config_type, git_enabled, prefs)
+    result = _call_service(
         CONFIGS_SERVICE.create_config,
         name=request.name,
         config=request.config,
@@ -159,18 +221,25 @@ async def create_config(request: ConfigRequest, config_type: str = "model") -> D
         tags=request.tags,
         config_type=config_type,
     )
+    return _maybe_snapshot_on_save(request.name, config_type, git_enabled, prefs, result, action="create")
 
 
 @router.post("/environments")
 async def create_environment(request: EnvironmentCreateRequest) -> Dict[str, Any]:
     """Create a new training environment."""
-    return _call_service(CONFIGS_SERVICE.create_environment, request)
+    git_enabled, prefs = _git_preferences()
+    _enforce_git_requirements("model", git_enabled, prefs)
+    result = _call_service(CONFIGS_SERVICE.create_environment, request)
+    env_name = getattr(request, "name", None) or ""
+    return _maybe_snapshot_on_save(env_name, "model", git_enabled, prefs, result, action="create")
 
 
 @router.put("/{name}")
 async def update_config(name: str, request: ConfigRequest, config_type: str = "model") -> Dict[str, Any]:
     """Update an existing configuration."""
-    return _call_service(
+    git_enabled, prefs = _git_preferences()
+    _enforce_git_requirements(config_type, git_enabled, prefs)
+    result = _call_service(
         CONFIGS_SERVICE.update_config,
         name=name,
         config=request.config,
@@ -178,6 +247,7 @@ async def update_config(name: str, request: ConfigRequest, config_type: str = "m
         tags=request.tags,
         config_type=config_type,
     )
+    return _maybe_snapshot_on_save(name, config_type, git_enabled, prefs, result, action="update")
 
 
 @router.delete("/{name}")
@@ -201,7 +271,10 @@ async def copy_config(name: str, request: ConfigCopyRequest, config_type: str = 
 @router.post("/{name}/dataloader")
 async def create_environment_dataloader(name: str, request: EnvironmentDataloaderRequest) -> Dict[str, Any]:
     """Create a dataloader configuration for an environment."""
-    return _call_service(CONFIGS_SERVICE.create_environment_dataloader, name, request.path, request.include_defaults)
+    git_enabled, prefs = _git_preferences()
+    _enforce_git_requirements("dataloader", git_enabled, prefs)
+    result = _call_service(CONFIGS_SERVICE.create_environment_dataloader, name, request.path, request.include_defaults)
+    return _maybe_snapshot_on_save(name, "dataloader", git_enabled, prefs, result, action="create-dataloader")
 
 
 @router.get("/dataloader/content")

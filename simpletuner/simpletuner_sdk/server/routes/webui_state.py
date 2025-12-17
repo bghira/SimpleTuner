@@ -146,7 +146,8 @@ class OnboardingStepUpdate(BaseModel):
 
 def _build_state_response(state: WebUIState, steps: List[OnboardingStepDefinition]) -> Dict[str, object]:
     store = WebUIStateStore()
-    bundle = store.resolve_defaults(state.defaults)
+    synced_defaults = _sync_defaults_from_onboarding(store, state.defaults)
+    bundle = store.resolve_defaults(synced_defaults)
     defaults_dict = bundle["raw"]
     resolved_defaults = bundle["resolved"]
     fallbacks = bundle["fallbacks"]
@@ -270,6 +271,39 @@ def _apply_step_to_defaults(
         defaults.accelerate_overrides = _normalise_accelerate_overrides(value)
 
 
+def _sync_defaults_from_onboarding(store: WebUIStateStore, defaults: WebUIDefaults) -> WebUIDefaults:
+    """Apply onboarding answers to defaults when sync is enabled."""
+
+    if not getattr(defaults, "sync_onboarding_defaults", False):
+        return defaults
+
+    try:
+        onboarding_state = store.load_onboarding()
+    except Exception:
+        return defaults
+
+    opt_out = set(getattr(defaults, "onboarding_sync_opt_out", []) or [])
+    changed = False
+
+    for step in _resolve_step_definitions():
+        if not step.applies_to_default or step.id in opt_out or step.applies_to_default in opt_out:
+            continue
+        stored_step = onboarding_state.steps.get(step.id)
+        if stored_step is None:
+            continue
+        if stored_step.value is None:
+            continue
+        before = defaults.__dict__.get(step.applies_to_default)
+        _apply_step_to_defaults(defaults, step, stored_step.value)
+        after = defaults.__dict__.get(step.applies_to_default)
+        if before != after:
+            changed = True
+
+    if changed:
+        store.save_defaults(defaults)
+    return defaults
+
+
 @router.post("/onboarding/steps/{step_id}")
 async def update_onboarding_step(step_id: str, payload: OnboardingStepUpdate) -> Dict[str, object]:
     """Update onboarding progress for a specific step."""
@@ -342,6 +376,15 @@ class DefaultsUpdate(BaseModel):
     allow_dataset_paths_outside_dir: Optional[bool] = None
     show_documentation_links: Optional[bool] = None
     accelerate_overrides: Optional[Dict[str, object]] = None
+    git_mirror_enabled: Optional[bool] = None
+    git_remote: Optional[str] = None
+    git_branch: Optional[str] = None
+    git_auto_commit: Optional[bool] = None
+    git_require_clean: Optional[bool] = None
+    git_push_on_snapshot: Optional[bool] = None
+    git_include_untracked: Optional[bool] = None
+    sync_onboarding_defaults: Optional[bool] = None
+    onboarding_sync_opt_out: Optional[List[str]] = None
 
 
 @router.post("/defaults/update")
@@ -386,6 +429,37 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
             defaults.show_documentation_links = bool(payload.show_documentation_links)
         if payload.accelerate_overrides is not None:
             defaults.accelerate_overrides = _normalise_accelerate_overrides(payload.accelerate_overrides)
+        if payload.git_mirror_enabled is not None:
+            defaults.git_mirror_enabled = bool(payload.git_mirror_enabled)
+        if payload.git_auto_commit is not None:
+            defaults.git_auto_commit = bool(payload.git_auto_commit)
+        if payload.git_require_clean is not None:
+            defaults.git_require_clean = bool(payload.git_require_clean)
+        if payload.git_push_on_snapshot is not None:
+            defaults.git_push_on_snapshot = bool(payload.git_push_on_snapshot)
+        if payload.git_include_untracked is not None:
+            defaults.git_include_untracked = bool(payload.git_include_untracked)
+        if payload.git_remote is not None:
+            normalized = payload.git_remote.strip() if isinstance(payload.git_remote, str) else ""
+            defaults.git_remote = normalized or None
+        if payload.git_branch is not None:
+            normalized = payload.git_branch.strip() if isinstance(payload.git_branch, str) else ""
+            defaults.git_branch = normalized or None
+        if payload.sync_onboarding_defaults is not None:
+            defaults.sync_onboarding_defaults = bool(payload.sync_onboarding_defaults)
+        if payload.onboarding_sync_opt_out is not None:
+            opt_out = payload.onboarding_sync_opt_out
+            if isinstance(opt_out, str):
+                opt_out = [opt_out]
+            if isinstance(opt_out, (list, tuple, set)):
+                cleaned = []
+                for item in opt_out:
+                    if not isinstance(item, str):
+                        continue
+                    candidate = item.strip()
+                    if candidate and candidate not in cleaned:
+                        cleaned.append(candidate)
+                defaults.onboarding_sync_opt_out = cleaned
 
         # Save updated defaults
         store.save_defaults(defaults)

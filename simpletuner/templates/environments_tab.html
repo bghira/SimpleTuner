@@ -194,6 +194,17 @@ window.environmentsTabComponent = function environmentsTabComponent() {
             : [],
         promptLibrariesLoading: false,
         promptLibrariesListener: null,
+        gitReady: false,
+        gitStatus: null,
+        gitHistoryModal: {
+            open: false,
+            target: null,
+            commits: [],
+            diff: null,
+            workingDiff: null,
+            loading: false,
+            error: '',
+        },
 
         hasDataloader(config) {
             if (!config) {
@@ -595,6 +606,152 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 }
             } catch (error) {
                 console.error('Failed to load configs:', error);
+            }
+        },
+
+        async loadGitStatus(force = false) {
+            if (this.gitHistoryModal.loading && !force) {
+                return;
+            }
+            try {
+                const response = await fetch(`/api/git/status?config_type=${this.configType}`);
+                if (!response.ok) {
+                    throw new Error('Git status unavailable');
+                }
+                const status = await response.json();
+                this.gitStatus = status;
+                this.gitReady = Boolean(status.git_available && status.repo_present);
+            } catch (error) {
+                console.debug('Git status check failed', error);
+                this.gitReady = false;
+            }
+        },
+
+        async openHistoryModal(configName) {
+            const target = this.normalizeConfigNameForType(configName);
+            if (!target) {
+                return;
+            }
+            this.gitHistoryModal.open = true;
+            this.gitHistoryModal.target = target;
+            this.gitHistoryModal.loading = true;
+            this.gitHistoryModal.error = '';
+            try {
+                await this.loadGitStatus(true);
+                if (!this.gitReady) {
+                    throw new Error('Git is not configured for the configs directory.');
+                }
+                const historyResponse = await fetch(
+                    `/api/git/history?path=${encodeURIComponent(target)}&config_type=${this.configType}`
+                );
+                if (!historyResponse.ok) {
+                    const detail = await historyResponse.json().catch(() => ({}));
+                    throw new Error(detail.detail || 'Failed to load history');
+                }
+                const payload = await historyResponse.json();
+                this.gitHistoryModal.commits = Array.isArray(payload.commits) ? payload.commits : [];
+
+                await this.loadDiffForCommit(null);
+            } catch (error) {
+                console.error('Failed to open git history modal', error);
+                this.gitHistoryModal.error = error.message || 'Unable to load history';
+            } finally {
+                this.gitHistoryModal.loading = false;
+            }
+        },
+
+        closeHistoryModal() {
+            this.gitHistoryModal.open = false;
+            this.gitHistoryModal.target = null;
+            this.gitHistoryModal.commits = [];
+            this.gitHistoryModal.diff = null;
+            this.gitHistoryModal.workingDiff = null;
+            this.gitHistoryModal.error = '';
+        },
+
+        async loadDiffForCommit(commitSha = null) {
+            if (!this.gitHistoryModal.target) {
+                return;
+            }
+            try {
+                const url = `/api/git/diff?path=${encodeURIComponent(this.gitHistoryModal.target)}&config_type=${this.configType}${commitSha ? `&commit=${encodeURIComponent(commitSha)}` : ''}`;
+                const response = await fetch(url);
+                if (!response.ok) {
+                    const detail = await response.json().catch(() => ({}));
+                    throw new Error(detail.detail || 'Failed to load diff');
+                }
+                const data = await response.json();
+                this.gitHistoryModal.diff = data;
+                if (!commitSha) {
+                    this.gitHistoryModal.workingDiff = data;
+                }
+            } catch (error) {
+                console.error('Failed to load diff', error);
+                this.gitHistoryModal.error = error.message || 'Unable to load diff';
+            }
+        },
+
+        async restoreCommit(commitSha) {
+            if (!this.gitHistoryModal.target || !commitSha) {
+                return;
+            }
+            if (!confirm('Restore this configuration to the selected commit? This will overwrite the current file.')) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/git/revert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        path: this.gitHistoryModal.target,
+                        commit: commitSha,
+                        config_type: this.configType,
+                    }),
+                });
+                if (!response.ok) {
+                    const detail = await response.json().catch(() => ({}));
+                    throw new Error(detail.detail || 'Failed to restore configuration');
+                }
+                window.showToast && window.showToast('Configuration restored from git', 'success');
+                await this.loadConfigs();
+                await this.openHistoryModal(this.gitHistoryModal.target);
+            } catch (error) {
+                console.error('Restore failed', error);
+                window.showToast && window.showToast(error.message || 'Restore failed', 'error');
+            }
+        },
+
+        async snapshotConfig(targetName) {
+            const target = this.normalizeConfigNameForType(targetName || this.gitHistoryModal.target);
+            if (!target) {
+                return;
+            }
+            const defaultMessage = `env:${target} snapshot`;
+            const message = prompt('Commit message', defaultMessage) || defaultMessage;
+            try {
+                const response = await fetch('/api/git/snapshot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        paths: [target],
+                        message,
+                        include_untracked: false,
+                        push: false,
+                        config_type: this.configType,
+                    }),
+                });
+                if (!response.ok) {
+                    const detail = await response.json().catch(() => ({}));
+                    throw new Error(detail.detail || 'Failed to create snapshot');
+                }
+                window.showToast && window.showToast('Snapshot created', 'success');
+                await this.loadGitStatus(true);
+                if (this.gitHistoryModal.open) {
+                    await this.openHistoryModal(target);
+                }
+            } catch (error) {
+                console.error('Snapshot failed', error);
+                window.showToast && window.showToast(error.message || 'Snapshot failed', 'error');
             }
         },
 
@@ -1677,7 +1834,7 @@ window.environmentsTabComponent = function environmentsTabComponent() {
      id="environments-tab-content"
      data-tab-name="environments"
      x-data="environmentsTabComponent()"
-     x-init="loadConfigs(); loadTemplates(); registerPromptLibraryListener()">
+     x-init="loadConfigs(); loadTemplates(); registerPromptLibraryListener(); loadGitStatus()">
 
     <!-- Main Card -->
     <div class="card mb-4">
@@ -1945,6 +2102,13 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                         @click="duplicateConfig(config.name)"
                                         title="Duplicate">
                                     <i class="fas fa-copy"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-secondary"
+                                        :disabled="!gitReady"
+                                        @click="openHistoryModal(config.name)"
+                                        :title="gitReady ? 'Version history' : 'Git not configured'">
+                                    <i class="fas fa-history"></i>
                                 </button>
                                 <button type="button"
                                         class="btn btn-outline-secondary"
@@ -2829,6 +2993,83 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Git History Modal -->
+    <div x-cloak x-show="gitHistoryModal.open" class="environment-modal-backdrop" @keydown.escape.window="closeHistoryModal()" x-transition.opacity>
+        <div class="modal-dialog modal-xl" @click.stop>
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-history me-2"></i>
+                    Version history
+                    <span x-text="gitHistoryModal.target ? `(${gitHistoryModal.target})` : ''"></span>
+                </h5>
+                <button type="button" class="btn-close" aria-label="Close" @click="closeHistoryModal()"></button>
+            </div>
+            <div class="modal-body">
+                <template x-if="gitHistoryModal.error">
+                    <div class="alert alert-danger" x-text="gitHistoryModal.error"></div>
+                </template>
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong>Commits</strong>
+                            <button class="btn btn-sm btn-outline-secondary" type="button" @click="openHistoryModal(gitHistoryModal.target)">
+                                <i class="fas fa-sync" :class="{ 'fa-spin': gitHistoryModal.loading }"></i>
+                            </button>
+                        </div>
+                        <div class="list-group history-list" style="max-height: 360px; overflow-y: auto;">
+                            <template x-if="gitHistoryModal.commits.length === 0">
+                                <div class="text-muted small px-2">No commits found for this path.</div>
+                            </template>
+                            <template x-for="commit in gitHistoryModal.commits" :key="commit.commit">
+                                <button type="button"
+                                        class="list-group-item list-group-item-action"
+                                        @click="loadDiffForCommit(commit.commit)">
+                                    <div class="d-flex justify-content-between">
+                                        <span class="fw-semibold" x-text="commit.abbrev"></span>
+                                        <small class="text-muted" x-text="commit.timestamp ? new Date(commit.timestamp * 1000).toLocaleString() : ''"></small>
+                                    </div>
+                                    <div class="small" x-text="commit.subject"></div>
+                                    <div class="text-muted small" x-text="commit.author"></div>
+                                    <div class="d-flex justify-content-end gap-2 mt-1">
+                                        <button type="button" class="btn btn-xs btn-outline-primary" @click.stop="restoreCommit(commit.commit)">
+                                            <i class="fas fa-undo"></i> Restore
+                                        </button>
+                                    </div>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="col-md-7">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong>Diff preview</strong>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-secondary" @click="loadDiffForCommit(null)">
+                                    Working copy
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" @click="snapshotConfig(gitHistoryModal.target)">
+                                    Snapshot
+                                </button>
+                            </div>
+                        </div>
+                        <template x-if="gitHistoryModal.diff && gitHistoryModal.diff.diff">
+                            <pre class="bg-dark text-light p-3 rounded" style="max-height: 420px; overflow: auto;"
+                                 x-text="gitHistoryModal.diff.diff"></pre>
+                        </template>
+                        <template x-if="!gitHistoryModal.diff || !gitHistoryModal.diff.diff">
+                            <div class="text-muted">Select a commit to view changes.</div>
+                        </template>
+                        <template x-if="gitHistoryModal.diff && gitHistoryModal.diff.truncated">
+                            <div class="alert alert-warning mt-2 mb-0">Diff truncated for size.</div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" @click="closeHistoryModal()">Close</button>
+            </div>
         </div>
     </div>
 
