@@ -215,8 +215,8 @@ class QwenEditTests(unittest.TestCase):
         self.assertEqual(model.model.last_img_shapes[0][0], (1, 4, 4))
 
     def test_prepare_edit_batch_v2_builds_control_tensors(self):
-        prompt_embeds = torch.ones(1, 4, 8)
-        prompt_mask = torch.ones(1, 4, dtype=torch.int64)
+        prompt_embeds = torch.ones(2, 4, 8)
+        prompt_mask = torch.ones(2, 4, dtype=torch.int64)
         pipeline = DummyPipeline(prompt_embeds, prompt_mask)
         transformer = DummyTransformer()
         vae = DummyVAE()
@@ -224,20 +224,24 @@ class QwenEditTests(unittest.TestCase):
 
         cond_a = torch.zeros(2, 3, 4, 4)
         cond_b = torch.ones(2, 3, 4, 4)
+        # Edit-v2 uses cached prompt embeddings (text encoder is unloaded during training)
         batch = {
             "prompts": ["a", "b"],
             "latents": torch.zeros(2, 16, 8, 8),
             "conditioning_pixel_values_multi": [cond_a, cond_b],
+            "prompt_embeds": prompt_embeds.clone(),
+            "encoder_attention_mask": prompt_mask.clone(),
         }
 
         updated = model._prepare_edit_batch_v2(batch)
 
+        # Verify cached embeddings are preserved
         self.assertEqual(updated["prompt_embeds"].shape, torch.Size([2, 4, 8]))
         self.assertEqual(updated["encoder_attention_mask"].shape, torch.Size([2, 4]))
+        # Verify control_tensor_list is built correctly
         self.assertIn("control_tensor_list", updated)
         self.assertEqual(len(updated["control_tensor_list"]), 2)
         self.assertEqual(len(updated["control_tensor_list"][0]), 2)
-        self.assertIsInstance(model._pipeline.captured_images, list)
 
     def test_model_predict_edit_plus_restores_latent_shape(self):
         prompt_embeds = torch.randn(1, 4, 8)
