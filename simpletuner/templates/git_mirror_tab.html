@@ -10,9 +10,12 @@ if (!window.gitMirrorTabComponent) {
             status: null,
             loading: false,
             savingPrefs: false,
+            savingIdentity: false,
             error: '',
             remoteUrl: defaults.git_remote || '',
             branchName: defaults.git_branch || '',
+            userName: defaults.git_user_name || '',
+            userEmail: defaults.git_user_email || '',
             allowRemote: false,
             syncOnboarding: defaults.sync_onboarding_defaults || false,
             onboardingOptOut: Array.isArray(defaults.onboarding_sync_opt_out) ? defaults.onboarding_sync_opt_out.slice() : [],
@@ -44,12 +47,19 @@ if (!window.gitMirrorTabComponent) {
                     if (!response.ok) {
                         throw new Error('Failed to load git status');
                     }
-                    this.status = await response.json();
+                    const payload = await response.json();
+                    this.status = payload;
                     if (this.status && this.status.remote && !this.remoteUrl) {
                         this.remoteUrl = this.status.remote;
                     }
                     if (this.status && this.status.branch && !this.branchName) {
                         this.branchName = this.status.branch;
+                    }
+                    if (this.status && this.status.user_name) {
+                        this.userName = this.status.user_name;
+                    }
+                    if (this.status && this.status.user_email) {
+                        this.userEmail = this.status.user_email;
                     }
                 } catch (error) {
                     console.error('Git status failed', error);
@@ -192,6 +202,36 @@ if (!window.gitMirrorTabComponent) {
                     this.savingPrefs = false;
                 }
             },
+            async saveIdentity() {
+                if (!this.userName || !this.userName.trim() || !this.userEmail || !this.userEmail.trim()) {
+                    this.error = 'Name and email are required.';
+                    return;
+                }
+                if (!this.status || !this.status.repo_present) {
+                    this.error = 'Initialize the repository before setting identity.';
+                    return;
+                }
+                this.savingIdentity = true;
+                this.error = '';
+                try {
+                    const response = await fetch('/api/git/identity', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: this.userName.trim(), email: this.userEmail.trim() }),
+                    });
+                    if (!response.ok) {
+                        const detail = await response.json().catch(() => ({}));
+                        throw new Error(detail.detail || 'Failed to save git identity');
+                    }
+                    await this.loadStatus();
+                    window.showToast && window.showToast('Git identity saved', 'success');
+                } catch (error) {
+                    this.error = error.message || 'Failed to save git identity';
+                    window.showToast && window.showToast(this.error, 'error');
+                } finally {
+                    this.savingIdentity = false;
+                }
+            },
             toggleOptOut(field) {
                 const idx = this.onboardingOptOut.indexOf(field);
                 if (idx >= 0) {
@@ -221,6 +261,7 @@ if (!window.gitMirrorTabComponent) {
             statusBadge() {
                 if (!this.status) return 'Unknown';
                 if (!this.status.repo_present) return 'Not initialized';
+                if (this.status.repo_present && !this.status.identity_configured) return 'Identity missing';
                 if (this.status.dirty_paths && this.status.dirty_paths.length) return 'Dirty';
                 return 'Clean';
             },
@@ -294,6 +335,40 @@ if (!window.gitMirrorTabComponent) {
                             </button>
                             <button class="btn btn-outline-info" type="button" @click="remoteAction('pull')" :disabled="loading || !allowRemote">
                                 <i class="fas fa-download"></i> Pull
+                            </button>
+                        </div>
+
+                        <div class="mt-3 border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <strong>Commit identity</strong>
+                                    <p class="text-muted small mb-0">Git uses this name and email for commits.</p>
+                                </div>
+                                <span class="badge" :class="status?.identity_configured ? 'bg-success' : 'bg-warning text-dark'">
+                                    <span x-text="status?.identity_configured ? 'Configured' : 'Missing'"></span>
+                                </span>
+                            </div>
+                            <template x-if="status && status.repo_present && !status.identity_configured">
+                                <div class="alert alert-warning py-2 mb-3 d-flex align-items-center gap-2">
+                                    <i class="fas fa-user-slash"></i>
+                                    <span>Provide an author name and email to avoid git errors when committing.</span>
+                                </div>
+                            </template>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">User name</label>
+                                    <input type="text" class="form-control" x-model="userName" placeholder="Your Name">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">User email</label>
+                                    <input type="email" class="form-control" x-model="userEmail" placeholder="you@example.com">
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-primary mt-3" type="button"
+                                    @click="saveIdentity()"
+                                    :disabled="savingIdentity || loading || !status || !status.repo_present">
+                                <i class="fas fa-id-card me-1" :class="{ 'fa-spin': savingIdentity }"></i>
+                                Save git identity
                             </button>
                         </div>
 

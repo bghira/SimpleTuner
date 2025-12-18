@@ -47,6 +47,11 @@ class GitRemoteActionRequest(BaseModel):
     branch: Optional[str] = None
 
 
+class GitIdentityRequest(BaseModel):
+    name: str
+    email: str
+
+
 def _config_dir(config_type: str = "model") -> str:
     store = GIT_CONFIG_SERVICE._get_store(config_type)  # noqa: SLF001 - shared path resolution
     return str(store.config_dir)
@@ -81,6 +86,9 @@ async def git_status(config_type: str = "model") -> Dict[str, Any]:
         "dirty_paths": status_obj.dirty_paths or [],
         "ahead": status_obj.ahead,
         "behind": status_obj.behind,
+        "user_name": status_obj.user_name,
+        "user_email": status_obj.user_email,
+        "identity_configured": status_obj.identity_configured,
         "config_dir": _config_dir(config_type),
     }
 
@@ -110,6 +118,12 @@ async def git_branch(payload: GitBranchRequest, config_type: str = "model") -> D
         payload.name,
         payload.create,
     )
+    return git_status(config_type)  # type: ignore[return-value]
+
+
+@router.post("/identity")
+async def git_identity(payload: GitIdentityRequest, config_type: str = "model") -> Dict[str, Any]:
+    _handle_repo_call(GIT_REPO_SERVICE.set_identity, _config_dir(config_type), payload.name, payload.email)
     return git_status(config_type)  # type: ignore[return-value]
 
 

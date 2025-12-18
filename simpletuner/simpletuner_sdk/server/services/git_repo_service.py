@@ -34,6 +34,9 @@ class GitStatus:
     dirty_paths: Optional[List[str]] = None
     ahead: Optional[int] = None
     behind: Optional[int] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    identity_configured: bool = False
 
 
 class GitRepoService:
@@ -97,9 +100,13 @@ class GitRepoService:
             ) from exc
         return root
 
+    def _read_identity(self, root: Path) -> tuple[Optional[str], Optional[str]]:
+        name = self._run_git(["config", "--get", "user.name"], cwd=root, check=False).stdout.strip() or None
+        email = self._run_git(["config", "--get", "user.email"], cwd=root, check=False).stdout.strip() or None
+        return name, email
+
     def _ensure_identity(self, root: Path) -> None:
-        name = self._run_git(["config", "--get", "user.name"], cwd=root, check=False).stdout.strip()
-        email = self._run_git(["config", "--get", "user.email"], cwd=root, check=False).stdout.strip()
+        name, email = self._read_identity(root)
         if name and email:
             return
 
@@ -148,6 +155,9 @@ class GitRepoService:
         self._ensure_git_installed()
         config_path = self._normalize_dir(config_dir)
         root = self._repo_root(config_path)
+        user_name = None
+        user_email = None
+        identity_configured = False
         if not root:
             return GitStatus(
                 git_available=True,
@@ -158,6 +168,9 @@ class GitRepoService:
                 dirty_paths=[],
                 ahead=None,
                 behind=None,
+                user_name=None,
+                user_email=None,
+                identity_configured=False,
             )
 
         try:
@@ -191,6 +204,13 @@ class GitRepoService:
             ahead = behind = None
 
         dirty_paths = self._parse_dirty(root, config_path)
+        try:
+            user_name, user_email = self._read_identity(root)
+            identity_configured = bool(user_name and user_email)
+        except Exception:
+            user_name = None
+            user_email = None
+            identity_configured = False
 
         return GitStatus(
             git_available=True,
@@ -201,6 +221,9 @@ class GitRepoService:
             dirty_paths=dirty_paths,
             ahead=ahead,
             behind=behind,
+            user_name=user_name,
+            user_email=user_email,
+            identity_configured=identity_configured,
         )
 
     def init_repo(self, config_dir: Path | str, remote: Optional[str] = None, branch: Optional[str] = None) -> GitStatus:
@@ -357,6 +380,17 @@ class GitRepoService:
 
             self._run_git(["commit", "-m", message], cwd=root)
         return {"message": "Committed changes", "commit_message": message}
+
+    def set_identity(self, config_dir: Path | str, name: str, email: str) -> Dict[str, str]:
+        cleaned_name = (name or "").strip()
+        cleaned_email = (email or "").strip()
+        if not cleaned_name or not cleaned_email:
+            raise GitRepoError("Both user name and email are required", status.HTTP_400_BAD_REQUEST)
+        with self._lock:
+            root = self._ensure_repo(self._normalize_dir(config_dir))
+            self._run_git(["config", "user.name", cleaned_name], cwd=root)
+            self._run_git(["config", "user.email", cleaned_email], cwd=root)
+        return {"message": "Updated git identity", "user_name": cleaned_name, "user_email": cleaned_email}
 
     def restore_path(self, config_dir: Path | str, path: Path | str, commit: Optional[str] = None) -> Dict[str, str]:
         with self._lock:
