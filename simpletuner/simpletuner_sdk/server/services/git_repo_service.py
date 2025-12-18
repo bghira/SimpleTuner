@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import threading
@@ -95,6 +96,21 @@ class GitRepoService:
                 status.HTTP_400_BAD_REQUEST,
             ) from exc
         return root
+
+    def _ensure_identity(self, root: Path) -> None:
+        name = self._run_git(["config", "--get", "user.name"], cwd=root, check=False).stdout.strip()
+        email = self._run_git(["config", "--get", "user.email"], cwd=root, check=False).stdout.strip()
+        if name and email:
+            return
+
+        default_name = os.environ.get("GIT_AUTHOR_NAME") or os.environ.get("GIT_COMMITTER_NAME") or "SimpleTuner"
+        default_email = (
+            os.environ.get("GIT_AUTHOR_EMAIL") or os.environ.get("GIT_COMMITTER_EMAIL") or "simpletuner@example.com"
+        )
+        if not name:
+            self._run_git(["config", "user.name", default_name], cwd=root)
+        if not email:
+            self._run_git(["config", "user.email", default_email], cwd=root)
 
     def _relativize(self, root: Path, target: Path) -> str:
         try:
@@ -326,6 +342,8 @@ class GitRepoService:
         with self._lock:
             root = self._ensure_repo(self._normalize_dir(config_dir))
             rel_paths = [self._relativize(root, Path(p)) for p in paths]
+
+            self._ensure_identity(root)
 
             add_args = ["add"]
             if not include_untracked:
