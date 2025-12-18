@@ -54,6 +54,21 @@ class GitRepoServiceTests(unittest.TestCase):
             restored = file_path.read_text()
             self.assertEqual(restored, "one")
 
+    def test_identity_status_and_setter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            config_file = config_dir / "config.json"
+            config_file.write_text("{}")
+
+            status = GIT_REPO_SERVICE.init_repo(config_dir)
+            self.assertIn(status.identity_configured, [True, False])
+
+            GIT_REPO_SERVICE.set_identity(config_dir, "Tester", "tester@example.com")
+            status = GIT_REPO_SERVICE.discover_repo(config_dir)
+            self.assertTrue(status.identity_configured)
+            self.assertEqual(status.user_name, "Tester")
+            self.assertEqual(status.user_email, "tester@example.com")
+
 
 class GitConfigServiceTests(unittest.TestCase):
     def setUp(self) -> None:
