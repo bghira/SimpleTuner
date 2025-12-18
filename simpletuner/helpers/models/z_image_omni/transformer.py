@@ -601,6 +601,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         pF = f_patch_size
         device = all_x[0][-1].device
         dtype = all_x[0][-1].dtype
+        sig_pad_dim = 1152
 
         all_x_padded = []
         all_x_size = []
@@ -737,74 +738,85 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             all_x_padded.append(torch.cat(x_padded, dim=0))
             all_x_len.append(x_len)
 
-            if all_siglip_feats[i] is None:
-                all_siglip_len.append([0 for j in range(num_images)])
-                all_siglip_padded_feats.append(None)
-            else:
-                sig_padded_feats = []
-                sig_padded_pos_ids = []
-                sig_pad_mask = []
-                sig_len = []
-                sig_noise_mask = []
-                for j, sig_item in enumerate(all_siglip_feats[i]):
-                    if sig_item is not None:
-                        sig_H, sig_W, sig_C = sig_item.size()
-                        sig_H_tokens, sig_W_tokens, sig_F_tokens = sig_H, sig_W, 1
+            sig_padded_feats = []
+            sig_padded_pos_ids = []
+            sig_pad_mask = []
+            sig_len = []
+            sig_noise_mask = []
 
-                        sig_item = sig_item.view(sig_C, sig_F_tokens, 1, sig_H_tokens, 1, sig_W_tokens, 1)
-                        sig_item = einops.rearrange(sig_item, "c f pf h ph w pw -> (f h w) (pf ph pw c)")
+            siglip_entries = all_siglip_feats[i]
+            no_siglip_data = siglip_entries is None
+            if siglip_entries is None:
+                siglip_entries = [None for _ in range(num_images)]
 
-                        sig_item_ori_len = len(sig_item)
-                        sig_item_padding_len = (-sig_item_ori_len) % SEQ_MULTI_OF
-                        sig_len.append(sig_item_ori_len + sig_item_padding_len)
-                        sig_item_padding_pos_ids = (
-                            self.create_coordinate_grid(
-                                size=(1, 1, 1),
-                                start=(0, 0, 0),
-                                device=device,
-                            )
-                            .flatten(0, 2)
-                            .repeat(sig_item_padding_len, 1)
+            for j, sig_item in enumerate(siglip_entries):
+                if sig_item is not None:
+                    sig_H, sig_W, sig_C = sig_item.size()
+                    sig_H_tokens, sig_W_tokens, sig_F_tokens = sig_H, sig_W, 1
+
+                    sig_item = sig_item.view(sig_C, sig_F_tokens, 1, sig_H_tokens, 1, sig_W_tokens, 1)
+                    sig_item = einops.rearrange(sig_item, "c f pf h ph w pw -> (f h w) (pf ph pw c)")
+
+                    sig_item_ori_len = len(sig_item)
+                    sig_item_padding_len = (-sig_item_ori_len) % SEQ_MULTI_OF
+                    sig_len.append(sig_item_ori_len + sig_item_padding_len)
+                    sig_item_padding_pos_ids = (
+                        self.create_coordinate_grid(
+                            size=(1, 1, 1),
+                            start=(0, 0, 0),
+                            device=device,
                         )
-                        sig_item_ori_pos_ids = self.create_coordinate_grid(
-                            size=(sig_F_tokens, sig_H_tokens, sig_W_tokens), start=(cap_end_pos[j] + 1, 0, 0), device=device
-                        )
-                        sig_item_ori_pos_ids[..., 1] = sig_item_ori_pos_ids[..., 1] / (sig_H_tokens - 1) * (x_size[j][1] - 1)
-                        sig_item_ori_pos_ids[..., 2] = sig_item_ori_pos_ids[..., 2] / (sig_W_tokens - 1) * (x_size[j][2] - 1)
-                        sig_item_ori_pos_ids = sig_item_ori_pos_ids.flatten(0, 2)
-                        sig_padded_pos_ids.append(sig_item_ori_pos_ids)
-                        sig_padded_pos_ids.append(sig_item_padding_pos_ids)
+                        .flatten(0, 2)
+                        .repeat(sig_item_padding_len, 1)
+                    )
+                    sig_item_ori_pos_ids = self.create_coordinate_grid(
+                        size=(sig_F_tokens, sig_H_tokens, sig_W_tokens), start=(cap_end_pos[j] + 1, 0, 0), device=device
+                    )
+                    sig_item_ori_pos_ids[..., 1] = sig_item_ori_pos_ids[..., 1] / (sig_H_tokens - 1) * (x_size[j][1] - 1)
+                    sig_item_ori_pos_ids[..., 2] = sig_item_ori_pos_ids[..., 2] / (sig_W_tokens - 1) * (x_size[j][2] - 1)
+                    sig_item_ori_pos_ids = sig_item_ori_pos_ids.flatten(0, 2)
+                    sig_padded_pos_ids.append(sig_item_ori_pos_ids)
+                    sig_padded_pos_ids.append(sig_item_padding_pos_ids)
 
-                        sig_pad_mask.append(torch.zeros((sig_item_ori_len,), dtype=torch.bool, device=device))
-                        sig_pad_mask.append(torch.ones((sig_item_padding_len,), dtype=torch.bool, device=device))
-                        sig_item_padded_feat = torch.cat([sig_item, sig_item[-1:].repeat(sig_item_padding_len, 1)], dim=0)
-                        sig_padded_feats.append(sig_item_padded_feat)
-                        sig_noise_mask.extend([images_noise_mask[i][j]] * (sig_item_ori_len + sig_item_padding_len))
-                    else:
-                        sig_pad_dim = 1152
-                        sig_item_ori_len = 0
-                        sig_item_padding_len = SEQ_MULTI_OF
-                        sig_item_padding_pos_ids = (
-                            self.create_coordinate_grid(
-                                size=(1, 1, 1),
-                                start=(0, 0, 0),
-                                device=device,
-                            )
-                            .flatten(0, 2)
-                            .repeat(sig_item_padding_len, 1)
+                    sig_pad_mask.append(torch.zeros((sig_item_ori_len,), dtype=torch.bool, device=device))
+                    sig_pad_mask.append(torch.ones((sig_item_padding_len,), dtype=torch.bool, device=device))
+                    sig_item_padded_feat = torch.cat([sig_item, sig_item[-1:].repeat(sig_item_padding_len, 1)], dim=0)
+                    sig_padded_feats.append(sig_item_padded_feat)
+                    sig_noise_mask.extend([images_noise_mask[i][j]] * (sig_item_ori_len + sig_item_padding_len))
+                else:
+                    sig_item_padding_len = 0 if no_siglip_data else SEQ_MULTI_OF
+                    sig_len.append(sig_item_padding_len)
+                    sig_item_padding_pos_ids = (
+                        self.create_coordinate_grid(
+                            size=(1, 1, 1),
+                            start=(0, 0, 0),
+                            device=device,
                         )
-                        sig_padded_pos_ids.append(sig_item_padding_pos_ids)
-                        sig_pad_mask.append(torch.ones((sig_item_padding_len,), dtype=torch.bool, device=device))
-                        sig_padded_feats.append(torch.zeros((sig_item_padding_len, sig_pad_dim), dtype=dtype, device=device))
-                        sig_noise_mask.extend([images_noise_mask[i][j]] * sig_item_padding_len)
+                        .flatten(0, 2)
+                        .repeat(sig_item_padding_len, 1)
+                    )
+                    sig_padded_pos_ids.append(sig_item_padding_pos_ids)
+                    sig_pad_mask.append(torch.ones((sig_item_padding_len,), dtype=torch.bool, device=device))
+                    sig_padded_feats.append(torch.zeros((sig_item_padding_len, sig_pad_dim), dtype=dtype, device=device))
+                    sig_noise_mask.extend([images_noise_mask[i][j]] * sig_item_padding_len)
 
-                all_siglip_noise_mask.append(sig_noise_mask)
-                sig_padded_pos_ids = torch.cat(sig_padded_pos_ids, dim=0)
-                all_siglip_pos_ids.append(sig_padded_pos_ids)
-                sig_pad_mask = torch.cat(sig_pad_mask, dim=0)
-                all_siglip_pad_mask.append(sig_pad_mask)
-                all_siglip_padded_feats.append(torch.cat(sig_padded_feats, dim=0))
-                all_siglip_len.append(sig_len)
+            all_siglip_noise_mask.append(sig_noise_mask)
+            all_siglip_pos_ids.append(
+                torch.cat(sig_padded_pos_ids, dim=0)
+                if len(sig_padded_pos_ids) > 0
+                else torch.zeros((0, 3), dtype=torch.int32, device=device)
+            )
+            all_siglip_pad_mask.append(
+                torch.cat(sig_pad_mask, dim=0)
+                if len(sig_pad_mask) > 0
+                else torch.zeros((0,), dtype=torch.bool, device=device)
+            )
+            all_siglip_padded_feats.append(
+                torch.cat(sig_padded_feats, dim=0)
+                if len(sig_padded_feats) > 0
+                else torch.zeros((0, sig_pad_dim), dtype=dtype, device=device)
+            )
+            all_siglip_len.append(sig_len)
 
         all_x_pos_offsets = []
         for i in range(bsz):
@@ -959,7 +971,8 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             for layer in self.context_refiner:
                 cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis)
 
-        if siglip_feats[0] is not None:
+        siglip_present = any(feats is not None and feats.shape[0] > 0 for feats in siglip_feats)
+        if siglip_present:
             siglip_item_seqlens = [len(_) for _ in siglip_feats]
             siglip_max_item_seqlen = max(siglip_item_seqlens)
 
@@ -989,7 +1002,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         unified = []
         unified_freqs_cis = []
         unified_noise_mask = []
-        if siglip_feats[0] is not None:
+        if siglip_present:
             for i in range(bsz):
                 x_len = x_item_seqlens[i]
                 cap_len = cap_item_seqlens[i]

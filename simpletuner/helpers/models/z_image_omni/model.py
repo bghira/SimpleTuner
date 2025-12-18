@@ -268,7 +268,9 @@ class ZImageOmni(ImageModelFoundation):
                 raise ValueError("conditioning_latents length must match batch size.")
 
         siglip_feats: List[Optional[List[torch.Tensor]]] = [None for _ in range(batch_size)]
-        siglip_input = prepared_batch.get("siglip_embeds") or prepared_batch.get("conditioning_image_embeds")
+        siglip_input = prepared_batch.get("siglip_embeds", None)
+        if siglip_input is None:
+            siglip_input = prepared_batch.get("conditioning_image_embeds", None)
         if siglip_input is not None:
             siglip_feats = []
             if isinstance(siglip_input, torch.Tensor):
