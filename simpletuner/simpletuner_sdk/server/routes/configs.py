@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -16,6 +17,7 @@ from simpletuner.simpletuner_sdk.server.services.git_config_service import (
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 
 router = APIRouter(prefix="/api/configs", tags=["configurations"])
+logger = logging.getLogger(__name__)
 
 
 class ConfigRequest(BaseModel):
@@ -164,6 +166,7 @@ def _maybe_snapshot_on_save(
                 response["git_push_error"] = snapshot["push_error"]
     except GitConfigError as exc:
         response["git_error"] = exc.message
+        logger.warning("Git snapshot on save failed for '%s' (%s): %s", name, config_type, exc.message)
     return response
 
 
