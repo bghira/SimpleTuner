@@ -89,15 +89,16 @@ This document provides a detailed comparison between SCFM (Shortcutting Pre-trai
     3. `fast_stu_lora_parameters_ema` - Fast student LoRA EMA
 - Training involves:
   ```python
-  # First jump: Teacher teaching (if teacher_indices exist)
+  # Phase 1: Teacher teaching (if teacher_indices exist)
   # Switches to teacher LoRA parameters
   # Runs t_skip // 2 steps with teacher
   
-  # First jump: Self teaching (for self_indices)
+  # Phase 2: Self teaching (for self_indices)
   # Uses fast student EMA parameters
   # Runs t_skip // 2 steps
   
-  # Second jump: Always uses slow student EMA
+  # Phase 3: Student completion
+  # Always uses slow student EMA
   # Completes remaining t_skip // 2 steps
   ```
 - The `t_skip` parameter (default=2) defines how many teacher steps to skip
@@ -219,7 +220,7 @@ pipe_slow = FluxPipeline.from_pretrained(base_model).to(device)
 pipe_slow.load_lora_weights("output/glance-slow")
 
 # First phase: 5 steps
-# Note: output_type="latent" returns latent tensors via .images attribute
+# Note: When output_type="latent", the latent tensors are accessed via the .images attribute of the result
 latents = pipe_slow(
     prompt=prompt,
     num_inference_steps=5,
@@ -330,14 +331,14 @@ However, potential hybrid ideas:
 ## Technical Implementation Status in SimpleTuner
 
 ### Glance:
-✅ **Fully implemented and documented**
+**[FULLY IMPLEMENTED]**
 - Uses `--flow_custom_timesteps` parameter
 - Works with any flow-matching model (Flux, SD3, etc.)
 - Documented in `/documentation/distillation/GLANCE.md`
 - Simple config-based training
 
 ### SCFM:
-❌ **Not currently implemented**
+**[NOT IMPLEMENTED]**
 - Would require:
   - Dataset pre-generation pipeline
   - Dual/triple EMA system
