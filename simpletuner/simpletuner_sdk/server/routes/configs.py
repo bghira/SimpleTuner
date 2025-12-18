@@ -160,6 +160,8 @@ def _maybe_snapshot_on_save(
         snapshot = GIT_CONFIG_SERVICE.snapshot_on_save(name, config_type, prefs, message=message)
         if snapshot:
             response["git_snapshot"] = snapshot
+            if "push_error" in snapshot:
+                response["git_push_error"] = snapshot["push_error"]
     except GitConfigError as exc:
         response["git_error"] = exc.message
     return response
