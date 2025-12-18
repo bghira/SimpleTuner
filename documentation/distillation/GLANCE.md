@@ -8,6 +8,12 @@ Glance is more of a “single-image LoRA with a split schedule” than a true di
 - Custom flow timesteps instead of CDF sampling (`--flow_custom_timesteps`)
 - Works with flow-matching models (Flux, SD3-family, Qwen-Image, etc.)
 
+## Relation to SCFM (Shortcutting Pre-trained Flow Matching)
+
+- SCFM proposes learning shortcut trajectories so a pre-trained flow-matching model can be sampled with far fewer global steps while keeping quality on a full dataset.
+- Glance keeps the base model frozen and only trains two tiny LoRAs on a single image/caption, using explicit custom timestep lists; it is not a general shortcut or distillation of the whole model.
+- Result: Glance is a different technique; there is no SCFM-specific code path to enable here, though SCFM-style shortcuts could be explored separately.
+
 ## Prerequisites
 
 - Python 3.10–3.12, SimpleTuner installed (`pip install simpletuner[cuda]`)
