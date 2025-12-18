@@ -404,7 +404,8 @@ class TabService:
         try:
             defaults = WebUIStateStore().load_defaults()
             return bool(getattr(defaults, "git_mirror_enabled", False))
-        except Exception:
+        except Exception as exc:
+            logger.debug("Failed to evaluate git mirror enabled flag: %s", exc, exc_info=True)
             return False
 
     def get_all_tabs(self) -> List[Dict[str, str]]:

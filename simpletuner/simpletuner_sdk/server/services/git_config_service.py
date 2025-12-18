@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from fastapi import status
 
@@ -55,6 +55,7 @@ class GitConfigService:
                 self._store_cache[cache_key] = store
                 return store
         except Exception:
+            # If loading persisted defaults fails, fall back to the default ConfigStore.
             pass
         store = ConfigStore(config_type=config_type)
         self._store_cache[cache_key] = store
@@ -73,9 +74,18 @@ class GitConfigService:
 
         # Fallback to ConfigStore path resolution
         target = store._get_config_path(name_or_path)  # noqa: SLF001 - deliberate reuse
-        if not target.exists():
+        config_root = Path(store.config_dir).expanduser().resolve()
+        resolved_target = Path(target).expanduser().resolve()
+        try:
+            resolved_target.relative_to(config_root)
+        except ValueError as exc:
+            raise GitConfigError(
+                "Config path is outside the configs directory; access denied",
+                status.HTTP_400_BAD_REQUEST,
+            ) from exc
+        if not resolved_target.exists():
             raise GitConfigError(f"Config '{name_or_path}' not found", status.HTTP_404_NOT_FOUND)
-        return target.resolve()
+        return resolved_target
 
     def _ensure_tracked_location(self, path: Path, config_dir: Path) -> None:
         try:

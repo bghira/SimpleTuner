@@ -22,6 +22,7 @@ from simpletuner.simpletuner_sdk.server.services.webui_state import (
 )
 
 router = APIRouter(prefix="/api/webui", tags=["webui"])
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -279,7 +280,8 @@ def _sync_defaults_from_onboarding(store: WebUIStateStore, defaults: WebUIDefaul
 
     try:
         onboarding_state = store.load_onboarding()
-    except Exception:
+    except Exception as exc:
+        logger.debug("Failed to load onboarding state during defaults sync: %s", exc, exc_info=True)
         return defaults
 
     opt_out = set(getattr(defaults, "onboarding_sync_opt_out", []) or [])

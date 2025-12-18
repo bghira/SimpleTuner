@@ -27,17 +27,42 @@ if (!window.gitMirrorTabComponent) {
             },
             init() {
                 this.loadStatus();
-                this._syncTimer = window.setInterval(() => {
-                    this.loadStatus();
-                    if (this.syncOnboarding) {
-                        this.refreshOnboardingDefaults();
-                    }
-                }, 60000);
+                if (window.Alpine && typeof Alpine.effect === 'function' && typeof Alpine.onCleanup === 'function') {
+                    Alpine.effect(() => {
+                        const syncTimer = window.setInterval(() => {
+                            this.loadStatus();
+                            if (this.syncOnboarding) {
+                                this.refreshOnboardingDefaults();
+                            }
+                        }, 60000);
+                        Alpine.onCleanup(() => {
+                            window.clearInterval(syncTimer);
+                        });
+                    });
+                } else {
+                    this._syncTimer = window.setInterval(() => {
+                        this.loadStatus();
+                        if (this.syncOnboarding) {
+                            this.refreshOnboardingDefaults();
+                        }
+                    }, 60000);
+                    this._beforeUnloadHandler = () => {
+                        if (this._syncTimer) {
+                            window.clearInterval(this._syncTimer);
+                            this._syncTimer = null;
+                        }
+                    };
+                    window.addEventListener('beforeunload', this._beforeUnloadHandler);
+                }
             },
             destroy() {
                 if (this._syncTimer) {
                     window.clearInterval(this._syncTimer);
                     this._syncTimer = null;
+                }
+                if (this._beforeUnloadHandler) {
+                    window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+                    this._beforeUnloadHandler = null;
                 }
             },
             async loadStatus() {
@@ -68,6 +93,14 @@ if (!window.gitMirrorTabComponent) {
                 } finally {
                     this.loading = false;
                 }
+            },
+            sanitizeDisplay(value) {
+                if (value === undefined || value === null) {
+                    return '';
+                }
+                return String(value)
+                    .replace(/\u001b\[[0-9;]*m/g, '')
+                    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
             },
             async initRepo() {
                 this.loading = true;
@@ -255,8 +288,8 @@ if (!window.gitMirrorTabComponent) {
                     if (resolved.git_branch) {
                         this.branchName = resolved.git_branch;
                     }
-                } catch (_) {
-                    // background refresh best-effort
+                } catch (error) {
+                    console.error('Failed to refresh onboarding defaults', error);
                 }
             },
             statusBadge() {
@@ -284,12 +317,12 @@ if (!window.gitMirrorTabComponent) {
             <div class="row g-4">
                 <div class="col-xl-7">
                     <div class="border rounded p-3 h-100">
-                        <div class="d-flex justify-content-between align-items-center mb-2">
-                            <div>
-                                <strong>Repository</strong>
-                                <p class="text-muted small mb-0" x-text="status?.repo_root || 'Not initialized'"></p>
-                                <p class="text-muted small mb-0" x-text="status?.config_dir ? 'Configs: ' + status.config_dir : ''"></p>
-                            </div>
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <strong>Repository</strong>
+                                    <p class="text-muted small mb-0" x-text="sanitizeDisplay(status?.repo_root || 'Not initialized')"></p>
+                                    <p class="text-muted small mb-0" x-text="status?.config_dir ? 'Configs: ' + sanitizeDisplay(status.config_dir) : ''"></p>
+                                </div>
                             <button class="btn btn-outline-secondary btn-sm" type="button" @click="loadStatus()">
                                 <i class="fas fa-sync" :class="{ 'fa-spin': loading }"></i> Refresh
                             </button>
@@ -378,7 +411,7 @@ if (!window.gitMirrorTabComponent) {
                                 <div class="fw-bold mb-1">Uncommitted changes</div>
                                 <ul class="mb-0 ps-3">
                                     <template x-for="path in status.dirty_paths" :key="path">
-                                        <li x-text="path"></li>
+                                        <li x-text="sanitizeDisplay(path)"></li>
                                     </template>
                                 </ul>
                             </div>
@@ -432,8 +465,8 @@ if (!window.gitMirrorTabComponent) {
                         </template>
                         <template x-if="status && status.repo_present && status.remote">
                             <div class="alert alert-info mt-3 mb-0">
-                                Remote: <strong x-text="status.remote"></strong><br>
-                                Branch: <strong x-text="status.branch || 'unknown'"></strong>
+                                Remote: <strong x-text="sanitizeDisplay(status.remote)"></strong><br>
+                                Branch: <strong x-text="sanitizeDisplay(status.branch || 'unknown')"></strong>
                             </div>
                         </template>
                     </div>

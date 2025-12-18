@@ -151,13 +151,14 @@ async def git_diff(
 
 
 @router.post("/snapshot")
-async def git_snapshot(payload: GitSnapshotRequest) -> Dict[str, Any]:
+async def git_snapshot(payload: GitSnapshotRequest, config_type: Optional[str] = None) -> Dict[str, Any]:
+    target_config_type = config_type or payload.config_type or "model"
     message = (payload.message or "").strip() or "Snapshot from SimpleTuner"
     result = _handle_config_call(
         GIT_CONFIG_SERVICE.snapshot_configs,
         payload.paths,
         message,
-        payload.config_type,
+        target_config_type,
         payload.include_untracked,
         payload.push,
     )
@@ -165,11 +166,12 @@ async def git_snapshot(payload: GitSnapshotRequest) -> Dict[str, Any]:
 
 
 @router.post("/revert")
-async def git_revert(payload: GitRevertRequest) -> Dict[str, Any]:
+async def git_revert(payload: GitRevertRequest, config_type: Optional[str] = None) -> Dict[str, Any]:
+    target_config_type = config_type or payload.config_type or "model"
     return _handle_config_call(
         GIT_CONFIG_SERVICE.restore_config,
         payload.path,
-        payload.config_type,
+        target_config_type,
         payload.commit,
     )
 
