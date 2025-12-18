@@ -121,6 +121,15 @@ class ZImageOmni(ImageModelFoundation):
         SigLIP conditioning is optional; enable when a conditioning dataset is configured.
         The conditioning dataset images (not the primary/edited images) are encoded via the provider below.
         """
+        try:
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            if StateTracker.get_conditioning_mappings():
+                return True
+        except Exception:
+            # Fallback to config-based detection when StateTracker is not yet initialised.
+            pass
+
         cond_data = getattr(self.config, "conditioning_data", None)
         if isinstance(cond_data, (list, tuple, set)):
             return len(cond_data) > 0
