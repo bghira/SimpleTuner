@@ -223,101 +223,126 @@ class ZImageOmni(ImageModelFoundation):
         )
         return self._conditioning_image_embedder
 
-    def model_predict(self, prepared_batch, custom_timesteps: Optional[list] = None):
-        latents = prepared_batch["noisy_latents"]
+    def _normalize_latents(self, latents: torch.Tensor) -> torch.Tensor:
         if latents.dim() == 4:
             latents = latents.unsqueeze(2)
         elif latents.dim() != 5:
             raise ValueError(f"Unexpected latent rank {latents.dim()} for Z-Image Omni.")
+        return latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
-        batch_size = latents.shape[0]
-        prompt_embeds = prepared_batch["encoder_hidden_states"]
-        attention_mask = prepared_batch.get("encoder_attention_mask")
+    def _prepare_prompt_list(
+        self, prompt_embeds: torch.Tensor, attention_mask: Optional[torch.Tensor], batch_size: int
+    ) -> List[List[torch.Tensor]]:
         if attention_mask is None:
             raise ValueError("encoder_attention_mask is required for Z-Image Omni training.")
-
         prompt_list: List[List[torch.Tensor]] = []
         for idx in range(batch_size):
             mask = attention_mask[idx].view(-1).bool()
             prompt_list.append([prompt_embeds[idx][mask].to(device=self.accelerator.device, dtype=self.config.weight_dtype)])
+        return prompt_list
 
-        latents = latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
-        latent_list = [sample for sample in latents]
-
-        cond_latents_input = prepared_batch.get("conditioning_latents")
+    def _prepare_conditioning_latents(
+        self, cond_latents_input: Optional[object], batch_size: int
+    ) -> List[List[torch.Tensor]]:
         cond_latent_list: List[List[torch.Tensor]] = [[] for _ in range(batch_size)]
-        if cond_latents_input is not None:
-            if isinstance(cond_latents_input, torch.Tensor):
-                cond_latents_tensor = cond_latents_input
-                if cond_latents_tensor.dim() == 4:
-                    cond_latents_tensor = cond_latents_tensor.unsqueeze(2)
-                cond_latents_tensor = cond_latents_tensor.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
-                cond_latent_list = [[sample] for sample in cond_latents_tensor]
-            elif isinstance(cond_latents_input, list):
-                cond_latent_list = []
-                for sample in cond_latents_input:
-                    if sample is None:
-                        cond_latent_list.append([])
-                        continue
-                    if not torch.is_tensor(sample):
-                        raise ValueError("conditioning_latents items must be tensors or None.")
-                    if sample.dim() == 4:
-                        sample = sample.unsqueeze(2)
-                    cond_latent_list.append([sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)])
-            if len(cond_latent_list) != batch_size:
-                raise ValueError("conditioning_latents length must match batch size.")
+        if cond_latents_input is None:
+            return cond_latent_list
 
+        if isinstance(cond_latents_input, torch.Tensor):
+            cond_latents_tensor = cond_latents_input
+            if cond_latents_tensor.dim() == 4:
+                cond_latents_tensor = cond_latents_tensor.unsqueeze(2)
+            cond_latents_tensor = cond_latents_tensor.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+            cond_latent_list = [[sample] for sample in cond_latents_tensor]
+        elif isinstance(cond_latents_input, list):
+            cond_latent_list = []
+            for sample in cond_latents_input:
+                if sample is None:
+                    cond_latent_list.append([])
+                    continue
+                if not torch.is_tensor(sample):
+                    raise ValueError("conditioning_latents items must be tensors or None.")
+                if sample.dim() == 4:
+                    sample = sample.unsqueeze(2)
+                cond_latent_list.append([sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)])
+        else:
+            raise ValueError("conditioning_latents must be a tensor or list when provided.")
+
+        if len(cond_latent_list) != batch_size:
+            raise ValueError("conditioning_latents length must match batch size.")
+        return cond_latent_list
+
+    def _prepare_siglip_features(
+        self, prepared_batch: dict, cond_latent_list: List[List[torch.Tensor]], batch_size: int
+    ) -> List[Optional[List[torch.Tensor]]]:
         siglip_feats: List[Optional[List[torch.Tensor]]] = [None for _ in range(batch_size)]
         siglip_input = prepared_batch.get("siglip_embeds", None)
         if siglip_input is None:
             siglip_input = prepared_batch.get("conditioning_image_embeds", None)
-        if siglip_input is not None:
-            siglip_feats = []
-            if isinstance(siglip_input, torch.Tensor):
-                for sample in siglip_input:
-                    siglip_feats.append([sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)])
-            elif isinstance(siglip_input, list):
-                for sample in siglip_input:
-                    if sample is None:
-                        siglip_feats.append(None)
-                    elif torch.is_tensor(sample):
-                        siglip_feats.append([sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)])
-                    elif isinstance(sample, list):
-                        siglip_feats.append(
-                            [s.to(device=self.accelerator.device, dtype=self.config.weight_dtype) for s in sample]
-                        )
-                    else:
-                        raise ValueError("siglip_embeds items must be tensors, lists of tensors or None.")
-            else:
-                raise ValueError("siglip_embeds must be a tensor or list when provided.")
-            if len(siglip_feats) != batch_size:
-                raise ValueError("siglip_embeds length must match batch size.")
-            cond_counts = [len(c) for c in cond_latent_list]
-            for idx, sels in enumerate(siglip_feats):
-                if cond_counts[idx] == 0:
-                    siglip_feats[idx] = None
-                    continue
-                if sels is None:
-                    raise ValueError(f"Missing SigLIP embeds for batch item {idx} with conditioning latents present.")
-                if len(sels) < cond_counts[idx]:
-                    raise ValueError(
-                        f"SigLIP embeds count ({len(sels)}) is less than conditioning latents ({cond_counts[idx]}) "
-                        f"for batch item {idx}."
-                    )
-                if len(sels) == cond_counts[idx]:
-                    siglip_feats[idx] = sels + [None]
-                else:
-                    siglip_feats[idx] = sels
+        if siglip_input is None:
+            return siglip_feats
 
-        timesteps = prepared_batch["timesteps"]
+        siglip_feats = []
+        if isinstance(siglip_input, torch.Tensor):
+            for sample in siglip_input:
+                siglip_feats.append([sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)])
+        elif isinstance(siglip_input, list):
+            for sample in siglip_input:
+                if sample is None:
+                    siglip_feats.append(None)
+                    continue
+                if torch.is_tensor(sample):
+                    siglip_feats.append([sample.to(device=self.accelerator.device, dtype=self.config.weight_dtype)])
+                elif isinstance(sample, list):
+                    siglip_feats.append(
+                        [s.to(device=self.accelerator.device, dtype=self.config.weight_dtype) for s in sample]
+                    )
+                else:
+                    raise ValueError("siglip_embeds items must be tensors, lists of tensors or None.")
+        else:
+            raise ValueError("siglip_embeds must be a tensor or list when provided.")
+
+        if len(siglip_feats) != batch_size:
+            raise ValueError("siglip_embeds length must match batch size.")
+
+        cond_counts = [len(c) for c in cond_latent_list]
+        for idx, sels in enumerate(siglip_feats):
+            if cond_counts[idx] == 0:
+                siglip_feats[idx] = None
+                continue
+            if sels is None:
+                raise ValueError(f"Missing SigLIP embeds for batch item {idx} with conditioning latents present.")
+            if len(sels) < cond_counts[idx]:
+                raise ValueError(
+                    f"SigLIP embeds count ({len(sels)}) is less than conditioning latents ({cond_counts[idx]}) "
+                    f"for batch item {idx}."
+                )
+            if len(sels) == cond_counts[idx]:
+                siglip_feats[idx] = sels + [None]
+        return siglip_feats
+
+    def _normalize_timesteps(self, timesteps: object) -> torch.Tensor:
         if not torch.is_tensor(timesteps):
             timesteps = torch.tensor(timesteps, device=self.accelerator.device, dtype=torch.float32)
         else:
             timesteps = timesteps.to(device=self.accelerator.device, dtype=torch.float32)
-        normalized_t = (1000.0 - timesteps) / 1000.0
+        return (1000.0 - timesteps) / 1000.0
+
+    def model_predict(self, prepared_batch, custom_timesteps: Optional[list] = None):
+        latents = self._normalize_latents(prepared_batch["noisy_latents"])
+        batch_size = latents.shape[0]
+
+        prompt_embeds = prepared_batch["encoder_hidden_states"]
+        attention_mask = prepared_batch.get("encoder_attention_mask")
+        prompt_list = self._prepare_prompt_list(prompt_embeds, attention_mask, batch_size)
+
+        cond_latent_list = self._prepare_conditioning_latents(prepared_batch.get("conditioning_latents"), batch_size)
+        siglip_feats = self._prepare_siglip_features(prepared_batch, cond_latent_list, batch_size)
+
+        normalized_t = self._normalize_timesteps(prepared_batch["timesteps"])
 
         model_out_list = self.model(
-            latent_list,
+            [sample for sample in latents],
             normalized_t,
             prompt_list,
             cond_latent_list,

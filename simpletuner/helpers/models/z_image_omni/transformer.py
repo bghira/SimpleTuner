@@ -971,7 +971,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             for layer in self.context_refiner:
                 cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis)
 
-        siglip_present = any(feats is not None and feats.shape[0] > 0 for feats in siglip_feats)
+        siglip_present = any(feats is not None and torch.is_tensor(feats) and feats.shape[0] > 0 for feats in siglip_feats)
         if siglip_present:
             siglip_item_seqlens = [len(_) for _ in siglip_feats]
             siglip_max_item_seqlen = max(siglip_item_seqlens)
