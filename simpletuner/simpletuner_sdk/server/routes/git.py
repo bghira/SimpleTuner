@@ -95,19 +95,19 @@ async def git_status(config_type: str = "model") -> Dict[str, Any]:
 
 @router.post("/init")
 async def git_init(payload: GitInitRequest, config_type: str = "model") -> Dict[str, Any]:
-    status_obj = _handle_repo_call(
+    _handle_repo_call(
         GIT_REPO_SERVICE.init_repo,
         _config_dir(config_type),
         remote=payload.remote,
         branch=payload.branch,
     )
-    return git_status(config_type)  # type: ignore[return-value]
+    return await git_status(config_type)
 
 
 @router.post("/remote")
 async def git_remote(payload: GitRemoteRequest, config_type: str = "model") -> Dict[str, Any]:
     _handle_repo_call(GIT_REPO_SERVICE.set_remote, _config_dir(config_type), payload.remote)
-    return git_status(config_type)  # type: ignore[return-value]
+    return await git_status(config_type)
 
 
 @router.post("/branch")
@@ -118,13 +118,13 @@ async def git_branch(payload: GitBranchRequest, config_type: str = "model") -> D
         payload.name,
         payload.create,
     )
-    return git_status(config_type)  # type: ignore[return-value]
+    return await git_status(config_type)
 
 
 @router.post("/identity")
 async def git_identity(payload: GitIdentityRequest, config_type: str = "model") -> Dict[str, Any]:
     _handle_repo_call(GIT_REPO_SERVICE.set_identity, _config_dir(config_type), payload.name, payload.email)
-    return git_status(config_type)  # type: ignore[return-value]
+    return await git_status(config_type)
 
 
 @router.get("/history")
@@ -181,8 +181,8 @@ async def git_push(payload: GitRemoteActionRequest, config_type: str = "model") 
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Remote actions require explicit opt-in.",
         )
-    status_obj = _handle_repo_call(GIT_REPO_SERVICE.push, _config_dir(config_type), payload.remote, payload.branch)
-    return git_status(config_type)  # type: ignore[return-value]
+    _handle_repo_call(GIT_REPO_SERVICE.push, _config_dir(config_type), payload.remote, payload.branch)
+    return await git_status(config_type)
 
 
 @router.post("/pull")
@@ -193,4 +193,4 @@ async def git_pull(payload: GitRemoteActionRequest, config_type: str = "model") 
             detail="Remote actions require explicit opt-in.",
         )
     _handle_repo_call(GIT_REPO_SERVICE.pull, _config_dir(config_type), payload.remote, payload.branch)
-    return git_status(config_type)  # type: ignore[return-value]
+    return await git_status(config_type)

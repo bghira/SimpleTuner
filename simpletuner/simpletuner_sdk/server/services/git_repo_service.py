@@ -256,7 +256,14 @@ class GitRepoService:
 
     def create_or_switch_branch(self, config_dir: Path | str, name: str, create: bool = False) -> GitStatus:
         with self._lock:
-            root = self._ensure_repo(self._normalize_dir(config_dir))
+            config_path = self._normalize_dir(config_dir)
+            root = self._ensure_repo(config_path)
+            dirty_paths = self._parse_dirty(root, config_path)
+            if dirty_paths:
+                raise GitRepoError(
+                    f"Cannot switch branches with uncommitted changes in configs directory: {', '.join(dirty_paths[:3])}{'...' if len(dirty_paths) > 3 else ''}",
+                    status.HTTP_409_CONFLICT,
+                )
             args = ["checkout", "-B" if create else "", name]
             args = [part for part in args if part]
             self._run_git(args, cwd=root)
@@ -271,15 +278,31 @@ class GitRepoService:
             self._run_git(args, cwd=root)
         return self.discover_repo(root)
 
-    def pull(self, config_dir: Path | str, remote: Optional[str] = None, branch: Optional[str] = None) -> GitStatus:
+    def pull(
+        self,
+        config_dir: Path | str,
+        remote: Optional[str] = None,
+        branch: Optional[str] = None,
+        autostash: bool = True,
+    ) -> GitStatus:
         with self._lock:
             root = self._ensure_repo(self._normalize_dir(config_dir))
             args = ["pull"]
+            if autostash:
+                args.append("--autostash")
             if remote:
                 args.append(remote)
             if branch:
                 args.append(branch)
-            self._run_git(args, cwd=root)
+            try:
+                self._run_git(args, cwd=root, timeout=60)
+            except GitRepoError as exc:
+                if "conflict" in exc.message.lower() or "merge" in exc.message.lower():
+                    raise GitRepoError(
+                        f"Pull failed due to conflicts. Resolve manually or stash changes: {exc.message}",
+                        status.HTTP_409_CONFLICT,
+                    ) from exc
+                raise
         return self.discover_repo(root)
 
     def push(self, config_dir: Path | str, remote: Optional[str] = None, branch: Optional[str] = None) -> GitStatus:
@@ -290,7 +313,7 @@ class GitRepoService:
                 args.append(remote)
             if branch:
                 args.append(branch)
-            self._run_git(args, cwd=root)
+            self._run_git(args, cwd=root, timeout=60)
         return self.discover_repo(root)
 
     def log(self, config_dir: Path | str, path: Path | str, skip: int = 0, limit: int = 20) -> List[Dict[str, object]]:
