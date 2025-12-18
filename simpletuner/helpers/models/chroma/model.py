@@ -153,9 +153,24 @@ class Chroma(ImageModelFoundation):
     def collate_prompt_embeds(self, text_encoder_output: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         if not text_encoder_output:
             return {}
+
+        prompt_embeds_list = [t["prompt_embeds"] for t in text_encoder_output]
+        attention_masks_list = [t["attention_masks"] for t in text_encoder_output]
+
+        # Handle both 2D (seq, dim) and 3D (1, seq, dim) cached embeddings
+        if prompt_embeds_list[0].dim() == 3:
+            prompt_embeds = torch.cat(prompt_embeds_list, dim=0)
+        else:
+            prompt_embeds = torch.stack(prompt_embeds_list)
+
+        if attention_masks_list[0].dim() == 2:
+            attention_masks = torch.cat(attention_masks_list, dim=0)
+        else:
+            attention_masks = torch.stack(attention_masks_list)
+
         return {
-            "prompt_embeds": torch.stack([t["prompt_embeds"] for t in text_encoder_output]),
-            "attention_masks": torch.stack([t["attention_masks"] for t in text_encoder_output]),
+            "prompt_embeds": prompt_embeds,
+            "attention_masks": attention_masks,
         }
 
     def convert_text_embed_for_pipeline(self, text_embedding: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
