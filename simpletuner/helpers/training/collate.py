@@ -713,7 +713,9 @@ def collate_fn(batch):
         normalized_training_examples: dict[str, list[dict | TrainingSample]] = defaultdict(list)
         # In combined mode, each training example needs to be matched once per conditioning backend.
         # In random mode, each training example is matched only once.
-        num_matches_per_example = 1 if (sampling_mode == "random" and len(conditioning_backends) > 1) else len(conditioning_backends)
+        num_matches_per_example = (
+            1 if (sampling_mode == "random" and len(conditioning_backends) > 1) else len(conditioning_backends)
+        )
         for training_example in examples:
             training_image_path = (
                 training_example.get("image_path")
@@ -929,9 +931,16 @@ def collate_fn(batch):
             "prompt": caption,
             "dataset_relative_path": normalized_identifier,
         }
-        pixel_value = _conditioning_pixel_value_for_example(idx)
-        if pixel_value is not None:
-            metadata["conditioning_pixel_values"] = pixel_value
+        # Only include conditioning pixels for text embedding when using a single
+        # conditioning image. With multiple backends in combined mode, skip image
+        # context in embeddings and rely solely on latent references.
+        # (In random mode with multiple backends, only one image is selected, so
+        # we can still use it for text embedding context.)
+        has_multiple_combined_refs = len(conditioning_backends) > 1 and is_combined_mode
+        if not has_multiple_combined_refs:
+            pixel_value = _conditioning_pixel_value_for_example(idx)
+            if pixel_value is not None:
+                metadata["conditioning_pixel_values"] = pixel_value
         if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and data_backend_id and example_path:
             key_value = f"{data_backend_id}:{normalized_identifier}"
         elif key_type is TextEmbedCacheKey.FILENAME and example_path:
