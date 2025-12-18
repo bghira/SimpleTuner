@@ -137,5 +137,187 @@ class TabServiceGitGatingTests(unittest.TestCase):
             self.assertIsNotNone(config)
 
 
+class GitRepoServiceBranchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._config_store_instances = ConfigStore._instances.copy()
+        ConfigStore._instances = {}
+
+    def tearDown(self) -> None:
+        ConfigStore._instances = self._config_store_instances
+
+    def test_switch_branch_blocked_when_dirty(self) -> None:
+        from simpletuner.simpletuner_sdk.server.services.git_repo_service import GitRepoError
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            config_file = config_dir / "config.json"
+            config_file.write_text("{}")
+
+            GIT_REPO_SERVICE.init_repo(config_dir)
+            GIT_REPO_SERVICE.stage_and_commit(config_dir, [config_file], "initial", include_untracked=True)
+
+            # Dirty the tree
+            config_file.write_text('{"dirty": true}')
+
+            with self.assertRaises(GitRepoError) as ctx:
+                GIT_REPO_SERVICE.create_or_switch_branch(config_dir, "new-branch", create=True)
+
+            self.assertIn("uncommitted changes", ctx.exception.message.lower())
+
+    def test_switch_branch_succeeds_when_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_dir = Path(tmpdir)
+            config_file = config_dir / "config.json"
+            config_file.write_text("{}")
+
+            GIT_REPO_SERVICE.init_repo(config_dir)
+            GIT_REPO_SERVICE.stage_and_commit(config_dir, [config_file], "initial", include_untracked=True)
+
+            status = GIT_REPO_SERVICE.create_or_switch_branch(config_dir, "new-branch", create=True)
+            self.assertEqual(status.branch, "new-branch")
+
+    def test_switch_branch_allowed_when_dirty_outside_config_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            config_dir = repo_root / "configs"
+            config_dir.mkdir()
+            config_file = config_dir / "config.json"
+            config_file.write_text("{}")
+            outside_file = repo_root / "outside.txt"
+            outside_file.write_text("initial")
+
+            GIT_REPO_SERVICE.init_repo(repo_root)
+            GIT_REPO_SERVICE.stage_and_commit(repo_root, [config_file, outside_file], "initial", include_untracked=True)
+
+            # Dirty a file outside config_dir
+            outside_file.write_text("dirty")
+
+            # Should succeed since only files outside config_dir are dirty
+            status = GIT_REPO_SERVICE.create_or_switch_branch(config_dir, "new-branch", create=True)
+            self.assertEqual(status.branch, "new-branch")
+
+
+class GitRoutesTests(unittest.TestCase):
+    """Router-level tests for git API endpoints."""
+
+    def setUp(self) -> None:
+        self._config_store_instances = ConfigStore._instances.copy()
+        ConfigStore._instances = {}
+        GIT_CONFIG_SERVICE._store_cache = {}
+
+    def tearDown(self) -> None:
+        ConfigStore._instances = self._config_store_instances
+        GIT_CONFIG_SERVICE._store_cache = {}
+
+    def test_git_status_endpoint(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ConfigStore(config_dir=tmpdir, config_type="model")
+            GIT_CONFIG_SERVICE._store_cache["model"] = store
+
+            from simpletuner.simpletuner_sdk.server.routes.git import router
+            from fastapi import FastAPI
+
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.get("/api/git/status")
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertIn("git_available", data)
+            self.assertIn("repo_present", data)
+
+    def test_git_init_endpoint(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ConfigStore(config_dir=tmpdir, config_type="model")
+            GIT_CONFIG_SERVICE._store_cache["model"] = store
+
+            from simpletuner.simpletuner_sdk.server.routes.git import router
+            from fastapi import FastAPI
+
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.post("/api/git/init", json={})
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertTrue(data["repo_present"])
+
+    def test_git_identity_endpoint(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ConfigStore(config_dir=tmpdir, config_type="model")
+            GIT_CONFIG_SERVICE._store_cache["model"] = store
+            GIT_REPO_SERVICE.init_repo(store.config_dir)
+
+            from simpletuner.simpletuner_sdk.server.routes.git import router
+            from fastapi import FastAPI
+
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/git/identity",
+                json={"name": "Test User", "email": "test@example.com"},
+            )
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data["user_name"], "Test User")
+            self.assertEqual(data["user_email"], "test@example.com")
+            self.assertTrue(data["identity_configured"])
+
+    def test_git_branch_blocked_when_dirty(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ConfigStore(config_dir=tmpdir, config_type="model")
+            GIT_CONFIG_SERVICE._store_cache["model"] = store
+
+            config_file = Path(tmpdir) / "config.json"
+            config_file.write_text("{}")
+            GIT_REPO_SERVICE.init_repo(store.config_dir)
+            GIT_REPO_SERVICE.stage_and_commit(store.config_dir, [config_file], "initial", include_untracked=True)
+
+            # Dirty the tree
+            config_file.write_text('{"dirty": true}')
+
+            from simpletuner.simpletuner_sdk.server.routes.git import router
+            from fastapi import FastAPI
+
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.post("/api/git/branch", json={"name": "new-branch", "create": True})
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("uncommitted", response.json()["detail"].lower())
+
+    def test_git_push_requires_opt_in(self) -> None:
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = ConfigStore(config_dir=tmpdir, config_type="model")
+            GIT_CONFIG_SERVICE._store_cache["model"] = store
+            GIT_REPO_SERVICE.init_repo(store.config_dir)
+
+            from simpletuner.simpletuner_sdk.server.routes.git import router
+            from fastapi import FastAPI
+
+            app = FastAPI()
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.post("/api/git/push", json={"allow_remote": False})
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("opt-in", response.json()["detail"].lower())
+
+
 if __name__ == "__main__":
     unittest.main()
