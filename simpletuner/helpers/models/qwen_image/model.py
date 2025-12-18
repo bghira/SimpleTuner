@@ -659,7 +659,10 @@ class QwenImage(ImageModelFoundation):
         return super().text_embed_cache_key()
 
     def requires_text_embed_image_context(self) -> bool:
-        return QwenImage._is_edit_config(self)
+        # Only edit-v1 requires image context in text embeddings.
+        # Edit-v2 supports multiple conditioning images, so we skip image context
+        # in embeddings and rely solely on the latent references.
+        return QwenImage._is_edit_v1_config(self)
 
     def requires_conditioning_image_embeds(self) -> bool:
         return QwenImage._is_edit_v1_config(self)
