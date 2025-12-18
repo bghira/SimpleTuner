@@ -352,6 +352,59 @@ class ZImageOmniPipeline(DiffusionPipeline, ZImageLoraLoaderMixin, FromSingleFil
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
     ):
+        r"""
+        Function invoked when calling the pipeline for generation with optional image conditioning.
+
+        Args:
+            image (`PIL.Image.Image` or `List[PIL.Image.Image]`, *optional*):
+                Conditioning images for image-to-image guidance.
+            prompt (`str` or `List[str]`, *optional*):
+                The prompt or prompts to guide image generation. Required when `prompt_embeds` is not provided.
+            height (`int`, *optional*):
+                The height in pixels of the generated image. Defaults to the conditioning image height or 1024.
+            width (`int`, *optional*):
+                The width in pixels of the generated image. Defaults to the conditioning image width or 1024.
+            num_inference_steps (`int`, *optional*, defaults to 50):
+                The number of denoising steps. More steps can improve quality at the cost of speed.
+            sigmas (`List[float]`, *optional*):
+                Custom sigma schedule for schedulers that support it.
+            guidance_scale (`float`, *optional*, defaults to 5.0):
+                Classifier-free guidance scale; values > 1 enable guidance.
+            cfg_normalization (`bool`, *optional*, defaults to False):
+                Whether to normalize classifier-free guidance predictions.
+            cfg_truncation (`float`, *optional*, defaults to 1.0):
+                Truncation threshold where guidance is disabled for late timesteps.
+            negative_prompt (`str` or `List[str]`, *optional*):
+                Negative prompts to steer generation away from undesired concepts.
+            num_images_per_prompt (`int`, *optional*, defaults to 1):
+                Number of images to generate per prompt.
+            generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
+                Random generator(s) to make generation deterministic.
+            latents (`torch.FloatTensor`, *optional*):
+                Pre-generated latents to use instead of sampling new noise.
+            prompt_embeds (`List[torch.FloatTensor]`, *optional*):
+                Pre-computed prompt embeddings.
+            negative_prompt_embeds (`List[torch.FloatTensor]`, *optional*):
+                Pre-computed negative prompt embeddings.
+            output_type (`str`, *optional*, defaults to `"pil"`):
+                The output format of the generated image: `"pil"` or `"latent"`.
+            return_dict (`bool`, *optional*, defaults to True):
+                Whether to return a [`~pipelines.z_image_omni.ZImagePipelineOutput`] instead of a tuple.
+            joint_attention_kwargs (`dict`, *optional*):
+                Extra kwargs forwarded to the attention processor.
+            callback_on_step_end (`Callable`, *optional*):
+                Function executed at the end of each denoising step.
+            callback_on_step_end_tensor_inputs (`List[str]`, *optional*):
+                Names of tensors to include in the callback kwargs.
+            max_sequence_length (`int`, *optional*, defaults to 512):
+                Maximum sequence length to use with the `prompt`.
+
+        Examples:
+
+        Returns:
+            [`~pipelines.z_image_omni.ZImagePipelineOutput`] or `tuple`:
+            The output includes generated images when `return_dict` is True; otherwise a tuple with images.
+        """
         if image is not None and not isinstance(image, list):
             image = [image]
         num_condition_images = len(image) if image is not None else 0

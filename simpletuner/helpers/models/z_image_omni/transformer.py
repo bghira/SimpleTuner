@@ -400,18 +400,38 @@ class RopeEmbedder:
         assert ids.shape[-1] == len(self.axes_dims)
         device = ids.device
 
+        max_ids = [int(ids[:, i].max().item()) if ids.numel() > 0 else -1 for i in range(len(self.axes_dims))]
+
         if self.freqs_cis is None:
-            self.freqs_cis = self.precompute_freqs_cis(self.axes_dims, self.axes_lens, theta=self.theta)
-            self.freqs_cis = [freqs_cis.to(device) for freqs_cis in self.freqs_cis]
+            target_lens = [
+                max(self.axes_lens[i], max_ids[i] + 1) if max_ids[i] >= 0 else self.axes_lens[i]
+                for i in range(len(self.axes_dims))
+            ]
+            self.freqs_cis = self.precompute_freqs_cis(self.axes_dims, target_lens, theta=self.theta)
         else:
-            if self.freqs_cis[0].device != device:
-                self.freqs_cis = [freqs_cis.to(device) for freqs_cis in self.freqs_cis]
+            # Grow cached frequencies if incoming position ids exceed the precomputed range.
+            for i, max_id in enumerate(max_ids):
+                needed = max_id + 1
+                if needed > self.freqs_cis[i].shape[0]:
+                    new_len = max(self.axes_lens[i], needed)
+                    self.freqs_cis[i] = self.precompute_freqs_cis(
+                        [self.axes_dims[i]],
+                        [new_len],
+                        theta=self.theta,
+                    )[0]
+
+        if any(freqs_cis.device != device for freqs_cis in self.freqs_cis):
+            self.freqs_cis = [freqs_cis.to(device) for freqs_cis in self.freqs_cis]
 
         result = []
         for i in range(len(self.axes_dims)):
             index = ids[:, i]
             result.append(self.freqs_cis[i][index])
-        return torch.cat(result, dim=-1)
+        freqs_cis = torch.cat(result, dim=-1)
+        target_dim = sum(self.axes_dims) // 2
+        if freqs_cis.shape[-1] > target_dim:
+            freqs_cis = freqs_cis[..., :target_dim]
+        return freqs_cis
 
 
 class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
@@ -519,6 +539,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         self.siglip_embedder = nn.Sequential(
             RMSNorm(siglip_feat_dim, eps=norm_eps), nn.Linear(siglip_feat_dim, dim, bias=True)
         )
+        self.siglip_feat_dim = siglip_feat_dim
 
         self.x_pad_token = nn.Parameter(torch.empty((1, dim)))
         self.cap_pad_token = nn.Parameter(torch.empty((1, dim)))
@@ -601,7 +622,7 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         pF = f_patch_size
         device = all_x[0][-1].device
         dtype = all_x[0][-1].dtype
-        sig_pad_dim = 1152
+        sig_pad_dim = self.siglip_feat_dim
 
         all_x_padded = []
         all_x_size = []
