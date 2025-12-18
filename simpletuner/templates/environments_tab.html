@@ -45,6 +45,15 @@ delete window.__promptLibraries;
 
 const cloneValue = (value) => JSON.parse(JSON.stringify(value));
 
+const handleGitResponseWarnings = (data) => {
+    if (data && data.git_push_error) {
+        window.showToast && window.showToast('Git push failed: ' + data.git_push_error, 'warning');
+    }
+    if (data && data.git_error) {
+        window.showToast && window.showToast('Git snapshot failed: ' + data.git_error, 'warning');
+    }
+};
+
 const safeGetPreferredViewMode = () => {
     if (typeof localStorage === 'undefined') {
         return 'cards';
@@ -567,21 +576,23 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 });
 
                 if (response.ok) {
-                this.closeCreateDataloaderModal();
-                // Force reload shared dataloader store
-                const dataloaderStore = Alpine.store('dataloaderConfigs');
-                if (dataloaderStore) {
-                    await dataloaderStore.load(true);
-                }
-                if (this.configType === 'dataloader') {
-                    await this.loadConfigs();
+                    const data = await response.json().catch(() => ({}));
+                    handleGitResponseWarnings(data);
+                    this.closeCreateDataloaderModal();
+                    // Force reload shared dataloader store
+                    const dataloaderStore = Alpine.store('dataloaderConfigs');
+                    if (dataloaderStore) {
+                        await dataloaderStore.load(true);
+                    }
+                    if (this.configType === 'dataloader') {
+                        await this.loadConfigs();
+                    } else {
+                        this.dataloaderConfigs = [];
+                    }
+                    window.showToast('Dataloader configuration created', 'success');
                 } else {
-                    this.dataloaderConfigs = [];
-                }
-                window.showToast('Dataloader configuration created', 'success');
-            } else {
-                const error = await response.json().catch(() => ({}));
-                window.showToast(error.detail || 'Failed to create dataloader', 'error');
+                    const error = await response.json().catch(() => ({}));
+                    window.showToast(error.detail || 'Failed to create dataloader', 'error');
                 }
             } catch (error) {
                 console.error('Failed to create dataloader:', error);
@@ -744,7 +755,12 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                     const detail = await response.json().catch(() => ({}));
                     throw new Error(detail.detail || 'Failed to create snapshot');
                 }
-                window.showToast && window.showToast('Snapshot created', 'success');
+                const result = await response.json();
+                if (result.push_error) {
+                    window.showToast && window.showToast('Snapshot created but push failed: ' + result.push_error, 'warning');
+                } else {
+                    window.showToast && window.showToast('Snapshot created', 'success');
+                }
                 await this.loadGitStatus(true);
                 if (this.gitHistoryModal.open) {
                     await this.openHistoryModal(target);
@@ -1805,6 +1821,8 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                         const error = await response.json().catch(() => ({}));
                         throw new Error(error.detail || 'Failed to save LyCORIS configuration');
                     }
+                    const data = await response.json().catch(() => ({}));
+                    handleGitResponseWarnings(data);
                     window.showToast('LyCORIS configuration saved', 'success');
                     await this.loadLycorisConfig(environmentId);
                     console.log('[LyCORIS UI] Saved environment LyCORIS config', environmentId);

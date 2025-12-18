@@ -28,6 +28,7 @@ if (!window.gitMirrorTabComponent) {
             init() {
                 this.loadStatus();
                 this._syncTimer = window.setInterval(() => {
+                    this.loadStatus();
                     if (this.syncOnboarding) {
                         this.refreshOnboardingDefaults();
                     }
