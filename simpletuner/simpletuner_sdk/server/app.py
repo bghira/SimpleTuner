@@ -90,11 +90,19 @@ async def _autostart_training(env: str) -> None:
     from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
     from simpletuner.simpletuner_sdk.server.services.training_service import start_training_job, validate_training_config
 
+    store = ConfigStore()
+
     backend_override = os.environ.get(
         "SIMPLETUNER_CONFIG_BACKEND",
         os.environ.get("CONFIG_BACKEND", os.environ.get("CONFIG_TYPE")),
     )
     config_path_override = os.environ.get("CONFIG_PATH")
+
+    # Respect the WebUI onboarding configs_dir if present, overriding the generic default
+    if getattr(store, "config_dir", None):
+        resolved_config_dir = str(store.config_dir)
+        if os.environ.get("SIMPLETUNER_CONFIG_DIR") != resolved_config_dir:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = resolved_config_dir
 
     candidate_paths = _candidate_config_paths(env, backend_override, config_path_override)
     config_path = next((path for path in candidate_paths if path.is_file()), None)
@@ -161,8 +169,6 @@ async def _autostart_training(env: str) -> None:
 
     config_data = _load_config_from_path(config_path, backend)
     complete_config = _coerce_cli_keys(config_data)
-
-    store = ConfigStore()
 
     # Validate configuration
     validation_result = validate_training_config(store, complete_config, config_data)
