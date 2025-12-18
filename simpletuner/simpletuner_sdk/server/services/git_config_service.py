@@ -10,7 +10,6 @@ from fastapi import status
 
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.git_repo_service import GIT_REPO_SERVICE, GitRepoError, GitStatus
-from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 
@@ -49,6 +48,8 @@ class GitConfigService:
         if cache_key in self._store_cache:
             return self._store_cache[cache_key]
         try:
+            from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+
             defaults = WebUIStateStore().load_defaults()
             if defaults.configs_dir:
                 store = ConfigStore(config_dir=Path(defaults.configs_dir).expanduser(), config_type=config_type)
@@ -100,6 +101,10 @@ class GitConfigService:
         store = self._get_store(config_type)
         repo_status = GIT_REPO_SERVICE.discover_repo(store.config_dir)
         return repo_status, Path(store.config_dir).expanduser().resolve()
+
+    def reset_cache(self) -> None:
+        """Clear cached ConfigStore instances (e.g., after configs_dir changes)."""
+        self._store_cache.clear()
 
     # ---------------------------
     # Public API

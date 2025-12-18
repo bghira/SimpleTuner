@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from simpletuner.simpletuner_sdk.server.services.configs_service import CONFIGS_SERVICE, ConfigServiceError
+from simpletuner.simpletuner_sdk.server.services.git_config_service import GIT_CONFIG_SERVICE
 from simpletuner.simpletuner_sdk.server.services.webui_state import (
     OnboardingStepState,
     WebUIDefaults,
@@ -465,6 +466,10 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
 
         # Save updated defaults
         store.save_defaults(defaults)
+        try:
+            GIT_CONFIG_SERVICE.reset_cache()
+        except Exception as exc:  # pragma: no cover - best-effort cache bust
+            logger.debug("Failed to reset git config cache after defaults update: %s", exc, exc_info=True)
 
         # Return updated state
         state = store.load_state()

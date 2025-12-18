@@ -139,6 +139,17 @@ class GitRepoService:
             raise GitRepoError("Invalid email address", status.HTTP_400_BAD_REQUEST)
         return cleaned
 
+    @staticmethod
+    def _validate_commit_ref(commit: str) -> str:
+        cleaned = (commit or "").strip()
+        if not cleaned:
+            raise GitRepoError("Commit reference is required", status.HTTP_400_BAD_REQUEST)
+        if cleaned.startswith("-") or re.search(r"\s", cleaned):
+            raise GitRepoError("Commit reference is invalid", status.HTTP_400_BAD_REQUEST)
+        if re.search(r"[^A-Za-z0-9._/-]", cleaned):
+            raise GitRepoError("Commit reference contains invalid characters", status.HTTP_400_BAD_REQUEST)
+        return cleaned
+
     def _set_remote_locked(self, root: Path, remote: Optional[str]) -> None:
         validated = self._validate_remote_url(remote)
         if validated is None:
@@ -433,9 +444,8 @@ class GitRepoService:
             rel = self._relativize(root, target)
             args = ["diff"]
             if commit:
-                if re.search(r"\s", commit):
-                    raise GitRepoError("Commit reference contains whitespace", status.HTTP_400_BAD_REQUEST)
-                args.append(commit)
+                safe_commit = self._validate_commit_ref(commit)
+                args.append(safe_commit)
             args.extend(["--", rel])
             result = self._run_git(args, cwd=root, check=False)
         content = result.stdout or ""
@@ -496,9 +506,8 @@ class GitRepoService:
             rel = self._relativize(root, Path(path))
             args = ["checkout"]
             if commit:
-                if re.search(r"\s", commit):
-                    raise GitRepoError("Commit reference contains whitespace", status.HTTP_400_BAD_REQUEST)
-                args.append(commit)
+                safe_commit = self._validate_commit_ref(commit)
+                args.append(safe_commit)
             args.extend(["--", rel])
             self._run_git(args, cwd=root)
         return {"message": f"Restored {rel}"}
