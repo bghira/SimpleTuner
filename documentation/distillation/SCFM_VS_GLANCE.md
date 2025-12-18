@@ -220,7 +220,8 @@ pipe_slow = FluxPipeline.from_pretrained(base_model).to(device)
 pipe_slow.load_lora_weights("output/glance-slow")
 
 # First phase: 5 steps
-# Note: When output_type="latent", the latent tensors are accessed via the .images attribute of the result
+# Note: When output_type="latent", diffusers returns latent tensors via the .images attribute
+# (the .images attribute is the standard output container for all output types)
 latents = pipe_slow(
     prompt=prompt,
     num_inference_steps=5,
