@@ -60,6 +60,25 @@ def get_freqs(dim, max_period=10000.0):
     return freqs
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
+    """
+    Store a hidden state in the provided buffer, optionally honoring a capture list.
+    """
+    if buffer is None:
+        return
+
+    capture_layers = getattr(buffer, "capture_layers", None)
+    if capture_layers is not None:
+        try:
+            layer_idx = int(key.split("_", 1)[1])
+        except Exception:
+            layer_idx = None
+        if layer_idx is not None and layer_idx not in capture_layers:
+            return
+
+    buffer[key] = hidden_states
+
+
 def fractal_flatten(x, rope, shape, block_mask=False):
     if block_mask:
         pixel_size = 8
@@ -718,6 +737,7 @@ class Kandinsky5Transformer3DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        hidden_states_buffer: Optional[dict] = None,
         timestep_sign: Optional[torch.Tensor] = None,
     ) -> Union[Transformer2DModelOutput, torch.FloatTensor]:
         """
@@ -735,6 +755,8 @@ class Kandinsky5Transformer3DModel(
             force_keep_mask (`torch.Tensor`, *optional*): Boolean mask used by TREAD to prevent specific tokens from
                 being dropped. Shape must match the routed token sequence length.
             return_dict (`bool`, optional): Whether to return a dictionary
+            hidden_states_buffer (`dict`, *optional*): Buffer used to capture intermediate hidden states for
+                regularizers like LayerSync.
 
         Returns:
             [`~models.transformer_2d.Transformer2DModelOutput`] or `torch.FloatTensor`: The output of the transformer
@@ -870,6 +892,19 @@ class Kandinsky5Transformer3DModel(
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_out(visual_transformer_block)
+
+            if hidden_states_buffer is not None:
+                expected_tokens = visual_shape[1] * visual_shape[2] * visual_shape[3]
+                if visual_embed.shape[1] == expected_tokens:
+                    tokens_view = visual_embed.reshape(
+                        batch_size,
+                        visual_shape[1],
+                        visual_shape[2] * visual_shape[3],
+                        -1,
+                    )
+                else:
+                    tokens_view = visual_embed
+                _store_hidden_state(hidden_states_buffer, f"layer_{layer_idx}", tokens_view)
 
         visual_embed = fractal_unflatten(visual_embed, visual_shape, block_mask=to_fractal)
         x = self.out_layer(visual_embed, text_embed, time_embed)
