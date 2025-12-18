@@ -243,12 +243,14 @@ class TimestepEmbedder(nn.Module):
     Embeds scalar timesteps into vector representations.
     """
 
-    def __init__(self, t_embed_dim, frequency_embedding_size=256):
+    def __init__(self, t_embed_dim, frequency_embedding_size=256, enable_time_sign_embed: bool = False):
         super().__init__()
         self.t_embed_dim = t_embed_dim
         self.frequency_embedding_size = frequency_embedding_size
-        self.time_sign_embed = nn.Embedding(2, t_embed_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, t_embed_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, t_embed_dim, bias=True),
             nn.SiLU(),
@@ -272,6 +274,11 @@ class TimestepEmbedder(nn.Module):
             t_freq = t_freq.to(dtype)
         t_emb = self.mlp(t_freq)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
             t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
@@ -908,6 +915,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         text_tokens_zero_pad: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ) -> None:
         super().__init__()
 
@@ -917,7 +925,11 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self.cp_split_hw = cp_split_hw or [1, 1]
 
         self.x_embedder = PatchEmbed3D(patch_size, in_channels, hidden_size)
-        self.t_embedder = TimestepEmbedder(t_embed_dim=adaln_tembed_dim, frequency_embedding_size=frequency_embedding_size)
+        self.t_embedder = TimestepEmbedder(
+            t_embed_dim=adaln_tembed_dim,
+            frequency_embedding_size=frequency_embedding_size,
+            enable_time_sign_embed=enable_time_sign_embed,
+        )
         self.y_embedder = CaptionEmbedder(in_channels=caption_channels, hidden_size=hidden_size)
 
         self.blocks = nn.ModuleList(

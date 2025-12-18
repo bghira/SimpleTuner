@@ -675,7 +675,8 @@ class Flux2(ImageModelFoundation):
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)
-        return apply_musubi_pretrained_defaults(self.config, args)
+        args = apply_musubi_pretrained_defaults(self.config, args)
+        return args
 
     @staticmethod
     def _validate_flux2_specific(config: dict) -> List[ValidationResult]:

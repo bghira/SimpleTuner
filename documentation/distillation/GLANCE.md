@@ -83,25 +83,45 @@ Notes:
 - Leave the other flow schedule flags at defaults; the custom list bypasses them.
 - If you prefer sigmas instead of 0–1000 timesteps, provide values in `[0,1]`.
 
-## Step 4 – Use both LoRAs together
+## Step 4 – Use both LoRAs together (with the right sigmas)
 
-At inference you run the base model twice: once with the Slow LoRA for the early steps (output latents), then reload/switch to the Fast LoRA and finish the remaining steps. A minimal Diffusers-style sketch:
+Diffusers needs to see the same sigma schedule you trained on. Convert the 0–1000 timestep lists into 0–1 sigmas and pass them explicitly; `num_inference_steps` must match the length of each list.
 
 ```python
-from diffusers import FluxPipeline
 import torch
+from diffusers import FluxPipeline
 
-pipe = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", torch_dtype=torch.bfloat16).to("cuda")
+device = "cuda"
+base_model = "black-forest-labs/FLUX.1-dev"
+
+# Convert the training timesteps to sigmas in [0, 1]
+slow_sigmas = [t / 1000.0 for t in (1000.0, 979.1915, 957.5157, 934.9171, 911.3354)]
+fast_sigmas = [t / 1000.0 for t in (886.7053, 745.0728, 562.9505, 320.0802, 20.0)]
+generator = torch.Generator(device=device).manual_seed(0)
 
 # Early phase
+pipe = FluxPipeline.from_pretrained(base_model, torch_dtype=torch.bfloat16).to(device)
 pipe.load_lora_weights("output/glance-slow")
-latents = pipe(prompt="your prompt", num_inference_steps=5, output_type="latent").images
+latents = pipe(
+    prompt="your prompt",
+    num_inference_steps=len(slow_sigmas),
+    sigmas=slow_sigmas,
+    output_type="latent",
+    generator=generator,
+).images
 
-# Late phase
-pipe_fast = FluxPipeline.from_pretrained("black-forest-labs/FLUX.1-dev", torch_dtype=torch.bfloat16).to("cuda")
+# Late phase (continue the same schedule)
+pipe_fast = FluxPipeline.from_pretrained(base_model, torch_dtype=torch.bfloat16).to(device)
 pipe_fast.load_lora_weights("output/glance-fast")
-image = pipe_fast(prompt="your prompt", num_inference_steps=5, latents=latents, guidance_scale=1.0).images[0]
+image = pipe_fast(
+    prompt="your prompt",
+    num_inference_steps=len(fast_sigmas),
+    sigmas=fast_sigmas,
+    latents=latents,
+    guidance_scale=1.0,
+    generator=generator,
+).images[0]
 image.save("glance.png")
 ```
 
-Keep the same prompt and seed between phases so the Fast LoRA continues from the Slow output. That’s the whole trick: two LoRAs, fixed timesteps, single image/caption. Nothing fancy—just a fast way to recreate the Glance-style split without a teacher.
+Re-use the same prompt and generator/seed so the Fast LoRA resumes exactly where the Slow LoRA stopped, and keep the sigma lists aligned with the `--flow_custom_timesteps` you trained with.

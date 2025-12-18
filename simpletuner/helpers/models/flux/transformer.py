@@ -431,6 +431,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         axes_dims_rope: Tuple[int] = (16, 56, 56),
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
         self.register_to_config(
@@ -446,6 +447,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             axes_dims_rope=axes_dims_rope,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            enable_time_sign_embed=enable_time_sign_embed,
         )
         self.out_channels = in_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -459,8 +461,10 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             pooled_projection_dim=self.config.pooled_projection_dim,
         )
         # Signed-time embedding for TwinFlow adversarial branch; row 0 = positive/zero, row 1 = negative.
-        self.time_sign_embed = nn.Embedding(2, self.inner_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, self.inner_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.inner_dim)
         self.x_embedder = torch.nn.Linear(self.config.in_channels, self.inner_dim)
@@ -665,6 +669,11 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             guidance = None
         sign_emb = None
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=hidden_states.device)
             sign_emb = self.time_sign_embed(sign_idx)
 

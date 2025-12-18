@@ -1408,7 +1408,9 @@ function trainerComponent() {
             }
 
             if (dataset.dataset_type === 'conditioning') {
-                dataset.conditioning_type = dataset.conditioning_type || 'controlnet';
+                // Default to 'controlnet' if ControlNet training is enabled, otherwise 'reference_strict'
+                const defaultConditioningType = this.modelContext?.controlnetEnabled ? 'controlnet' : 'reference_strict';
+                dataset.conditioning_type = dataset.conditioning_type || defaultConditioningType;
                 dataset.default = this.normalizeBoolean(dataset.default);
                 dataset.source_dataset_id = this._coerceString(dataset.source_dataset_id);
             }

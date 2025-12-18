@@ -214,13 +214,16 @@ class WanTimeTextImageEmbedding(nn.Module):
         time_proj_dim: int,
         text_embed_dim: int,
         image_embed_dim: Optional[int] = None,
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
 
         self.timesteps_proj = Timesteps(num_channels=time_freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.time_embedder = TimestepEmbedding(in_channels=time_freq_dim, time_embed_dim=dim)
-        self.time_sign_embed = nn.Embedding(2, dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
         self.act_fn = nn.SiLU()
         self.time_proj = nn.Linear(dim, time_proj_dim)
         self.text_embedder = PixArtAlphaTextProjection(text_embed_dim, dim, act_fn="gelu_tanh")
@@ -243,6 +246,11 @@ class WanTimeTextImageEmbedding(nn.Module):
             timestep = timestep.to(time_embedder_dtype)
         temb = self.time_embedder(timestep).type_as(encoder_hidden_states)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=temb.device)
             temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
         timestep_proj = self.time_proj(self.act_fn(temb))
@@ -581,6 +589,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         feed_forward_chunk_dim: int = 0,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ) -> None:
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -604,6 +613,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             feed_forward_chunk_dim=feed_forward_chunk_dim,
             musubi_blocks_to_swap=musubi_blocks_to_swap,
             musubi_block_swap_device=musubi_block_swap_device,
+            enable_time_sign_embed=enable_time_sign_embed,
         )
 
         inner_dim = num_attention_heads * attention_head_dim
@@ -621,6 +631,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             time_proj_dim=inner_dim * 6,
             text_embed_dim=text_dim,
             image_embed_dim=image_dim,
+            enable_time_sign_embed=enable_time_sign_embed,
         )
 
         # 3. Transformer blocks

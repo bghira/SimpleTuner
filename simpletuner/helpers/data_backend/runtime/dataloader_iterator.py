@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Union
 
 import torch
 
+from simpletuner.helpers.data_backend.runtime.schedule import dataset_is_active
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -37,13 +38,25 @@ def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str
 
     weights = []
     backend_ids = []
+    inactive_ids = []
     for backend_id, backend in backends.items():
         weight = get_backend_weight(backend_id, backend, step)
+        if weight <= 0:
+            inactive_ids.append(backend_id)
+            continue
         weights.append(weight)
         backend_ids.append(backend_id)
 
     if not backend_ids:
-        raise ValueError("No data backends available for selection.")
+        try:
+            next_step = (StateTracker.get_global_step() or 0) + 1
+        except Exception:
+            next_step = step
+        current_epoch = StateTracker.get_epoch()
+        raise ValueError(
+            f"No active datasets available for sampling at epoch {current_epoch}, step {next_step}. "
+            "Adjust start_epoch/start_step so at least one dataset is active."
+        )
 
     weights_tensor = torch.tensor(weights, dtype=torch.float32)
     total = weights_tensor.sum()
@@ -71,6 +84,11 @@ def get_backend_weight(backend_id: str, backend: Any, step: int) -> float:
     if not isinstance(sampling_method, str):
         sampling_method = "uniform"
 
+    epoch = StateTracker.get_epoch()
+    is_active, _ = dataset_is_active(backend_id, backend_config, step_hint=step, epoch_hint=epoch)
+    if not is_active:
+        return 0.0
+
     if sampling_method == "uniform":
         return prob
     elif sampling_method == "auto-weighting":
@@ -89,11 +107,17 @@ def get_backend_weight(backend_id: str, backend: Any, step: int) -> float:
         adjusted_prob = prob * length_factor
 
         disable_step = backend_config.get("disable_after_epoch_step", None)
-        if disable_step:
-            disable_step = int(disable_step)
-        else:
+        try:
+            disable_step = int(disable_step) if disable_step else None
+        except (TypeError, ValueError):
+            disable_step = None
+        if disable_step is None:
             disable_step = float("inf")
-        adjusted_prob = 0 if int(step) > disable_step else max(0, adjusted_prob * (1 - step / disable_step))
+        try:
+            current_step = int(step)
+        except Exception:
+            current_step = 0
+        adjusted_prob = 0 if current_step > disable_step else max(0, adjusted_prob * (1 - current_step / disable_step))
 
         return adjusted_prob
     else:
@@ -180,18 +204,25 @@ class ScaledDatasetSampler:
         if not backend_ids:
             return None
         weights: list[float] = []
+        filtered_ids: list[str] = []
         for backend_id in backend_ids:
             try:
-                weights.append(get_backend_weight(backend_id, backends[backend_id], step))
+                weight = get_backend_weight(backend_id, backends[backend_id], step)
             except Exception:
-                weights.append(0.0)
+                weight = 0.0
+            if weight <= 0:
+                continue
+            filtered_ids.append(backend_id)
+            weights.append(weight)
+        if not filtered_ids:
+            return None
         weights_tensor = torch.tensor(weights, dtype=torch.float32)
         total = weights_tensor.sum()
         if total <= 0:
-            return backend_ids[0]
+            return None
         weights_tensor /= total
         chosen_index = torch.multinomial(weights_tensor, 1).item()
-        return backend_ids[chosen_index]
+        return filtered_ids[chosen_index]
 
     def next_backend_id(self, step: int, backends: Dict[str, Any]) -> Optional[str]:
         """

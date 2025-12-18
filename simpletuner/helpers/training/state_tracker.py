@@ -74,6 +74,9 @@ class StateTracker:
 
     webhook_handler = None
 
+    # Dataset scheduling tracking
+    dataset_schedule: dict = {}
+
     @classmethod
     def delete_cache_files(cls, data_backend_id: str = None, preserve_data_backend_cache=False):
         for cache_name in [
@@ -364,6 +367,50 @@ class StateTracker:
         cls.exhausted_backends = []
 
     @classmethod
+    def set_dataset_schedule(cls, data_backend_id: str, start_epoch: int | None = None, start_step: int | None = None):
+        schedule = cls.dataset_schedule.get(data_backend_id, {})
+        if start_epoch is not None:
+            try:
+                schedule["start_epoch"] = int(start_epoch)
+            except (TypeError, ValueError):
+                schedule["start_epoch"] = 1
+        if start_step is not None:
+            try:
+                schedule["start_step"] = int(start_step)
+            except (TypeError, ValueError):
+                schedule["start_step"] = 0
+        schedule.setdefault("start_epoch", 1)
+        schedule.setdefault("start_step", 0)
+        schedule.setdefault("reached", False)
+        cls.dataset_schedule[data_backend_id] = schedule
+
+    @classmethod
+    def mark_dataset_schedule_reached(cls, data_backend_id: str, epoch: int | None = None, step: int | None = None):
+        schedule = cls.dataset_schedule.get(data_backend_id, {})
+        schedule.setdefault("start_epoch", 1)
+        schedule.setdefault("start_step", 0)
+        schedule["reached"] = True
+        if epoch is not None:
+            try:
+                schedule["reached_at_epoch"] = int(epoch)
+            except (TypeError, ValueError):
+                schedule["reached_at_epoch"] = epoch
+        if step is not None:
+            try:
+                schedule["reached_at_step"] = int(step)
+            except (TypeError, ValueError):
+                schedule["reached_at_step"] = step
+        cls.dataset_schedule[data_backend_id] = schedule
+
+    @classmethod
+    def get_dataset_schedule(cls, data_backend_id: str):
+        return cls.dataset_schedule.get(data_backend_id, {}).copy()
+
+    @classmethod
+    def get_dataset_schedules(cls):
+        return {k: v.copy() for k, v in cls.dataset_schedule.items()}
+
+    @classmethod
     def set_vae_cache_files(cls, raw_file_list: list, data_backend_id: str):
         if cls.all_vae_cache_files.get(data_backend_id) is not None:
             cls.all_vae_cache_files[data_backend_id].clear()
@@ -558,6 +605,7 @@ class StateTracker:
     @classmethod
     def clear_data_backends(cls):
         cls.data_backends = {}
+        cls.dataset_schedule = {}
 
     @classmethod
     def get_data_backends(

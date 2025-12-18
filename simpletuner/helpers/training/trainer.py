@@ -40,6 +40,7 @@ from simpletuner.helpers.data_backend.factory import (
     run_distillation_cache_generation,
 )
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
+from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -2871,12 +2872,62 @@ class Trainer:
         # Scheduler and math around the number of training steps.
         if not hasattr(self.config, "overrode_max_train_steps"):
             self.config.overrode_max_train_steps = False
-        self.config.total_num_batches = sum(
-            [
-                len(backend["metadata_backend"] if "metadata_backend" in backend else [])
-                for _, backend in StateTracker.get_data_backends().items()
-            ]
-        )
+        total_num_batches = 0
+        initial_num_batches = 0
+        initial_active_ids: list[str] = []
+
+        caption_batches_supported = False
+        distiller = getattr(self, "distiller", None)
+        if distiller is not None:
+            try:
+                caption_batches_supported = bool(getattr(distiller, "consumes_caption_batches", lambda: False)())
+            except Exception:
+                caption_batches_supported = False
+        if not caption_batches_supported:
+            method = getattr(self.config, "distillation_method", None)
+            if method:
+                try:
+                    profile = DistillationRegistry.get_requirement_profile(method)
+                    caption_batches_supported = profile.requires_dataset_type(DatasetType.CAPTION)
+                except Exception:
+                    caption_batches_supported = False
+
+        training_dataset_types = {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}
+        if caption_batches_supported:
+            training_dataset_types.add(DatasetType.CAPTION)
+
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+            if backend_type is DatasetType.EVAL:
+                continue
+            if backend_type not in training_dataset_types:
+                continue
+            try:
+                dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
+            except Exception:
+                dataset_batches = 0
+            total_num_batches += dataset_batches
+
+            schedule = StateTracker.get_dataset_schedule(backend_id) or {}
+            start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend.get("config", {}).get("start_epoch", 1)))
+            start_step = normalize_start_step(schedule.get("start_step", backend.get("config", {}).get("start_step", 0)))
+            if start_epoch <= 1 and start_step <= 1:
+                initial_num_batches += dataset_batches
+                initial_active_ids.append(backend_id)
+
+        if initial_num_batches <= 0:
+            raise ValueError(
+                "No datasets are active at the start of training. "
+                "Ensure at least one dataset has start_epoch<=1 and start_step<=1."
+            )
+
+        self.config.total_num_batches = total_num_batches
+        self.config.initial_num_batches = initial_num_batches
+        if initial_num_batches < total_num_batches:
+            logger.info(
+                f"Dataset scheduling detected: {initial_num_batches} batches available at start, "
+                f"{total_num_batches} once all schedules begin. Progress estimates may shift after activation."
+            )
         self.config.num_update_steps_per_epoch = math.ceil(
             self.config.total_num_batches / max(self.config.gradient_accumulation_steps or 1, 1)
         )
@@ -2909,6 +2960,26 @@ class Trainer:
                 f"Calculated our maximum training steps at {self.config.max_train_steps} because we have"
                 f" {self.config.num_train_epochs} epochs and {self.config.num_update_steps_per_epoch} steps per epoch."
             )
+
+        max_epochs = getattr(self.config, "num_train_epochs", None)
+        max_steps = getattr(self.config, "max_train_steps", None)
+        for dataset_id, backend in StateTracker.get_data_backends().items():
+            backend_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+            if backend_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.AUDIO, DatasetType.CONDITIONING}:
+                continue
+            schedule = StateTracker.get_dataset_schedule(dataset_id) or {}
+            start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend.get("config", {}).get("start_epoch", 1)))
+            start_step = normalize_start_step(schedule.get("start_step", backend.get("config", {}).get("start_step", 0)))
+            if max_epochs not in (None, 0) and start_epoch > max_epochs:
+                logger.warning(
+                    f"Dataset {dataset_id} is scheduled to start at epoch {start_epoch}, "
+                    f"but training ends at epoch {max_epochs}. It will never sample."
+                )
+            if max_steps not in (None, 0) and start_step > max_steps:
+                logger.warning(
+                    f"Dataset {dataset_id} is scheduled to start at step {start_step}, "
+                    f"but training stops at step {max_steps}. It will never sample."
+                )
         if self.lr_scheduler is not None and hasattr(self.lr_scheduler, "num_update_steps_per_epoch"):
             self.lr_scheduler.num_update_steps_per_epoch = self.config.num_update_steps_per_epoch
         self.config.total_batch_size = (
