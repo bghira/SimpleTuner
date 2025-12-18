@@ -50,7 +50,7 @@ This document provides a detailed comparison between SCFM (Shortcutting Pre-trai
 **YES - Uses pre-generated teacher outputs as training data**
 - Requires generating a dataset using the teacher model first
 - Example from their script:
-  ```bash
+  ```shell
   python inference/sample_dataset.py \
   --output_dir flux_dataset_1024 \
   --resolution 1024 \
@@ -167,7 +167,8 @@ This document provides a detailed comparison between SCFM (Shortcutting Pre-trai
 
 #### Glance:
 ```python
-# Simplified conceptual loss
+# Simplified conceptual loss (pseudocode)
+# MSE represents mean squared error loss function
 loss = MSE(model_pred, target_velocity_at_custom_timestep)
 ```
 - Standard flow matching loss
@@ -176,7 +177,10 @@ loss = MSE(model_pred, target_velocity_at_custom_timestep)
 
 #### SCFM:
 ```python
-# Dual-path loss (simplified concept)
+# Dual-path loss (simplified pseudocode)
+# MSE represents mean squared error loss function
+# weighted_combination represents the batch-weighted loss aggregation
+
 # Teacher-guided samples:
 loss_teacher = MSE(student_pred, teacher_trajectory_shortcut)
 
