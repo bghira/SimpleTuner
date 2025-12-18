@@ -1174,6 +1174,8 @@ class FactoryRegistry:
         self.distillation_cache_backends = {}
         self.data_backends = {}
         self.default_text_embed_backend_id = None
+        # Queue for backends needing deferred text embed processing (models requiring image context)
+        self._deferred_text_embed_backends: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
         self.distiller_requirement_profile: DistillerRequirementProfile = distiller_profile or EMPTY_PROFILE
         self.distillation_method = (
             distillation_method.lower() if isinstance(distillation_method, str) and distillation_method else None
@@ -1459,6 +1461,41 @@ class FactoryRegistry:
                     f"but training stops at step {target_steps}. It will never sample."
                 )
 
+    def _validate_dataset_paths(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        """
+        Validate that all dataset paths exist before proceeding with configuration.
+
+        This catches missing directories early rather than silently skipping them
+        during cache discovery, which would lead to confusing behavior.
+        """
+        missing_paths: list[tuple[str, str, str]] = []
+
+        for backend in data_backend_config:
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+
+            backend_id = backend.get("id", "unknown")
+            backend_type = backend.get("type", "local")
+
+            # Only validate local backends - cloud backends don't have local paths
+            if backend_type != "local":
+                continue
+
+            # Check instance_data_dir for all local backends
+            instance_data_dir = backend.get("instance_data_dir", backend.get("instance_data_root"))
+            if instance_data_dir and isinstance(instance_data_dir, str):
+                instance_data_dir = instance_data_dir.strip()
+                if instance_data_dir and not os.path.exists(instance_data_dir):
+                    missing_paths.append((backend_id, "instance_data_dir", instance_data_dir))
+
+        if missing_paths:
+            error_lines = ["The following dataset directories do not exist:"]
+            for backend_id, path_type, path in missing_paths:
+                error_lines.append(f"  - (id={backend_id}) {path_type}: {path}")
+            error_lines.append("")
+            error_lines.append("Please ensure all dataset paths exist before starting training.")
+            raise FileNotFoundError("\n".join(error_lines))
+
     def load_configuration(self) -> List[Dict[str, Any]]:
         """Load and process the data backend configuration file."""
         config_start_time = time.time()
@@ -1505,6 +1542,7 @@ class FactoryRegistry:
         self._log_performance_metrics("config_sorted")
 
         data_backend_config = fill_variables_in_config_paths(args=self.args, config=data_backend_config)
+        self._validate_dataset_paths(data_backend_config)
         self._validate_schedule_windows(data_backend_config)
 
         model_family = getattr(self.args, "model_family", "base")
@@ -2232,6 +2270,10 @@ class FactoryRegistry:
         # Validate conditioning_type for edit models
         self._validate_edit_model_conditioning_type(data_backend_config)
 
+        # Process deferred text embeddings for models requiring image context
+        # (must happen after conditioning datasets are connected)
+        self._process_deferred_text_embeddings()
+
     def _handle_resolution_conversion(self, backend: Dict[str, Any]) -> None:
         """Handle resolution type conversion from pixel_area to area."""
         dataset_type = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
@@ -2809,11 +2851,15 @@ class FactoryRegistry:
     ) -> None:
         """Process text embeddings for captions."""
         # We get captions from the IMAGE dataset. Not the text embeds dataset.
+        # caption_strategy is stored in init_backend["config"], not directly in backend
+        caption_strategy = init_backend["config"].get("caption_strategy")
+        skip_file_discovery = backend.get("skip_file_discovery", "")
+        args_skip = getattr(self.args, "skip_file_discovery", "")
         if (
             conditioning_type != "mask"
-            and "text" not in self.args.skip_file_discovery
-            and "text" not in backend.get("skip_file_discovery", "")
-            and backend.get("caption_strategy", None) is not None
+            and "text" not in args_skip
+            and "text" not in skip_file_discovery
+            and caption_strategy is not None
         ):
             if hasattr(init_backend.get("data_backend"), "_mock_children"):
                 info_log(f"(id={init_backend['id']}) Detected mocked data backend, skipping text embedding processing.")
@@ -2821,10 +2867,26 @@ class FactoryRegistry:
             state_args = StateTracker.get_args()
             output_dir = getattr(state_args, "output_dir", None)
             if not isinstance(output_dir, (str, os.PathLike)):
-                logger.debug("Skipping text embedding processing due to missing output_dir in args.")
+                info_log(f"(id={init_backend['id']}) Skipping text embedding processing due to missing output_dir in args.")
                 return
+
+            # Check if this model requires image context for text encoding
+            # If so, defer processing until after conditioning datasets are connected
+            requires_image_context = getattr(self.model, "requires_text_embed_image_context", lambda: False)()
+            conditioning_data = init_backend["config"].get("conditioning_data")
+            if requires_image_context and conditioning_data:
+                info_log(
+                    f"(id={init_backend['id']}) Deferring text embed pre-computation until conditioning datasets are connected."
+                )
+                self._deferred_text_embed_backends.append((backend, init_backend))
+                # Still set the hash_filenames config
+                default_hash_option = True
+                hash_filenames = init_backend["config"].get("hash_filenames", default_hash_option)
+                init_backend["config"]["hash_filenames"] = hash_filenames
+                StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+                return
+
             info_log(f"(id={init_backend['id']}) Collecting captions.")
-            caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
             prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
             instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
             use_captions = True
@@ -2884,6 +2946,120 @@ class FactoryRegistry:
         init_backend["config"]["hash_filenames"] = hash_filenames
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         logger.debug(f"Hashing filenames: {hash_filenames}")
+
+    def _process_deferred_text_embeddings(self) -> None:
+        """
+        Process text embeddings for backends that were deferred because they require
+        image context and needed conditioning datasets to be connected first.
+        """
+        if not self._deferred_text_embed_backends:
+            return
+
+        info_log(f"Processing {len(self._deferred_text_embed_backends)} deferred text embed backend(s) with image context.")
+
+        for backend, init_backend in self._deferred_text_embed_backends:
+            dataset_id = init_backend["id"]
+            info_log(f"(id={dataset_id}) Processing deferred text embeddings with conditioning image context.")
+
+            # Get the conditioning datasets for this backend
+            conditioning_datasets = StateTracker.get_conditioning_datasets(dataset_id)
+            if not conditioning_datasets:
+                logger.warning(
+                    f"(id={dataset_id}) No conditioning datasets found for deferred text embed processing. "
+                    "Text embeds will be computed without image context."
+                )
+                conditioning_info = []
+            else:
+                conditioning_info = []
+                for cond_backend in conditioning_datasets:
+                    cond_backend_id = cond_backend.get("id")
+                    cond_config = cond_backend.get("config", {})
+                    cond_dataset_root = cond_config.get("instance_data_dir")
+                    if cond_backend_id and cond_dataset_root:
+                        conditioning_info.append((cond_backend_id, cond_dataset_root))
+                if conditioning_info:
+                    info_log(
+                        f"(id={dataset_id}) Using {len(conditioning_info)} conditioning dataset(s) for image context: "
+                        f"{[c[0] for c in conditioning_info]}"
+                    )
+
+            # Collect captions (same logic as _process_text_embeddings)
+            caption_strategy = backend.get("caption_strategy", self.args.caption_strategy)
+            prepend_instance_prompt = backend.get("prepend_instance_prompt", self.args.prepend_instance_prompt)
+            instance_prompt = backend.get("instance_prompt", self.args.instance_prompt)
+            use_captions = True
+            if backend.get("only_instance_prompt") or getattr(self.args, "only_instance_prompt", False):
+                use_captions = False
+            elif caption_strategy == "instanceprompt":
+                use_captions = False
+
+            try:
+                captions, images_missing_captions, caption_image_paths = PromptHandler.get_all_captions(
+                    data_backend=init_backend["data_backend"],
+                    instance_data_dir=init_backend["instance_data_dir"],
+                    prepend_instance_prompt=prepend_instance_prompt,
+                    instance_prompt=instance_prompt,
+                    use_captions=use_captions,
+                    caption_strategy=caption_strategy,
+                    return_image_paths=True,
+                )
+            except AttributeError:
+                logger.debug(
+                    f"(id={dataset_id}) Skipping deferred text embedding processing due to incomplete StateTracker configuration."
+                )
+                continue
+
+            if len(images_missing_captions) > 0 and hasattr(init_backend["metadata_backend"], "remove_images"):
+                init_backend["metadata_backend"].remove_images(images_missing_captions)
+
+            info_log(
+                f"(id={dataset_id}) Processing {len(captions)} captions with image context using {caption_strategy} strategy."
+            )
+
+            move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
+            prompt_records = []
+            key_type = self.model.text_embed_cache_key()
+            dataset_root = init_backend.get("instance_data_dir")
+
+            for caption, image_path in zip(captions, caption_image_paths):
+                image_path_str = str(image_path)
+                normalized_identifier = normalize_data_path(image_path_str, dataset_root)
+                metadata = {
+                    "image_path": image_path_str,
+                    "data_backend_id": dataset_id,
+                    "prompt": caption,
+                    "dataset_relative_path": normalized_identifier,
+                }
+
+                # Add conditioning image paths and backend IDs for models requiring image context
+                if conditioning_info:
+                    image_paths = []
+                    data_backend_ids = []
+                    for cond_backend_id, cond_dataset_root in conditioning_info:
+                        cond_image_path = os.path.join(cond_dataset_root, normalized_identifier)
+                        image_paths.append(cond_image_path)
+                        data_backend_ids.append(cond_backend_id)
+                    metadata["image_paths"] = image_paths
+                    metadata["data_backend_ids"] = data_backend_ids
+                    # Also set singular forms for compatibility (use first conditioning dataset)
+                    metadata["image_path"] = image_paths[0]
+                    metadata["data_backend_id"] = data_backend_ids[0]
+
+                if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
+                    key_value = f"{dataset_id}:{normalized_identifier}"
+                elif key_type is TextEmbedCacheKey.FILENAME:
+                    key_value = normalize_data_path(image_path_str, None)
+                else:
+                    key_value = caption
+                prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
+
+            init_backend["text_embed_cache"].compute_embeddings_for_prompts(
+                prompt_records, return_concat=False, load_from_cache=False
+            )
+            info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
+
+        # Clear the deferred queue
+        self._deferred_text_embed_backends.clear()
 
     def _handle_auto_generated_dataset(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle auto-generated reference datasets."""

@@ -675,13 +675,20 @@ def collate_fn(batch):
     conditioning_pixel_values = None
     conditioning_latents = None
 
-    # get multiple backend ids
+    # get multiple backend ids (conditioning_data is already populated with full backend dicts by set_conditioning_datasets)
     conditioning_backends = data_backend.get("conditioning_data", [])
+    # Check sampling mode early since it affects expected counts and matching
+    sampling_mode = getattr(StateTracker.get_args(), "conditioning_multidataset_sampling", "combined")
     if len(conditioning_examples) > 0:
         # check the # of conditioning backends
         logger.debug(f"Found {len(conditioning_examples)} conditioning examples.")
 
-        expected_conditioning_total = len(examples) * len(conditioning_backends)
+        # In "random" mode with multiple backends, only ONE conditioning sample per training example
+        # In "combined" mode, one sample from EACH backend per training example
+        if sampling_mode == "random" and len(conditioning_backends) > 1:
+            expected_conditioning_total = len(examples)
+        else:
+            expected_conditioning_total = len(examples) * len(conditioning_backends)
         if len(conditioning_examples) != expected_conditioning_total:
             missing_pairs = describe_missing_conditioning_pairs(
                 examples,
@@ -704,6 +711,9 @@ def collate_fn(batch):
 
         backend_lookup = {backend["id"]: backend for backend in conditioning_backends}
         normalized_training_examples: dict[str, list[dict | TrainingSample]] = defaultdict(list)
+        # In combined mode, each training example needs to be matched once per conditioning backend.
+        # In random mode, each training example is matched only once.
+        num_matches_per_example = 1 if (sampling_mode == "random" and len(conditioning_backends) > 1) else len(conditioning_backends)
         for training_example in examples:
             training_image_path = (
                 training_example.get("image_path")
@@ -712,7 +722,9 @@ def collate_fn(batch):
             )
             identifier = normalize_data_path(training_image_path, training_data_root)
             if identifier:
-                normalized_training_examples[identifier].append(training_example)
+                # Add the example multiple times so it can be matched by each conditioning backend
+                for _ in range(num_matches_per_example):
+                    normalized_training_examples[identifier].append(training_example)
 
         def _pop_training_example_for_path(match_path: str):
             if not match_path:
@@ -868,7 +880,7 @@ def collate_fn(batch):
         return pixel_tensor.detach().to("cpu")
 
     # Check if we're in combined mode with multiple conditioning datasets
-    sampling_mode = getattr(StateTracker.get_args(), "conditioning_multidataset_sampling")
+    # (sampling_mode was already defined earlier in the function)
     is_combined_mode = sampling_mode == "combined"
     is_random_mode = sampling_mode == "random" and len(conditioning_backends) > 1
 

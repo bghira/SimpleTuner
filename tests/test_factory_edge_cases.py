@@ -161,7 +161,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
         with self.assertRaises(json.JSONDecodeError):
             factory.load_configuration()
 
-    def test_missing_required_fields(self):
+    @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
+    def test_missing_required_fields(self, mock_validate_paths):
         """Test behavior when required fields are missing."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -194,7 +195,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
             self.assertIn("unique 'id' field", str(context.exception))
 
-    def test_duplicate_backend_ids(self):
+    @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
+    def test_duplicate_backend_ids(self, mock_validate_paths):
         """Test behavior with duplicate backend IDs."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -320,8 +322,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
             self.assertIn("Only one text embed backend can be marked as default", str(context.exception))
 
+    @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
     @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_deepfloyd_model_warnings(self, mock_torch_save):
+    def test_deepfloyd_model_warnings(self, mock_torch_save, mock_validate_paths):
         """Test DeepFloyd model specific warnings and handling."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -367,8 +370,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # Check that warnings were logged (the exact calls depend on the implementation)
                 # We mainly want to ensure no exceptions are raised for DeepFloyd
 
+    @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
     @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_pixel_area_resolution_conversion(self, mock_torch_save):
+    def test_pixel_area_resolution_conversion(self, mock_torch_save, mock_validate_paths):
         """Test pixel_area to area resolution type conversion."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
@@ -513,8 +517,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
             with self.assertRaises((ValueError, KeyError)):
                 factory.configure_data_backends(loaded_config)
 
+    @patch("simpletuner.helpers.data_backend.factory.FactoryRegistry._validate_dataset_paths")
     @patch("simpletuner.helpers.data_backend.local.torch.save")
-    def test_parquet_backend_missing_config(self, mock_torch_save):
+    def test_parquet_backend_missing_config(self, mock_torch_save, mock_validate_paths):
         """Test parquet metadata backend with missing parquet config."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 

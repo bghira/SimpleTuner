@@ -264,17 +264,41 @@ class QwenImage(ImageModelFoundation):
             return None
         image_tensors = []
         for idx, context in enumerate(prompt_contexts):
-            tensor = self._extract_prompt_image_from_context(context)
-            if tensor is None:
+            extracted = self._extract_prompt_image_from_context(context)
+            if extracted is None:
                 logger.warning(f"Failed to extract image tensor from context {idx}: {context}")
                 return None
+
+            if isinstance(extracted, list):
+                if batch_size != 1:
+                    raise ValueError("Multiple prompt images per caption require single-item prompt batches.")
+                if self._is_edit_v1_flavour():
+                    extracted = extracted[:1]
+                image_tensors.extend(extracted)
+                continue
+
+            tensor = extracted
             if tensor.dim() == 4 and tensor.size(0) == 1:
                 tensor = tensor.squeeze(0)
             if tensor.dim() != 3:
                 raise ValueError(f"Expected conditioning tensor with shape (C, H, W); received {tensor.shape}.")
             logger.debug(f"Prompt image {idx} tensor shape: {tensor.shape}, dtype: {tensor.dtype}")
             image_tensors.append(tensor)
+
         pil_images = [self._tensor_to_pil(tensor) for tensor in image_tensors]
+        if self._is_edit_v2_flavour():
+            resized: List[Image.Image] = []
+            for img in pil_images:
+                if not isinstance(img, Image.Image):
+                    continue
+                ratio = img.size[0] / img.size[1]
+                width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
+                height = width / ratio
+                width = max(round(width / 32) * 32, 32)
+                height = max(round(height / 32) * 32, 32)
+                resized.append(img.resize((int(width), int(height)), Image.Resampling.LANCZOS))
+            pil_images = resized
+
         logger.debug(
             f"Converted {len(pil_images)} tensors to PIL images: {[img.size if isinstance(img, Image.Image) else type(img) for img in pil_images]}"
         )
@@ -336,8 +360,46 @@ class QwenImage(ImageModelFoundation):
         return [self._tensor_to_pil(entry) for entry in tensor_list]
 
     def _load_prompt_image_from_backend(self, context: dict):
-        if not self._is_edit_v1_flavour():
+        if not self._is_edit_flavour():
             return None
+        image_paths = context.get("image_paths")
+        data_backend_ids = context.get("data_backend_ids")
+
+        if isinstance(image_paths, (list, tuple)) and image_paths:
+            if self._is_edit_v1_flavour():
+                context = {
+                    "image_path": image_paths[0],
+                    "data_backend_id": (
+                        data_backend_ids[0]
+                        if isinstance(data_backend_ids, (list, tuple)) and data_backend_ids
+                        else context.get("data_backend_id")
+                    ),
+                }
+            else:
+                if isinstance(data_backend_ids, (list, tuple)) and len(data_backend_ids) == len(image_paths):
+                    resolved_backend_ids = list(data_backend_ids)
+                elif context.get("data_backend_id"):
+                    resolved_backend_ids = [context.get("data_backend_id")] * len(image_paths)
+                else:
+                    return None
+
+                tensors = []
+                for image_path, data_backend_id in zip(image_paths, resolved_backend_ids):
+                    if not image_path or not data_backend_id:
+                        return None
+                    backend_entry = StateTracker.get_data_backend(data_backend_id)
+                    if backend_entry is None:
+                        return None
+                    data_backend = backend_entry.get("data_backend")
+                    if data_backend is None:
+                        return None
+                    image = data_backend.read_image(image_path)
+                    tensor = self._convert_image_to_tensor(image)
+                    if tensor is None:
+                        return None
+                    tensors.append(tensor.to(device=self.accelerator.device, dtype=self.config.weight_dtype))
+                return tensors
+
         image_path = context.get("image_path")
         data_backend_id = context.get("data_backend_id")
         if not image_path or not data_backend_id:
@@ -592,12 +654,12 @@ class QwenImage(ImageModelFoundation):
         }
 
     def text_embed_cache_key(self) -> TextEmbedCacheKey:
-        if QwenImage._is_edit_v1_config(self):
+        if QwenImage._is_edit_config(self):
             return TextEmbedCacheKey.DATASET_AND_FILENAME
         return super().text_embed_cache_key()
 
     def requires_text_embed_image_context(self) -> bool:
-        return QwenImage._is_edit_v1_config(self)
+        return QwenImage._is_edit_config(self)
 
     def requires_conditioning_image_embeds(self) -> bool:
         return QwenImage._is_edit_v1_config(self)
@@ -664,77 +726,58 @@ class QwenImage(ImageModelFoundation):
         return batch
 
     def _prepare_edit_batch_v2(self, batch: dict) -> dict:
-        prompts = batch.get("prompts")
-        if prompts is None:
-            logger.warning("Edit flavour batch is missing prompts; skipping prompt re-encoding.")
-            return batch
+        """
+        Prepare batch for edit-v2 training.
 
+        Text embeddings should already be cached (with image context baked in during caching).
+        This method processes the cached conditioning latents into control_latent_list
+        for the transformer input.
+        """
         latents = batch.get("latents")
         if latents is None:
             logger.warning("Edit flavour batch is missing latents; skipping edit conditioning.")
             return batch
         batch_size = latents.shape[0]
 
-        conditioning_multi = batch.get("conditioning_pixel_values_multi")
-        if conditioning_multi is None:
-            conditioning_single = batch.get("conditioning_pixel_values")
-            if conditioning_single is not None:
-                conditioning_multi = [conditioning_single]
+        # Verify we have cached prompt embeddings
+        if batch.get("prompt_embeds") is None:
+            raise ValueError(
+                "Edit-v2 batch is missing cached prompt_embeds. "
+                "Ensure text embeddings are pre-computed with conditioning image context."
+            )
 
-        if conditioning_multi is None:
-            logger.warning("Edit flavour batch is missing conditioning pixels; skipping edit conditioning.")
+        # Use cached conditioning latents instead of pixels (latents are already VAE-encoded)
+        conditioning_latents = batch.get("conditioning_latents")
+        if conditioning_latents is None or len(conditioning_latents) == 0:
+            logger.warning("Edit flavour batch is missing conditioning latents; skipping edit conditioning.")
             return batch
 
-        control_tensor_list: List[List[torch.Tensor]] = [[] for _ in range(batch_size)]
-        for control_tensor in conditioning_multi:
-            if control_tensor is None:
+        # conditioning_latents is a list of tensors, one per conditioning backend
+        # Each tensor has shape (batch_size, channels, height, width) or is a list of individual latents
+        # Build control_latent_list: for each batch item, collect latents from all backends
+        control_latent_list: List[List[torch.Tensor]] = [[] for _ in range(batch_size)]
+        for backend_latents in conditioning_latents:
+            if backend_latents is None:
                 continue
-            if control_tensor.dim() != 4:
-                raise ValueError("Expected conditioning tensor with shape (B, C, H, W).")
-            for idx in range(batch_size):
-                control_tensor_list[idx].append(control_tensor[idx].to(self.accelerator.device, self.config.weight_dtype))
+            # backend_latents can be a list of individual latents or a stacked tensor
+            if isinstance(backend_latents, list):
+                for idx, latent in enumerate(backend_latents):
+                    if idx < batch_size:
+                        control_latent_list[idx].append(latent.to(self.accelerator.device, self.config.weight_dtype))
+            elif torch.is_tensor(backend_latents):
+                if backend_latents.dim() == 4:
+                    for idx in range(min(backend_latents.shape[0], batch_size)):
+                        control_latent_list[idx].append(
+                            backend_latents[idx].to(self.accelerator.device, self.config.weight_dtype)
+                        )
+                elif backend_latents.dim() == 3:
+                    # Single latent, add to first batch item
+                    control_latent_list[0].append(backend_latents.to(self.accelerator.device, self.config.weight_dtype))
 
-        if any(len(items) == 0 for items in control_tensor_list):
-            raise ValueError("Each batch item must provide at least one control image for edit-v2 training.")
+        if any(len(items) == 0 for items in control_latent_list):
+            raise ValueError("Each batch item must provide at least one control latent for edit-v2 training.")
 
-        pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG)
-        pixel_dtype = getattr(pipeline.text_encoder, "dtype", torch.float32)
-        device = self.accelerator.device
-
-        prompt_embeds_list = []
-        prompt_masks_list = []
-
-        for prompt, control_images in zip(prompts, control_tensor_list):
-            processed_images = []
-            for control_img in control_images:
-                img = control_img
-                if img.dim() == 3:
-                    img = img.unsqueeze(0)
-                ratio = img.shape[2] / img.shape[3]
-                width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
-                height = width / ratio
-                width = round(width / 32) * 32
-                height = round(height / 32) * 32
-                resized = F.interpolate(img, size=(int(height), int(width)), mode="bilinear", align_corners=False)
-                resized = resized.squeeze(0)
-                processed = ((resized + 1.0) / 2.0).clamp_(0.0, 1.0)
-                processed_images.append(self._tensor_to_pil(processed))
-
-            prompt_embed, prompt_mask = pipeline.encode_prompt(
-                [prompt],
-                image=processed_images,  # Don't wrap in list - already a list of PIL images
-                device=device,
-                num_images_per_prompt=1,
-            )
-            prompt_embeds_list.append(prompt_embed.squeeze(0))
-            prompt_masks_list.append(prompt_mask.squeeze(0))
-
-        prompt_embeds = torch.stack(prompt_embeds_list, dim=0).to(device=device, dtype=self.config.weight_dtype)
-        prompt_masks = torch.stack(prompt_masks_list, dim=0).to(device=device, dtype=torch.int64)
-
-        batch["prompt_embeds"] = prompt_embeds
-        batch["encoder_attention_mask"] = prompt_masks
-        batch["control_tensor_list"] = control_tensor_list
+        batch["control_latent_list"] = control_latent_list
 
         return batch
 
@@ -998,9 +1041,9 @@ class QwenImage(ImageModelFoundation):
 
     def _model_predict_edit_plus(self, prepared_batch):
         latent_model_input = prepared_batch["noisy_latents"]
-        control_tensor_list = prepared_batch.get("control_tensor_list")
-        if control_tensor_list is None:
-            raise ValueError("Edit-v2 training requires control tensors but none were provided in the batch.")
+        control_latent_list = prepared_batch.get("control_latent_list")
+        if control_latent_list is None:
+            raise ValueError("Edit-v2 training requires control latents but none were provided in the batch.")
 
         if latent_model_input.dim() == 5:
             batch_size, num_channels, _, latent_height, latent_width = latent_model_input.shape
@@ -1019,58 +1062,22 @@ class QwenImage(ImageModelFoundation):
             latent_height,
             latent_width,
         )
-        base_packed_tokens = packed_latents
         packed_latents_split = torch.chunk(packed_latents, batch_size, dim=0)
 
         img_shapes = [[(1, latent_height // 2, latent_width // 2)] for _ in range(batch_size)]
         combined_tokens = []
-        vae = self.get_vae()
-        if vae is None:
-            raise ValueError("Qwen edit-v2 inference requires a loaded VAE.")
-        vae.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
-        for idx, sample_controls in enumerate(control_tensor_list):
-            if not sample_controls:
-                raise ValueError("Each batch item must provide at least one control image for edit-v2 training.")
+        for idx, sample_control_latents in enumerate(control_latent_list):
+            if not sample_control_latents:
+                raise ValueError("Each batch item must provide at least one control latent for edit-v2 training.")
 
             sample_tokens = [packed_latents_split[idx]]
-            for control_img in sample_controls:
-                control_tensor = control_img
-                if control_tensor.dim() == 3:
-                    control_tensor = control_tensor.unsqueeze(0)
+            for control_latent in sample_control_latents:
+                # Control latents are already VAE-encoded and normalized from the cache
+                if control_latent.dim() == 3:
+                    control_latent = control_latent.unsqueeze(0)
 
-                ratio = control_tensor.shape[2] / control_tensor.shape[3]
-                width = math.sqrt(VAE_IMAGE_SIZE * ratio)
-                height = width / ratio
-                width = round(width / 32) * 32
-                height = round(height / 32) * 32
-
-                resized = F.interpolate(
-                    control_tensor,
-                    size=(int(height), int(width)),
-                    mode="bilinear",
-                    align_corners=False,
-                )
-
-                scaled = resized.to(device=self.accelerator.device, dtype=self.config.weight_dtype).clamp_(-1.0, 1.0)
-                vae_input = scaled.unsqueeze(2)  # (1, C, 1, H, W)
-
-                with torch.no_grad():
-                    encoded = vae.encode(vae_input).latent_dist.sample()
-
-                if encoded.dim() == 5:
-                    encoded = encoded.squeeze(2)
-
-                latents_mean = (
-                    torch.tensor(vae.config.latents_mean)
-                    .view(1, vae.config.z_dim, 1, 1)
-                    .to(device=encoded.device, dtype=encoded.dtype)
-                )
-                latents_std = 1.0 / torch.tensor(vae.config.latents_std).view(1, vae.config.z_dim, 1, 1).to(
-                    device=encoded.device, dtype=encoded.dtype
-                )
-                control_latent = (encoded - latents_mean) * latents_std
-
+                control_latent = control_latent.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
                 cl_height, cl_width = control_latent.shape[2], control_latent.shape[3]
                 packed_control = pipeline_class._pack_latents(
                     control_latent,
@@ -1127,7 +1134,7 @@ class QwenImage(ImageModelFoundation):
                 call_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
             noise_pred = self.model(**call_kwargs)[0]
 
-        noise_pred = noise_pred[:, : base_packed_tokens.size(1)]
+        noise_pred = noise_pred[:, : packed_latents.size(1)]
 
         noise_pred = pipeline_class._unpack_latents(noise_pred, pixel_height, pixel_width, self.vae_scale_factor)
         if noise_pred.dim() == 5:

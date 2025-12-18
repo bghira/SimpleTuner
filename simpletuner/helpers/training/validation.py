@@ -489,16 +489,23 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 # pass the reference image path so the model can load it from the backend
                 # Use shortname as cache key for stable validation embedding lookup
                 if reference_images and model.requires_text_embed_image_context():
-                    # Extract the first reference TrainingSample (for Qwen edit-v1)
-                    reference_sample = reference_images[0] if isinstance(reference_images, list) else reference_images
+                    reference_samples = reference_images if isinstance(reference_images, list) else [reference_images]
+                    reference_samples = [sample for sample in reference_samples if sample is not None]
+                    if not reference_samples:
+                        logger.debug(
+                            "Skipping validation sample without reference images while preparing embeds for image-context encoding."
+                        )
+                        continue
 
                     # Create prompt record with shortname as key and image metadata for encoding
                     prompt_record = {
                         "prompt": validation_prompt,
                         "key": shortname,
                         "metadata": {
-                            "image_path": reference_sample.image_path(),
-                            "data_backend_id": reference_sample.data_backend_id,
+                            "image_path": reference_samples[0].image_path(),
+                            "data_backend_id": reference_samples[0].data_backend_id,
+                            "image_paths": [sample.image_path() for sample in reference_samples],
+                            "data_backend_ids": [sample.data_backend_id for sample in reference_samples],
                         },
                     }
                     embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
