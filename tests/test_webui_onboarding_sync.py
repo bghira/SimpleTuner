@@ -3,12 +3,7 @@ import unittest
 from pathlib import Path
 
 from simpletuner.simpletuner_sdk.server.routes import webui_state as webui_routes
-from simpletuner.simpletuner_sdk.server.services.webui_state import (
-    OnboardingStepState,
-    WebUIDefaults,
-    WebUIState,
-    WebUIStateStore,
-)
+from simpletuner.simpletuner_sdk.server.services.webui_state import OnboardingStepState, WebUIDefaults, WebUIStateStore
 
 
 class WebUIOnboardingSyncTests(unittest.TestCase):
