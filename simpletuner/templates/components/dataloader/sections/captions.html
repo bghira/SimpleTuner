@@ -22,15 +22,19 @@
                             <label class="form-label">Caption Strategy</label>
                             <select class="form-select form-select-sm"
                                     x-model="dataset.caption_strategy"
-                                    @change="markAsUnsaved()">
+                                    @change="markAsUnsaved()"
+                                    :class="{'border-danger': !dataset.caption_strategy}">
+                                <option value="">Select caption source...</option>
                                 <option value="textfile">Text files (.txt)</option>
                                 <option value="csv">CSV</option>
                                 <option value="parquet">Parquet</option>
                                 <option value="jsonl">JSON Lines</option>
                                 <option value="instanceprompt">Instance prompt only</option>
-                                <option value="">Use dataset default</option>
                             </select>
-                            <div class="form-text">How captions are stored and loaded.</div>
+                            <div class="form-text" x-show="dataset.caption_strategy">How captions are stored and loaded.</div>
+                            <div class="form-text" x-show="!dataset.caption_strategy" x-cloak>
+                                <span class="text-danger"><i class="fas fa-exclamation-triangle"></i> Please select a caption source</span>
+                            </div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Metadata Backend</label>
