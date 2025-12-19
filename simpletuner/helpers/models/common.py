@@ -84,6 +84,7 @@ flow_matching_model_families = [
     "auraflow",
     "qwen_image",
     "z_image",
+    "z_image_omni",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
