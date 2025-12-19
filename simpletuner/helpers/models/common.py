@@ -523,7 +523,36 @@ class ModelFoundation(ABC):
     def get_lora_save_layers(self):
         return None
 
+    def _get_peft_lora_target_modules(self):
+        if str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
+            return None
+
+        raw_targets = getattr(self.config, "peft_lora_target_modules", None)
+        if raw_targets in (None, "", "None"):
+            return None
+
+        if not isinstance(raw_targets, (list, tuple)):
+            raise ValueError(
+                "peft_lora_target_modules must be a list of module name strings. " f"Received {type(raw_targets)}."
+            )
+
+        normalized = []
+        for entry in raw_targets:
+            if entry in (None, "", "None"):
+                continue
+            if not isinstance(entry, str):
+                raise ValueError("peft_lora_target_modules entries must be strings. " f"Received {type(entry)}.")
+            candidate = entry.strip()
+            if candidate:
+                normalized.append(candidate)
+
+        return normalized or None
+
     def get_lora_target_layers(self):
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
+
         lora_type = getattr(self.config, "lora_type", "standard")
         if lora_type.lower() == "standard":
             if getattr(self.config, "slider_lora_target", False):
