@@ -15,8 +15,11 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from fastapi import HTTPException
+
 import simpletuner.helpers.models  # noqa: F401  # Ensure model registry population
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
 
 try:  # Lazy import so the configurator still works without LyCORIS extras
     from lycoris.config_sdk import PresetValidationError
@@ -34,6 +37,7 @@ else:  # pragma: no cover - passthrough for tests
 if TYPE_CHECKING:
     from fastapi.templating import Jinja2Templates
 
+    from simpletuner.simpletuner_sdk.server.routes import webui_state as webui_routes
     from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
     from simpletuner.simpletuner_sdk.server.services.tab_service import TabService
 
@@ -855,10 +859,14 @@ class SimpleTunerNCurses:
             ) from exc
 
         self.state = ConfigState(self.field_service)
+        self.webui_store: Optional[WebUIStateStore] = None
+        self._webui_store_error: Optional[str] = None
         self.lycoris_service = LYCORIS_BUILDER_SERVICE
         self._lycoris_support_error = _LYCORIS_IMPORT_ERROR
         self._lycoris_session: Optional[LycorisBuilderSession] = None
         self._lycoris_menu_index = 0
+        self._webui_menu_index = 0
+        self._refresh_webui_defaults()
         self.tab_entries = self._build_tab_entries()
         self.tab_lookup = {entry.name: entry for entry in self.tab_entries}
         self.menu_items = [
@@ -872,6 +880,13 @@ class SimpleTunerNCurses:
                     "Interactively edit LyCORIS algorithm presets and overrides",
                 )
             )
+        self.menu_items.append(
+            (
+                "WebUI Onboarding",
+                self.edit_webui_onboarding,
+                "Update WebUI onboarding defaults and completion state",
+            )
+        )
         self.menu_items.append(("Review & Save", self.review_and_save, "Review the configuration and write it to disk"))
         self._menu_index = 0
         self._section_menu_indices: Dict[str, int] = {}
@@ -1350,6 +1365,168 @@ class SimpleTunerNCurses:
 
         if self._validate_and_set_field(stdscr, field_name, new_value):
             self.show_message(stdscr, "Field updated.")
+
+    # ------------------------------------------------------------------
+    # WebUI onboarding support
+    # ------------------------------------------------------------------
+
+    def _get_webui_store(self) -> Optional[WebUIStateStore]:
+        if self.webui_store is not None:
+            return self.webui_store
+        try:
+            self.webui_store = WebUIStateStore()
+        except Exception as exc:
+            self._webui_store_error = str(exc)
+            return None
+        self._webui_store_error = None
+        return self.webui_store
+
+    def _refresh_webui_defaults(self) -> None:
+        store = self._get_webui_store()
+        if store is None:
+            self.state.webui_defaults = {}
+            return
+        try:
+            bundle = store.get_defaults_bundle()
+        except ValueError as exc:
+            self._webui_store_error = str(exc)
+            self.state.webui_defaults = {}
+            return
+        self._webui_store_error = None
+        resolved = bundle.get("resolved")
+        self.state.webui_defaults = resolved if isinstance(resolved, dict) else {}
+
+    @staticmethod
+    def _get_webui_routes():
+        from simpletuner.simpletuner_sdk.server.routes import webui_state as webui_routes
+
+        return webui_routes
+
+    def _summarize_onboarding_step(self, step: "webui_routes.OnboardingStepDefinition", stored: Any) -> str:
+        if stored is None:
+            return "Pending" if step.required else "Not set"
+        is_complete = stored.completed_version >= step.version
+        status = "Done" if is_complete else "Pending"
+        if stored.value in (None, ""):
+            return f"{status}: empty"
+        if isinstance(stored.value, dict):
+            summary = json.dumps(stored.value, sort_keys=True)
+        else:
+            summary = str(stored.value)
+        return f"{status}: {summary}"
+
+    def _prompt_onboarding_value(
+        self,
+        stdscr,
+        step: "webui_routes.OnboardingStepDefinition",
+        current_value: Optional[Any],
+    ) -> Optional[Any]:
+        if step.id == "default_datasets_dir" and current_value not in (None, ""):
+            choice = self.show_options(
+                stdscr,
+                f"{step.title}\n{step.prompt}",
+                ["Keep current value", "Update value", "Clear value"],
+                0,
+            )
+            if choice == -1:
+                return None
+            if choice == 0:
+                return current_value
+            if choice == 2:
+                return ""
+
+        prompt = f"{step.title}\n{step.prompt}"
+        if step.input_type == "accelerate_auto":
+            prompt = f"{prompt}\nEnter JSON overrides (single line):"
+            default_value = json.dumps(current_value, sort_keys=True) if current_value else ""
+        else:
+            default_value = "" if current_value in (None, "") else str(current_value)
+        return self.get_input(stdscr, prompt, default_value)
+
+    def edit_webui_onboarding(self, stdscr) -> None:
+        store = self._get_webui_store()
+        if store is None:
+            error = self._webui_store_error or "WebUI state store unavailable."
+            self.show_error(stdscr, error)
+            return
+
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            try:
+                onboarding = store.load_onboarding()
+            except ValueError as exc:
+                self.show_error(stdscr, f"Failed to load WebUI onboarding state: {exc}")
+                return
+
+            webui_routes = self._get_webui_routes()
+            steps = webui_routes._resolve_step_definitions()
+            if not steps:
+                self.show_message(stdscr, "No onboarding steps available.")
+                return
+
+            menu_items: List[tuple[str, Any]] = []
+            current_values: Dict[str, str] = {}
+
+            for step in steps:
+                menu_items.append((step.title, partial(self._edit_webui_onboarding_step, stdscr, step)))
+                current_values[step.title] = self._summarize_onboarding_step(step, onboarding.steps.get(step.id))
+
+            menu_items.append(("Back", None))
+            choice = nav.show_menu("WebUI Onboarding", menu_items, current_values, selected=self._webui_menu_index)
+            self._webui_menu_index = nav.last_selection
+
+            if choice == -1:
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif choice == -2 or menu_items[choice][1] is None:
+                return
+            else:
+                handler = menu_items[choice][1]
+                if handler:
+                    handler()
+
+    def _edit_webui_onboarding_step(
+        self,
+        stdscr,
+        step: "webui_routes.OnboardingStepDefinition",
+    ) -> None:
+        store = self._get_webui_store()
+        if store is None:
+            error = self._webui_store_error or "WebUI state store unavailable."
+            self.show_error(stdscr, error)
+            return
+
+        try:
+            onboarding = store.load_onboarding()
+            defaults = store.load_defaults()
+        except ValueError as exc:
+            self.show_error(stdscr, f"Failed to load WebUI state: {exc}")
+            return
+
+        stored = onboarding.steps.get(step.id)
+        current_value = stored.value if stored else None
+        raw_value = self._prompt_onboarding_value(stdscr, step, current_value)
+        if raw_value is None:
+            return
+
+        try:
+            webui_routes = self._get_webui_routes()
+            normalized = webui_routes._normalise_value(step, raw_value)
+        except HTTPException as exc:
+            self.show_error(stdscr, str(exc.detail))
+            return
+
+        if step.required and not normalized and step.id != "default_datasets_dir":
+            self.show_error(stdscr, "A value is required to complete this step.")
+            return
+
+        store.record_onboarding_step(step.id, step.version, value=normalized)
+        webui_routes = self._get_webui_routes()
+        webui_routes._apply_step_to_defaults(defaults, step, normalized)
+        store.save_defaults(defaults)
+        self._refresh_webui_defaults()
+        self.show_message(stdscr, f"Updated '{step.title}'.")
 
     # ------------------------------------------------------------------
     # LyCORIS builder support
