@@ -156,6 +156,13 @@ if (!window.uiSettingsTabComponent) {
                     output_dir: (data.output_dir && data.output_dir !== 'Not configured') ? data.output_dir : '',
                     configs_dir: data.configs_dir || '',
                     accelerate: this.prepareAccelerateState(data.accelerate_overrides),
+                    git_mirror_enabled: data.git_mirror_enabled === true,
+                    git_auto_commit: data.git_auto_commit === true,
+                    git_require_clean: data.git_require_clean === true,
+                    git_include_untracked: data.git_include_untracked === true,
+                    git_push_on_snapshot: data.git_push_on_snapshot === true,
+                    git_remote: typeof data.git_remote === 'string' ? data.git_remote : '',
+                    git_branch: typeof data.git_branch === 'string' ? data.git_branch : '',
                 };
             },
             clone(value) {
@@ -475,6 +482,14 @@ if (!window.uiSettingsTabComponent) {
                 }
                 payload.accelerate_overrides = acceleratePayload;
 
+                payload.git_mirror_enabled = this.settings.git_mirror_enabled;
+                payload.git_auto_commit = this.settings.git_auto_commit;
+                payload.git_require_clean = this.settings.git_require_clean;
+                payload.git_include_untracked = this.settings.git_include_untracked;
+                payload.git_push_on_snapshot = this.settings.git_push_on_snapshot;
+                payload.git_remote = this.settings.git_remote || null;
+                payload.git_branch = this.settings.git_branch || null;
+
                 try {
                     const response = await fetch('/api/webui/defaults/update', {
                         method: 'POST',
@@ -641,6 +656,83 @@ if (!window.uiSettingsTabComponent) {
                         <p class="text-muted small mb-0">
                             When enabled, external link icons appear next to dataloader form fields linking to documentation.
                             Disable this if you prefer a cleaner interface without the link indicators.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-xl-6">
+                    <div class="preference-card">
+                        <h6 class="mb-3">Git Mirror</h6>
+                        <div class="form-check form-switch form-switch-lg mb-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-git-mirror-enabled"
+                                   x-model="settings.git_mirror_enabled"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-git-mirror-enabled">
+                                Enable Git Mirror tab
+                            </label>
+                        </div>
+                        <div class="form-check form-switch form-switch-lg mb-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-git-auto-commit"
+                                   x-model="settings.git_auto_commit"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-git-auto-commit">
+                                Auto-commit on save
+                            </label>
+                        </div>
+                        <div class="form-check form-switch form-switch-lg mb-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-git-require-clean"
+                                   x-model="settings.git_require_clean"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-git-require-clean">
+                                Require clean tree before saving
+                            </label>
+                        </div>
+                        <div class="form-check form-switch form-switch-lg mb-2">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-git-include-untracked"
+                                   x-model="settings.git_include_untracked"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-git-include-untracked">
+                                Include untracked files when snapshotting
+                            </label>
+                        </div>
+                        <div class="form-check form-switch form-switch-lg mb-3">
+                            <input class="form-check-input"
+                                   type="checkbox"
+                                   id="ui-git-push-on-snapshot"
+                                   x-model="settings.git_push_on_snapshot"
+                                   @change="markDirty()">
+                            <label class="form-check-label" for="ui-git-push-on-snapshot">
+                                Push after snapshot
+                            </label>
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-sm-6">
+                                <label class="form-label">Remote URL</label>
+                                <input type="text"
+                                       class="form-control"
+                                       placeholder="https://example.com/repo.git"
+                                       x-model="settings.git_remote"
+                                       @input="markDirty()">
+                            </div>
+                            <div class="col-sm-6">
+                                <label class="form-label">Default branch</label>
+                                <input type="text"
+                                       class="form-control"
+                                       placeholder="main"
+                                       x-model="settings.git_branch"
+                                       @input="markDirty()">
+                            </div>
+                        </div>
+                        <p class="text-muted small mt-2 mb-0">
+                            Git preferences apply to the configs directory. Enable the tab to expose the Git Mirror controls.
                         </p>
                     </div>
                 </div>
