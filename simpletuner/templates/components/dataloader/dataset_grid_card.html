@@ -43,10 +43,10 @@
                   title="Default text embed backend">Default</span>
             <span class="badge grid-card-type-badge bg-danger"
                   x-show="dataset.dataset_type === 'conditioning' && !dataset.conditioning_type"
-                  title="Conditioning type not configured - click to configure">No type</span>
+                  title="Conditioning type not configured">No type</span>
             <span class="badge grid-card-type-badge bg-danger"
                   x-show="['image', 'video', 'audio'].includes(dataset.dataset_type) && !dataset.caption_strategy"
-                  title="Caption strategy not configured - click to configure">No captions</span>
+                  title="Caption strategy not configured">No captions</span>
         </div>
 
         <!-- Repeats -->
