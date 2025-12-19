@@ -102,6 +102,28 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="peft_lora_target_modules",
+            arg_name="--peft_lora_target_modules",
+            ui_label="PEFT LoRA Target Modules",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value=None,
+            placeholder='["to_k", "to_q", "to_v", "to_out.0"]',
+            dependencies=[
+                FieldDependency(field="model_type", value="lora"),
+                FieldDependency(field="lora_type", value="standard"),
+            ],
+            help_text="Override PEFT LoRA target modules with a JSON list or JSON file path.",
+            tooltip="Provide a JSON array (or path to a JSON file) listing module names. Overrides preset targets.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3.6,
+        )
+    )
+
     # LoRA Dropout
     registry._add_field(
         ConfigField(

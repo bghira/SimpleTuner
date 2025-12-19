@@ -259,6 +259,65 @@ def _normalize_structured_config_option(raw_value, option_name: str):
 
         raise ValueError(f"Could not find {option_name} file: {config_str}")
 
+
+def _normalize_lora_target_modules(raw_value, option_name: str):
+    """Normalize PEFT LoRA target modules supplied as JSON or JSON file."""
+    if raw_value is None:
+        return None
+
+    if isinstance(raw_value, (ast.AST, ast.Name, ast.Call, ast.Dict, ast.List, ast.Constant)) or (
+        hasattr(raw_value, "__class__") and "ast" in str(type(raw_value))
+    ):
+        ast_repr = repr(raw_value)
+        raise ValueError(
+            f"{option_name} is an AST object ({ast_repr}) instead of a JSON string or file path. "
+            f"Please check your configuration format."
+        )
+
+    def _normalize_list(value):
+        if isinstance(value, dict):
+            raise ValueError(f"{option_name} must be a JSON array of strings, got {type(value)}")
+        if not isinstance(value, (list, tuple)):
+            raise ValueError(f"{option_name} must be a JSON array of strings, got {type(value)}")
+        normalized = []
+        for entry in value:
+            if entry in (None, "", "None"):
+                continue
+            if not isinstance(entry, str):
+                raise ValueError(f"{option_name} entries must be strings, got {type(entry)}")
+            candidate = entry.strip()
+            if candidate:
+                normalized.append(candidate)
+        return normalized or None
+
+    if isinstance(raw_value, str):
+        config_str = os.path.expanduser(str(raw_value))
+        if config_str in ("", "None"):
+            return None
+        if config_str.startswith("{") or config_str.startswith("["):
+            if _contains_ast_markers(config_str):
+                raise ValueError(f"{option_name} contains AST object patterns instead of valid JSON. Received: {config_str}")
+
+            try:
+                parsed_config = json.loads(config_str)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Could not load {option_name} (invalid JSON): {exc}") from exc
+
+            return _normalize_list(parsed_config)
+
+        if os.path.isfile(config_str):
+            try:
+                with open(config_str, "r", encoding="utf-8") as handle:
+                    loaded_config = json.load(handle)
+            except Exception as exc:
+                raise ValueError(f"Could not load {option_name} from file: {exc}") from exc
+
+            return _normalize_list(loaded_config)
+
+        raise ValueError(f"Could not find {option_name} file: {config_str}")
+
+    return _normalize_list(raw_value)
+
     if isinstance(raw_value, dict):
         return [raw_value]
 
@@ -958,6 +1017,16 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             else:
                 warning_log("DoRA support is experimental and not very thoroughly tested.")
                 args.lora_initialisation_style = "default"
+
+    if getattr(args, "peft_lora_target_modules", None) is not None:
+        try:
+            args.peft_lora_target_modules = _normalize_lora_target_modules(
+                args.peft_lora_target_modules,
+                "peft_lora_target_modules",
+            )
+        except ValueError as exc:
+            logger.error(str(exc))
+            raise
 
     if args.distillation_config is not None:
         if args.distillation_config.startswith("{"):
