@@ -64,6 +64,43 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             },
             "fields": [
                 {
+                    "id": "id",
+                    "label": "dataset id",
+                    "description": "unique identifier for this dataset",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "my-dataset",
+                },
+                {
+                    "id": "type",
+                    "label": "backend type",
+                    "description": "storage backend type",
+                    "type": "select",
+                    "defaultValue": "local",
+                    "options": [
+                        {"value": "local", "label": "local filesystem"},
+                        {"value": "aws", "label": "AWS S3"},
+                        {"value": "csv", "label": "CSV URL list"},
+                        {"value": "huggingface", "label": "Hugging Face"},
+                    ],
+                },
+                {
+                    "id": "dataset_type",
+                    "label": "dataset type",
+                    "description": "type of data in this dataset",
+                    "type": "select",
+                    "defaultValue": "image",
+                    "options": [
+                        {"value": "image", "label": "image"},
+                        {"value": "video", "label": "video"},
+                        {"value": "conditioning", "label": "conditioning"},
+                        {"value": "text_embeds", "label": "text embeds"},
+                        {"value": "image_embeds", "label": "image embeds"},
+                        {"value": "audio", "label": "audio"},
+                        {"value": "eval", "label": "eval"},
+                    ],
+                },
+                {
                     "id": "instance_data_dir",
                     "label": "instance data path",
                     "description": "absolute path containing images or videos",
@@ -80,6 +117,9 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "options": [
                         {"value": "discovery", "label": "discovery json"},
                         {"value": "json", "label": "static json"},
+                        {"value": "parquet", "label": "parquet index"},
+                        {"value": "csv", "label": "CSV index"},
+                        {"value": "huggingface", "label": "Hugging Face dataset"},
                         {"value": "none", "label": "none"},
                     ],
                 },
@@ -91,10 +131,10 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "defaultValue": "textfile",
                     "options": [
                         {"value": "textfile", "label": "text file"},
-                        {"value": "filename", "label": "filename"},
-                        {"value": "csv", "label": "csv column"},
-                        {"value": "huggingface", "label": "huggingface field"},
+                        {"value": "csv", "label": "CSV"},
                         {"value": "parquet", "label": "parquet"},
+                        {"value": "jsonl", "label": "JSON lines"},
+                        {"value": "instanceprompt", "label": "instance prompt only"},
                     ],
                 },
                 {
@@ -332,6 +372,34 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             },
             "fields": [
                 {
+                    "id": "id",
+                    "label": "dataset id",
+                    "description": "unique identifier for this dataset",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "my-audio-dataset",
+                },
+                {
+                    "id": "type",
+                    "label": "backend type",
+                    "description": "storage backend type",
+                    "type": "select",
+                    "defaultValue": "local",
+                    "options": [
+                        {"value": "local", "label": "local filesystem"},
+                    ],
+                },
+                {
+                    "id": "dataset_type",
+                    "label": "dataset type",
+                    "description": "type of data in this dataset",
+                    "type": "select",
+                    "defaultValue": "audio",
+                    "options": [
+                        {"value": "audio", "label": "audio"},
+                    ],
+                },
+                {
                     "id": "instance_data_dir",
                     "label": "instance data path",
                     "description": "absolute path containing audio files",
@@ -453,6 +521,34 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             },
             "fields": [
                 {
+                    "id": "id",
+                    "label": "dataset id",
+                    "description": "unique identifier for this dataset",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "my-text-embeds",
+                },
+                {
+                    "id": "type",
+                    "label": "backend type",
+                    "description": "storage backend type",
+                    "type": "select",
+                    "defaultValue": "local",
+                    "options": [
+                        {"value": "local", "label": "local filesystem"},
+                    ],
+                },
+                {
+                    "id": "dataset_type",
+                    "label": "dataset type",
+                    "description": "type of data in this dataset",
+                    "type": "select",
+                    "defaultValue": "text_embeds",
+                    "options": [
+                        {"value": "text_embeds", "label": "text embeds"},
+                    ],
+                },
+                {
                     "id": "cache_dir",
                     "label": "cache directory",
                     "description": "path containing cached text embeddings",
@@ -522,6 +618,34 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 "split": "train",
             },
             "fields": [
+                {
+                    "id": "id",
+                    "label": "dataset id",
+                    "description": "unique identifier for this dataset",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "my-hf-dataset",
+                },
+                {
+                    "id": "type",
+                    "label": "backend type",
+                    "description": "storage backend type",
+                    "type": "select",
+                    "defaultValue": "huggingface",
+                    "options": [
+                        {"value": "huggingface", "label": "Hugging Face"},
+                    ],
+                },
+                {
+                    "id": "dataset_type",
+                    "label": "dataset type",
+                    "description": "type of data in this dataset",
+                    "type": "select",
+                    "defaultValue": "image",
+                    "options": [
+                        {"value": "image", "label": "image"},
+                    ],
+                },
                 {
                     "id": "dataset_name",
                     "label": "dataset repository",
@@ -606,6 +730,34 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             },
             "fields": [
                 {
+                    "id": "id",
+                    "label": "dataset id",
+                    "description": "unique identifier for this dataset",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "my-csv-dataset",
+                },
+                {
+                    "id": "type",
+                    "label": "backend type",
+                    "description": "storage backend type",
+                    "type": "select",
+                    "defaultValue": "csv",
+                    "options": [
+                        {"value": "csv", "label": "CSV URL list"},
+                    ],
+                },
+                {
+                    "id": "dataset_type",
+                    "label": "dataset type",
+                    "description": "type of data in this dataset",
+                    "type": "select",
+                    "defaultValue": "image",
+                    "options": [
+                        {"value": "image", "label": "image"},
+                    ],
+                },
+                {
                     "id": "csv_file",
                     "label": "csv file path",
                     "description": "path to the csv manifest",
@@ -660,6 +812,34 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                 "caption_strategy": "textfile",
             },
             "fields": [
+                {
+                    "id": "id",
+                    "label": "dataset id",
+                    "description": "unique identifier for this dataset",
+                    "type": "text",
+                    "required": True,
+                    "placeholder": "my-s3-dataset",
+                },
+                {
+                    "id": "type",
+                    "label": "backend type",
+                    "description": "storage backend type",
+                    "type": "select",
+                    "defaultValue": "aws",
+                    "options": [
+                        {"value": "aws", "label": "AWS S3"},
+                    ],
+                },
+                {
+                    "id": "dataset_type",
+                    "label": "dataset type",
+                    "description": "type of data in this dataset",
+                    "type": "select",
+                    "defaultValue": "image",
+                    "options": [
+                        {"value": "image", "label": "image"},
+                    ],
+                },
                 {
                     "id": "aws_bucket_name",
                     "label": "bucket name",
