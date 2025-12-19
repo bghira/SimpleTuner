@@ -476,7 +476,7 @@ class Kandinsky5Video(VideoModelFoundation):
 
         model_pred = model_output.sample
         crepa_hidden = getattr(model_output, "crepa_hidden_states", None) if capture_hidden else None
-        if capture_hidden and crepa_hidden is None:
+        if capture_hidden and crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
             raise ValueError(
                 f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
                 "but none were returned. Check that crepa_block_index is within the model's block count."

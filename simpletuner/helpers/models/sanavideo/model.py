@@ -201,7 +201,7 @@ class SanaVideo(VideoModelFoundation):
             else:
                 model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
                 crepa_hidden = None
-            if crepa_hidden is None:
+            if crepa_hidden is None and not getattr(self.crepa_regularizer, "use_backbone_features", False):
                 raise ValueError(
                     f"CREPA requested hidden states from layer {self.crepa_regularizer.block_index} "
                     "but none were returned. Check that crepa_block_index is within the model's block count."
