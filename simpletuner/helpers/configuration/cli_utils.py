@@ -171,7 +171,7 @@ def mapping_to_cli_args(
                 continue
 
         # Special handling for webhook_config-like options: always JSON-serialize dicts/lists
-        if canonical_key in {"webhook_config", "deepspeed_config", "publishing_config"}:
+        if canonical_key in {"webhook_config", "deepspeed_config", "publishing_config", "peft_lora_target_modules"}:
             if isinstance(value, (Mapping, list)):
                 import json
 

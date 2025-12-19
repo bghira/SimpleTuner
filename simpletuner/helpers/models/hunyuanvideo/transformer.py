@@ -189,13 +189,15 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
             The dimension of the output embedding.
     """
 
-    def __init__(self, embedding_dim: int, use_meanflow: bool = False):
+    def __init__(self, embedding_dim: int, use_meanflow: bool = False, enable_time_sign_embed: bool = False):
         super().__init__()
 
         self.time_proj = Timesteps(num_channels=256, flip_sin_to_cos=True, downscale_freq_shift=0)
         self.timestep_embedder = TimestepEmbedding(in_channels=256, time_embed_dim=embedding_dim)
-        self.time_sign_embed = nn.Embedding(2, embedding_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, embedding_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
         self.use_meanflow = use_meanflow
         self.time_proj_r = None
@@ -213,6 +215,11 @@ class HunyuanVideo15TimeEmbedding(nn.Module):
         timesteps_proj = self.time_proj(timestep)
         timesteps_emb = self.timestep_embedder(timesteps_proj.to(dtype=timestep.dtype))
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=timesteps_emb.device)
             timesteps_emb = timesteps_emb + self.time_sign_embed(sign_idx).to(
                 dtype=timesteps_emb.dtype, device=timesteps_emb.device
@@ -612,6 +619,7 @@ class HunyuanVideo15Transformer3DModel(
         use_meanflow: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ) -> None:
         super().__init__()
         self._tread_router = None
@@ -630,7 +638,11 @@ class HunyuanVideo15Transformer3DModel(
         )
         self.context_embedder_2 = HunyuanVideo15ByT5TextProjection(text_embed_2_dim, 2048, inner_dim)
 
-        self.time_embed = HunyuanVideo15TimeEmbedding(inner_dim, use_meanflow=use_meanflow)
+        self.time_embed = HunyuanVideo15TimeEmbedding(
+            inner_dim,
+            use_meanflow=use_meanflow,
+            enable_time_sign_embed=enable_time_sign_embed,
+        )
 
         self.cond_type_embed = nn.Embedding(3, inner_dim)
 
@@ -671,6 +683,7 @@ class HunyuanVideo15Transformer3DModel(
         image_embeds: Optional[torch.Tensor] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[Tuple[torch.Tensor], Transformer2DModelOutput]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()

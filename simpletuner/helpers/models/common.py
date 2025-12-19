@@ -84,6 +84,7 @@ flow_matching_model_families = [
     "auraflow",
     "qwen_image",
     "z_image",
+    "z_image_omni",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -522,7 +523,36 @@ class ModelFoundation(ABC):
     def get_lora_save_layers(self):
         return None
 
+    def _get_peft_lora_target_modules(self):
+        if str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
+            return None
+
+        raw_targets = getattr(self.config, "peft_lora_target_modules", None)
+        if raw_targets in (None, "", "None"):
+            return None
+
+        if not isinstance(raw_targets, (list, tuple)):
+            raise ValueError(
+                "peft_lora_target_modules must be a list of module name strings. " f"Received {type(raw_targets)}."
+            )
+
+        normalized = []
+        for entry in raw_targets:
+            if entry in (None, "", "None"):
+                continue
+            if not isinstance(entry, str):
+                raise ValueError("peft_lora_target_modules entries must be strings. " f"Received {type(entry)}.")
+            candidate = entry.strip()
+            if candidate:
+                normalized.append(candidate)
+
+        return normalized or None
+
     def get_lora_target_layers(self):
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
+
         lora_type = getattr(self.config, "lora_type", "standard")
         if lora_type.lower() == "standard":
             if getattr(self.config, "slider_lora_target", False):
@@ -1583,8 +1613,22 @@ class ModelFoundation(ABC):
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         """
-        A stub method for child classes to augment pretrained class load arguments with.
+        Augment `from_pretrained` kwargs before loading the base model.
+
+        This is commonly used by child classes, but we also handle shared feature flags here when safe.
         """
+        if getattr(self.config, "twinflow_enabled", False):
+            model_cls = getattr(self, "MODEL_CLASS", None)
+            if model_cls is not None:
+                try:
+                    import inspect
+
+                    signature = inspect.signature(model_cls.__init__)
+                    if "enable_time_sign_embed" in signature.parameters:
+                        pretrained_load_args.setdefault("enable_time_sign_embed", True)
+                except (TypeError, ValueError):
+                    # Some callables may not have introspectable signatures (e.g., C-extensions).
+                    pass
         return pretrained_load_args
 
     def _extract_quantization_entry(self, raw_config, component_keys: list[str]):

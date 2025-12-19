@@ -57,12 +57,14 @@ if "ZImageTransformer2DModel" not in diffusers_peft._SET_ADAPTER_SCALE_FN_MAPPIN
 
 
 class TimestepEmbedder(nn.Module):
-    def __init__(self, out_size, mid_size=None, frequency_embedding_size=256):
+    def __init__(self, out_size, mid_size=None, frequency_embedding_size=256, enable_time_sign_embed: bool = False):
         super().__init__()
         if mid_size is None:
             mid_size = out_size
-        self.time_sign_embed = nn.Embedding(2, out_size)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, out_size)
+            nn.init.zeros_(self.time_sign_embed.weight)
         self.mlp = nn.Sequential(
             nn.Linear(
                 frequency_embedding_size,
@@ -99,6 +101,11 @@ class TimestepEmbedder(nn.Module):
             t_freq = t_freq.to(weight_dtype)
         t_emb = self.mlp(t_freq)
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=t_emb.device)
             t_emb = t_emb + self.time_sign_embed(sign_idx).to(dtype=t_emb.dtype, device=t_emb.device)
         return t_emb
@@ -394,6 +401,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         t_scale=1000.0,
         axes_dims=[32, 48, 48],
         axes_lens=[1024, 512, 512],
+        enable_time_sign_embed: bool = False,
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -448,7 +456,11 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 for layer_id in range(n_refiner_layers)
             ]
         )
-        self.t_embedder = TimestepEmbedder(min(dim, ADALN_EMBED_DIM), mid_size=1024)
+        self.t_embedder = TimestepEmbedder(
+            min(dim, ADALN_EMBED_DIM),
+            mid_size=1024,
+            enable_time_sign_embed=enable_time_sign_embed,
+        )
         self.cap_embedder = nn.Sequential(
             RMSNorm(cap_feat_dim, eps=norm_eps),
             nn.Linear(cap_feat_dim, dim, bias=True),

@@ -142,6 +142,34 @@ class DatasetUploadAndCaptionRoutesTestCase(APITestCase, unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("ZIP", response.json()["detail"])
 
+    def test_upload_zip_preserves_subfolder_structure(self) -> None:
+        """ZIP uploads should preserve the subfolder structure from the archive."""
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w") as zf:
+            zf.writestr("subdir1/image1.png", _png_bytes("red"))
+            zf.writestr("subdir1/nested/image2.png", _png_bytes("blue"))
+            zf.writestr("subdir2/image3.png", _png_bytes("green"))
+            zf.writestr("root_image.png", _png_bytes("yellow"))
+        zip_buffer.seek(0)
+
+        response = self.client.post(
+            "/api/datasets/upload/zip",
+            data={"target_path": str(self.datasets_dir)},
+            files=[("file", ("archive.zip", zip_buffer.read(), "application/zip"))],
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["files_uploaded"], 4)
+        self.assertEqual(body["files_skipped"], 0)
+
+        # Verify subfolder structure was preserved
+        self.assertTrue((self.datasets_dir / "subdir1" / "image1.png").exists())
+        self.assertTrue((self.datasets_dir / "subdir1" / "nested" / "image2.png").exists())
+        self.assertTrue((self.datasets_dir / "subdir2" / "image3.png").exists())
+        self.assertTrue((self.datasets_dir / "root_image.png").exists())
+
     def test_caption_status_thumbnails_and_writes(self) -> None:
         """Caption endpoints should report coverage, generate thumbnails, and write captions."""
         img1 = self.datasets_dir / "one.png"

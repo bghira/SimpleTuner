@@ -6,13 +6,16 @@
         <label class="form-label small">Type <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#conditioning_type" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
         <select class="form-select form-select-sm"
                 x-model="editingDataset.conditioning_type"
-                @change="markAsUnsaved()">
-            <option value="controlnet">ControlNet</option>
+                @change="markAsUnsaved()"
+                :class="{'border-danger': !editingDataset.conditioning_type}">
+            <option value="">Select conditioning type...</option>
+            <option value="controlnet" x-show="modelContext.controlnetEnabled">ControlNet</option>
             <option value="mask">Inpainting Mask</option>
             <option value="reference_strict">Reference (Strict Alignment)</option>
             <option value="reference_loose">Reference (Loose Alignment)</option>
         </select>
         <div class="form-text small text-muted">
+            <span x-show="!editingDataset.conditioning_type" class="text-danger"><i class="fas fa-exclamation-triangle"></i> Please select a conditioning type</span>
             <span x-show="editingDataset.conditioning_type === 'controlnet'">For ControlNet training with control signal inputs</span>
             <span x-show="editingDataset.conditioning_type === 'mask'">For inpainting with binary mask inputs</span>
             <span x-show="editingDataset.conditioning_type === 'reference_strict'">For edit models (Qwen Edit) with strict pixel alignment</span>

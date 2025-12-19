@@ -24,6 +24,56 @@ CONFIG_FILENAMES = {
 }
 
 
+def _find_webui_state_file(filename: str) -> Optional[Path]:
+    candidates: list[Path] = []
+
+    override = os.environ.get("SIMPLETUNER_WEB_UI_CONFIG")
+    if override:
+        candidates.append(Path(override).expanduser() / filename)
+
+    base_candidate = os.environ.get("XDG_HOME") or os.environ.get("XDG_CONFIG_HOME")
+    if base_candidate:
+        candidates.append(Path(base_candidate).expanduser() / "webui" / filename)
+
+    for root in (Path("/workspace/simpletuner"), Path("/notebooks/simpletuner"), Path.home() / ".simpletuner"):
+        candidates.append(root / "webui" / filename)
+
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _get_webui_configs_dir() -> Optional[Path]:
+    defaults_path = _find_webui_state_file("defaults.json")
+    if defaults_path:
+        with defaults_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        configs_dir = payload.get("configs_dir")
+        if configs_dir:
+            return Path(str(configs_dir)).expanduser()
+
+    onboarding_path = _find_webui_state_file("onboarding.json")
+    if onboarding_path:
+        with onboarding_path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        steps = payload.get("steps", {})
+        if isinstance(steps, dict):
+            step_payload = steps.get("default_configs_dir", {})
+            if isinstance(step_payload, dict):
+                configs_dir = step_payload.get("value")
+                if configs_dir:
+                    return Path(str(configs_dir)).expanduser()
+
+    return None
+
+
 def find_config_file() -> Optional[str]:
     """Find config file in current directory or config/ subdirectory."""
     # Check for config.json in current directory
@@ -753,6 +803,12 @@ def cmd_server(args) -> int:
     ssl_key = getattr(args, "ssl_key", None)
     ssl_cert = getattr(args, "ssl_cert", None)
     ssl_no_verify = getattr(args, "ssl_no_verify", False)
+    env = getattr(args, "env", None)
+
+    if not os.environ.get("SIMPLETUNER_CONFIG_DIR"):
+        webui_configs_dir = _get_webui_configs_dir()
+        if webui_configs_dir:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = str(webui_configs_dir)
 
     # Determine port based on mode if not specified
     if port is None:
@@ -762,6 +818,32 @@ def cmd_server(args) -> int:
             port = 8002
         else:  # unified
             port = 8001
+
+    # Handle --env option: validate config exists and set up for auto-start
+    # This is done early to fail fast before any server setup
+    if env:
+        os.environ["ENV"] = env
+
+        # Load environment variables from config.env files (like train.sh does)
+        from simpletuner.helpers.configuration.loader import load_env_variables
+
+        load_env_variables()
+
+        # Validate that the configuration file exists
+        config_backend_env = os.environ.get(
+            "SIMPLETUNER_CONFIG_BACKEND",
+            os.environ.get("CONFIG_BACKEND", os.environ.get("CONFIG_TYPE")),
+        )
+        config_path_env = os.environ.get("CONFIG_PATH")
+
+        try:
+            _validate_environment_config(env, config_backend_env, config_path_env)
+        except FileNotFoundError as validation_error:
+            print(f"Error: {validation_error}")
+            return 1
+
+        # Store env for auto-start training
+        os.environ["SIMPLETUNER_SERVER_AUTOSTART_ENV"] = env
 
     # Handle SSL configuration
     ssl_config = None
@@ -775,6 +857,9 @@ def cmd_server(args) -> int:
     if mode in {"trainer", "unified"}:
         print(f"> API: {protocol}://{host}:{port}/api")
         print(f"> Web: {protocol}://{host}:{port}/web")
+    if env:
+        print(f"> Environment: {env}")
+        print("> Training will start automatically once server is ready.")
 
     # Set environment variables for webhook configuration
     os.environ["SIMPLETUNER_SSL_ENABLED"] = "true" if ssl_config else "false"
@@ -1074,6 +1159,10 @@ Examples:
         "--ssl-no-verify",
         action="store_true",
         help="Disable SSL certificate verification for webhook connections",
+    )
+    server_parser.add_argument(
+        "--env",
+        help="Environment/config path to load and auto-start training (same as 'simpletuner train --env')",
     )
     server_parser.set_defaults(func=cmd_server)
 

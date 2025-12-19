@@ -1,0 +1,477 @@
+<!-- templates/git_mirror_tab.html - Git integration tab -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-git">
+<script>document.getElementById('css-form-sections-git').href = '/static/css/form-sections.css?t=' + Date.now();</script>
+
+<script>
+if (!window.gitMirrorTabComponent) {
+    window.gitMirrorTabComponent = function(initialDefaults) {
+        const defaults = initialDefaults || {};
+        return {
+            status: null,
+            loading: false,
+            savingPrefs: false,
+            savingIdentity: false,
+            error: '',
+            remoteUrl: defaults.git_remote || '',
+            branchName: defaults.git_branch || '',
+            userName: defaults.git_user_name || '',
+            userEmail: defaults.git_user_email || '',
+            allowRemote: false,
+            syncOnboarding: defaults.sync_onboarding_defaults || false,
+            onboardingOptOut: Array.isArray(defaults.onboarding_sync_opt_out) ? defaults.onboarding_sync_opt_out.slice() : [],
+            prefs: {
+                auto_commit: defaults.git_auto_commit || false,
+                require_clean: defaults.git_require_clean || false,
+                include_untracked: defaults.git_include_untracked || false,
+                push_on_snapshot: defaults.git_push_on_snapshot || false,
+            },
+            init() {
+                this.loadStatus();
+                if (window.Alpine && typeof Alpine.effect === 'function' && typeof Alpine.onCleanup === 'function') {
+                    Alpine.effect(() => {
+                        const syncTimer = window.setInterval(() => {
+                            this.loadStatus();
+                            if (this.syncOnboarding) {
+                                this.refreshOnboardingDefaults();
+                            }
+                        }, 60000);
+                        Alpine.onCleanup(() => {
+                            window.clearInterval(syncTimer);
+                        });
+                    });
+                } else {
+                    this._syncTimer = window.setInterval(() => {
+                        this.loadStatus();
+                        if (this.syncOnboarding) {
+                            this.refreshOnboardingDefaults();
+                        }
+                    }, 60000);
+                    this._beforeUnloadHandler = () => {
+                        if (this._syncTimer) {
+                            window.clearInterval(this._syncTimer);
+                            this._syncTimer = null;
+                        }
+                    };
+                    window.addEventListener('beforeunload', this._beforeUnloadHandler);
+                }
+            },
+            destroy() {
+                if (this._syncTimer) {
+                    window.clearInterval(this._syncTimer);
+                    this._syncTimer = null;
+                }
+                if (this._beforeUnloadHandler) {
+                    window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+                    this._beforeUnloadHandler = null;
+                }
+            },
+            async loadStatus() {
+                this.loading = true;
+                this.error = '';
+                try {
+                    const response = await fetch('/api/git/status');
+                    if (!response.ok) {
+                        throw new Error('Failed to load git status');
+                    }
+                    const payload = await response.json();
+                    this.status = payload;
+                    if (this.status && this.status.remote && !this.remoteUrl) {
+                        this.remoteUrl = this.status.remote;
+                    }
+                    if (this.status && this.status.branch && !this.branchName) {
+                        this.branchName = this.status.branch;
+                    }
+                    if (this.status && this.status.user_name) {
+                        this.userName = this.status.user_name;
+                    }
+                    if (this.status && this.status.user_email) {
+                        this.userEmail = this.status.user_email;
+                    }
+                } catch (error) {
+                    console.error('Git status failed', error);
+                    this.error = error.message || 'Unable to load git status.';
+                } finally {
+                    this.loading = false;
+                }
+            },
+            sanitizeDisplay(value) {
+                if (value === undefined || value === null) {
+                    return '';
+                }
+                return String(value)
+                    .replace(/\u001b\[[0-9;]*m/g, '')
+                    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+            },
+            async initRepo() {
+                this.loading = true;
+                this.error = '';
+                try {
+                    const response = await fetch('/api/git/init', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ remote: this.remoteUrl || null, branch: this.branchName || null }),
+                    });
+                    if (!response.ok) {
+                        const detail = await response.json().catch(() => ({}));
+                        throw new Error(detail.detail || 'Failed to initialize repository');
+                    }
+                    await this.loadStatus();
+                    window.showToast && window.showToast('Initialized git repository', 'success');
+                } catch (error) {
+                    this.error = error.message || 'Failed to initialize repository';
+                    window.showToast && window.showToast(this.error, 'error');
+                } finally {
+                    this.loading = false;
+                }
+            },
+            async setRemote() {
+                this.loading = true;
+                this.error = '';
+                try {
+                    const response = await fetch('/api/git/remote', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ remote: this.remoteUrl || null }),
+                    });
+                    if (!response.ok) {
+                        const detail = await response.json().catch(() => ({}));
+                        throw new Error(detail.detail || 'Failed to update remote');
+                    }
+                    await this.loadStatus();
+                    window.showToast && window.showToast('Updated remote', 'success');
+                } catch (error) {
+                    this.error = error.message || 'Failed to update remote';
+                    window.showToast && window.showToast(this.error, 'error');
+                } finally {
+                    this.loading = false;
+                }
+            },
+            async switchBranch(create = false) {
+                if (!this.branchName || !this.branchName.trim()) {
+                    this.error = 'Branch name is required.';
+                    return;
+                }
+                this.loading = true;
+                this.error = '';
+                try {
+                    const response = await fetch('/api/git/branch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: this.branchName.trim(), create }),
+                    });
+                    if (!response.ok) {
+                        const detail = await response.json().catch(() => ({}));
+                        throw new Error(detail.detail || 'Failed to switch branch');
+                    }
+                    await this.loadStatus();
+                    window.showToast && window.showToast(create ? 'Created branch' : 'Switched branch', 'success');
+                } catch (error) {
+                    this.error = error.message || 'Branch operation failed';
+                    window.showToast && window.showToast(this.error, 'error');
+                } finally {
+                    this.loading = false;
+                }
+            },
+            async remoteAction(kind) {
+                if (!this.allowRemote) {
+                    this.error = 'Enable remote actions to proceed.';
+                    return;
+                }
+                this.loading = true;
+                this.error = '';
+                try {
+                    const response = await fetch(`/api/git/${kind}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            allow_remote: true,
+                            remote: this.remoteUrl || null,
+                            branch: this.branchName || null,
+                        }),
+                    });
+                    if (!response.ok) {
+                        const detail = await response.json().catch(() => ({}));
+                        throw new Error(detail.detail || `${kind} failed`);
+                    }
+                    await this.loadStatus();
+                    window.showToast && window.showToast(`${kind} succeeded`, 'success');
+                } catch (error) {
+                    this.error = error.message || `${kind} failed`;
+                    window.showToast && window.showToast(this.error, 'error');
+                } finally {
+                    this.loading = false;
+                }
+            },
+            async savePrefs() {
+                this.savingPrefs = true;
+                this.error = '';
+                try {
+                    const payload = {
+                        git_mirror_enabled: true,
+                        git_auto_commit: this.prefs.auto_commit,
+                        git_require_clean: this.prefs.require_clean,
+                        git_include_untracked: this.prefs.include_untracked,
+                        git_push_on_snapshot: this.prefs.push_on_snapshot,
+                        git_remote: this.remoteUrl || null,
+                        git_branch: this.branchName || null,
+                        sync_onboarding_defaults: this.syncOnboarding,
+                        onboarding_sync_opt_out: this.onboardingOptOut,
+                    };
+                    const response = await fetch('/api/webui/defaults/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    if (!response.ok) {
+                        const detail = await response.json().catch(() => ({}));
+                        throw new Error(detail.detail || 'Failed to save preferences');
+                    }
+                    const data = await response.json();
+                    window.dispatchEvent(new CustomEvent('webui-defaults-updated', { detail: data }));
+                    window.showToast && window.showToast('Git preferences saved', 'success');
+                } catch (error) {
+                    this.error = error.message || 'Failed to save preferences';
+                    window.showToast && window.showToast(this.error, 'error');
+                } finally {
+                    this.savingPrefs = false;
+                }
+            },
+            async saveIdentity() {
+                if (!this.userName || !this.userName.trim() || !this.userEmail || !this.userEmail.trim()) {
+                    this.error = 'Name and email are required.';
+                    return;
+                }
+                if (!this.status || !this.status.repo_present) {
+                    this.error = 'Initialize the repository before setting identity.';
+                    return;
+                }
+                this.savingIdentity = true;
+                this.error = '';
+                try {
+                    const response = await fetch('/api/git/identity', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: this.userName.trim(), email: this.userEmail.trim() }),
+                    });
+                    if (!response.ok) {
+                        const detail = await response.json().catch(() => ({}));
+                        throw new Error(detail.detail || 'Failed to save git identity');
+                    }
+                    await this.loadStatus();
+                    window.showToast && window.showToast('Git identity saved', 'success');
+                } catch (error) {
+                    this.error = error.message || 'Failed to save git identity';
+                    window.showToast && window.showToast(this.error, 'error');
+                } finally {
+                    this.savingIdentity = false;
+                }
+            },
+            toggleOptOut(field) {
+                const idx = this.onboardingOptOut.indexOf(field);
+                if (idx >= 0) {
+                    this.onboardingOptOut.splice(idx, 1);
+                } else {
+                    this.onboardingOptOut.push(field);
+                }
+            },
+            async refreshOnboardingDefaults() {
+                try {
+                    const response = await fetch('/api/webui/state');
+                    if (!response.ok) {
+                        return;
+                    }
+                    const data = await response.json();
+                    const resolved = data.resolved_defaults || data.defaults || {};
+                    if (resolved.git_remote) {
+                        this.remoteUrl = resolved.git_remote;
+                    }
+                    if (resolved.git_branch) {
+                        this.branchName = resolved.git_branch;
+                    }
+                } catch (error) {
+                    console.error('Failed to refresh onboarding defaults', error);
+                }
+            },
+            statusBadge() {
+                if (!this.status) return 'Unknown';
+                if (!this.status.repo_present) return 'Not initialized';
+                if (this.status.repo_present && !this.status.identity_configured) return 'Identity missing';
+                if (this.status.dirty_paths && this.status.dirty_paths.length) return 'Dirty';
+                return 'Clean';
+            },
+        };
+    };
+}
+</script>
+
+<div class="tab-fragment" id="git-mirror-tab" x-data="gitMirrorTabComponent({{ webui_defaults | tojson | safe }})">
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <div>
+                <h5 class="mb-1"><i class="fas fa-code-branch me-2"></i>Git Mirror</h5>
+                <p class="text-muted mb-0">Track configuration changes, inspect status, and control remote sync.</p>
+            </div>
+            <span class="badge bg-secondary" x-text="statusBadge()"></span>
+        </div>
+        <div class="card-body" :class="{ 'opacity-50': loading }">
+            <div class="row g-4">
+                <div class="col-xl-7">
+                    <div class="border rounded p-3 h-100">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <strong>Repository</strong>
+                                    <p class="text-muted small mb-0" x-text="sanitizeDisplay(status?.repo_root || 'Not initialized')"></p>
+                                    <p class="text-muted small mb-0" x-text="status?.config_dir ? 'Configs: ' + sanitizeDisplay(status.config_dir) : ''"></p>
+                                </div>
+                            <button class="btn btn-outline-secondary btn-sm" type="button" @click="loadStatus()">
+                                <i class="fas fa-sync" :class="{ 'fa-spin': loading }"></i> Refresh
+                            </button>
+                        </div>
+
+                        <template x-if="!status || !status.repo_present">
+                            <div class="alert alert-info d-flex align-items-center gap-2">
+                                <i class="fas fa-info-circle"></i>
+                                <div>
+                                    <div>Initialize a repository in the configs directory to begin tracking changes.</div>
+                                    <small class="text-muted">You can add a remote now or later.</small>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Remote URL</label>
+                                <input type="text" class="form-control" x-model="remoteUrl" placeholder="https://example.com/repo.git">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Branch</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" x-model="branchName" placeholder="main">
+                                    <button class="btn btn-outline-secondary" type="button" @click="switchBranch(false)" :disabled="loading">Switch</button>
+                                    <button class="btn btn-outline-primary" type="button" @click="switchBranch(true)" :disabled="loading">Create</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="d-flex gap-2 mt-3 flex-wrap">
+                            <button class="btn btn-primary" type="button" @click="initRepo()" :disabled="loading">
+                                <i class="fas fa-play"></i> Init
+                            </button>
+                            <button class="btn btn-outline-secondary" type="button" @click="setRemote()" :disabled="loading">
+                                <i class="fas fa-plug"></i> Update Remote
+                            </button>
+                            <div class="form-check form-switch align-self-center">
+                                <input class="form-check-input" type="checkbox" id="allowRemote" x-model="allowRemote">
+                                <label class="form-check-label" for="allowRemote">Allow push/pull</label>
+                            </div>
+                            <button class="btn btn-outline-success" type="button" @click="remoteAction('push')" :disabled="loading || !allowRemote">
+                                <i class="fas fa-upload"></i> Push
+                            </button>
+                            <button class="btn btn-outline-info" type="button" @click="remoteAction('pull')" :disabled="loading || !allowRemote">
+                                <i class="fas fa-download"></i> Pull
+                            </button>
+                        </div>
+
+                        <div class="mt-3 border rounded p-3">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <div>
+                                    <strong>Commit identity</strong>
+                                    <p class="text-muted small mb-0">Git uses this name and email for commits.</p>
+                                </div>
+                                <span class="badge" :class="status?.identity_configured ? 'bg-success' : 'bg-warning text-dark'">
+                                    <span x-text="status?.identity_configured ? 'Configured' : 'Missing'"></span>
+                                </span>
+                            </div>
+                            <template x-if="status && status.repo_present && !status.identity_configured">
+                                <div class="alert alert-warning py-2 mb-3 d-flex align-items-center gap-2">
+                                    <i class="fas fa-user-slash"></i>
+                                    <span>Provide an author name and email to avoid git errors when committing.</span>
+                                </div>
+                            </template>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">User name</label>
+                                    <input type="text" class="form-control" x-model="userName" placeholder="Your Name">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">User email</label>
+                                    <input type="email" class="form-control" x-model="userEmail" placeholder="you@example.com">
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-primary mt-3" type="button"
+                                    @click="saveIdentity()"
+                                    :disabled="savingIdentity || loading || !status || !status.repo_present">
+                                <i class="fas fa-id-card me-1" :class="{ 'fa-spin': savingIdentity }"></i>
+                                Save git identity
+                            </button>
+                        </div>
+
+                        <template x-if="status && status.dirty_paths && status.dirty_paths.length">
+                            <div class="alert alert-warning mt-3 mb-0">
+                                <div class="fw-bold mb-1">Uncommitted changes</div>
+                                <ul class="mb-0 ps-3">
+                                    <template x-for="path in status.dirty_paths" :key="path">
+                                        <li x-text="sanitizeDisplay(path)"></li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <div class="col-xl-5">
+                    <div class="border rounded p-3 h-100">
+                        <h6 class="mb-3">Snapshot policy</h6>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="prefAutoCommit" x-model="prefs.auto_commit">
+                            <label class="form-check-label" for="prefAutoCommit">Auto-commit on save</label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="prefRequireClean" x-model="prefs.require_clean">
+                            <label class="form-check-label" for="prefRequireClean">Require clean tree before saving</label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="prefIncludeUntracked" x-model="prefs.include_untracked">
+                            <label class="form-check-label" for="prefIncludeUntracked">Include untracked files when snapshotting</label>
+                        </div>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="prefPush" x-model="prefs.push_on_snapshot">
+                            <label class="form-check-label" for="prefPush">Push after snapshot</label>
+                        </div>
+                        <div class="mt-3 border-top pt-3">
+                            <h6 class="mb-2">Onboarding sync</h6>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="prefSyncOnboarding" x-model="syncOnboarding">
+                                <label class="form-check-label" for="prefSyncOnboarding">Periodically sync onboarding defaults</label>
+                            </div>
+                            <p class="text-muted small">Opt out to keep local values even if onboarding answers change.</p>
+                            <div class="d-flex flex-wrap gap-2">
+                                <template x-for="field in ['output_dir', 'configs_dir', 'datasets_dir', 'accelerate_overrides']" :key="field">
+                                    <button type="button"
+                                            class="btn btn-sm"
+                                            :class="onboardingOptOut.includes(field) ? 'btn-outline-secondary' : 'btn-outline-primary'"
+                                            @click="toggleOptOut(field)">
+                                        <span x-text="field.replace('_', ' ')"></span>
+                                        <i class="fas" :class="onboardingOptOut.includes(field) ? 'fa-ban ms-1' : 'fa-sync-alt ms-1'"></i>
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary w-100" type="button" @click="savePrefs()" :disabled="savingPrefs">
+                            <i class="fas fa-save me-2" :class="{ 'fa-spin': savingPrefs }"></i>
+                            Save preferences
+                        </button>
+                        <template x-if="error">
+                            <div class="alert alert-danger mt-3 mb-0" x-text="error"></div>
+                        </template>
+                        <template x-if="status && status.repo_present && status.remote">
+                            <div class="alert alert-info mt-3 mb-0">
+                                Remote: <strong x-text="sanitizeDisplay(status.remote)"></strong><br>
+                                Branch: <strong x-text="sanitizeDisplay(status.branch || 'unknown')"></strong>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

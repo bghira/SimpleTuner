@@ -265,6 +265,9 @@ class Lumina2(ImageModelFoundation):
 
     def get_lora_target_layers(self):
         """Get LoRA target layers for Lumina2"""
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
         if getattr(self.config, "slider_lora_target", False) and self.config.lora_type.lower() == "standard":
             return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if self.config.lora_type.lower() == "standard":

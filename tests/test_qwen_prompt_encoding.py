@@ -120,6 +120,24 @@ class QwenPromptEncodingTests(unittest.TestCase):
         self.assertTrue(torch.is_tensor(pipeline.last_image))
         self.assertEqual(tuple(pipeline.last_image.shape), (1, 3, 224, 224))
 
+    def test_edit_v2_encode_prompts_requires_and_uses_prompt_image(self):
+        pipeline = ImageEncodePipeline()
+        model = PromptEncodingQwen(pipeline, flavour="edit-v2")
+
+        with self.assertRaises(ValueError):
+            model._encode_prompts(["needs image"])
+
+        model._current_prompt_contexts = [
+            {"conditioning_pixel_values": torch.ones(3, 2, 2)},
+        ]
+        embeds, mask = model._encode_prompts(["with image"])
+
+        self.assertEqual(embeds.shape, torch.Size([1, 2, 4]))
+        self.assertEqual(mask.shape, torch.Size([1, 2]))
+        self.assertIsNotNone(pipeline.last_image)
+        self.assertEqual(len(pipeline.last_image), 1)
+        self.assertIsInstance(pipeline.last_image[0], Image.Image)
+
 
 if __name__ == "__main__":
     unittest.main()

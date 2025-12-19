@@ -843,6 +843,9 @@ class Flux(ImageModelFoundation):
 
     def get_lora_target_layers(self):
         # Some models, eg. Flux should override this with more complex config-driven logic.
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
         if self.config.lora_type.lower() == "standard" and getattr(self.config, "slider_lora_target", False):
             return getattr(self, "SLIDER_LORA_TARGET", None) or self.DEFAULT_SLIDER_LORA_TARGET
         if self.config.model_type == "lora" and (self.config.controlnet or self.config.control):

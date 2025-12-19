@@ -1152,6 +1152,7 @@ class ConfigsService:
             "--publishing_config",
             "--lycoris_config",
             "--user_prompt_library",
+            "--peft_lora_target_modules",
         }
 
         numeric_fields = {
@@ -1237,7 +1238,14 @@ class ConfigsService:
                     config_dict[config_key] = converted_value
                     continue
                 # webhook_config should preserve list structure (can contain multiple webhook configs)
-                if config_key in {"--webhook_config", "webhook_config", "--publishing_config", "publishing_config"}:
+                if config_key in {
+                    "--webhook_config",
+                    "webhook_config",
+                    "--publishing_config",
+                    "publishing_config",
+                    "--peft_lora_target_modules",
+                    "peft_lora_target_modules",
+                }:
                     config_dict[config_key] = value
                     continue
                 # Filter out empty strings from list before taking last element

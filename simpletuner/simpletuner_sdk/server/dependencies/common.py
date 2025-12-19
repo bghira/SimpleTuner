@@ -109,6 +109,15 @@ async def get_webui_defaults() -> Dict[str, Any]:
             "event_polling_interval": resolved.get("event_polling_interval", 5),
             "event_stream_enabled": resolved.get("event_stream_enabled", True),
             "asset_version": asset_version,
+            "git_mirror_enabled": resolved.get("git_mirror_enabled", False),
+            "git_auto_commit": resolved.get("git_auto_commit", False),
+            "git_require_clean": resolved.get("git_require_clean", False),
+            "git_include_untracked": resolved.get("git_include_untracked", False),
+            "git_push_on_snapshot": resolved.get("git_push_on_snapshot", False),
+            "git_remote": resolved.get("git_remote"),
+            "git_branch": resolved.get("git_branch"),
+            "sync_onboarding_defaults": resolved.get("sync_onboarding_defaults", False),
+            "onboarding_sync_opt_out": resolved.get("onboarding_sync_opt_out", []),
         }
     except Exception as e:
         logger.error(f"Error loading WebUI defaults: {e}")

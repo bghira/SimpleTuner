@@ -67,11 +67,21 @@ export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$CUDA_HOME/targets/x86_64-linux/lib/stub
 simpletuner server --ssl --port 8080
 ```
 
-Now, visit https://localhost:8080 in your web browser. You may need to forward the port over SSH, for example:
+Now, visit https://localhost:8080 in your web browser.
+
+You may need to forward the port over SSH, for example:
 
 ```bash
 ssh -L 8080:localhost:8080 user@remote-server
 ```
+
+> **Tip:** If you have an existing configuration environment (e.g., from previous CLI usage), you can start the server with `--env` to automatically begin training once the server is ready:
+>
+> ```bash
+> simpletuner server --ssl --port 8080 --env my-training-config
+> ```
+>
+> This is equivalent to starting the server and then manually clicking "Start Training" in the WebUI, but allows for unattended startup.
 
 ## Using the WebUI
 

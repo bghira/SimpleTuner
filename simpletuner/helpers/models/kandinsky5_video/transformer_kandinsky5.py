@@ -60,6 +60,25 @@ def get_freqs(dim, max_period=10000.0):
     return freqs
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
+    """
+    Store a hidden state in the provided buffer, optionally honoring a capture list.
+    """
+    if buffer is None:
+        return
+
+    capture_layers = getattr(buffer, "capture_layers", None)
+    if capture_layers is not None:
+        try:
+            layer_idx = int(key.split("_", 1)[1])
+        except Exception:
+            layer_idx = None
+        if layer_idx is not None and layer_idx not in capture_layers:
+            return
+
+    buffer[key] = hidden_states
+
+
 def fractal_flatten(x, rope, shape, block_mask=False):
     if block_mask:
         pixel_size = 8
@@ -174,7 +193,7 @@ def nablaT_v2(
 
 
 class Kandinsky5TimeEmbeddings(nn.Module):
-    def __init__(self, model_dim, time_dim, max_period=10000.0):
+    def __init__(self, model_dim, time_dim, max_period=10000.0, enable_time_sign_embed: bool = False):
         super().__init__()
         assert model_dim % 2 == 0
         self.model_dim = model_dim
@@ -184,8 +203,10 @@ class Kandinsky5TimeEmbeddings(nn.Module):
         self.activation = nn.SiLU()
         self.out_layer = nn.Linear(time_dim, time_dim, bias=True)
         # Signed-time embedding for TwinFlow-style negative time handling.
-        self.time_sign_embed = nn.Embedding(2, time_dim)
-        nn.init.zeros_(self.time_sign_embed.weight)
+        self.time_sign_embed: Optional[nn.Embedding] = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = nn.Embedding(2, time_dim)
+            nn.init.zeros_(self.time_sign_embed.weight)
 
     @torch.autocast(device_type="cuda", dtype=torch.float32)
     def forward(self, time, timestep_sign: Optional[torch.Tensor] = None):
@@ -193,6 +214,11 @@ class Kandinsky5TimeEmbeddings(nn.Module):
         time_embed = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         time_embed = self.out_layer(self.activation(self.in_layer(time_embed)))
         if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow (or load a TwinFlow-compatible checkpoint) to use signed-timestep conditioning."
+                )
             sign_idx = (timestep_sign.view(-1) < 0).long().to(device=time_embed.device)
             time_embed = time_embed + self.time_sign_embed(sign_idx).to(dtype=time_embed.dtype, device=time_embed.device)
         return time_embed
@@ -630,6 +656,7 @@ class Kandinsky5Transformer3DModel(
         attention_method: str = None,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ):
         super().__init__()
 
@@ -643,7 +670,11 @@ class Kandinsky5Transformer3DModel(
         visual_embed_dim = 2 * in_visual_dim + 1 if visual_cond else in_visual_dim
 
         # Initialize embeddings
-        self.time_embeddings = Kandinsky5TimeEmbeddings(model_dim, time_dim)
+        self.time_embeddings = Kandinsky5TimeEmbeddings(
+            model_dim,
+            time_dim,
+            enable_time_sign_embed=enable_time_sign_embed,
+        )
         self.text_embeddings = Kandinsky5TextEmbeddings(in_text_dim, model_dim)
         self.pooled_text_embeddings = Kandinsky5TextEmbeddings(in_text_dim2, time_dim)
         self.visual_embeddings = Kandinsky5VisualEmbeddings(visual_embed_dim, model_dim, patch_size)
@@ -706,6 +737,7 @@ class Kandinsky5Transformer3DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
+        hidden_states_buffer: Optional[dict] = None,
         timestep_sign: Optional[torch.Tensor] = None,
     ) -> Union[Transformer2DModelOutput, torch.FloatTensor]:
         """
@@ -723,6 +755,8 @@ class Kandinsky5Transformer3DModel(
             force_keep_mask (`torch.Tensor`, *optional*): Boolean mask used by TREAD to prevent specific tokens from
                 being dropped. Shape must match the routed token sequence length.
             return_dict (`bool`, optional): Whether to return a dictionary
+            hidden_states_buffer (`dict`, *optional*): Buffer used to capture intermediate hidden states for
+                regularizers like LayerSync.
 
         Returns:
             [`~models.transformer_2d.Transformer2DModelOutput`] or `torch.FloatTensor`: The output of the transformer
@@ -858,6 +892,19 @@ class Kandinsky5Transformer3DModel(
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_out(visual_transformer_block)
+
+            if hidden_states_buffer is not None:
+                expected_tokens = visual_shape[1] * visual_shape[2] * visual_shape[3]
+                if visual_embed.shape[1] == expected_tokens:
+                    tokens_view = visual_embed.reshape(
+                        batch_size,
+                        visual_shape[1],
+                        visual_shape[2] * visual_shape[3],
+                        -1,
+                    )
+                else:
+                    tokens_view = visual_embed
+                _store_hidden_state(hidden_states_buffer, f"layer_{layer_idx}", tokens_view)
 
         visual_embed = fractal_unflatten(visual_embed, visual_shape, block_mask=to_fractal)
         x = self.out_layer(visual_embed, text_embed, time_embed)

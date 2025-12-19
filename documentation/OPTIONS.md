@@ -995,6 +995,7 @@ usage: train.py [-h] --model_family
                 [--lora_dropout LORA_DROPOUT]
                 [--lora_init_type {default,gaussian,loftq,olora,pissa}]
                 [--peft_lora_mode {standard,singlora}]
+                [--peft_lora_target_modules PEFT_LORA_TARGET_MODULES]
                 [--singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS]
                 [--init_lora INIT_LORA] [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM]
@@ -1350,6 +1351,9 @@ options:
                         The initialization type for the LoRA model
   --peft_lora_mode {standard,singlora}
                         PEFT LoRA training mode
+  --peft_lora_target_modules PEFT_LORA_TARGET_MODULES
+                        JSON array (or path to a JSON file) listing PEFT
+                        LoRA target module names. Overrides preset targets.
   --singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS
                         Number of ramp-up steps for SingLoRA
   --slider_lora_target [SLIDER_LORA_TARGET]

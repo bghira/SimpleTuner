@@ -361,8 +361,9 @@ class DatasetUploadService:
                             if info.filename.startswith("/") or ".." in info.filename:
                                 continue
 
-                            # Get just the filename (ignore subdirectories in zip)
-                            filename = Path(info.filename).name
+                            # Preserve the relative path from the zip
+                            relative_path = Path(info.filename)
+                            filename = relative_path.name
                             if not filename:
                                 continue
 
@@ -372,14 +373,25 @@ class DatasetUploadService:
                                 result.errors.append(f"Unsupported file type in zip: {filename}")
                                 continue
 
-                            # Extract to temp dir
+                            # Determine the final path preserving directory structure
+                            final_path = target_dir / relative_path
+
+                            # Validate the final path is still within bounds
+                            try:
+                                self._validate_path(final_path)
+                            except ValueError:
+                                result.files_skipped += 1
+                                result.errors.append(f"Invalid path in zip: {info.filename}")
+                                continue
+
+                            # Create parent directories if needed
+                            final_path.parent.mkdir(parents=True, exist_ok=True)
+
+                            # Extract to temp dir first
                             extracted_path = temp_path / filename
 
                             with zf.open(info) as src, open(extracted_path, "wb") as dst:
                                 shutil.copyfileobj(src, dst)
-
-                            # Move to target
-                            final_path = target_dir / filename
 
                             # Handle duplicate names
                             if final_path.exists():
@@ -387,7 +399,7 @@ class DatasetUploadService:
                                 suffix = final_path.suffix
                                 counter = 1
                                 while final_path.exists():
-                                    final_path = target_dir / f"{stem}_{counter}{suffix}"
+                                    final_path = final_path.parent / f"{stem}_{counter}{suffix}"
                                     counter += 1
 
                             shutil.move(str(extracted_path), str(final_path))
