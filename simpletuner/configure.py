@@ -882,7 +882,7 @@ class SimpleTunerNCurses:
             )
         self.menu_items.append(
             (
-                "WebUI Onboarding",
+                "WebUI Setup",
                 self.edit_webui_onboarding,
                 "Update WebUI onboarding defaults and completion state",
             )
