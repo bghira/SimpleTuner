@@ -35,6 +35,7 @@ class TabType(str, Enum):
     TRAINING = "training"
     DATASETS = "datasets"
     ENVIRONMENTS = "environments"
+    GIT_MIRROR = "git_mirror"
     VALIDATION = "validation"
     PUBLISHING = "publishing"
     CHECKPOINTS = "checkpoints"
@@ -140,6 +141,14 @@ class TabService:
                 description="Environment and compute settings",
                 extra_context_handler=self._environments_tab_context,
             ),
+            TabType.GIT_MIRROR: TabConfig(
+                id="git-mirror",
+                title="Git Mirror",
+                icon="fas fa-code-branch",
+                template="git_mirror_tab.html",
+                description="Versioning and sync for configuration files",
+                extra_context_handler=None,
+            ),
             TabType.UI_SETTINGS: TabConfig(
                 id="ui-settings",
                 title="UI Settings",
@@ -165,6 +174,9 @@ class TabService:
         try:
             tab_type = TabType(tab_name)
         except ValueError:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
+
+        if tab_type == TabType.GIT_MIRROR and not self._git_mirror_enabled():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tab '{tab_name}' not found")
 
         return self._tab_configs.get(tab_type)
@@ -388,19 +400,48 @@ class TabService:
             context["prompt_libraries"] = []
         return context
 
+    def _git_mirror_enabled(self) -> bool:
+        try:
+            defaults = WebUIStateStore().load_defaults()
+            return bool(getattr(defaults, "git_mirror_enabled", False))
+        except Exception as exc:
+            logger.debug("Failed to evaluate git mirror enabled flag: %s", exc, exc_info=True)
+            return False
+
     def get_all_tabs(self) -> List[Dict[str, str]]:
         """Get information about all available tabs.
 
         Returns:
             List of tab info dictionaries
         """
-        return [
-            {
-                "id": config.id,
-                "name": tab_type.value,
-                "title": config.title,
-                "icon": config.icon,
-                "description": config.description,
-            }
-            for tab_type, config in self._tab_configs.items()
+        ordered = [
+            TabType.BASIC,
+            TabType.HARDWARE,
+            TabType.MODEL,
+            TabType.TRAINING,
+            TabType.DATASETS,
+            TabType.VALIDATION,
+            TabType.PUBLISHING,
+            TabType.CHECKPOINTS,
+            TabType.ENVIRONMENTS,
+            TabType.GIT_MIRROR,
+            TabType.UI_SETTINGS,
         ]
+        include_git = self._git_mirror_enabled()
+        tabs: List[Dict[str, str]] = []
+        for tab_type in ordered:
+            if tab_type == TabType.GIT_MIRROR and not include_git:
+                continue
+            config = self._tab_configs.get(tab_type)
+            if not config:
+                continue
+            tabs.append(
+                {
+                    "id": config.id,
+                    "name": tab_type.value,
+                    "title": config.title,
+                    "icon": config.icon,
+                    "description": config.description,
+                }
+            )
+        return tabs

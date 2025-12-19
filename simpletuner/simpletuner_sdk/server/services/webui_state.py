@@ -165,6 +165,15 @@ class WebUIDefaults:
     allow_dataset_paths_outside_dir: bool = False
     show_documentation_links: bool = True
     accelerate_overrides: Dict[str, Any] = field(default_factory=dict)
+    git_mirror_enabled: bool = False
+    git_remote: Optional[str] = None
+    git_branch: Optional[str] = None
+    git_auto_commit: bool = False
+    git_require_clean: bool = False
+    git_push_on_snapshot: bool = False
+    git_include_untracked: bool = False
+    sync_onboarding_defaults: bool = False
+    onboarding_sync_opt_out: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -331,6 +340,33 @@ class WebUIStateStore:
             defaults.show_documentation_links = True
         else:
             defaults.show_documentation_links = bool(show_docs_value)
+
+        # Normalise git preferences
+        defaults.git_mirror_enabled = bool(payload.get("git_mirror_enabled", False))
+        defaults.git_auto_commit = bool(payload.get("git_auto_commit", False))
+        defaults.git_require_clean = bool(payload.get("git_require_clean", False))
+        defaults.git_push_on_snapshot = bool(payload.get("git_push_on_snapshot", False))
+        defaults.git_include_untracked = bool(payload.get("git_include_untracked", False))
+        defaults.sync_onboarding_defaults = bool(payload.get("sync_onboarding_defaults", False))
+        opt_out_raw = payload.get("onboarding_sync_opt_out", [])
+        if isinstance(opt_out_raw, str):
+            opt_out_raw = [opt_out_raw]
+        if isinstance(opt_out_raw, (list, tuple, set)):
+            cleaned = []
+            for item in opt_out_raw:
+                if not isinstance(item, str):
+                    continue
+                candidate = item.strip()
+                if candidate and candidate not in cleaned:
+                    cleaned.append(candidate)
+            defaults.onboarding_sync_opt_out = cleaned
+        else:
+            defaults.onboarding_sync_opt_out = []
+
+        git_remote = payload.get("git_remote")
+        defaults.git_remote = git_remote.strip() if isinstance(git_remote, str) and git_remote.strip() else None
+        git_branch = payload.get("git_branch")
+        defaults.git_branch = git_branch.strip() if isinstance(git_branch, str) and git_branch.strip() else None
 
         defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults

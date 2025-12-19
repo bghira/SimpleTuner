@@ -170,7 +170,7 @@ if hasattr(os, "setsid"):
 if hasattr(os, "fork"):
     pid = os.fork()
     if pid == 0:
-        time.sleep(30)
+        time.sleep(2)
     else:
         if pid_file:
             with open(pid_file, "w", encoding="utf-8") as handle:
@@ -180,7 +180,7 @@ else:
     if pid_file:
         with open(pid_file, "w", encoding="utf-8") as handle:
             handle.write(f"{os.getpid()},{os.getpgid(0)}")
-    time.sleep(30)
+    time.sleep(2)
 """
 
     env = os.environ.copy()
