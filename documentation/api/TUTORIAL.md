@@ -28,6 +28,14 @@ simpletuner server --port 8001
 
 The API lives at `http://localhost:8001`. Leave the server running while you issue the following commands in another terminal.
 
+> **Tip:** If you have an existing configuration environment ready to train, you can start the server with `--env` to automatically begin training once the server is fully loaded:
+>
+> ```bash
+> simpletuner server --port 8001 --env my-training-config
+> ```
+>
+> This validates your configuration at startup and launches training immediately after the server is ready—useful for unattended or scripted deployments. The `--env` option works identically to `simpletuner train --env`.
+
 ## Discover the API
 
 FastAPI serves interactive docs and the OpenAPI schema:

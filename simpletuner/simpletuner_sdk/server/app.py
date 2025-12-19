@@ -3,12 +3,14 @@ FastAPI application factory for SimpleTuner server with multiple modes.
 """
 
 import asyncio
+import json
 import logging
 import os
 import signal
 import sys
 from contextlib import asynccontextmanager
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -81,6 +83,104 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
+async def _autostart_training(env: str) -> None:
+    """Load configuration from the specified environment and start training."""
+    from simpletuner.cli import _candidate_config_paths
+    from simpletuner.helpers.configuration import env_file
+    from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+    from simpletuner.simpletuner_sdk.server.services.training_service import start_training_job, validate_training_config
+
+    store = ConfigStore()
+
+    backend_override = os.environ.get(
+        "SIMPLETUNER_CONFIG_BACKEND",
+        os.environ.get("CONFIG_BACKEND", os.environ.get("CONFIG_TYPE")),
+    )
+    config_path_override = os.environ.get("CONFIG_PATH")
+
+    # Respect the WebUI onboarding configs_dir if present, overriding the generic default
+    if getattr(store, "config_dir", None):
+        resolved_config_dir = str(store.config_dir)
+        if os.environ.get("SIMPLETUNER_CONFIG_DIR") != resolved_config_dir:
+            os.environ["SIMPLETUNER_CONFIG_DIR"] = resolved_config_dir
+
+    candidate_paths = _candidate_config_paths(env, backend_override, config_path_override)
+    config_path = next((path for path in candidate_paths if path.is_file()), None)
+
+    if config_path is None:
+        checked = "\n  - ".join(str(path) for path in candidate_paths)
+        raise FileNotFoundError(f"Configuration for environment '{env}' not found. Checked:\n  - {checked}")
+
+    backend = (backend_override or "").lower() or None
+    if backend not in {"json", "toml", "env"}:
+        suffix = config_path.suffix.lower()
+        if suffix == ".toml":
+            backend = "toml"
+        elif suffix == ".env":
+            backend = "env"
+        else:
+            backend = "json"
+
+    def _coerce_cli_keys(config: dict[str, object]) -> dict[str, object]:
+        cli_config: dict[str, object] = {}
+        for key, value in config.items():
+            cli_key = key if str(key).startswith("--") else f"--{key}"
+            cli_config[cli_key] = value
+        return cli_config
+
+    def _load_config_from_path(path: Path, backend_name: str) -> dict[str, object]:
+        if backend_name == "json":
+            with path.open("r", encoding="utf-8") as handle:
+                raw_data = json.load(handle)
+
+            if isinstance(raw_data, dict):
+                if "_metadata" in raw_data and isinstance(raw_data.get("config"), dict):
+                    config_section = raw_data.get("config", {})
+                    config_dict = config_section if isinstance(config_section, dict) else {}
+                    return _coerce_cli_keys(config_dict)
+
+                return _coerce_cli_keys({k: v for k, v in raw_data.items() if k != "_metadata"})
+
+            return {}
+
+        if backend_name == "toml":
+            try:
+                import toml
+            except ImportError as exc:  # pragma: no cover - optional dependency
+                raise RuntimeError("TOML support is not available; install toml to use --env with toml configs.") from exc
+
+            raw_data = toml.load(path)
+            if isinstance(raw_data, dict):
+                return _coerce_cli_keys(raw_data)
+            return {}
+
+        if backend_name == "env":
+            # env configs are already loaded into the environment; map them to CLI args
+            mapped: dict[str, object] = {}
+            for env_var, arg_name in env_file.env_to_args_map.items():
+                value = os.environ.get(env_var)
+                if value is None:
+                    continue
+                cli_key = arg_name if arg_name.startswith("--") else f"--{arg_name}"
+                mapped[cli_key] = value
+            return mapped
+
+        return {}
+
+    config_data = _load_config_from_path(config_path, backend)
+    complete_config = _coerce_cli_keys(config_data)
+
+    # Validate configuration
+    validation_result = validate_training_config(store, complete_config, config_data)
+    if validation_result.errors:
+        error_list = ", ".join(validation_result.errors)
+        raise RuntimeError(f"Configuration validation failed: {error_list}")
+
+    # Start the training job
+    job_id = start_training_job(complete_config)
+    logger.info("Auto-started training job: %s", job_id)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handle application startup and shutdown."""
@@ -109,6 +209,16 @@ async def lifespan(app: FastAPI):
     except ValueError:
         # signal.signal() only works in main thread - ignore in test environments
         logger.debug("Could not register signal handlers (not in main thread)")
+
+    # Auto-start training if --env was specified
+    autostart_env = os.environ.get("SIMPLETUNER_SERVER_AUTOSTART_ENV")
+    if autostart_env:
+        logger.info("Auto-starting training for environment: %s", autostart_env)
+        try:
+            await _autostart_training(autostart_env)
+        except Exception as e:
+            logger.error("Failed to auto-start training: %s", e)
+
     try:
         yield
     except asyncio.CancelledError:
