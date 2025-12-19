@@ -148,10 +148,48 @@ def _store() -> DatasetPlanStore:
     return DatasetPlanStore()
 
 
+def _get_active_resolution() -> int:
+    """Get resolution from active config, defaulting to 1024."""
+    try:
+        from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
+
+        configs_service = ConfigsService()
+        active_config = configs_service.get_active_config()
+        config_blob = active_config.get("config", {})
+        resolution = config_blob.get("resolution") or config_blob.get("--resolution")
+        if resolution is not None:
+            return int(resolution)
+    except Exception:
+        pass
+    return 1024
+
+
+def _apply_resolution_defaults(blueprints: List[Dict[str, Any]], resolution: int) -> List[Dict[str, Any]]:
+    """Apply resolution-based defaults to blueprint fields."""
+    for blueprint in blueprints:
+        # Update defaults dict
+        if "defaults" in blueprint:
+            defaults = blueprint["defaults"]
+            if "resolution" in defaults:
+                defaults["resolution"] = resolution
+
+        # Update field defaults
+        for field in blueprint.get("fields", []):
+            field_id = field.get("id")
+            if field_id == "resolution":
+                field["defaultValue"] = resolution
+            elif field_id in ("minimum_image_size", "maximum_image_size", "target_downsample_size"):
+                field["defaultValue"] = resolution
+
+    return blueprints
+
+
 @router.get("/blueprints")
 async def list_blueprints() -> Dict[str, Any]:
     """Return blueprint metadata for all supported dataset backends."""
     blueprints = [blueprint.model_dump() for blueprint in get_dataset_blueprints()]
+    resolution = _get_active_resolution()
+    blueprints = _apply_resolution_defaults(blueprints, resolution)
     return {"blueprints": blueprints, "warnings": [], "source": "remote"}
 
 

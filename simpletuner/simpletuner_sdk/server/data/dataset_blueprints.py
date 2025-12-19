@@ -145,6 +145,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
+                    "id": "minimum_image_size",
+                    "label": "min image size",
+                    "description": "discard images smaller than this (match resolution type)",
+                    "type": "number",
+                    "advanced": True,
+                    "min": 0,
+                    "step": 1,
+                },
+                {
                     "id": "maximum_image_size",
                     "label": "max image size",
                     "description": "optional clamp before downsampling (match resolution type)",
