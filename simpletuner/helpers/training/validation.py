@@ -2915,8 +2915,10 @@ class Validation:
 
         for resolution in resolutions:
             extra_validation_kwargs = {}
+            validation_input_image_for_resolution = None
             if validation_input_image is not None:
-                extra_validation_kwargs["image"] = validation_input_image
+                validation_input_image_for_resolution = _coerce_validation_image_input(validation_input_image)
+                extra_validation_kwargs["image"] = validation_input_image_for_resolution
                 if self.deepfloyd_stage2:
                     # deepfloyd-if stage 2 requires 4x size declaration on the outputs.
                     # the input is 64px edge len.
@@ -2928,7 +2930,7 @@ class Validation:
                     or self.config.validation_using_datasets
                     or self.model.requires_conditioning_validation_inputs()
                 ):
-                    # for most conditioned models, we want the input size to remain.
+                    # Align conditioned inputs to validation resolution unless the model enforces a fixed edge length.
                     validation_image_edge_len = self.model.validation_image_input_edge_length()
                     if validation_image_edge_len is not None:
                         # calculate the megapixels value (eg ~0.25 for 512px)
@@ -2943,18 +2945,53 @@ class Validation:
                         extra_validation_kwargs["image"] = extra_validation_kwargs["image"].resize(
                             validation_resolution, Image.Resampling.LANCZOS
                         )
+                        validation_input_image_for_resolution = extra_validation_kwargs["image"]
                         validation_resolution_width, validation_resolution_height = validation_resolution
                     else:
+                        base_image = None
                         if isinstance(extra_validation_kwargs["image"], list):
-                            (
-                                validation_resolution_width,
-                                validation_resolution_height,
-                            ) = resolution
+                            if extra_validation_kwargs["image"]:
+                                base_image = extra_validation_kwargs["image"][0]
                         else:
-                            (
+                            base_image = extra_validation_kwargs["image"]
+                        if isinstance(base_image, Image.Image) and resolution[0] > 0 and resolution[1] > 0:
+                            validation_resolution_megapixels = (resolution[0] * resolution[1]) / 1_000_000
+                            validation_resolution, _, _ = MultiaspectImage.calculate_new_size_by_pixel_area(
+                                aspect_ratio=base_image.size[0] / base_image.size[1],
+                                megapixels=validation_resolution_megapixels,
+                                original_size=base_image.size,
+                            )
+                            if isinstance(extra_validation_kwargs["image"], list):
+                                extra_validation_kwargs["image"] = [
+                                    img.resize(validation_resolution, Image.Resampling.LANCZOS)
+                                    for img in extra_validation_kwargs["image"]
+                                ]
+                            else:
+                                extra_validation_kwargs["image"] = extra_validation_kwargs["image"].resize(
+                                    validation_resolution, Image.Resampling.LANCZOS
+                                )
+                            validation_input_image_for_resolution = extra_validation_kwargs["image"]
+                            validation_resolution_width, validation_resolution_height = validation_resolution
+                            logger.debug(
+                                "Resized validation input from %sx%s to %sx%s for %sx%s validation base.",
+                                base_image.size[0],
+                                base_image.size[1],
                                 validation_resolution_width,
                                 validation_resolution_height,
-                            ) = extra_validation_kwargs["image"].size
+                                resolution[0],
+                                resolution[1],
+                            )
+                        else:
+                            if isinstance(extra_validation_kwargs["image"], list):
+                                (
+                                    validation_resolution_width,
+                                    validation_resolution_height,
+                                ) = resolution
+                            else:
+                                (
+                                    validation_resolution_width,
+                                    validation_resolution_height,
+                                ) = extra_validation_kwargs["image"].size
                 extra_validation_kwargs["control_image"] = extra_validation_kwargs["image"]
             else:
                 if not is_audio:
@@ -2984,7 +3021,7 @@ class Validation:
                 ema_validation_images[validation_shortname] = []
             try:
                 _embed = self._gather_prompt_embeds(
-                    prompt, validation_shortname, validation_input_image, cache_shortname=cache_key
+                    prompt, validation_shortname, validation_input_image_for_resolution, cache_shortname=cache_key
                 )
                 if _embed is not None:
                     extra_validation_kwargs.update(_embed)
@@ -3169,7 +3206,7 @@ class Validation:
                     has_input_stitching = (
                         hasattr(self.config, "validation_stitch_input_location")
                         and self.config.validation_stitch_input_location == "left"
-                        and validation_input_image is not None
+                        and validation_input_image_for_resolution is not None
                     )
 
                     # Check if we'll be adding benchmark
@@ -3184,7 +3221,7 @@ class Validation:
                         display_validation_results = [
                             self.stitch_validation_input_image(
                                 validation_image_result=img,
-                                validation_input_image=validation_input_image,
+                                validation_input_image=validation_input_image_for_resolution,
                                 labels=(["input", f"step {StateTracker.get_global_step()}"]),
                             )
                             for img in display_validation_results
@@ -3210,7 +3247,7 @@ class Validation:
                                 ]
 
                                 display_validation_results[idx] = self.stitch_three_images(
-                                    left_image=validation_input_image,
+                                    left_image=validation_input_image_for_resolution,
                                     middle_image=benchmark_image,
                                     right_image=original_img,
                                     labels=labels_to_use,
