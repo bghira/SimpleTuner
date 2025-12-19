@@ -2071,6 +2071,7 @@ class Trainer:
         self._twinflow_traj_logged = False
         self.guidance_values_list = []
         self.train_loss = 0.0
+        self.train_diffusion_loss = 0.0
         self.bf = None
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
@@ -4880,6 +4881,7 @@ class Trainer:
                         model_output=model_pred,
                         apply_conditioning_mask=True,
                     )
+                    diffusion_loss = loss.clone()
                     loss, aux_loss_logs = self.model.auxiliary_loss(
                         prepared_batch=prepared_batch,
                         model_output=model_pred,
@@ -4897,6 +4899,11 @@ class Trainer:
                     # Gather the losses across all processes for logging (if using distributed training)
                     avg_loss = self.accelerator.gather(loss.repeat(self.config.train_batch_size)).mean()
                     self.train_loss += avg_loss.item() / self.config.gradient_accumulation_steps
+                    if aux_loss_logs is not None:
+                        avg_diffusion_loss = self.accelerator.gather(
+                            diffusion_loss.repeat(self.config.train_batch_size)
+                        ).mean()
+                        self.train_diffusion_loss += avg_diffusion_loss.item() / self.config.gradient_accumulation_steps
                     # Backpropagate
                     self.grad_norm = None
                     if not self.config.disable_accelerator:
@@ -5088,6 +5095,7 @@ class Trainer:
                     if aux_loss_logs is not None:
                         for key, value in aux_loss_logs.items():
                             wandb_logs[f"aux_loss/{key}"] = value
+                        wandb_logs["diffusion_loss"] = self.train_diffusion_loss
                     self._update_grad_metrics(wandb_logs)
                     if self.validation is not None and hasattr(self.validation, "evaluation_result"):
                         eval_result = self.validation.get_eval_result()
@@ -5271,6 +5279,7 @@ class Trainer:
                     # Reset some values for the next go.
                     training_luminance_values = []
                     self.train_loss = 0.0
+                    self.train_diffusion_loss = 0.0
                     last_step_saved_checkpoint = checkpoint_saved_this_step
 
                 logs = {
