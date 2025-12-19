@@ -91,6 +91,50 @@ class QuantoWorkaroundsTests(unittest.TestCase):
         if device.index is not None:
             self.assertEqual(weight._scale.device.index, device.index)
 
+    def test_tinygemm_tensor_data_access_with_misaligned_devices(self):
+        """Test that TinyGemmWeightQBitsTensor.data access works when internal tensors are on different devices.
+
+        This tests the fix for the error:
+        AssertionError: assert data.device == scale_shift.device
+        which occurs when diffusers group_offloading moves internal tensors independently.
+        """
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA not available")
+        if not torch.version.cuda:
+            self.skipTest("TinyGemm requires CUDA (not ROCm)")
+
+        try:
+            from optimum.quanto.tensor.weights.tinygemm.qbits import TinyGemmWeightQBitsTensor
+        except ImportError:
+            self.skipTest("TinyGemmWeightQBitsTensor not available")
+
+        # TinyGemm requires larger tensors (minimum 128 for some dimensions)
+        model = torch.nn.Linear(256, 256, dtype=torch.float16, device="cuda")
+        quantize(model, weights=qint4)
+        freeze(model)
+
+        weight = model.weight
+        if not isinstance(weight, TinyGemmWeightQBitsTensor):
+            self.skipTest("Weight is not TinyGemmWeightQBitsTensor (size requirements not met)")
+
+        # Simulate what group_offloading does: move internal tensors to different devices
+        # This would normally cause __tensor_unflatten__ to fail with device mismatch
+        weight._scale_shift = weight._scale_shift.to("cpu")
+
+        # Verify tensors are now on different devices
+        self.assertNotEqual(weight._data.device.type, weight._scale_shift.device.type)
+
+        # This should NOT raise AssertionError thanks to _sync_tinygemm_internal_devices
+        try:
+            _ = weight.data
+        except AssertionError as e:
+            if "data.device == scale_shift.device" in str(e):
+                self.fail("Device sync fix not working: " + str(e))
+            raise
+
+        # Verify internal tensors are now synced
+        self.assertEqual(weight._data.device, weight._scale_shift.device)
+
 
 if __name__ == "__main__":
     unittest.main()
