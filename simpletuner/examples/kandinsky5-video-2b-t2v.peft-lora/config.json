@@ -20,7 +20,7 @@
     "model_family": "kandinsky5-video",
     "model_type": "lora",
     "num_train_epochs": 0,
-    "optimizer": "optimi-lion",
+    "optimizer": "adamw_bf16",
     "output_dir": "output/examples/kandinsky5-video-2b-t2v.peft-lora",
     "report_to": "none",
     "resolution": 480,
