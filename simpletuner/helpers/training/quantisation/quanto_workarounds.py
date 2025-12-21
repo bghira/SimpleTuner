@@ -6,6 +6,16 @@ from optimum.quanto.tensor.weights.qbytes import WeightQBytesTensor
 
 _TORCH_TENSOR_DATA_DESCRIPTOR = torch.Tensor.data
 
+# TinyGemmWeightQBitsTensor is only available on CUDA
+_TinyGemmWeightQBitsTensor = None
+_TinyGemmPackedTensor = None
+if torch.cuda.is_available() and torch.version.cuda:
+    try:
+        from optimum.quanto.tensor.weights.tinygemm.packed import TinyGemmPackedTensor as _TinyGemmPackedTensor
+        from optimum.quanto.tensor.weights.tinygemm.qbits import TinyGemmWeightQBitsTensor as _TinyGemmWeightQBitsTensor
+    except ImportError:
+        pass
+
 if torch.cuda.is_available():
     # the marlin fp8 kernel needs some help with dtype casting for some reason
     # see: https://github.com/huggingface/optimum-quanto/pull/296#issuecomment-2380719201
@@ -151,6 +161,27 @@ def _bridge_storage_accessors(tensor_cls, data_attr: str) -> None:
 _bridge_storage_accessors(WeightQBytesTensor, "_data")
 _bridge_storage_accessors(WeightQBitsTensor, "_data")
 _bridge_storage_accessors(PackedTensor, "_data")
+if _TinyGemmPackedTensor is not None:
+    _bridge_storage_accessors(_TinyGemmPackedTensor, "_data")
+
+
+def _sync_tinygemm_internal_devices(tensor) -> None:
+    """Ensure TinyGemmWeightQBitsTensor internal components are on the same device.
+
+    When diffusers group_offloading moves internal tensors independently, they can
+    end up on different devices. This breaks __tensor_unflatten__ which asserts
+    that _data and _scale_shift are on the same device. We sync them to _data's device.
+    """
+    if _TinyGemmWeightQBitsTensor is None:
+        return
+    if not isinstance(tensor, _TinyGemmWeightQBitsTensor):
+        return
+
+    data_device = tensor._data.device
+    scale_shift_device = tensor._scale_shift.device
+
+    if data_device != scale_shift_device:
+        tensor._scale_shift = tensor._scale_shift.to(data_device, non_blocking=True)
 
 
 def _mirror_tensor_data_property(tensor_cls, attrs: tuple[str, ...]) -> None:
@@ -158,6 +189,7 @@ def _mirror_tensor_data_property(tensor_cls, attrs: tuple[str, ...]) -> None:
         return
 
     def _data_get(self):
+        _sync_tinygemm_internal_devices(self)
         return _TORCH_TENSOR_DATA_DESCRIPTOR.__get__(self, type(self))
 
     def _data_set(self, value):
@@ -172,3 +204,7 @@ def _mirror_tensor_data_property(tensor_cls, attrs: tuple[str, ...]) -> None:
 
 _mirror_tensor_data_property(WeightQBytesTensor, ("_data", "_scale", "activation_qtype", "_axis", "_qtype"))
 _mirror_tensor_data_property(WeightQBitsTensor, ("_data", "_scale", "_shift", "_axis", "_qtype"))
+if _TinyGemmWeightQBitsTensor is not None:
+    _mirror_tensor_data_property(_TinyGemmWeightQBitsTensor, ("_data", "_scale_shift", "_axis", "_qtype", "_group_size"))
+if _TinyGemmPackedTensor is not None:
+    _mirror_tensor_data_property(_TinyGemmPackedTensor, ("_data",))
