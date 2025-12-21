@@ -3725,7 +3725,37 @@ class FactoryRegistry:
             },
         )
 
+        # Delete text encoders from cache after factory completes (embed caching is done)
+        self._delete_text_encoder_caches()
+
         return result
+
+    def _delete_text_encoder_caches(self):
+        """
+        Delete text encoder model files from HuggingFace cache after factory setup completes.
+
+        Text encoders are only needed during embed caching. After the factory has configured
+        all backends (and cached embeddings), the text encoder files can be removed from disk
+        to save storage space.
+
+        This is gated to local-rank 0 only, and failures are silently ignored for
+        race conditions on shared/network storage.
+        """
+        if not getattr(self.args, "delete_model_after_load", False):
+            return
+
+        # Only local-rank 0 should delete
+        if not getattr(self.accelerator, "is_local_main_process", True):
+            return
+
+        from simpletuner.helpers.models.common import delete_model_from_cache
+
+        # Find all text encoder paths stored in StateTracker
+        snapshot_paths = StateTracker.get_all_model_snapshot_paths()
+        for component_key in list(snapshot_paths.keys()):
+            if component_key.startswith("text_encoder_"):
+                logger.info(f"Deleting cached text encoder: {component_key}")
+                delete_model_from_cache(component_key, self.accelerator)
 
     def _validate_with_config_registry(self, config: Dict[str, Any], model_family: str) -> None:
         """

@@ -77,6 +77,10 @@ class StateTracker:
     # Dataset scheduling tracking
     dataset_schedule: dict = {}
 
+    # Snapshot paths for models loaded from HuggingFace cache (for delete_model_after_load)
+    # Keys: "transformer", "unet", "vae", "text_encoder_0", "text_encoder_1", etc.
+    _model_snapshot_paths: dict = {}
+
     @classmethod
     def delete_cache_files(cls, data_backend_id: str = None, preserve_data_backend_cache=False):
         for cache_name in [
@@ -772,3 +776,30 @@ class StateTracker:
     @classmethod
     def set_last_lr(cls, last_lr: float):
         cls.last_lr = float(last_lr)
+
+    @classmethod
+    def set_model_snapshot_path(cls, component_key: str, snapshot_path: str):
+        """
+        Store a model component's snapshot path for potential deletion after loading.
+
+        Args:
+            component_key: Identifier for the component (e.g., "transformer", "vae", "text_encoder_0")
+            snapshot_path: The full path to the snapshot directory in the HuggingFace cache
+        """
+        if snapshot_path:
+            cls._model_snapshot_paths[component_key] = snapshot_path
+
+    @classmethod
+    def get_model_snapshot_path(cls, component_key: str) -> Optional[str]:
+        """Get the snapshot path for a model component."""
+        return cls._model_snapshot_paths.get(component_key)
+
+    @classmethod
+    def get_all_model_snapshot_paths(cls) -> dict:
+        """Get all stored model snapshot paths."""
+        return dict(cls._model_snapshot_paths)
+
+    @classmethod
+    def clear_model_snapshot_path(cls, component_key: str):
+        """Remove a model snapshot path after deletion."""
+        cls._model_snapshot_paths.pop(component_key, None)
