@@ -64,7 +64,6 @@ env_to_args_map = {
     "QUANTIZATION_CONFIG": "--quantization_config",
     "TRAINING_NUM_PROCESSES": "--num_processes",
     "TRAINING_NUM_MACHINES": "--num_machines",
-    "VALIDATION_TORCH_COMPILE": "--validation_torch_compile",
     "TRAINER_DYNAMO_BACKEND": "--dynamo_backend",
     "VALIDATION_GUIDANCE_REAL": "--validation_guidance_real",
     "VALIDATION_NO_CFG_UNTIL_TIMESTEP": "--validation_no_cfg_until_timestep",
