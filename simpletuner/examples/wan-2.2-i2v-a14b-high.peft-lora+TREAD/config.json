@@ -30,7 +30,7 @@
     "model_type": "lora",
     "num_train_epochs": 0,
     "offload_during_startup": true,
-    "optimizer": "optimi-lion",
+    "optimizer": "adamw_bf16",
     "output_dir": "output/examples/wan-2.2-i2v-a14b-high.peft-lora+TREAD",
     "push_checkpoints_to_hub": false,
     "push_to_hub": false,
