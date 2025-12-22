@@ -105,6 +105,9 @@ class LongCatImage(ImageModelFoundation):
     def requires_text_embed_image_context(self) -> bool:
         return self._is_edit_flavour()
 
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        return not self._is_edit_flavour()
+
     def conditioning_validation_dataset_type(self) -> bool:
         if self._is_edit_flavour():
             return "image"
