@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Optional
 
 import torch
 from diffusers import FlowMatchEulerDiscreteScheduler
@@ -7,6 +8,7 @@ from diffusers.models import AutoencoderKLWan
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizerFast
 
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.models.common import (
     ModelTypes,
     PipelineTypes,
@@ -65,6 +67,108 @@ class SanaVideo(VideoModelFoundation):
             "model": Gemma2Model,
         },
     }
+
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        # SanaVideo has 20 transformer blocks
+        # Leave at least 1 block on GPU
+        return 19
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        return [
+            # Basic tab - RamTorch options
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="basic",
+                name="RamTorch - Basic",
+                description="Streams first 10 of 20 transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~30%",
+                tradeoff_speed="Increases training time by ~20%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9",
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="aggressive",
+                name="RamTorch - Aggressive",
+                description="Streams all transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~60%",
+                tradeoff_speed="Increases training time by ~50%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.*",
+                },
+            ),
+            # Basic tab - Block swap options
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="light",
+                name="Block Swap - Light",
+                description="Swaps 5 of 20 blocks (~25%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~20%",
+                tradeoff_speed="Increases training time by ~15%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 5},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="balanced",
+                name="Block Swap - Balanced",
+                description="Swaps 10 of 20 blocks (~50%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~45%",
+                tradeoff_speed="Increases training time by ~30%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 10},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="aggressive",
+                name="Block Swap - Aggressive",
+                description="Swaps 15 of 20 blocks (~75%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~65%",
+                tradeoff_speed="Increases training time by ~55%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 15},
+            ),
+            # Advanced tab - DeepSpeed options
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
+                level="zero1",
+                name="DeepSpeed ZeRO Stage 1",
+                description="Shards optimizer states across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
+                tradeoff_speed="Minimal overhead",
+                tradeoff_notes="Requires multi-GPU setup.",
+                config={"deepspeed": "zero1"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
+                level="zero2",
+                name="DeepSpeed ZeRO Stage 2",
+                description="Shards optimizer states and gradients across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
+                tradeoff_speed="Moderate communication overhead",
+                tradeoff_notes="Requires multi-GPU setup.",
+                config={"deepspeed": "zero2"},
+            ),
+        ]
 
     COMPLEX_HUMAN_INSTRUCTION = [
         "Given a user prompt, generate an 'Enhanced prompt' that provides detailed visual descriptions suitable for video generation. Evaluate the level of detail in the user prompt:",

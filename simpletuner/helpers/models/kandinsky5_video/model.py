@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from diffusers import AutoencoderKLHunyuanVideo
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
 
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.configuration.registry import ConfigRegistry, ConfigRule, RuleType, make_default_rule
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_i2v import Kandinsky5I2VPipeline
@@ -163,6 +164,108 @@ class Kandinsky5Video(VideoModelFoundation):
             "subfolder": "text_encoder_2",
         },
     }
+
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        # Kandinsky5Video has 34 transformer blocks (2 text + 32 visual)
+        # Leave at least 1 block on GPU
+        return 33
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        return [
+            # Basic tab - RamTorch options
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="basic",
+                name="RamTorch - Basic",
+                description="Streams half of transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~30%",
+                tradeoff_speed="Increases training time by ~20%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "text_transformer_blocks.*,visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5,visual_transformer_blocks.6,visual_transformer_blocks.7,visual_transformer_blocks.8,visual_transformer_blocks.9,visual_transformer_blocks.10,visual_transformer_blocks.11,visual_transformer_blocks.12,visual_transformer_blocks.13,visual_transformer_blocks.14,visual_transformer_blocks.15",
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="aggressive",
+                name="RamTorch - Aggressive",
+                description="Streams all transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~60%",
+                tradeoff_speed="Increases training time by ~50%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "text_transformer_blocks.*,visual_transformer_blocks.*",
+                },
+            ),
+            # Basic tab - Block swap options
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="light",
+                name="Block Swap - Light",
+                description="Swaps 8 of 34 blocks (~25%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~20%",
+                tradeoff_speed="Increases training time by ~15%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 8},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="balanced",
+                name="Block Swap - Balanced",
+                description="Swaps 17 of 34 blocks (~50%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~45%",
+                tradeoff_speed="Increases training time by ~30%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 17},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="aggressive",
+                name="Block Swap - Aggressive",
+                description="Swaps 25 of 34 blocks (~75%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~65%",
+                tradeoff_speed="Increases training time by ~55%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 25},
+            ),
+            # Advanced tab - DeepSpeed options
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
+                level="zero1",
+                name="DeepSpeed ZeRO Stage 1",
+                description="Shards optimizer states across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
+                tradeoff_speed="Minimal overhead",
+                tradeoff_notes="Requires multi-GPU setup.",
+                config={"deepspeed": "zero1"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
+                level="zero2",
+                name="DeepSpeed ZeRO Stage 2",
+                description="Shards optimizer states and gradients across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
+                tradeoff_speed="Moderate communication overhead",
+                tradeoff_notes="Requires multi-GPU setup.",
+                config={"deepspeed": "zero2"},
+            ),
+        ]
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         """

@@ -2,7 +2,7 @@
 
 import logging
 import os
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 from diffusers.guiders import ClassifierFreeGuidance
@@ -17,6 +17,7 @@ from transformers import (
     T5EncoderModel,
 )
 
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.hunyuanvideo.autoencoder import AutoencoderKLConv3D
@@ -98,6 +99,111 @@ class HunyuanVideo(VideoModelFoundation):
         "add_v_proj",
         "to_add_out",
     ]
+
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        # HunyuanVideo has 54 transformer layers (double blocks)
+        return 53
+
+    @classmethod
+    def get_acceleration_presets(cls) -> List[AccelerationPreset]:
+        return [
+            # Basic tab - RamTorch presets
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="basic",
+                name="RamTorch - Basic",
+                description="Streams half of transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~30%",
+                tradeoff_speed="Increases training time by ~20%",
+                tradeoff_notes="Requires 64GB+ system RAM. CUDA/ROCm only.",
+                requires_cuda=True,
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.0-26.*",
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="aggressive",
+                name="RamTorch - Aggressive",
+                description="Streams all transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~65%",
+                tradeoff_speed="Increases training time by ~55%",
+                tradeoff_notes="Requires 64GB+ system RAM. CUDA/ROCm only.",
+                requires_cuda=True,
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "*",
+                },
+            ),
+            # Basic tab - Block swap presets
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="light",
+                name="Block Swap - Light",
+                description="Swaps 14 of 54 blocks (~25%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~20%",
+                tradeoff_speed="Increases training time by ~15%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 14},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="balanced",
+                name="Block Swap - Balanced",
+                description="Swaps 27 of 54 blocks (~50%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~45%",
+                tradeoff_speed="Increases training time by ~30%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 27},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="aggressive",
+                name="Block Swap - Aggressive",
+                description="Swaps 40 of 54 blocks (~75%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~65%",
+                tradeoff_speed="Increases training time by ~50%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 40},
+            ),
+            # Advanced tab - DeepSpeed presets
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
+                level="zero1",
+                name="DeepSpeed ZeRO Stage 1",
+                description="Shards optimizer states across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer memory by ~75% per GPU",
+                tradeoff_speed="Minimal overhead",
+                tradeoff_notes="Requires multi-GPU. Not compatible with FSDP.",
+                requires_cuda=True,
+                config={"deepspeed_config": "zero1"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
+                level="zero2",
+                name="DeepSpeed ZeRO Stage 2",
+                description="Shards optimizer states and gradients across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces memory by ~85% per GPU",
+                tradeoff_speed="Moderate overhead from gradient sync",
+                tradeoff_notes="Requires multi-GPU. Not compatible with FSDP.",
+                requires_cuda=True,
+                config={"deepspeed_config": "zero2"},
+            ),
+        ]
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)

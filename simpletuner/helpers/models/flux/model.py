@@ -1,7 +1,7 @@
 import logging
 import os
 import random
-from typing import List
+from typing import List, Optional
 
 import torch
 from diffusers import AutoencoderKL
@@ -9,6 +9,7 @@ from diffusers.models.attention_processor import Attention
 from torch.nn import functional as F
 from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
     ConfigRule,
@@ -93,6 +94,125 @@ class Flux(ImageModelFoundation):
             "model": T5EncoderModel,
         },
     }
+
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        # Flux has 19 double blocks + 38 single blocks = 57 total
+        # Leave at least 1 block on GPU
+        return 56
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        return [
+            # Basic tab - RamTorch presets
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="basic",
+                name="RamTorch - Basic",
+                description="Streams double block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~35%",
+                tradeoff_speed="Increases training time by ~25%",
+                tradeoff_notes="Requires 64GB+ system RAM. CUDA/ROCm only.",
+                requires_cuda=True,
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.*",
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="aggressive",
+                name="RamTorch - Aggressive",
+                description="Streams all transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~60%",
+                tradeoff_speed="Increases training time by ~50%",
+                tradeoff_notes="Requires 64GB+ system RAM. CUDA/ROCm only.",
+                requires_cuda=True,
+                requires_min_system_ram_gb=64,
+                config={
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "*",
+                },
+            ),
+            # Basic tab - Block swap presets
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="light",
+                name="Block Swap - Light",
+                description="Swaps 14 of 57 blocks (~25%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~20%",
+                tradeoff_speed="Increases training time by ~15%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 14},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="balanced",
+                name="Block Swap - Balanced",
+                description="Swaps 28 of 57 blocks (~50%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~45%",
+                tradeoff_speed="Increases training time by ~30%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 28},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="aggressive",
+                name="Block Swap - Aggressive",
+                description="Swaps 42 of 57 blocks (~75%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~65%",
+                tradeoff_speed="Increases training time by ~50%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={"musubi_blocks_to_swap": 42},
+            ),
+            # Advanced tab - DeepSpeed presets
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
+                level="zero1",
+                name="DeepSpeed ZeRO Stage 1",
+                description="Shards optimizer states across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer memory by ~75% per GPU",
+                tradeoff_speed="Minimal overhead",
+                tradeoff_notes="Requires multi-GPU. Not compatible with FSDP.",
+                requires_cuda=True,
+                config={"deepspeed_config": "zero1"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
+                level="zero2",
+                name="DeepSpeed ZeRO Stage 2",
+                description="Shards optimizer states and gradients across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces memory by ~85% per GPU",
+                tradeoff_speed="Moderate overhead from gradient sync",
+                tradeoff_notes="Requires multi-GPU. Not compatible with FSDP.",
+                requires_cuda=True,
+                config={"deepspeed_config": "zero2"},
+            ),
+            # Advanced tab - Group Offload
+            AccelerationPreset(
+                backend=AccelerationBackend.GROUP_OFFLOAD,
+                level="block",
+                name="Group Offload - Block Level",
+                description="Offloads module groups to CPU using diffusers hooks.",
+                tab="advanced",
+                tradeoff_vram="Substantial VRAM savings",
+                tradeoff_speed="Significant overhead from CPU-GPU transfers",
+                tradeoff_notes="Known stability issues. Mutually exclusive with RamTorch.",
+                requires_min_system_ram_gb=64,
+                config={"enable_group_offload": True, "group_offload_type": "block_level"},
+            ),
+        ]
 
     def control_init(self):
         """
