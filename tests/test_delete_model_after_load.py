@@ -276,6 +276,85 @@ class TestDeleteModelFromCache(unittest.TestCase):
             self.assertFalse(os.path.exists(cache_dir))
 
 
+class TestSharedRepoDeletion(unittest.TestCase):
+    """Test that shared repos are not deleted until all components are done."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        StateTracker._model_snapshot_paths = {}
+        StateTracker.args = SimpleNamespace(delete_model_after_load=True)
+
+    def tearDown(self):
+        """Clean up."""
+        StateTracker._model_snapshot_paths = {}
+        StateTracker.args = None
+
+    def test_shared_repo_not_deleted_early(self):
+        """Test that a shared repo is not deleted when other components still need it."""
+        from simpletuner.helpers.models.common import delete_model_from_cache
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a shared cache directory
+            shared_cache = os.path.join(tmpdir, "shared_model_cache")
+            os.makedirs(shared_cache)
+            with open(os.path.join(shared_cache, "model.bin"), "w") as f:
+                f.write("test")
+
+            # Register multiple components using the same path (simulating unified pipeline)
+            StateTracker.set_model_snapshot_path("vae", shared_cache)
+            StateTracker.set_model_snapshot_path("text_encoder_1", shared_cache)
+            StateTracker.set_model_snapshot_path("transformer", shared_cache)
+
+            accelerator = MagicMock()
+            accelerator.is_local_main_process = True
+
+            # VAE tries to delete first - should defer because text_encoder and transformer still need it
+            result = delete_model_from_cache("vae", accelerator)
+            self.assertFalse(result)
+            self.assertTrue(os.path.exists(shared_cache))  # Dir should still exist
+            self.assertIsNone(StateTracker.get_model_snapshot_path("vae"))  # VAE entry cleared
+
+            # Text encoder tries next - should defer because transformer still needs it
+            result = delete_model_from_cache("text_encoder_1", accelerator)
+            self.assertFalse(result)
+            self.assertTrue(os.path.exists(shared_cache))  # Dir should still exist
+            self.assertIsNone(StateTracker.get_model_snapshot_path("text_encoder_1"))
+
+            # Transformer is last - should actually delete
+            result = delete_model_from_cache("transformer", accelerator)
+            self.assertTrue(result)
+            self.assertFalse(os.path.exists(shared_cache))  # Dir should be deleted now
+
+    def test_separate_repos_deleted_independently(self):
+        """Test that components with different repos can delete independently."""
+        from simpletuner.helpers.models.common import delete_model_from_cache
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create separate cache directories
+            vae_cache = os.path.join(tmpdir, "vae_cache")
+            transformer_cache = os.path.join(tmpdir, "transformer_cache")
+            os.makedirs(vae_cache)
+            os.makedirs(transformer_cache)
+
+            # Register components with different paths
+            StateTracker.set_model_snapshot_path("vae", vae_cache)
+            StateTracker.set_model_snapshot_path("transformer", transformer_cache)
+
+            accelerator = MagicMock()
+            accelerator.is_local_main_process = True
+
+            # VAE can delete immediately (different path from transformer)
+            result = delete_model_from_cache("vae", accelerator)
+            self.assertTrue(result)
+            self.assertFalse(os.path.exists(vae_cache))
+            self.assertTrue(os.path.exists(transformer_cache))  # Transformer cache unaffected
+
+            # Transformer can also delete
+            result = delete_model_from_cache("transformer", accelerator)
+            self.assertTrue(result)
+            self.assertFalse(os.path.exists(transformer_cache))
+
+
 class TestVAEDeletionGating(unittest.TestCase):
     """Test that VAE deletion is gated on validation being disabled."""
 
