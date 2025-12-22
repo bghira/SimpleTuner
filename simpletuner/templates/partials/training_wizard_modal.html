@@ -459,7 +459,137 @@
                 </div>
             </div>
 
-            <!-- Step 4: Training Duration -->
+            <!-- Step 4: Memory Optimization (Full Training Only) -->
+            <div x-show="currentStep.id === 'memory-optimization'" class="wizard-step-content">
+                <h6 class="wizard-question">Configure memory optimization strategies</h6>
+                <p class="text-muted mb-3">
+                    Choose strategies to reduce VRAM usage. Multiple strategies can be combined where compatible.
+                </p>
+
+                <!-- System RAM Warning -->
+                <div class="alert alert-warning mb-4" x-show="lowSystemRam && hasRamIntensiveSelection">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>Low System RAM Detected</strong> (<span x-text="systemRamGb"></span> GB).
+                    Most memory optimization strategies require 64GB+ of system RAM to be effective.
+                </div>
+
+                <!-- Loading state -->
+                <div x-show="memoryPresetsLoading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading presets...</span>
+                    </div>
+                </div>
+
+                <!-- Tab Navigation -->
+                <div x-show="!memoryPresetsLoading" class="memory-tabs mb-4">
+                    <ul class="nav nav-tabs">
+                        <li class="nav-item">
+                            <button class="nav-link"
+                                    :class="{ 'active': selectedMemoryTab === 'basic' }"
+                                    @click.prevent="selectedMemoryTab = 'basic'">
+                                Basic
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link"
+                                    :class="{ 'active': selectedMemoryTab === 'advanced' }"
+                                    @click.prevent="selectedMemoryTab = 'advanced'">
+                                Advanced
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Tab Content -->
+                <div x-show="!memoryPresetsLoading" class="memory-tab-content">
+                    <!-- Quantization selector (shown on basic tab) -->
+                    <div x-show="selectedMemoryTab === 'basic'" class="mb-4 p-3 border rounded">
+                        <label class="form-label fw-semibold">Quantization Level</label>
+                        <div class="btn-group w-100" role="group">
+                            <input type="radio" class="btn-check" name="memoryQuantLevel" id="quant-disabled"
+                                   value="disabled" x-model="memoryQuantLevel">
+                            <label class="btn btn-outline-secondary" for="quant-disabled">Disabled</label>
+
+                            <input type="radio" class="btn-check" name="memoryQuantLevel" id="quant-int8"
+                                   value="int8-torchao" x-model="memoryQuantLevel">
+                            <label class="btn btn-outline-secondary" for="quant-int8">INT8</label>
+
+                            <input type="radio" class="btn-check" name="memoryQuantLevel" id="quant-nf4"
+                                   value="nf4-bnb" x-model="memoryQuantLevel">
+                            <label class="btn btn-outline-secondary" for="quant-nf4">NF4</label>
+
+                            <input type="radio" class="btn-check" name="memoryQuantLevel" id="quant-int4"
+                                   value="int4-quanto" x-model="memoryQuantLevel">
+                            <label class="btn btn-outline-secondary" for="quant-int4">INT4</label>
+                        </div>
+                        <div class="form-text mt-2">
+                            <span x-show="memoryQuantLevel === 'disabled'">No quantization applied.</span>
+                            <span x-show="memoryQuantLevel === 'int8-torchao'">Recommended default. Good balance of quality and memory savings.</span>
+                            <span x-show="memoryQuantLevel === 'nf4-bnb'">More aggressive savings. Does not work on AMD or Apple machines.</span>
+                            <span x-show="memoryQuantLevel === 'int4-quanto'">Experimental. Maximum savings but may impact quality.</span>
+                        </div>
+                    </div>
+
+                    <!-- Advanced tab warning -->
+                    <div class="alert alert-warning small mb-4" x-show="selectedMemoryTab === 'advanced'">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Advanced strategies require careful configuration and may have stability issues.
+                    </div>
+
+                    <!-- Presets grouped by strategy -->
+                    <template x-for="group in getPresetsGroupedByBackend(selectedMemoryTab)" :key="group.backend">
+                        <div class="memory-strategy-row mb-3 p-3 border rounded">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <div class="strategy-label fw-semibold" x-text="group.label"></div>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <template x-for="preset in group.presets" :key="preset.level">
+                                        <button type="button" class="btn"
+                                                :class="isPresetSelected(preset) ? 'btn-primary' : 'btn-outline-secondary'"
+                                                @click.prevent="togglePreset(preset)"
+                                                x-text="preset.level.charAt(0).toUpperCase() + preset.level.slice(1)">
+                                        </button>
+                                    </template>
+                                </div>
+                            </div>
+                            <!-- Show info for selected preset in this group -->
+                            <template x-for="preset in group.presets" :key="'info-' + preset.level">
+                                <div x-show="isPresetSelected(preset)" class="small">
+                                    <p class="text-muted mb-2" x-text="preset.description"></p>
+                                    <div class="preset-tradeoffs">
+                                        <span class="badge bg-success-subtle text-success-emphasis me-2" x-text="preset.tradeoff_vram"></span>
+                                        <span class="badge bg-warning-subtle text-warning-emphasis me-2" x-text="preset.tradeoff_speed"></span>
+                                        <span class="badge bg-info-subtle text-info-emphasis" x-show="preset.requires_min_system_ram_gb >= 64">Requires 64GB+ RAM</span>
+                                    </div>
+                                    <div class="form-text mt-1" x-show="preset.tradeoff_notes" x-text="preset.tradeoff_notes"></div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+
+                    <!-- Empty state -->
+                    <div x-show="getPresetsGroupedByBackend(selectedMemoryTab).length === 0" class="text-muted text-center py-4">
+                        No presets available for this tab. Select a different model or check the Advanced tab for distributed strategies.
+                    </div>
+
+                    <!-- Custom Block Swap Slider -->
+                    <div x-show="maxSwappableBlocks !== null && selectedMemoryTab === 'basic'" class="mt-4 p-3 border rounded">
+                        <label class="form-label d-flex justify-content-between align-items-center">
+                            Custom Block Swap Count
+                            <span class="badge bg-secondary" x-text="customBlockSwapCount + ' / ' + maxSwappableBlocks"></span>
+                        </label>
+                        <input type="range" class="form-range"
+                               min="0" :max="maxSwappableBlocks"
+                               x-model.number="customBlockSwapCount"
+                               @input="if (customBlockSwapCount > 0) { delete selectedPresets['RAMTORCH']; delete selectedPresets['GROUP_OFFLOAD']; selectedPresets = {...selectedPresets}; }">
+                        <div class="form-text">
+                            Set a custom number of blocks to swap if presets don't match your needs.
+                            Higher values save more VRAM, use more system RAM, and increase training time.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 5: Training Duration -->
             <div x-show="currentStep.id === 'training-duration'" class="wizard-step-content">
                 <h6 class="wizard-question">How long should training run?</h6>
                 <p class="text-muted mb-3">
