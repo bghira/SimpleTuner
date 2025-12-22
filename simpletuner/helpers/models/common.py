@@ -1948,6 +1948,12 @@ class ModelFoundation(ABC):
         """
         return getattr(self, "processor", None)
 
+    def _load_text_processor_for_pipeline(self):
+        """
+        Hook for subclasses to load or return any text_processor modules required by their pipelines.
+        """
+        return getattr(self, "text_processor", None)
+
     def _load_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         """
         Loads the pipeline class for the model.
@@ -2016,6 +2022,14 @@ class ModelFoundation(ABC):
             if processor is None:
                 raise ValueError(f"{pipeline_class.__name__} requires a processor but none was provided or could be loaded.")
             pipeline_kwargs["processor"] = processor
+
+        if "text_processor" in pipeline_init_signature.parameters and "text_processor" not in pipeline_kwargs:
+            text_processor = self._load_text_processor_for_pipeline()
+            if text_processor is None:
+                raise ValueError(
+                    f"{pipeline_class.__name__} requires a text_processor but none was provided or could be loaded."
+                )
+            pipeline_kwargs["text_processor"] = text_processor
 
         if self.config.controlnet and pipeline_type is PipelineTypes.CONTROLNET:
             pipeline_kwargs["controlnet"] = self.controlnet
