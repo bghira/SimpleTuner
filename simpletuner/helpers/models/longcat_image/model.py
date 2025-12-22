@@ -321,6 +321,56 @@ class LongCatImage(ImageModelFoundation):
             "text_ids": text_ids,
         }
 
+    def collate_prompt_embeds(self, text_encoder_output: list) -> dict:
+        """
+        Collate prompt embeddings for LongCat-Image models with padding.
+
+        For edit models, embeddings can have different sequence lengths due to
+        different conditioning image sizes. This method pads all embeddings to
+        the maximum sequence length in the batch.
+        """
+        if not text_encoder_output:
+            return {}
+
+        first_embed = text_encoder_output[0].get("prompt_embeds")
+        if first_embed is None:
+            return {}
+
+        # Single sample - just ensure batch dimension
+        if len(text_encoder_output) == 1:
+            embed = first_embed
+            if embed.dim() == 2:
+                embed = embed.unsqueeze(0)
+            return {"prompt_embeds": embed}
+
+        # Normalize all embeddings to 2D [seq, hidden] for processing
+        embeds = []
+        for t in text_encoder_output:
+            embed = t["prompt_embeds"]
+            if embed.dim() == 3 and embed.shape[0] == 1:
+                embed = embed.squeeze(0)
+            embeds.append(embed)
+
+        # Find max sequence length
+        max_seq_len = max(e.shape[0] for e in embeds)
+        hidden_dim = embeds[0].shape[-1]
+
+        # Pad all embeddings to max length
+        padded_embeds = []
+        for embed in embeds:
+            seq_len = embed.shape[0]
+            if seq_len < max_seq_len:
+                padding = torch.zeros(
+                    max_seq_len - seq_len,
+                    hidden_dim,
+                    dtype=embed.dtype,
+                    device=embed.device,
+                )
+                embed = torch.cat([embed, padding], dim=0)
+            padded_embeds.append(embed)
+
+        return {"prompt_embeds": torch.stack(padded_embeds, dim=0)}
+
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]
         text_ids = text_embedding.get("text_ids")
