@@ -1,6 +1,7 @@
 CURRENT_VERSION = 2
 
-LATEST_DEFAULTS = {1: {"hash_filenames": False}, 2: {"hash_filenames": True}}
+# hash_filenames was removed in version 2 as it is now always enabled
+LATEST_DEFAULTS = {1: {}, 2: {}}
 
 
 def default(setting: str, current_version: int = None, default_value=None):

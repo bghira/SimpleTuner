@@ -54,21 +54,6 @@
     <div class="section-group" x-show="matchesParamFilter('cache', 'processing', 'hash', 'filename', 'preserve', 'backend')">
         <h6 class="modal-section-title">Cache & Processing</h6>
         <div class="row g-2">
-            <div class="col-md-6" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type)">
-                <div class="form-check">
-                    <input class="form-check-input"
-                           type="checkbox"
-                           :id="'hash-filenames-' + editingDataset.id"
-                           x-model="editingDataset.hash_filenames"
-                           @change="markAsUnsaved()">
-                    <label class="form-check-label small" :for="'hash-filenames-' + editingDataset.id">
-                        Hash cached filenames <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#hash_filenames" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
-                    </label>
-                </div>
-                <div class="form-text small text-muted ps-4">
-                    Use hashed names for cache files to avoid path issues
-                </div>
-            </div>
             <div class="col-md-6" x-show="editingDataset.dataset_type !== 'image_embeds'">
                 <div class="form-check">
                     <input class="form-check-input"

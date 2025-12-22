@@ -114,6 +114,178 @@ def get_model_config_path(model_family: str, model_path: str):
     return model_path
 
 
+def get_hf_cache_repo_path(model_path: str) -> Optional[str]:
+    """
+    Resolve a model path to its HuggingFace cache repository path.
+
+    For Hub models (org/model-name), finds the corresponding cache directory.
+    For local paths, returns None (nothing to delete).
+    For single-file checkpoints (.safetensors, .gguf), returns None.
+
+    Returns the repo-level cache path (e.g., ~/.cache/huggingface/hub/models--org--name)
+    which contains blobs, refs, and snapshots directories.
+    """
+    if model_path is None:
+        return None
+
+    # Skip single-file checkpoints
+    if isinstance(model_path, str) and model_path.endswith((".safetensors", ".gguf")):
+        return None
+
+    # Skip local paths
+    if isinstance(model_path, str) and os.path.exists(model_path):
+        # Check if it's already a local directory (not in HF cache)
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        hf_cache = os.environ.get("HF_HUB_CACHE", HF_HUB_CACHE)
+        if not model_path.startswith(hf_cache):
+            return None
+
+    # Try to find the repo in the HF cache
+    try:
+        from huggingface_hub import scan_cache_dir
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        hf_cache = os.environ.get("HF_HUB_CACHE", HF_HUB_CACHE)
+        cache_info = scan_cache_dir(hf_cache)
+
+        # Normalize model_path to repo_id format
+        repo_id = model_path.strip("/")
+
+        for repo in cache_info.repos:
+            if repo.repo_id == repo_id:
+                return str(repo.repo_path)
+
+    except Exception as e:
+        logger.debug(f"Could not resolve HF cache path for {model_path}: {e}")
+
+    return None
+
+
+def delete_model_from_cache(
+    component_key: str,
+    accelerator,
+    force: bool = False,
+) -> bool:
+    """
+    Delete a model component's cached files from the HuggingFace cache.
+
+    This function is gated to only run on local-rank 0 processes to avoid
+    race conditions on shared/network storage. Deletion failures are silently
+    ignored to handle cases where multiple nodes share the same network mount.
+
+    Args:
+        component_key: The StateTracker key for the component (e.g., "transformer", "vae")
+        accelerator: The accelerator instance for checking local_rank
+        force: If True, delete even without checking delete_model_after_load config
+
+    Returns:
+        True if deletion was attempted (regardless of success), False if skipped
+    """
+    import shutil
+
+    from simpletuner.helpers.training.state_tracker import StateTracker
+
+    # Only local-rank 0 should delete
+    if not getattr(accelerator, "is_local_main_process", True):
+        return False
+
+    args = StateTracker.get_args()
+    if not force and not getattr(args, "delete_model_after_load", False):
+        return False
+
+    repo_path = StateTracker.get_model_snapshot_path(component_key)
+    if not repo_path:
+        logger.debug(f"No cached path found for {component_key}, skipping deletion")
+        return False
+
+    # Skip pending placeholders (model path, not actual cache path)
+    if repo_path.startswith("__pending__:"):
+        logger.debug(f"Path for {component_key} is pending placeholder, skipping")
+        StateTracker.clear_model_snapshot_path(component_key)
+        return False
+
+    logger.info(f"Deleting cached model files for {component_key}: {repo_path}")
+
+    try:
+        if os.path.isdir(repo_path):
+            shutil.rmtree(repo_path)
+            logger.info(f"Successfully deleted cache for {component_key}")
+            StateTracker.clear_model_snapshot_path(component_key)
+            return True
+        elif os.path.isfile(repo_path):
+            os.remove(repo_path)
+            logger.info(f"Successfully deleted cache file for {component_key}")
+            StateTracker.clear_model_snapshot_path(component_key)
+            return True
+        else:
+            # Path doesn't exist (already deleted or never existed)
+            logger.debug(f"Cache path does not exist for {component_key}: {repo_path}")
+            StateTracker.clear_model_snapshot_path(component_key)
+            return False
+    except Exception as e:
+        # Silently ignore deletion errors (race conditions on shared storage)
+        logger.debug(f"Could not delete cache for {component_key}: {e}")
+        StateTracker.clear_model_snapshot_path(component_key)
+        return False
+
+
+def delete_all_model_caches(accelerator) -> int:
+    """
+    Delete all registered model caches after all models have been loaded.
+
+    This is called once after VAE, text encoders, and transformer/unet are all loaded
+    and the text encoders have been unloaded (their paths cleared). This ensures
+    that shared repos (like unified pipelines) are only deleted after all components
+    that use them have loaded.
+
+    Args:
+        accelerator: The accelerator instance for checking local_rank
+
+    Returns:
+        Number of components whose caches were deleted
+    """
+    from simpletuner.helpers.training.state_tracker import StateTracker
+
+    args = StateTracker.get_args()
+    delete_enabled = getattr(args, "delete_model_after_load", False)
+    logger.info(f"delete_all_model_caches called, delete_model_after_load={delete_enabled}")
+
+    if not delete_enabled:
+        return 0
+
+    # Only local-rank 0 should delete
+    if not getattr(accelerator, "is_local_main_process", True):
+        logger.info("delete_all_model_caches: not local main process, skipping")
+        return 0
+
+    # Log all registered paths
+    all_paths = StateTracker.get_all_model_snapshot_paths()
+    logger.info(f"delete_all_model_caches: registered paths = {all_paths}")
+
+    deleted_count = 0
+
+    # Delete remaining component caches (VAE may be kept if validation is enabled)
+    for component_key in ["vae", "transformer", "unet"]:
+        # Check if VAE should be kept for validation
+        if component_key == "vae":
+            validation_enabled = (
+                getattr(args, "validation_prompts", None)
+                or getattr(args, "validation_prompt", None)
+                or getattr(args, "validation_image_prompts", None)
+            )
+            if validation_enabled:
+                logger.info("Skipping VAE cache deletion because validation is enabled")
+                StateTracker.clear_model_snapshot_path("vae")
+                continue
+
+        if delete_model_from_cache(component_key, accelerator):
+            deleted_count += 1
+
+    logger.info(f"delete_all_model_caches: deleted {deleted_count} caches")
+    return deleted_count
+
+
 class PipelineTypes(Enum):
     IMG2IMG = "img2img"
     TEXT2IMG = "text2img"
@@ -1335,6 +1507,19 @@ class ModelFoundation(ABC):
             return
 
         logger.info(f"Loading {self.AUTOENCODER_CLASS.__name__} from {self.config.vae_path}")
+
+        # Register VAE cache path for potential deletion
+        if getattr(self.config, "delete_model_after_load", False):
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            cache_repo_path = get_hf_cache_repo_path(self.config.vae_path)
+            logger.info(
+                f"load_vae: delete_model_after_load=True, vae_path={self.config.vae_path}, cache_repo_path={cache_repo_path}"
+            )
+            if cache_repo_path:
+                StateTracker.set_model_snapshot_path("vae", cache_repo_path)
+                logger.info(f"load_vae: registered VAE cache path: {cache_repo_path}")
+
         self.vae = None
         self.config.vae_kwargs = {
             "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
@@ -1392,6 +1577,7 @@ class ModelFoundation(ABC):
             )
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
+
         self.post_vae_load_setup()
 
     def post_vae_load_setup(self):
@@ -1478,6 +1664,9 @@ class ModelFoundation(ABC):
             return
         self.load_text_tokenizer()
 
+        # Track if we should store cache paths for text encoder deletion
+        should_track_for_deletion = getattr(self.config, "delete_model_after_load", False)
+
         text_encoder_idx = 0
         with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
             for (
@@ -1502,6 +1691,16 @@ class ModelFoundation(ABC):
                 )
                 if text_encoder_config.get("path", None) is not None:
                     text_encoder_path = text_encoder_config.get("path")
+
+                # Register text encoder cache path for potential deletion
+                if should_track_for_deletion:
+                    from simpletuner.helpers.training.state_tracker import StateTracker
+
+                    component_key = f"text_encoder_{text_encoder_idx}"
+                    cache_repo_path = get_hf_cache_repo_path(text_encoder_path)
+                    if cache_repo_path:
+                        StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
+
                 requires_quant = text_encoder_config.get("required_quantisation_level", None)
                 quantization_config = None
                 if (
@@ -1693,6 +1892,20 @@ class ModelFoundation(ABC):
             if self.MODEL_TYPE is ModelTypes.TRANSFORMER
             else self.config.pretrained_unet_model_name_or_path
         ) or self.config.pretrained_model_name_or_path
+
+        # Register transformer/unet cache path for potential deletion
+        if getattr(self.config, "delete_model_after_load", False):
+            from simpletuner.helpers.training.state_tracker import StateTracker
+
+            component_key = self.MODEL_TYPE.value  # "transformer" or "unet"
+            cache_repo_path = get_hf_cache_repo_path(model_path)
+            logger.info(
+                f"load_model: delete_model_after_load=True, model_path={model_path}, cache_repo_path={cache_repo_path}"
+            )
+            if cache_repo_path:
+                StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
+                logger.info(f"load_model: registered {component_key} cache path: {cache_repo_path}")
+
         is_safetensors = isinstance(model_path, str) and model_path.endswith(".safetensors")
         is_gguf = isinstance(model_path, str) and model_path.endswith(".gguf")
         if isinstance(self.config.pretrained_model_name_or_path, str) and self.config.pretrained_model_name_or_path.endswith(

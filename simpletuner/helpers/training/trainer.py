@@ -1707,6 +1707,7 @@ class Trainer:
                     self.init_unload_text_encoder,
                     self.init_unload_vae,
                     self.init_load_base_model,
+                    self.init_delete_model_caches,
                     self.init_precision,
                     self.init_controlnet_model,
                     self.init_tread_model,
@@ -2491,6 +2492,12 @@ class Trainer:
             logger.info("Unloading text encoders, as they are not being trained.")
         self._report_cuda_usage("pre_text_encoder_unload")
         self.model.unload_text_encoder()
+
+        # Clear text encoder cache paths now that they're unloaded
+        # This allows delete_all_model_caches to skip these components
+        for i in range(1, 10):  # Support up to 10 text encoders
+            StateTracker.clear_model_snapshot_path(f"text_encoder_{i}")
+
         caches_seen: set[int] = set()
         caches_to_clear: list[object] = []
         try:
@@ -3572,6 +3579,12 @@ class Trainer:
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(f"After nuking the VAE from orbit, we freed {abs(round(memory_saved, 2)) * 1024} MB of VRAM.")
+
+    def init_delete_model_caches(self):
+        """Delete model caches from disk after all models are loaded."""
+        from simpletuner.helpers.models.common import delete_all_model_caches
+
+        delete_all_model_caches(self.accelerator)
 
     def init_validations(self):
         if (

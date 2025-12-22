@@ -582,7 +582,7 @@ This is particularly useful when:
 
 ### `hash_filenames`
 
-- When set, the VAE cache entries' filenames will be hashed. This is not set by default for backwards compatibility, but it allows for datasets with very long filenames to be easily used.
+- VAE cache entries' filenames are always hashed. This is not user-configurable and ensures datasets with very long filenames can be easily used without path length issues. Any `hash_filenames` setting in your configuration will be ignored.
 
 ## Filtering captions
 
@@ -629,7 +629,6 @@ In order, the lines behave as follows:
     "resolution": 1.0,
     "resolution_type": "area|pixel",
     "minimum_image_size": 1.0,
-    "hash_filenames": true,
     "prepend_instance_prompt": false,
     "instance_prompt": "something to label every image",
     "only_instance_prompt": false,
@@ -745,8 +744,7 @@ Required keys:
         "minimum_image_size": 0,
         "disabled": false,
         "skip_file_discovery": "",
-        "preserve_data_backend_cache": false,
-        "hash_filenames": true
+        "preserve_data_backend_cache": false
     },
     {
       "id": "image-embeds",

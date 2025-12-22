@@ -1503,7 +1503,7 @@ function trainerComponent() {
                 dataset.is_regularisation_data = dataset.is_regularization_data;
             }
 
-            dataset.hash_filenames = this.normalizeBoolean(dataset.hash_filenames);
+            dataset.hash_filenames = true;  // always enabled, not user-configurable
             dataset.preserve_data_backend_cache = this.normalizeBoolean(dataset.preserve_data_backend_cache);
             dataset.is_regularisation_data = this.normalizeBoolean(dataset.is_regularisation_data);
             dataset.is_regularization_data = dataset.is_regularisation_data;
@@ -2110,7 +2110,7 @@ function trainerComponent() {
                     delete cleaned.skip_file_discovery;
                 }
 
-                cleaned.hash_filenames = this.normalizeBoolean(dataset.hash_filenames);
+                cleaned.hash_filenames = true;  // always enabled, not user-configurable
                 cleaned.preserve_data_backend_cache = this.normalizeBoolean(dataset.preserve_data_backend_cache);
                 cleaned.disabled = this.normalizeBoolean(dataset.disabled);
 

@@ -500,6 +500,25 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Delete Model After Load
+    registry._add_field(
+        ConfigField(
+            name="delete_model_after_load",
+            arg_name="--delete_model_after_load",
+            ui_label="Delete Model After Load",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_config",
+            subsection="storage",
+            default_value=False,
+            help_text="Delete model files from HuggingFace cache after loading into memory",
+            tooltip="Reduces disk usage by removing cached model files after they're loaded. Useful for storage-constrained setups. VAE is preserved if validation is enabled.",
+            importance=ImportanceLevel.ADVANCED,
+            order=18,
+            documentation="OPTIONS.md#--delete_model_after_load",
+        )
+    )
+
     # Quantize Via
     registry._add_field(
         ConfigField(
