@@ -1,0 +1,245 @@
+<!-- Memory Presets Modal -->
+<div x-data="memoryPresetsComponent()" x-cloak>
+    <template x-if="isOpen">
+        <div class="memory-presets-backdrop" @keydown.escape.window="close()" @click.self="close()">
+            <div class="memory-presets-modal" @click.stop>
+                <div class="modal-header d-flex align-items-start justify-content-between">
+                    <div>
+                        <h5 class="modal-title mb-1">Memory Optimization Presets</h5>
+                        <p class="text-muted small mb-0">
+                            Select presets to configure memory optimization strategies. Changes will be applied to the form but not saved until you click Save.
+                        </p>
+                    </div>
+                    <button type="button" class="btn-close" aria-label="Close" @click="close()"></button>
+                </div>
+
+                <div class="modal-body">
+                    <!-- Loading state -->
+                    <div x-show="loading" class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading presets...</span>
+                        </div>
+                        <p class="text-muted mt-2">Loading presets for your model...</p>
+                    </div>
+
+                    <!-- Error state -->
+                    <div x-show="!loading && error" class="alert alert-danger" role="alert">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <span x-text="error"></span>
+                    </div>
+
+                    <!-- System RAM Warning -->
+                    <div x-show="!loading && !error && lowSystemRam && hasRamIntensiveSelection" class="alert alert-warning mb-3" role="alert">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Low System RAM Detected</strong> (<span x-text="systemRamGb"></span> GB).
+                        Most memory optimization strategies require 64GB+ of system RAM to be effective.
+                    </div>
+
+                    <!-- No presets available -->
+                    <div x-show="!loading && !error && presets.length === 0" class="text-center py-4">
+                        <i class="fas fa-info-circle text-muted fa-2x mb-3"></i>
+                        <p class="text-muted">No presets available for this model.</p>
+                        <p class="text-muted small">Presets are defined per-model. Check that you have selected a model family.</p>
+                    </div>
+
+                    <!-- Presets content -->
+                    <div x-show="!loading && !error && presets.length > 0">
+                        <!-- Tab Navigation -->
+                        <ul class="nav nav-tabs mb-3">
+                            <li class="nav-item">
+                                <button class="nav-link"
+                                        :class="{ 'active': selectedTab === 'basic' }"
+                                        @click.prevent="selectedTab = 'basic'">
+                                    Basic
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link"
+                                        :class="{ 'active': selectedTab === 'advanced' }"
+                                        @click.prevent="selectedTab = 'advanced'">
+                                    Advanced
+                                </button>
+                            </li>
+                        </ul>
+
+                        <!-- Advanced tab warning -->
+                        <div class="alert alert-warning small mb-3" x-show="selectedTab === 'advanced'">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Advanced strategies require careful configuration and may have stability issues. DeepSpeed requires multi-GPU setups.
+                        </div>
+
+                        <!-- Presets grouped by strategy -->
+                        <template x-for="group in getPresetsGroupedByBackend(selectedTab)" :key="group.backend">
+                            <div class="memory-strategy-row mb-3 p-3 border rounded">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <div class="strategy-label fw-semibold" x-text="group.label"></div>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <template x-for="preset in group.presets" :key="preset.level">
+                                            <button type="button" class="btn"
+                                                    :class="isPresetSelected(preset) ? 'btn-primary' : 'btn-outline-secondary'"
+                                                    @click.prevent="togglePreset(preset)"
+                                                    x-text="preset.level.charAt(0).toUpperCase() + preset.level.slice(1)">
+                                            </button>
+                                        </template>
+                                    </div>
+                                </div>
+                                <!-- Show info for selected preset in this group -->
+                                <template x-for="preset in group.presets" :key="'info-' + preset.level">
+                                    <div x-show="isPresetSelected(preset)" class="small">
+                                        <p class="text-muted mb-2" x-text="preset.description"></p>
+                                        <div class="preset-tradeoffs">
+                                            <span class="badge bg-success-subtle text-success-emphasis me-2" x-text="preset.tradeoff_vram"></span>
+                                            <span class="badge bg-warning-subtle text-warning-emphasis me-2" x-text="preset.tradeoff_speed"></span>
+                                            <span class="badge bg-info-subtle text-info-emphasis" x-show="preset.requires_min_system_ram_gb >= 64">Requires 64GB+ RAM</span>
+                                        </div>
+                                        <div class="form-text mt-1" x-show="preset.tradeoff_notes" x-text="preset.tradeoff_notes"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- Empty state for tab -->
+                        <div x-show="getPresetsGroupedByBackend(selectedTab).length === 0" class="text-muted text-center py-4">
+                            No presets available for this tab.
+                        </div>
+
+                        <!-- Custom Block Swap Slider -->
+                        <div x-show="maxSwappableBlocks !== null && selectedTab === 'basic'" class="mt-4 p-3 border rounded">
+                            <label class="form-label d-flex justify-content-between align-items-center">
+                                Custom Block Swap Count
+                                <span class="badge bg-secondary" x-text="customBlockSwapCount + ' / ' + maxSwappableBlocks"></span>
+                            </label>
+                            <input type="range" class="form-range"
+                                   min="0" :max="maxSwappableBlocks"
+                                   x-model.number="customBlockSwapCount"
+                                   @input="onBlockSwapSliderChange()">
+                            <div class="form-text">
+                                Set a custom number of blocks to swap if presets don't match your needs.
+                                Higher values save more VRAM, use more system RAM, and increase training time.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer d-flex justify-content-between">
+                    <div class="text-muted small">
+                        <template x-if="hasSelection">
+                            <span>
+                                <i class="fas fa-check-circle text-success me-1"></i>
+                                <span x-text="Object.keys(selectedPresets).length"></span> preset(s) selected
+                                <span x-show="customBlockSwapCount > 0">, custom block swap: <span x-text="customBlockSwapCount"></span></span>
+                            </span>
+                        </template>
+                        <template x-if="!hasSelection">
+                            <span>No presets selected</span>
+                        </template>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secondary me-2" @click="close()">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-primary" @click="apply()" :disabled="!hasSelection">
+                            <i class="fas fa-check me-1"></i> Apply to Form
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+
+<style>
+.memory-presets-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1055;
+    backdrop-filter: blur(2px);
+}
+
+.memory-presets-modal {
+    background: var(--bs-body-bg, #fff);
+    border-radius: 0.5rem;
+    width: 90%;
+    max-width: 700px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.memory-presets-modal .modal-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+.memory-presets-modal .modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.memory-presets-modal .modal-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+.memory-presets-modal .nav-tabs {
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+}
+
+.memory-presets-modal .nav-tabs .nav-link {
+    color: var(--bs-body-color, #212529);
+    border: 1px solid transparent;
+    border-bottom: none;
+    padding: 0.5rem 1rem;
+}
+
+.memory-presets-modal .nav-tabs .nav-link:hover {
+    border-color: var(--bs-border-color, #dee2e6);
+    background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.memory-presets-modal .nav-tabs .nav-link.active {
+    background: var(--bs-body-bg, #fff);
+    border-color: var(--bs-border-color, #dee2e6);
+    border-bottom-color: var(--bs-body-bg, #fff);
+}
+
+.memory-strategy-row {
+    background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.memory-strategy-row .strategy-label {
+    font-size: 0.95rem;
+}
+
+.preset-tradeoffs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .memory-presets-modal {
+        background: var(--bs-body-bg, #212529);
+    }
+
+    .memory-strategy-row {
+        background: var(--bs-tertiary-bg, #2c3034);
+    }
+}
+
+/* Ensure dark mode works with Bootstrap's data-bs-theme */
+[data-bs-theme="dark"] .memory-presets-modal {
+    background: var(--bs-body-bg, #212529);
+}
+
+[data-bs-theme="dark"] .memory-strategy-row {
+    background: var(--bs-tertiary-bg, #2c3034);
+}
+</style>
