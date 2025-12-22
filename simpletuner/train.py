@@ -137,6 +137,8 @@ if __name__ == "__main__":
         trainer.init_unload_vae()
 
         trainer.init_load_base_model()
+        trainer.init_delete_model_caches()
+
         trainer.init_controlnet_model()
         trainer.init_tread_model()
         trainer.init_precision()

@@ -199,16 +199,9 @@ def delete_model_from_cache(
         logger.debug(f"No cached path found for {component_key}, skipping deletion")
         return False
 
-    # Check if other components are still using the same repo path
-    # (e.g., VAE, text_encoder, transformer all from the same model repo)
-    all_paths = StateTracker.get_all_model_snapshot_paths()
-    other_components_using_path = [k for k, v in all_paths.items() if k != component_key and v == repo_path]
-
-    if other_components_using_path:
-        logger.info(
-            f"Deferring deletion of {repo_path} for {component_key} - "
-            f"still needed by: {', '.join(other_components_using_path)}"
-        )
+    # Skip pending placeholders (model path, not actual cache path)
+    if repo_path.startswith("__pending__:"):
+        logger.debug(f"Path for {component_key} is pending placeholder, skipping")
         StateTracker.clear_model_snapshot_path(component_key)
         return False
 
@@ -235,6 +228,62 @@ def delete_model_from_cache(
         logger.debug(f"Could not delete cache for {component_key}: {e}")
         StateTracker.clear_model_snapshot_path(component_key)
         return False
+
+
+def delete_all_model_caches(accelerator) -> int:
+    """
+    Delete all registered model caches after all models have been loaded.
+
+    This is called once after VAE, text encoders, and transformer/unet are all loaded
+    and the text encoders have been unloaded (their paths cleared). This ensures
+    that shared repos (like unified pipelines) are only deleted after all components
+    that use them have loaded.
+
+    Args:
+        accelerator: The accelerator instance for checking local_rank
+
+    Returns:
+        Number of components whose caches were deleted
+    """
+    from simpletuner.helpers.training.state_tracker import StateTracker
+
+    args = StateTracker.get_args()
+    delete_enabled = getattr(args, "delete_model_after_load", False)
+    logger.info(f"delete_all_model_caches called, delete_model_after_load={delete_enabled}")
+
+    if not delete_enabled:
+        return 0
+
+    # Only local-rank 0 should delete
+    if not getattr(accelerator, "is_local_main_process", True):
+        logger.info("delete_all_model_caches: not local main process, skipping")
+        return 0
+
+    # Log all registered paths
+    all_paths = StateTracker.get_all_model_snapshot_paths()
+    logger.info(f"delete_all_model_caches: registered paths = {all_paths}")
+
+    deleted_count = 0
+
+    # Delete remaining component caches (VAE may be kept if validation is enabled)
+    for component_key in ["vae", "transformer", "unet"]:
+        # Check if VAE should be kept for validation
+        if component_key == "vae":
+            validation_enabled = (
+                getattr(args, "validation_prompts", None)
+                or getattr(args, "validation_prompt", None)
+                or getattr(args, "validation_image_prompts", None)
+            )
+            if validation_enabled:
+                logger.info("Skipping VAE cache deletion because validation is enabled")
+                StateTracker.clear_model_snapshot_path("vae")
+                continue
+
+        if delete_model_from_cache(component_key, accelerator):
+            deleted_count += 1
+
+    logger.info(f"delete_all_model_caches: deleted {deleted_count} caches")
+    return deleted_count
 
 
 class PipelineTypes(Enum):
@@ -1441,54 +1490,6 @@ class ModelFoundation(ABC):
         """
         return latents
 
-    def register_cache_paths_for_deletion(self):
-        """
-        Pre-register all model component cache paths before any loading happens.
-
-        This must be called BEFORE load_vae/load_text_encoder/load_model to ensure
-        that when any component tries to delete its cache, it knows about all other
-        components that may share the same repo path.
-
-        Without this, if VAE and text_encoder share the same repo (e.g., unified
-        pipeline like meituan-longcat/LongCat-Image-Edit), the VAE deletion would
-        nuke the entire repo before text_encoder can load.
-        """
-        if not getattr(self.config, "delete_model_after_load", False):
-            return
-
-        from simpletuner.helpers.training.state_tracker import StateTracker
-
-        # Register VAE path
-        if getattr(self, "AUTOENCODER_CLASS", None):
-            cache_repo_path = get_hf_cache_repo_path(self.config.vae_path)
-            if cache_repo_path:
-                StateTracker.set_model_snapshot_path("vae", cache_repo_path)
-
-        # Register text encoder paths
-        if self.TEXT_ENCODER_CONFIGURATION:
-            text_encoder_idx = 0
-            for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
-                text_encoder_idx += 1
-                text_encoder_path = get_model_config_path(
-                    self.config.model_family, self.config.pretrained_model_name_or_path
-                )
-                if text_encoder_config.get("path", None) is not None:
-                    text_encoder_path = text_encoder_config.get("path")
-                cache_repo_path = get_hf_cache_repo_path(text_encoder_path)
-                if cache_repo_path:
-                    StateTracker.set_model_snapshot_path(f"text_encoder_{text_encoder_idx}", cache_repo_path)
-
-        # Register transformer/unet path
-        model_path = (
-            self.config.pretrained_transformer_model_name_or_path
-            if self.MODEL_TYPE is ModelTypes.TRANSFORMER
-            else self.config.pretrained_unet_model_name_or_path
-        ) or self.config.pretrained_model_name_or_path
-        cache_repo_path = get_hf_cache_repo_path(model_path)
-        if cache_repo_path:
-            component_key = self.MODEL_TYPE.value  # "transformer" or "unet"
-            StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
-
     def get_vae(self):
         """
         Returns the VAE model.
@@ -1507,14 +1508,17 @@ class ModelFoundation(ABC):
 
         logger.info(f"Loading {self.AUTOENCODER_CLASS.__name__} from {self.config.vae_path}")
 
-        # Store the cache path for potential deletion after loading
-        # VAE is only deleted if validation is disabled (VAE needed for validation images)
+        # Register VAE cache path for potential deletion
         if getattr(self.config, "delete_model_after_load", False):
             from simpletuner.helpers.training.state_tracker import StateTracker
 
             cache_repo_path = get_hf_cache_repo_path(self.config.vae_path)
+            logger.info(
+                f"load_vae: delete_model_after_load=True, vae_path={self.config.vae_path}, cache_repo_path={cache_repo_path}"
+            )
             if cache_repo_path:
                 StateTracker.set_model_snapshot_path("vae", cache_repo_path)
+                logger.info(f"load_vae: registered VAE cache path: {cache_repo_path}")
 
         self.vae = None
         self.config.vae_kwargs = {
@@ -1573,19 +1577,6 @@ class ModelFoundation(ABC):
             )
             self.vae.to(self.accelerator.device, dtype=_vae_dtype)
         self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
-
-        # Delete VAE from cache after loading, but only if validation is disabled
-        # VAE is needed for generating validation images
-        if getattr(self.config, "delete_model_after_load", False):
-            validation_enabled = (
-                getattr(self.config, "validation_prompts", None)
-                or getattr(self.config, "validation_prompt", None)
-                or getattr(self.config, "validation_image_prompts", None)
-            )
-            if not validation_enabled:
-                delete_model_from_cache("vae", self.accelerator)
-            else:
-                logger.info("Skipping VAE cache deletion because validation is enabled")
 
         self.post_vae_load_setup()
 
@@ -1701,14 +1692,14 @@ class ModelFoundation(ABC):
                 if text_encoder_config.get("path", None) is not None:
                     text_encoder_path = text_encoder_config.get("path")
 
-                # Store the cache path for potential deletion after factory completes
+                # Register text encoder cache path for potential deletion
                 if should_track_for_deletion:
                     from simpletuner.helpers.training.state_tracker import StateTracker
 
+                    component_key = f"text_encoder_{text_encoder_idx}"
                     cache_repo_path = get_hf_cache_repo_path(text_encoder_path)
                     if cache_repo_path:
-                        # Use 1-based keys to match setattr(self, f"text_encoder_{idx}", ...)
-                        StateTracker.set_model_snapshot_path(f"text_encoder_{text_encoder_idx}", cache_repo_path)
+                        StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
 
                 requires_quant = text_encoder_config.get("required_quantisation_level", None)
                 quantization_config = None
@@ -1902,14 +1893,18 @@ class ModelFoundation(ABC):
             else self.config.pretrained_unet_model_name_or_path
         ) or self.config.pretrained_model_name_or_path
 
-        # Store the cache path for potential deletion after loading
+        # Register transformer/unet cache path for potential deletion
         if getattr(self.config, "delete_model_after_load", False):
             from simpletuner.helpers.training.state_tracker import StateTracker
 
+            component_key = self.MODEL_TYPE.value  # "transformer" or "unet"
             cache_repo_path = get_hf_cache_repo_path(model_path)
+            logger.info(
+                f"load_model: delete_model_after_load=True, model_path={model_path}, cache_repo_path={cache_repo_path}"
+            )
             if cache_repo_path:
-                component_key = self.MODEL_TYPE.value  # "transformer" or "unet"
                 StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
+                logger.info(f"load_model: registered {component_key} cache path: {cache_repo_path}")
 
         is_safetensors = isinstance(model_path, str) and model_path.endswith(".safetensors")
         is_gguf = isinstance(model_path, str) and model_path.endswith(".gguf")
@@ -2012,11 +2007,6 @@ class ModelFoundation(ABC):
             self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value)
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
-
-        # Delete the model from cache after it's loaded into memory
-        if getattr(self.config, "delete_model_after_load", False):
-            component_key = self.MODEL_TYPE.value  # "transformer" or "unet"
-            delete_model_from_cache(component_key, self.accelerator)
 
         self.configure_chunked_feed_forward()
 

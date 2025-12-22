@@ -503,10 +503,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     else:
         output["config"]["caption_strategy"] = _get_arg_value(args, "caption_strategy")
     output["config"]["instance_data_dir"] = backend.get("instance_data_dir", backend.get("aws_data_prefix", ""))
-    if "hash_filenames" in backend:
-        output["config"]["hash_filenames"] = backend["hash_filenames"]
-    if "hash_filenames" in backend and backend.get("type") == "csv":
-        output["config"]["hash_filenames"] = backend["hash_filenames"]
+    # hash_filenames is always enabled and not user-configurable
+    output["config"]["hash_filenames"] = True
     if "conditioning" in backend:
         output["config"]["conditioning"] = backend["conditioning"]
     if "conditioning_config" in backend:
@@ -2626,6 +2624,7 @@ class FactoryRegistry:
             "video",
             "conditioning_data",
             "conditioning",
+            "hash_filenames",  # always enabled, not user-configurable
         ]
         _latest_config_version = latest_config_version()
         current_config_version = _latest_config_version
@@ -2879,10 +2878,8 @@ class FactoryRegistry:
                     f"(id={init_backend['id']}) Deferring text embed pre-computation until conditioning datasets are connected."
                 )
                 self._deferred_text_embed_backends.append((backend, init_backend))
-                # Still set the hash_filenames config
-                default_hash_option = True
-                hash_filenames = init_backend["config"].get("hash_filenames", default_hash_option)
-                init_backend["config"]["hash_filenames"] = hash_filenames
+                # hash_filenames is always enabled
+                init_backend["config"]["hash_filenames"] = True
                 StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
                 return
 
@@ -2941,11 +2938,9 @@ class FactoryRegistry:
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
-        default_hash_option = True
-        hash_filenames = init_backend["config"].get("hash_filenames", default_hash_option)
-        init_backend["config"]["hash_filenames"] = hash_filenames
+        # hash_filenames is always enabled
+        init_backend["config"]["hash_filenames"] = True
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
-        logger.debug(f"Hashing filenames: {hash_filenames}")
 
     def _process_deferred_text_embeddings(self) -> None:
         """
@@ -3123,7 +3118,7 @@ class FactoryRegistry:
             write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
             read_batch_size=backend.get("read_batch_size", self.args.read_batch_size),
             embed_batch_size=conditioning_embed_batch_size,
-            hash_filenames=init_backend["config"].get("hash_filenames", True),
+            hash_filenames=True,  # always enabled
         )
         init_backend["conditioning_image_embed_cache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
@@ -3272,7 +3267,7 @@ class FactoryRegistry:
             process_queue_size=backend.get("image_processing_batch_size", self.args.image_processing_batch_size),
             vae_cache_ondemand=self.args.vae_cache_ondemand,
             vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
-            hash_filenames=init_backend["config"].get("hash_filenames", True),
+            hash_filenames=True,  # always enabled
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
@@ -3725,37 +3720,7 @@ class FactoryRegistry:
             },
         )
 
-        # Delete text encoders from cache after factory completes (embed caching is done)
-        self._delete_text_encoder_caches()
-
         return result
-
-    def _delete_text_encoder_caches(self):
-        """
-        Delete text encoder model files from HuggingFace cache after factory setup completes.
-
-        Text encoders are only needed during embed caching. After the factory has configured
-        all backends (and cached embeddings), the text encoder files can be removed from disk
-        to save storage space.
-
-        This is gated to local-rank 0 only, and failures are silently ignored for
-        race conditions on shared/network storage.
-        """
-        if not getattr(self.args, "delete_model_after_load", False):
-            return
-
-        # Only local-rank 0 should delete
-        if not getattr(self.accelerator, "is_local_main_process", True):
-            return
-
-        from simpletuner.helpers.models.common import delete_model_from_cache
-
-        # Find all text encoder paths stored in StateTracker
-        snapshot_paths = StateTracker.get_all_model_snapshot_paths()
-        for component_key in list(snapshot_paths.keys()):
-            if component_key.startswith("text_encoder_"):
-                logger.info(f"Deleting cached text encoder: {component_key}")
-                delete_model_from_cache(component_key, self.accelerator)
 
     def _validate_with_config_registry(self, config: Dict[str, Any], model_family: str) -> None:
         """

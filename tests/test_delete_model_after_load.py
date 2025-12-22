@@ -276,54 +276,106 @@ class TestDeleteModelFromCache(unittest.TestCase):
             self.assertFalse(os.path.exists(cache_dir))
 
 
-class TestSharedRepoDeletion(unittest.TestCase):
-    """Test that shared repos are not deleted until all components are done."""
+class TestDeleteAllModelCaches(unittest.TestCase):
+    """Test the delete_all_model_caches function."""
 
     def setUp(self):
         """Set up test fixtures."""
         StateTracker._model_snapshot_paths = {}
-        StateTracker.args = SimpleNamespace(delete_model_after_load=True)
+        StateTracker.args = SimpleNamespace(
+            delete_model_after_load=True,
+            validation_prompts=None,
+            validation_prompt=None,
+            validation_image_prompts=None,
+        )
 
     def tearDown(self):
         """Clean up."""
         StateTracker._model_snapshot_paths = {}
         StateTracker.args = None
 
-    def test_shared_repo_not_deleted_early(self):
-        """Test that a shared repo is not deleted when other components still need it."""
-        from simpletuner.helpers.models.common import delete_model_from_cache
+    def test_deletes_vae_transformer_unet(self):
+        """Test that delete_all_model_caches deletes VAE, transformer, and unet."""
+        from simpletuner.helpers.models.common import delete_all_model_caches
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create a shared cache directory
-            shared_cache = os.path.join(tmpdir, "shared_model_cache")
-            os.makedirs(shared_cache)
-            with open(os.path.join(shared_cache, "model.bin"), "w") as f:
-                f.write("test")
+            vae_cache = os.path.join(tmpdir, "vae_cache")
+            transformer_cache = os.path.join(tmpdir, "transformer_cache")
+            os.makedirs(vae_cache)
+            os.makedirs(transformer_cache)
 
-            # Register multiple components using the same path (simulating unified pipeline)
-            StateTracker.set_model_snapshot_path("vae", shared_cache)
-            StateTracker.set_model_snapshot_path("text_encoder_1", shared_cache)
-            StateTracker.set_model_snapshot_path("transformer", shared_cache)
+            StateTracker.set_model_snapshot_path("vae", vae_cache)
+            StateTracker.set_model_snapshot_path("transformer", transformer_cache)
 
             accelerator = MagicMock()
             accelerator.is_local_main_process = True
 
-            # VAE tries to delete first - should defer because text_encoder and transformer still need it
-            result = delete_model_from_cache("vae", accelerator)
-            self.assertFalse(result)
-            self.assertTrue(os.path.exists(shared_cache))  # Dir should still exist
-            self.assertIsNone(StateTracker.get_model_snapshot_path("vae"))  # VAE entry cleared
+            deleted = delete_all_model_caches(accelerator)
+            self.assertEqual(deleted, 2)
+            self.assertFalse(os.path.exists(vae_cache))
+            self.assertFalse(os.path.exists(transformer_cache))
 
-            # Text encoder tries next - should defer because transformer still needs it
-            result = delete_model_from_cache("text_encoder_1", accelerator)
-            self.assertFalse(result)
-            self.assertTrue(os.path.exists(shared_cache))  # Dir should still exist
-            self.assertIsNone(StateTracker.get_model_snapshot_path("text_encoder_1"))
+    def test_skips_vae_when_validation_enabled(self):
+        """Test that VAE cache is not deleted when validation is enabled."""
+        from simpletuner.helpers.models.common import delete_all_model_caches
 
-            # Transformer is last - should actually delete
-            result = delete_model_from_cache("transformer", accelerator)
-            self.assertTrue(result)
-            self.assertFalse(os.path.exists(shared_cache))  # Dir should be deleted now
+        StateTracker.args = SimpleNamespace(
+            delete_model_after_load=True,
+            validation_prompts=["test prompt"],
+            validation_prompt=None,
+            validation_image_prompts=None,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vae_cache = os.path.join(tmpdir, "vae_cache")
+            transformer_cache = os.path.join(tmpdir, "transformer_cache")
+            os.makedirs(vae_cache)
+            os.makedirs(transformer_cache)
+
+            StateTracker.set_model_snapshot_path("vae", vae_cache)
+            StateTracker.set_model_snapshot_path("transformer", transformer_cache)
+
+            accelerator = MagicMock()
+            accelerator.is_local_main_process = True
+
+            deleted = delete_all_model_caches(accelerator)
+            self.assertEqual(deleted, 1)  # Only transformer deleted
+            self.assertTrue(os.path.exists(vae_cache))  # VAE kept
+            self.assertFalse(os.path.exists(transformer_cache))
+
+    def test_skips_when_disabled(self):
+        """Test that nothing is deleted when feature is disabled."""
+        from simpletuner.helpers.models.common import delete_all_model_caches
+
+        StateTracker.args = SimpleNamespace(delete_model_after_load=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vae_cache = os.path.join(tmpdir, "vae_cache")
+            os.makedirs(vae_cache)
+            StateTracker.set_model_snapshot_path("vae", vae_cache)
+
+            accelerator = MagicMock()
+            accelerator.is_local_main_process = True
+
+            deleted = delete_all_model_caches(accelerator)
+            self.assertEqual(deleted, 0)
+            self.assertTrue(os.path.exists(vae_cache))
+
+    def test_skips_on_non_main_process(self):
+        """Test that deletion is skipped on non-main processes."""
+        from simpletuner.helpers.models.common import delete_all_model_caches
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vae_cache = os.path.join(tmpdir, "vae_cache")
+            os.makedirs(vae_cache)
+            StateTracker.set_model_snapshot_path("vae", vae_cache)
+
+            accelerator = MagicMock()
+            accelerator.is_local_main_process = False
+
+            deleted = delete_all_model_caches(accelerator)
+            self.assertEqual(deleted, 0)
+            self.assertTrue(os.path.exists(vae_cache))
 
     def test_separate_repos_deleted_independently(self):
         """Test that components with different repos can delete independently."""
@@ -353,6 +405,22 @@ class TestSharedRepoDeletion(unittest.TestCase):
             result = delete_model_from_cache("transformer", accelerator)
             self.assertTrue(result)
             self.assertFalse(os.path.exists(transformer_cache))
+
+    def test_pending_placeholder_cleared_but_not_deleted(self):
+        """Test that pending placeholders are cleared from registry but no filesystem deletion."""
+        from simpletuner.helpers.models.common import delete_model_from_cache
+
+        # Register a pending placeholder
+        StateTracker.set_model_snapshot_path("transformer", "__pending__:org/model-name")
+
+        accelerator = MagicMock()
+        accelerator.is_local_main_process = True
+
+        # Trying to delete a pending path should skip deletion but clear the entry
+        result = delete_model_from_cache("transformer", accelerator)
+        self.assertFalse(result)
+        # Path should be cleared so it doesn't block other components
+        self.assertIsNone(StateTracker.get_model_snapshot_path("transformer"))
 
 
 class TestVAEDeletionGating(unittest.TestCase):

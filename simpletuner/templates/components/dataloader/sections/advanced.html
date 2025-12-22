@@ -193,26 +193,6 @@
                     <div class="checkbox-group-row">
                         <div class="row">
                             <div class="col-md-4"
-                                 x-show="!['text_embeds','image_embeds'].includes(dataset.dataset_type)">
-                                <div class="checkbox-item">
-                                    <div class="form-check">
-                                        <input class="form-check-input"
-                                               type="checkbox"
-                                               :id="`dataset-hash-${datasetSafeId(dataset)}`"
-                                               x-model="dataset.hash_filenames"
-                                               @change="markAsUnsaved()">
-                                        <div class="checkbox-content">
-                                            <label class="form-check-label" :for="`dataset-hash-${datasetSafeId(dataset)}`">
-                                                Hash cached filenames
-                                            </label>
-                                            <div class="form-text">
-                                                Creates shorter, hashed names for VAE cache files to avoid filesystem path length limits.
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-md-4"
                                  x-show="dataset.dataset_type !== 'image_embeds'">
                                 <div class="checkbox-item">
                                     <div class="form-check">

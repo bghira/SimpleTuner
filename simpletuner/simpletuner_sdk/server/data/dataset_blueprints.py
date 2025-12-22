@@ -785,13 +785,6 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "placeholder": "cache/csv",
                     "advanced": True,
                 },
-                {
-                    "id": "hash_filenames",
-                    "label": "hash filenames",
-                    "type": "toggle",
-                    "defaultValue": True,
-                    "advanced": True,
-                },
             ],
             "metadata": {
                 "tags": ["image", "csv"],
