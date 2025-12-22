@@ -7,6 +7,7 @@
         "crop_style": "random",
         "crop_aspect": "square",
         "minimum_image_size": 128,
+        "repeats": 4,
         "resolution": 1024,
         "maximum_image_size": 1024,
         "target_downsample_size": 1024,
