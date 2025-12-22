@@ -5,7 +5,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 from diffusers import AutoencoderKL
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
@@ -13,6 +13,7 @@ from simpletuner.helpers.models.common import (
     PipelineTypes,
     PredictionTypes,
     TextEmbedCacheKey,
+    get_model_config_path,
 )
 from simpletuner.helpers.models.longcat_image import pack_latents, prepare_pos_ids, unpack_latents
 from simpletuner.helpers.models.longcat_image.pipeline import LongCatImagePipeline
@@ -79,6 +80,15 @@ class LongCatImage(ImageModelFoundation):
     def _get_model_flavour(self) -> Optional[str]:
         return getattr(self.config, "model_flavour", None)
 
+    def _load_text_processor_for_pipeline(self):
+        text_processor = getattr(self, "text_processor", None)
+        if text_processor is not None:
+            return text_processor
+        model_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
+        text_processor = AutoProcessor.from_pretrained(model_path, subfolder="text_processor")
+        self.text_processor = text_processor
+        return text_processor
+
     def _is_edit_flavour(self) -> bool:
         flavour = self._get_model_flavour()
         return flavour in self.EDIT_FLAVOURS if flavour is not None else False
@@ -94,6 +104,9 @@ class LongCatImage(ImageModelFoundation):
 
     def requires_text_embed_image_context(self) -> bool:
         return self._is_edit_flavour()
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        return not self._is_edit_flavour()
 
     def conditioning_validation_dataset_type(self) -> bool:
         if self._is_edit_flavour():
@@ -307,6 +320,56 @@ class LongCatImage(ImageModelFoundation):
             "prompt_embeds": prompt_embeds,
             "text_ids": text_ids,
         }
+
+    def collate_prompt_embeds(self, text_encoder_output: list) -> dict:
+        """
+        Collate prompt embeddings for LongCat-Image models with padding.
+
+        For edit models, embeddings can have different sequence lengths due to
+        different conditioning image sizes. This method pads all embeddings to
+        the maximum sequence length in the batch.
+        """
+        if not text_encoder_output:
+            return {}
+
+        first_embed = text_encoder_output[0].get("prompt_embeds")
+        if first_embed is None:
+            return {}
+
+        # Single sample - just ensure batch dimension
+        if len(text_encoder_output) == 1:
+            embed = first_embed
+            if embed.dim() == 2:
+                embed = embed.unsqueeze(0)
+            return {"prompt_embeds": embed}
+
+        # Normalize all embeddings to 2D [seq, hidden] for processing
+        embeds = []
+        for t in text_encoder_output:
+            embed = t["prompt_embeds"]
+            if embed.dim() == 3 and embed.shape[0] == 1:
+                embed = embed.squeeze(0)
+            embeds.append(embed)
+
+        # Find max sequence length
+        max_seq_len = max(e.shape[0] for e in embeds)
+        hidden_dim = embeds[0].shape[-1]
+
+        # Pad all embeddings to max length
+        padded_embeds = []
+        for embed in embeds:
+            seq_len = embed.shape[0]
+            if seq_len < max_seq_len:
+                padding = torch.zeros(
+                    max_seq_len - seq_len,
+                    hidden_dim,
+                    dtype=embed.dtype,
+                    device=embed.device,
+                )
+                embed = torch.cat([embed, padding], dim=0)
+            padded_embeds.append(embed)
+
+        return {"prompt_embeds": torch.stack(padded_embeds, dim=0)}
 
     def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]

@@ -255,7 +255,8 @@ class SDXL(ImageModelFoundation):
             f"\n{prepared_batch['add_text_embeds'].shape}"
             f"\n{prepared_batch['added_cond_kwargs']['text_embeds'].shape}"
         )
-        hidden_states_buffer = self._new_hidden_state_buffer()
+        # Note: UNet2DConditionModel does not support hidden_states_buffer parameter
+        # unlike custom transformers (Flux, AuraFlow, etc.)
         return {
             "model_prediction": self.model(
                 prepared_batch["noisy_latents"].to(
@@ -273,9 +274,8 @@ class SDXL(ImageModelFoundation):
                 ),
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
                 return_dict=False,
-                hidden_states_buffer=hidden_states_buffer,
             )[0],
-            "hidden_states_buffer": hidden_states_buffer,
+            "hidden_states_buffer": None,
         }
 
     def post_model_load_setup(self):

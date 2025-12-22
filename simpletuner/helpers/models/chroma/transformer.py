@@ -864,8 +864,8 @@ class ChromaTransformer2DModel(
 
                 current_rope = image_rotary_emb
 
-            global_idx += 1
-            continue
+                global_idx += 1
+                continue
 
             use_checkpoint = (
                 torch.is_grad_enabled()

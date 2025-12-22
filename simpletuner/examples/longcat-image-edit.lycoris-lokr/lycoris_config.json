@@ -1,0 +1,19 @@
+{
+    "bypass_mode": true,
+    "algo": "lokr",
+    "multiplier": 1.0,
+    "full_matrix": true,
+    "linear_dim": 10000,
+    "linear_alpha": 1,
+    "factor": 16,
+    "apply_preset": {
+        "target_module": [
+            "LongCatImageTransformer2DModel"
+        ],
+        "module_algo_map": {
+            "LongCatImageTransformer2DModel": {
+                "factor": 16
+            }
+        }
+    }
+}

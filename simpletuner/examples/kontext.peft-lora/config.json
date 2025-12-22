@@ -43,5 +43,5 @@
     "validation_prompt": "🟫 is holding a sign that says hello world from flux",
     "validation_resolution": "512x512",
     "validation_seed": 42,
-    "validation_steps": 50,
+    "validation_steps": 50
 }
