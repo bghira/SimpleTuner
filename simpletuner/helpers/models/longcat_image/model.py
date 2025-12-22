@@ -5,7 +5,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 from diffusers import AutoencoderKL
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
+from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
@@ -13,6 +13,7 @@ from simpletuner.helpers.models.common import (
     PipelineTypes,
     PredictionTypes,
     TextEmbedCacheKey,
+    get_model_config_path,
 )
 from simpletuner.helpers.models.longcat_image import pack_latents, prepare_pos_ids, unpack_latents
 from simpletuner.helpers.models.longcat_image.pipeline import LongCatImagePipeline
@@ -78,6 +79,15 @@ class LongCatImage(ImageModelFoundation):
 
     def _get_model_flavour(self) -> Optional[str]:
         return getattr(self.config, "model_flavour", None)
+
+    def _load_text_processor_for_pipeline(self):
+        text_processor = getattr(self, "text_processor", None)
+        if text_processor is not None:
+            return text_processor
+        model_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
+        text_processor = AutoProcessor.from_pretrained(model_path, subfolder="text_encoder")
+        self.text_processor = text_processor
+        return text_processor
 
     def _is_edit_flavour(self) -> bool:
         flavour = self._get_model_flavour()
