@@ -1,7 +1,7 @@
 {
     "base_model_precision": "int8-torchao",
     "checkpoint_step_interval": 50,
-    "data_backend_config": "config/examples/multidatabackend-controlnet-512px.json",
+    "data_backend_config": "config/examples/multidatabackend-controlnet-128px.json",
     "disable_bucket_pruning": true,
     "flow_schedule_shift": 3,
     "grad_clip_method": "value",

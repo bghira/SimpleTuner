@@ -5,14 +5,14 @@
     "full_matrix": true,
     "linear_dim": 10000,
     "linear_alpha": 1,
-    "factor": 4,
+    "factor": 16,
     "apply_preset": {
         "target_module": [
             "LongCatImageTransformer2DModel"
         ],
         "module_algo_map": {
             "LongCatImageTransformer2DModel": {
-                "factor": 2
+                "factor": 16
             }
         }
     }
