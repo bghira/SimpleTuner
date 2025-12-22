@@ -149,97 +149,277 @@
 </div>
 
 <style>
+/* Memory Presets Modal - Dark theme matching DeepSpeed builder */
 .memory-presets-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.6);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1055;
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(4px);
+    padding: 2rem;
 }
 
 .memory-presets-modal {
-    background: var(--bs-body-bg, #fff);
-    border-radius: 0.5rem;
-    width: 90%;
+    width: 90vw;
     max-width: 700px;
     max-height: 85vh;
+    background: rgba(15, 23, 42, 0.98);
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
     display: flex;
     flex-direction: column;
-    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    overflow: hidden;
+    pointer-events: auto;
 }
 
 .memory-presets-modal .modal-header {
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 1.5rem 2rem;
+    flex-shrink: 0;
+    background: rgba(30, 41, 59, 0.6);
+    border-radius: 16px 16px 0 0;
+}
+
+.memory-presets-modal .modal-title {
+    color: #f8fafc;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.memory-presets-modal .modal-header p {
+    color: #94a3b8;
+    margin-bottom: 0;
+}
+
+.memory-presets-modal .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+    opacity: 0.7;
+}
+
+.memory-presets-modal .btn-close:hover {
+    opacity: 1;
 }
 
 .memory-presets-modal .modal-body {
-    padding: 1.5rem;
-    overflow-y: auto;
     flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem 2rem;
+    background: rgba(15, 23, 42, 0.98);
 }
 
 .memory-presets-modal .modal-footer {
-    padding: 1rem 1.5rem;
-    border-top: 1px solid var(--bs-border-color, #dee2e6);
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 1.25rem 2rem;
+    flex-shrink: 0;
+    background: rgba(30, 41, 59, 0.6);
+    border-radius: 0 0 16px 16px;
 }
 
+/* Tab navigation */
 .memory-presets-modal .nav-tabs {
-    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    margin-bottom: 1rem;
 }
 
 .memory-presets-modal .nav-tabs .nav-link {
-    color: var(--bs-body-color, #212529);
+    color: #94a3b8;
     border: 1px solid transparent;
     border-bottom: none;
     padding: 0.5rem 1rem;
+    border-radius: 8px 8px 0 0;
+    transition: all 0.2s ease;
 }
 
 .memory-presets-modal .nav-tabs .nav-link:hover {
-    border-color: var(--bs-border-color, #dee2e6);
-    background: var(--bs-tertiary-bg, #f8f9fa);
+    color: #f8fafc;
+    background: rgba(148, 163, 184, 0.1);
+    border-color: rgba(148, 163, 184, 0.2);
 }
 
 .memory-presets-modal .nav-tabs .nav-link.active {
-    background: var(--bs-body-bg, #fff);
-    border-color: var(--bs-border-color, #dee2e6);
-    border-bottom-color: var(--bs-body-bg, #fff);
+    color: #f8fafc;
+    background: rgba(30, 41, 59, 0.8);
+    border-color: rgba(148, 163, 184, 0.2);
+    border-bottom-color: transparent;
 }
 
-.memory-strategy-row {
-    background: var(--bs-tertiary-bg, #f8f9fa);
+/* Strategy rows */
+.memory-presets-modal .memory-strategy-row {
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.15) !important;
+    border-radius: 12px !important;
 }
 
-.memory-strategy-row .strategy-label {
+.memory-presets-modal .memory-strategy-row .strategy-label {
     font-size: 0.95rem;
+    color: #f8fafc;
 }
 
-.preset-tradeoffs {
+/* Preset tradeoff badges */
+.memory-presets-modal .preset-tradeoffs {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.25rem;
+    gap: 0.5rem;
 }
 
-/* Dark mode support */
-@media (prefers-color-scheme: dark) {
-    .memory-presets-modal {
-        background: var(--bs-body-bg, #212529);
-    }
-
-    .memory-strategy-row {
-        background: var(--bs-tertiary-bg, #2c3034);
-    }
+.memory-presets-modal .preset-tradeoffs .badge {
+    font-weight: 500;
+    padding: 0.35em 0.65em;
 }
 
-/* Ensure dark mode works with Bootstrap's data-bs-theme */
-[data-bs-theme="dark"] .memory-presets-modal {
-    background: var(--bs-body-bg, #212529);
+.memory-presets-modal .badge.bg-success-subtle {
+    background: rgba(34, 197, 94, 0.15) !important;
+    color: #4ade80 !important;
 }
 
-[data-bs-theme="dark"] .memory-strategy-row {
-    background: var(--bs-tertiary-bg, #2c3034);
+.memory-presets-modal .badge.bg-warning-subtle {
+    background: rgba(245, 158, 11, 0.15) !important;
+    color: #fbbf24 !important;
+}
+
+.memory-presets-modal .badge.bg-info-subtle {
+    background: rgba(59, 130, 246, 0.15) !important;
+    color: #60a5fa !important;
+}
+
+.memory-presets-modal .badge.bg-secondary {
+    background: rgba(148, 163, 184, 0.2) !important;
+    color: #cbd5e1 !important;
+}
+
+/* Text colors */
+.memory-presets-modal .text-muted {
+    color: #94a3b8 !important;
+}
+
+.memory-presets-modal .form-text {
+    color: #64748b !important;
+}
+
+/* Alerts */
+.memory-presets-modal .alert {
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 1rem !important;
+}
+
+.memory-presets-modal .alert-warning {
+    background: rgba(245, 158, 11, 0.1) !important;
+    color: #fbbf24 !important;
+    border: 1px solid rgba(245, 158, 11, 0.2) !important;
+}
+
+.memory-presets-modal .alert-danger {
+    background: rgba(239, 68, 68, 0.1) !important;
+    color: #f87171 !important;
+    border: 1px solid rgba(239, 68, 68, 0.2) !important;
+}
+
+/* Buttons */
+.memory-presets-modal .btn {
+    padding: 0.5rem 1rem !important;
+    font-weight: 600 !important;
+    font-size: 0.875rem !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+}
+
+.memory-presets-modal .btn-primary {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    border: none !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
+}
+
+.memory-presets-modal .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+}
+
+.memory-presets-modal .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.memory-presets-modal .btn-secondary {
+    background: rgba(148, 163, 184, 0.2) !important;
+    color: #f8fafc !important;
+    border: 1px solid rgba(148, 163, 184, 0.3) !important;
+}
+
+.memory-presets-modal .btn-secondary:hover {
+    background: rgba(148, 163, 184, 0.3) !important;
+    border-color: rgba(148, 163, 184, 0.4) !important;
+}
+
+.memory-presets-modal .btn-outline-secondary {
+    background: transparent !important;
+    color: #94a3b8 !important;
+    border: 1px solid rgba(148, 163, 184, 0.3) !important;
+}
+
+.memory-presets-modal .btn-outline-secondary:hover {
+    background: rgba(148, 163, 184, 0.1) !important;
+    color: #f8fafc !important;
+}
+
+/* Form range (slider) */
+.memory-presets-modal .form-range {
+    height: 0.5rem;
+    background: transparent;
+}
+
+.memory-presets-modal .form-range::-webkit-slider-track {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 4px;
+}
+
+.memory-presets-modal .form-range::-webkit-slider-thumb {
+    background: #3b82f6;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.memory-presets-modal .form-range::-moz-range-track {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 4px;
+}
+
+.memory-presets-modal .form-range::-moz-range-thumb {
+    background: #3b82f6;
+    border: none;
+}
+
+/* Form label */
+.memory-presets-modal .form-label {
+    color: #f8fafc;
+    font-weight: 500;
+}
+
+/* Spinner */
+.memory-presets-modal .spinner-border {
+    color: #3b82f6 !important;
+}
+
+/* Custom block swap section */
+.memory-presets-modal .border.rounded {
+    border-color: rgba(148, 163, 184, 0.15) !important;
+    background: rgba(30, 41, 59, 0.5);
+    border-radius: 12px !important;
+}
+
+/* Icon colors */
+.memory-presets-modal .fa-check-circle.text-success {
+    color: #4ade80 !important;
+}
+
+.memory-presets-modal .fa-info-circle.text-muted {
+    color: #64748b !important;
 }
 </style>

@@ -64,10 +64,15 @@
             },
 
             getModelFamily() {
-                // Try to get from trainer store first
+                // Try to get from trainer store first (keys are prefixed with --)
                 const trainerStore = window.Alpine?.store?.('trainer');
-                if (trainerStore?.activeEnvironmentConfig?.model_family) {
-                    return trainerStore.activeEnvironmentConfig.model_family;
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    // Check both dashed and non-dashed keys
+                    const modelFamily = config['--model_family'] || config['model_family'];
+                    if (modelFamily) {
+                        return modelFamily;
+                    }
                 }
 
                 // Fallback to DOM element
@@ -241,14 +246,22 @@
                 const trainerStore = window.Alpine?.store?.('trainer');
                 if (trainerStore) {
                     for (const [key, value] of Object.entries(config)) {
+                        // Canonicalize key to match store format (add -- prefix)
+                        const canonicalKey = key.startsWith('--') ? key : `--${key}`;
+
                         // Use the trainer store's config update method
                         if (typeof trainerStore.updateConfigValue === 'function') {
-                            trainerStore.updateConfigValue(key, value);
+                            trainerStore.updateConfigValue(canonicalKey, value);
                         } else {
                             // Fallback: update activeEnvironmentConfig directly
                             if (trainerStore.activeEnvironmentConfig) {
-                                trainerStore.activeEnvironmentConfig[key] = value;
+                                trainerStore.activeEnvironmentConfig[canonicalKey] = value;
                             }
+                        }
+
+                        // Also update configValues if present
+                        if (trainerStore.configValues) {
+                            trainerStore.configValues[canonicalKey] = value;
                         }
                     }
 
@@ -263,9 +276,11 @@
                     }
                 }
 
-                // Also update DOM elements directly
+                // Also update DOM elements directly (fields use non-dashed names)
                 for (const [key, value] of Object.entries(config)) {
-                    const el = document.getElementById(key) || document.querySelector(`[name="${key}"]`);
+                    // Remove -- prefix for DOM element lookup
+                    const fieldName = key.startsWith('--') ? key.slice(2) : key;
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
                     if (el) {
                         if (el.type === 'checkbox') {
                             el.checked = Boolean(value);
