@@ -85,7 +85,7 @@ class LongCatImage(ImageModelFoundation):
         if text_processor is not None:
             return text_processor
         model_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
-        text_processor = AutoProcessor.from_pretrained(model_path, subfolder="text_encoder")
+        text_processor = AutoProcessor.from_pretrained(model_path, subfolder="text_processor")
         self.text_processor = text_processor
         return text_processor
 
