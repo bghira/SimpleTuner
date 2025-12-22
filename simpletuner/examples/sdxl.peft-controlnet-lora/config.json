@@ -37,5 +37,5 @@
     "validation_prompt": "🟫 is holding a sign that says hello world from sdxl",
     "validation_resolution": "1024x1024",
     "validation_seed": 42,
-    "validation_steps": 50,
+    "validation_steps": 50
 }
