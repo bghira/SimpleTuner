@@ -18,8 +18,16 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException
 
 import simpletuner.helpers.models  # noqa: F401  # Ensure model registry population
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
+
+try:
+    import psutil
+
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _PSUTIL_AVAILABLE = False
 
 try:  # Lazy import so the configurator still works without LyCORIS extras
     from lycoris.config_sdk import PresetValidationError
@@ -537,6 +545,177 @@ class LycorisBuilderSession:
         return self._last_loaded_path
 
 
+class MemoryPresetsSession:
+    """Stateful helper for selecting and applying memory optimization presets via the CLI."""
+
+    # Backend labels for display
+    BACKEND_LABELS = {
+        "RAMTORCH": "RamTorch Streaming",
+        "MUSUBI_BLOCK_SWAP": "Block Swap",
+        "GROUP_OFFLOAD": "Group Offload",
+        "DEEPSPEED_ZERO_1": "DeepSpeed ZeRO-1",
+        "DEEPSPEED_ZERO_2": "DeepSpeed ZeRO-2",
+        "DEEPSPEED_ZERO_3": "DeepSpeed ZeRO-3",
+    }
+
+    # These backends are mutually exclusive
+    EXCLUSIVE_BACKENDS = {"RAMTORCH", "GROUP_OFFLOAD", "MUSUBI_BLOCK_SWAP"}
+
+    def __init__(self, model_family: str):
+        self.model_family = model_family
+        self._model_cls = None
+        self.presets: List[AccelerationPreset] = []
+        self.max_swappable_blocks: Optional[int] = None
+        self.unsupported_backends: set[str] = set()
+        self.system_ram_gb: Optional[float] = None
+
+        # Selection state
+        self.selected_presets: Dict[str, str] = {}  # backend_name -> level
+        self.custom_block_swap_count: int = 0
+
+        self._load_presets()
+        self._detect_system_ram()
+
+    def _load_presets(self) -> None:
+        """Load presets from the model class."""
+        model_families = ModelRegistry.model_families()
+        self._model_cls = model_families.get(self.model_family)
+        if self._model_cls is None:
+            return
+
+        # Get presets from model
+        if hasattr(self._model_cls, "get_acceleration_presets"):
+            self.presets = self._model_cls.get_acceleration_presets()
+
+        # Get max swappable blocks
+        if hasattr(self._model_cls, "max_swappable_blocks"):
+            self.max_swappable_blocks = self._model_cls.max_swappable_blocks()
+
+        # Get unsupported backends
+        unsupported = getattr(self._model_cls, "UNSUPPORTED_BACKENDS", set())
+        self.unsupported_backends = {b.name if hasattr(b, "name") else str(b) for b in unsupported}
+
+    def _detect_system_ram(self) -> None:
+        """Detect system RAM if psutil is available."""
+        if not _PSUTIL_AVAILABLE:
+            return
+        try:
+            mem = psutil.virtual_memory()
+            self.system_ram_gb = round(mem.total / (1024**3), 2)
+        except Exception:
+            pass
+
+    @property
+    def low_system_ram(self) -> bool:
+        """True if system RAM is below 64GB."""
+        return self.system_ram_gb is not None and self.system_ram_gb < 64
+
+    @property
+    def has_ram_intensive_selection(self) -> bool:
+        """True if any selected preset requires 64GB+ RAM."""
+        for backend, level in self.selected_presets.items():
+            preset = self._find_preset(backend, level)
+            if preset and preset.requires_min_system_ram_gb >= 64:
+                return True
+        return self.custom_block_swap_count > 0
+
+    def _find_preset(self, backend: str, level: str) -> Optional[AccelerationPreset]:
+        """Find a preset by backend name and level."""
+        for preset in self.presets:
+            if preset.backend.name == backend and preset.level == level:
+                return preset
+        return None
+
+    def get_presets_for_tab(self, tab: str) -> List[AccelerationPreset]:
+        """Get presets for a specific tab (basic, advanced)."""
+        return [p for p in self.presets if p.tab == tab]
+
+    def get_presets_grouped_by_backend(self, tab: str) -> Dict[str, List[AccelerationPreset]]:
+        """Get presets grouped by backend for a tab."""
+        groups: Dict[str, List[AccelerationPreset]] = {}
+        for preset in self.get_presets_for_tab(tab):
+            backend_name = preset.backend.name
+            if backend_name not in groups:
+                groups[backend_name] = []
+            groups[backend_name].append(preset)
+
+        # Sort presets within each group by level
+        level_order = {"basic": 0, "light": 1, "conservative": 2, "balanced": 3, "aggressive": 4, "extreme": 5}
+        for group in groups.values():
+            group.sort(key=lambda p: level_order.get(p.level, 99))
+
+        return groups
+
+    def get_backend_label(self, backend: str) -> str:
+        """Get human-readable label for a backend."""
+        return self.BACKEND_LABELS.get(backend, backend.replace("_", " ").title())
+
+    def is_preset_selected(self, preset: AccelerationPreset) -> bool:
+        """Check if a preset is currently selected."""
+        return self.selected_presets.get(preset.backend.name) == preset.level
+
+    def toggle_preset(self, preset: AccelerationPreset) -> None:
+        """Toggle a preset on/off, respecting mutual exclusivity."""
+        backend_name = preset.backend.name
+
+        if self.is_preset_selected(preset):
+            # Deselect
+            del self.selected_presets[backend_name]
+        else:
+            # If selecting an exclusive backend, deselect the others
+            if backend_name in self.EXCLUSIVE_BACKENDS:
+                for other in self.EXCLUSIVE_BACKENDS:
+                    if other != backend_name and other in self.selected_presets:
+                        del self.selected_presets[other]
+                # Clear custom block swap when selecting RamTorch or Group Offload
+                if backend_name in {"RAMTORCH", "GROUP_OFFLOAD"}:
+                    self.custom_block_swap_count = 0
+            # Select this preset
+            self.selected_presets[backend_name] = preset.level
+
+    def set_custom_block_swap(self, count: int) -> None:
+        """Set a custom block swap count, clearing exclusive backends."""
+        self.custom_block_swap_count = max(0, min(count, self.max_swappable_blocks or 0))
+        if self.custom_block_swap_count > 0:
+            # Clear RamTorch and Group Offload when using custom block swap
+            self.selected_presets.pop("RAMTORCH", None)
+            self.selected_presets.pop("GROUP_OFFLOAD", None)
+
+    def get_selected_config(self) -> Dict[str, Any]:
+        """Merge all selected presets' configs into one dictionary."""
+        merged_config: Dict[str, Any] = {}
+
+        for backend, level in self.selected_presets.items():
+            preset = self._find_preset(backend, level)
+            if preset and preset.config:
+                merged_config.update(preset.config)
+
+        # Apply custom block swap if set
+        if self.custom_block_swap_count > 0:
+            merged_config["musubi_blocks_to_swap"] = self.custom_block_swap_count
+            # Clear RamTorch if using custom block swap
+            merged_config.pop("ramtorch", None)
+            merged_config.pop("ramtorch_target_modules", None)
+
+        return merged_config
+
+    @property
+    def has_selection(self) -> bool:
+        """True if any presets are selected or custom block swap is set."""
+        return bool(self.selected_presets) or self.custom_block_swap_count > 0
+
+    def get_summary(self) -> str:
+        """Get a summary string of current selections."""
+        if not self.has_selection:
+            return "No presets selected"
+        parts = []
+        for backend, level in sorted(self.selected_presets.items()):
+            parts.append(f"{self.get_backend_label(backend)}: {level}")
+        if self.custom_block_swap_count > 0:
+            parts.append(f"Block swap: {self.custom_block_swap_count} blocks")
+        return ", ".join(parts)
+
+
 class ConfigState:
     """Holds configuration values and interacts with the FieldRegistry."""
 
@@ -865,6 +1044,8 @@ class SimpleTunerNCurses:
         self._lycoris_support_error = _LYCORIS_IMPORT_ERROR
         self._lycoris_session: Optional[LycorisBuilderSession] = None
         self._lycoris_menu_index = 0
+        self._memory_presets_session: Optional[MemoryPresetsSession] = None
+        self._memory_presets_menu_index = 0
         self._webui_menu_index = 0
         self._refresh_webui_defaults()
         self.tab_entries = self._build_tab_entries()
@@ -880,6 +1061,13 @@ class SimpleTunerNCurses:
                     "Interactively edit LyCORIS algorithm presets and overrides",
                 )
             )
+        self.menu_items.append(
+            (
+                "Memory Optimization Presets",
+                self.edit_memory_presets,
+                "Select and apply memory optimization presets for your model",
+            )
+        )
         self.menu_items.append(
             (
                 "WebUI Setup",
@@ -1527,6 +1715,241 @@ class SimpleTunerNCurses:
         store.save_defaults(defaults)
         self._refresh_webui_defaults()
         self.show_message(stdscr, f"Updated '{step.title}'.")
+
+    # ------------------------------------------------------------------
+    # Memory optimization presets support
+    # ------------------------------------------------------------------
+
+    def _get_memory_presets_session(self) -> Optional[MemoryPresetsSession]:
+        """Get or create a memory presets session for the current model family."""
+        model_family = self.state.get_value("model_family")
+        if not model_family:
+            return None
+
+        if self._memory_presets_session is None or self._memory_presets_session.model_family != model_family:
+            self._memory_presets_session = MemoryPresetsSession(model_family)
+
+        return self._memory_presets_session
+
+    def edit_memory_presets(self, stdscr) -> None:
+        """Display the memory optimization presets menu."""
+        session = self._get_memory_presets_session()
+        if session is None:
+            self.show_error(stdscr, "Please select a model family first (in Model Selection tab).")
+            return
+
+        if not session.presets:
+            self.show_message(
+                stdscr,
+                f"No memory optimization presets available for model family '{session.model_family}'.",
+            )
+            return
+
+        nav = MenuNavigator(stdscr)
+
+        while True:
+            # Show RAM warning if low RAM and RAM-intensive selection
+            ram_warning = ""
+            if session.low_system_ram and session.has_ram_intensive_selection:
+                ram_warning = f"\n[WARNING: Low system RAM ({session.system_ram_gb}GB). Most strategies require 64GB+]"
+
+            menu_items = [
+                ("Basic Presets", partial(self._memory_presets_tab, stdscr, session, "basic")),
+                ("Advanced Presets", partial(self._memory_presets_tab, stdscr, session, "advanced")),
+            ]
+            if session.max_swappable_blocks is not None:
+                menu_items.append(("Custom Block Swap", partial(self._memory_presets_custom_block_swap, stdscr, session)))
+            menu_items.append(("Show Preset Configuration", partial(self._memory_presets_preview, stdscr, session)))
+            menu_items.append(("Apply to Configuration", partial(self._memory_presets_apply, stdscr, session)))
+            menu_items.append(("Clear Selections", partial(self._memory_presets_clear, stdscr, session)))
+            menu_items.append(("Back", None))
+
+            current_values = {
+                "Basic Presets": f"{len(session.get_presets_for_tab('basic'))} available",
+                "Advanced Presets": f"{len(session.get_presets_for_tab('advanced'))} available",
+                "Custom Block Swap": (
+                    f"{session.custom_block_swap_count}/{session.max_swappable_blocks}"
+                    if session.max_swappable_blocks
+                    else "N/A"
+                ),
+                "Show Preset Configuration": f"{len(session.get_selected_config())} values",
+                "Apply to Configuration": session.get_summary(),
+                "Clear Selections": "",
+            }
+
+            title = f"Memory Optimization Presets ({session.model_family}){ram_warning}"
+            choice = nav.show_menu(title, menu_items, current_values, selected=self._memory_presets_menu_index)
+            self._memory_presets_menu_index = nav.last_selection
+
+            if choice == -1:
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif choice == -2 or menu_items[choice][1] is None:
+                return
+            else:
+                handler = menu_items[choice][1]
+                if handler:
+                    handler()
+
+    def _memory_presets_tab(self, stdscr, session: MemoryPresetsSession, tab: str) -> None:
+        """Display presets for a specific tab (basic/advanced)."""
+        presets = session.get_presets_for_tab(tab)
+        if not presets:
+            self.show_message(stdscr, f"No {tab} presets available for this model.")
+            return
+
+        nav = MenuNavigator(stdscr)
+        groups = session.get_presets_grouped_by_backend(tab)
+
+        while True:
+            menu_items: List[tuple[str, Any]] = []
+            current_values: Dict[str, str] = {}
+
+            for backend_name, backend_presets in groups.items():
+                label = session.get_backend_label(backend_name)
+                for preset in backend_presets:
+                    item_label = f"{label}: {preset.level.capitalize()}"
+                    menu_items.append((item_label, partial(self._memory_presets_toggle, stdscr, session, preset)))
+                    if session.is_preset_selected(preset):
+                        current_values[item_label] = "[SELECTED]"
+                    else:
+                        current_values[item_label] = preset.tradeoff_vram
+
+            menu_items.append(("Back", None))
+
+            title = f"{tab.capitalize()} Presets ({session.model_family})"
+            if tab == "advanced":
+                title += "\n[Advanced strategies require careful configuration]"
+
+            choice = nav.show_menu(title, menu_items, current_values)
+            if choice == -1:
+                if self.confirm_quit(stdscr):
+                    raise KeyboardInterrupt
+            elif choice == -2 or menu_items[choice][1] is None:
+                return
+            else:
+                menu_items[choice][1]()
+
+    def _memory_presets_toggle(self, stdscr, session: MemoryPresetsSession, preset: AccelerationPreset) -> None:
+        """Toggle a preset and show its info."""
+        # Show preset details first
+        info_lines = [
+            f"Preset: {preset.name}",
+            "",
+            f"Description: {preset.description}",
+            "",
+            f"VRAM Impact: {preset.tradeoff_vram}",
+            f"Speed Impact: {preset.tradeoff_speed}",
+        ]
+        if preset.tradeoff_notes:
+            info_lines.append(f"Notes: {preset.tradeoff_notes}")
+        if preset.requires_cuda:
+            info_lines.append("Requires: CUDA/ROCm")
+        if preset.requires_min_system_ram_gb > 0:
+            info_lines.append(f"Requires: {preset.requires_min_system_ram_gb}GB+ system RAM")
+
+        info_lines.append("")
+        status = "Currently: SELECTED" if session.is_preset_selected(preset) else "Currently: Not selected"
+        info_lines.append(status)
+
+        choice = self.show_options(
+            stdscr,
+            "\n".join(info_lines),
+            ["Toggle selection", "Cancel"],
+            0,
+        )
+        if choice == 0:
+            session.toggle_preset(preset)
+            action = "Deselected" if not session.is_preset_selected(preset) else "Selected"
+            self.show_message(stdscr, f"{action} '{preset.name}'")
+
+    def _memory_presets_custom_block_swap(self, stdscr, session: MemoryPresetsSession) -> None:
+        """Allow setting a custom block swap count."""
+        if session.max_swappable_blocks is None:
+            self.show_message(stdscr, "Block swap is not available for this model.")
+            return
+
+        current = session.custom_block_swap_count
+        prompt = (
+            f"Custom Block Swap Count\n\n"
+            f"Maximum blocks: {session.max_swappable_blocks}\n"
+            f"Current setting: {current}\n\n"
+            f"Higher values save more VRAM but increase training time.\n"
+            f"Enter 0 to disable custom block swap.\n\n"
+            f"Enter value (0-{session.max_swappable_blocks}):"
+        )
+
+        response = self.get_input(stdscr, prompt, str(current))
+        if not response.strip():
+            return
+
+        try:
+            value = int(response.strip())
+            if value < 0 or value > session.max_swappable_blocks:
+                self.show_error(stdscr, f"Value must be between 0 and {session.max_swappable_blocks}")
+                return
+            session.set_custom_block_swap(value)
+            if value > 0:
+                self.show_message(stdscr, f"Set custom block swap to {value} blocks")
+            else:
+                self.show_message(stdscr, "Disabled custom block swap")
+        except ValueError:
+            self.show_error(stdscr, "Please enter a valid number")
+
+    def _memory_presets_preview(self, stdscr, session: MemoryPresetsSession) -> None:
+        """Show the merged configuration from selected presets as JSON."""
+        config = session.get_selected_config()
+        if not config:
+            self.show_message(stdscr, "No presets selected. Select presets to see their configuration.")
+            return
+
+        self._display_json(stdscr, config)
+
+    def _memory_presets_apply(self, stdscr, session: MemoryPresetsSession) -> None:
+        """Apply selected presets to the current configuration."""
+        if not session.has_selection:
+            self.show_error(stdscr, "No presets selected. Please select at least one preset.")
+            return
+
+        config = session.get_selected_config()
+        if not config:
+            self.show_error(stdscr, "No configuration values to apply.")
+            return
+
+        # Show what will be applied
+        info_lines = ["The following settings will be applied:", ""]
+        for key, value in sorted(config.items()):
+            info_lines.append(f"  {key}: {value}")
+        info_lines.append("")
+        info_lines.append("Apply these settings?")
+
+        choice = self.show_options(stdscr, "\n".join(info_lines), ["Apply", "Cancel"], 0)
+        if choice != 0:
+            return
+
+        # Apply to config state
+        for key, value in config.items():
+            self.state.set_value(key, value)
+
+        count = len(config)
+        self.show_message(stdscr, f"Applied {count} setting{'s' if count != 1 else ''} from memory presets.")
+
+    def _memory_presets_clear(self, stdscr, session: MemoryPresetsSession) -> None:
+        """Clear all selected presets."""
+        if not session.has_selection:
+            self.show_message(stdscr, "No presets are currently selected.")
+            return
+
+        choice = self.show_options(
+            stdscr,
+            f"Clear all selections?\n\nCurrent: {session.get_summary()}",
+            ["Clear all", "Cancel"],
+            1,
+        )
+        if choice == 0:
+            session.selected_presets.clear()
+            session.custom_block_swap_count = 0
+            self.show_message(stdscr, "Cleared all preset selections.")
 
     # ------------------------------------------------------------------
     # LyCORIS builder support
