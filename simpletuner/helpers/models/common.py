@@ -199,6 +199,19 @@ def delete_model_from_cache(
         logger.debug(f"No cached path found for {component_key}, skipping deletion")
         return False
 
+    # Check if other components are still using the same repo path
+    # (e.g., VAE, text_encoder, transformer all from the same model repo)
+    all_paths = StateTracker.get_all_model_snapshot_paths()
+    other_components_using_path = [k for k, v in all_paths.items() if k != component_key and v == repo_path]
+
+    if other_components_using_path:
+        logger.info(
+            f"Deferring deletion of {repo_path} for {component_key} - "
+            f"still needed by: {', '.join(other_components_using_path)}"
+        )
+        StateTracker.clear_model_snapshot_path(component_key)
+        return False
+
     logger.info(f"Deleting cached model files for {component_key}: {repo_path}")
 
     try:
@@ -1427,6 +1440,54 @@ class ModelFoundation(ABC):
             The transformed latents tensor
         """
         return latents
+
+    def register_cache_paths_for_deletion(self):
+        """
+        Pre-register all model component cache paths before any loading happens.
+
+        This must be called BEFORE load_vae/load_text_encoder/load_model to ensure
+        that when any component tries to delete its cache, it knows about all other
+        components that may share the same repo path.
+
+        Without this, if VAE and text_encoder share the same repo (e.g., unified
+        pipeline like meituan-longcat/LongCat-Image-Edit), the VAE deletion would
+        nuke the entire repo before text_encoder can load.
+        """
+        if not getattr(self.config, "delete_model_after_load", False):
+            return
+
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        # Register VAE path
+        if getattr(self, "AUTOENCODER_CLASS", None):
+            cache_repo_path = get_hf_cache_repo_path(self.config.vae_path)
+            if cache_repo_path:
+                StateTracker.set_model_snapshot_path("vae", cache_repo_path)
+
+        # Register text encoder paths
+        if self.TEXT_ENCODER_CONFIGURATION:
+            text_encoder_idx = 0
+            for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
+                text_encoder_idx += 1
+                text_encoder_path = get_model_config_path(
+                    self.config.model_family, self.config.pretrained_model_name_or_path
+                )
+                if text_encoder_config.get("path", None) is not None:
+                    text_encoder_path = text_encoder_config.get("path")
+                cache_repo_path = get_hf_cache_repo_path(text_encoder_path)
+                if cache_repo_path:
+                    StateTracker.set_model_snapshot_path(f"text_encoder_{text_encoder_idx}", cache_repo_path)
+
+        # Register transformer/unet path
+        model_path = (
+            self.config.pretrained_transformer_model_name_or_path
+            if self.MODEL_TYPE is ModelTypes.TRANSFORMER
+            else self.config.pretrained_unet_model_name_or_path
+        ) or self.config.pretrained_model_name_or_path
+        cache_repo_path = get_hf_cache_repo_path(model_path)
+        if cache_repo_path:
+            component_key = self.MODEL_TYPE.value  # "transformer" or "unet"
+            StateTracker.set_model_snapshot_path(component_key, cache_repo_path)
 
     def get_vae(self):
         """

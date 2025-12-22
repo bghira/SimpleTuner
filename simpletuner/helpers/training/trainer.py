@@ -2184,6 +2184,10 @@ class Trainer:
         if hasattr(log_format, "configure_third_party_loggers"):
             log_format.configure_third_party_loggers()
 
+        # Pre-register all cache paths before any loading, so that shared repos
+        # are not deleted prematurely (e.g., VAE deleting a repo before text_encoder loads)
+        self.model.register_cache_paths_for_deletion()
+
         # image embeddings
         self.init_vae(move_to_accelerator=move_to_accelerator)
         # text embeds
