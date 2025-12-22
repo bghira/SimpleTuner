@@ -8,13 +8,10 @@
     "factor": 4,
     "apply_preset": {
         "target_module": [
-            "Kandinsky5Attention", "Kandinsky5FeedForward"
+            "LongCatImageTransformer2DModel"
         ],
         "module_algo_map": {
-            "Kandinsky5FeedForward": {
-                "factor": 4
-            },
-            "Kandinsky5Attention": {
+            "LongCatImageTransformer2DModel": {
                 "factor": 2
             }
         }
