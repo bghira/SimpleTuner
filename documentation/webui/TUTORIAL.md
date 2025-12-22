@@ -290,6 +290,19 @@ See [DATALOADER.md](/documentation/DATALOADER.md#multi-gpu-training-and-dataset-
 
 <img width="1118" height="1015" alt="image" src="https://github.com/user-attachments/assets/25d5650d-e77b-42fe-b749-06c0ec92b1e2" />
 
+#### Memory optimisation presets
+
+For easier setup on consumer hardware, each model has custom presets included that allow selecting for light, balanced, or aggressive memory savings.
+
+On the **Training** tab's **Memory Optimisation** section, you'll find the **Load Presets** button:
+
+<img width="1048" height="940" alt="image" src="https://github.com/user-attachments/assets/804e84f6-7eb8-493e-95d2-a89d930bafa5" />
+
+Which brings up this interface:
+
+<img width="1048" height="940" alt="image" src="https://github.com/user-attachments/assets/775aaee5-c3c0-4659-bbea-ebb39e3eb098" />
+
+
 #### Review & save
 
 If you're happy with all of your selected values, go ahead and **Finish** the wizard.
