@@ -17,7 +17,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 from tqdm import tqdm
 
-from simpletuner.helpers.models.common import PipelineTypes
+from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -504,6 +504,16 @@ class SaveHookManager:
                 continue
 
             state_dict = self._resolve_model_state_dict(model, weights)
+
+            # ComfyUI: Add v_pred and ztsnr keys to the state_dict if applicable
+            prediction_type = getattr(self.args, "prediction_type", None)
+            if hasattr(prediction_type, "value"):
+                prediction_type = prediction_type.value
+
+            if prediction_type == PredictionTypes.V_PREDICTION.value and getattr(self.args, "rescale_betas_zero_snr", False):
+                state_dict["v_pred"] = torch.tensor([])
+                state_dict["ztsnr"] = torch.tensor([])
+
             try:
                 unwrapped_model = unwrap_model(self.accelerator, model)
                 if distributed_type == DistributedType.FSDP:
