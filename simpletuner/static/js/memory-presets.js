@@ -432,7 +432,7 @@
         console.log('[MEMORY PRESETS] Injected presets button into memory_optimization section');
     }
 
-    // Inject button when training tab loads
+    // Inject button when model tab loads
     function setupButtonInjection() {
         // Initial injection attempt
         injectPresetsButton();
@@ -441,7 +441,7 @@
         document.body.addEventListener('htmx:afterSwap', (evt) => {
             // Check if the swap target might contain our section
             if (evt.detail.target.id === 'tab-content' ||
-                evt.detail.target.id === 'training-tab-content' ||
+                evt.detail.target.id === 'model-tab-content' ||
                 evt.detail.target.querySelector?.('#section-memory_optimization')) {
                 // Small delay to ensure DOM is ready
                 setTimeout(injectPresetsButton, 50);

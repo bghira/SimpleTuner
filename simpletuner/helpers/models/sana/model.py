@@ -8,6 +8,7 @@ from diffusers.pipelines import SanaPipeline
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizerFast
 
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
     ModelTypes,
@@ -311,6 +312,77 @@ class Sana(ImageModelFoundation):
             ),
             self.config.tread_config["routes"],
         )
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
+        return [
+            # Basic tab - RamTorch presets
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="basic",
+                name="RamTorch - Basic",
+                description="Streams half of transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~30%",
+                tradeoff_speed="Increases training time by ~20%",
+                tradeoff_notes="Requires 64GB+ system RAM. CUDA/ROCm only.",
+                requires_cuda=True,
+                requires_min_system_ram_gb=64,
+                config={
+                    **_base_memory_config,
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.*",
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="aggressive",
+                name="RamTorch - Aggressive",
+                description="Streams all transformer block weights from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~60%",
+                tradeoff_speed="Increases training time by ~50%",
+                tradeoff_notes="Requires 64GB+ system RAM. CUDA/ROCm only.",
+                requires_cuda=True,
+                requires_min_system_ram_gb=64,
+                config={
+                    **_base_memory_config,
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "*",
+                },
+            ),
+            # Advanced tab - DeepSpeed options
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
+                level="zero1",
+                name="DeepSpeed ZeRO Stage 1",
+                description="Shards optimizer states across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer memory by ~75% per GPU",
+                tradeoff_speed="Minimal overhead",
+                tradeoff_notes="Not compatible with FSDP.",
+                requires_cuda=True,
+                config={**_base_memory_config, "deepspeed_config": "zero1"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
+                level="zero2",
+                name="DeepSpeed ZeRO Stage 2",
+                description="Shards optimizer states and gradients across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces memory by ~85% per GPU",
+                tradeoff_speed="Moderate overhead from gradient sync",
+                tradeoff_notes="Not compatible with FSDP.",
+                requires_cuda=True,
+                config={**_base_memory_config, "deepspeed_config": "zero2"},
+            ),
+        ]
 
 
 from simpletuner.helpers.models.registry import ModelRegistry
