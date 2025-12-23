@@ -1422,7 +1422,7 @@ class ModelFoundation(ABC):
             self.unwrap_model(model=self.controlnet).to(target_device)
         if self.vae is not None and self.vae.device != "meta":
             self.vae.to(target_device)
-        if self.text_encoders is not None:
+        if self.text_encoders is not None and not self._ramtorch_text_encoders_requested():
             for text_encoder in self.text_encoders:
                 if text_encoder is None or getattr(text_encoder, "device", None) == "meta":
                     continue
@@ -1766,7 +1766,12 @@ class ModelFoundation(ABC):
                 if self._ramtorch_text_encoders_requested():
                     self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
 
-                if move_to_device and text_encoder_precision in ["no_change", None] and quantization_config is None:
+                if (
+                    move_to_device
+                    and text_encoder_precision in ["no_change", None]
+                    and quantization_config is None
+                    and not self._ramtorch_text_encoders_requested()
+                ):
                     text_encoder.to(
                         self.accelerator.device,
                         dtype=self.config.weight_dtype,

@@ -261,8 +261,10 @@ class HunyuanVideo(VideoModelFoundation):
         tokenizer = Qwen2Tokenizer.from_pretrained(qwen_path)
         text_encoder = Qwen2_5_VLTextModel.from_pretrained(qwen_path, torch_dtype=torch.bfloat16)
         text_encoder.requires_grad_(False)
-        if move_to_device:
+        if move_to_device and not self._ramtorch_text_encoders_requested():
             text_encoder = text_encoder.to(device)
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(text_encoder, "text_encoder_1")
 
         glyph_repo = getattr(self.config, "glyph_byt5_repo", self.GLYPH_BYT5_REPO)
         fallback_glyph_repo = getattr(self.config, "glyph_byt5_fallback_repo", "google/byt5-small")
@@ -301,8 +303,10 @@ class HunyuanVideo(VideoModelFoundation):
         except Exception as glyph_load_error:
             logger.debug("No Glyph ByT5 finetuned weights applied (%s).", glyph_load_error)
         byt5_model.requires_grad_(False)
-        if move_to_device:
+        if move_to_device and not self._ramtorch_text_encoders_requested():
             byt5_model = byt5_model.to(device)
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(byt5_model, "text_encoder_2")
 
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer

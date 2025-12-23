@@ -332,11 +332,13 @@ class Flux2(ImageModelFoundation):
             mistral_path,
             **model_kwargs,
         )
-        if move_to_device:
+        if move_to_device and not self._ramtorch_text_encoders_requested():
             target_device = (
                 torch.device("cpu") if quantize_via_cpu and should_quantize_text_encoder else self.accelerator.device
             )
             self._mistral_model.to(target_device, dtype=dtype)
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(self._mistral_model, "text_encoder_1")
         self._mistral_model.requires_grad_(False)
         self._mistral_model.eval()
 
