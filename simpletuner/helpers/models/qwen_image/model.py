@@ -1281,7 +1281,7 @@ class QwenImage(ImageModelFoundation):
         modulate_index = None
         if self._uses_zero_cond_t():
             # Double the timesteps: [actual_t, 0] for each batch item
-            timesteps = torch.cat([timesteps, timesteps * 0], dim=0)
+            timesteps = torch.cat([timesteps, torch.zeros_like(timesteps)], dim=0)
 
             # Compute modulate_index: target tokens (first shape) get 0, control tokens get 1
             # img_shapes[i] = [(1, h0, w0), (1, h1, w1), ...] for batch item i
