@@ -6,7 +6,7 @@ import torch
 from diffusers import AutoencoderKL, SD3ControlNetModel
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.sd3.controlnet import StableDiffusion3ControlNetPipeline
 from simpletuner.helpers.models.sd3.pipeline import StableDiffusion3Img2ImgPipeline, StableDiffusion3Pipeline
@@ -273,6 +273,8 @@ class SD3(ImageModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def controlnet_init(self):

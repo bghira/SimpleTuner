@@ -6,7 +6,7 @@ from diffusers import AutoencoderKL, UNet2DConditionModel
 from diffusers.pipelines.kolors.text_encoder import ChatGLMModel
 from diffusers.pipelines.kolors.tokenizer import ChatGLMTokenizer
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.kolors.pipeline import KolorsImg2ImgPipeline, KolorsPipeline
 from simpletuner.helpers.models.tae.types import ImageTAESpec
@@ -291,6 +291,8 @@ class Kolors(ImageModelFoundation):
                 requires_cuda=True,
                 config={**_base_memory_config, "deepspeed_config": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
 

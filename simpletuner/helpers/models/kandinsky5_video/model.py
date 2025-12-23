@@ -6,7 +6,7 @@ from typing import Dict, Optional
 import torch
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.configuration.registry import ConfigRegistry, ConfigRule, RuleType, make_default_rule
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.hunyuanvideo_vae import AutoencoderKLHunyuanVideoOptimized
@@ -200,6 +200,8 @@ class Kandinsky5Video(VideoModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):

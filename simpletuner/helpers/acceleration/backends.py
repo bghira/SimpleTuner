@@ -19,3 +19,4 @@ class AccelerationBackend(Enum):
     DEEPSPEED_ZERO_2 = auto()
     DEEPSPEED_ZERO_3 = auto()
     FSDP2 = auto()
+    SDNQ = auto()  # SD.Next Quantization - works on AMD, Apple, NVIDIA

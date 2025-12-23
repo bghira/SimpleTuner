@@ -14,7 +14,7 @@ import torch
 from einops import rearrange
 from torch import Tensor
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
     ConfigRule,
@@ -246,6 +246,8 @@ class Flux2(ImageModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def __init__(self, *args, **kwargs):

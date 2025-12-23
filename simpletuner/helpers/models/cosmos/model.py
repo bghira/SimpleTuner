@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from diffusers import AutoencoderKLWan
 from transformers import T5EncoderModel, T5TokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.cosmos.pipeline import Cosmos2TextToImagePipeline
 from simpletuner.helpers.models.cosmos.transformer import CosmosTransformer3DModel
@@ -195,6 +195,8 @@ class Cosmos2Image(VideoModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):

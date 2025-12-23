@@ -8,7 +8,7 @@ from diffusers.models import AutoencoderKLWan
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import (
     ModelTypes,
     PipelineTypes,
@@ -176,6 +176,8 @@ class SanaVideo(VideoModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     COMPLEX_HUMAN_INSTRUCTION = [

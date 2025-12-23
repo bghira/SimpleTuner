@@ -9,7 +9,7 @@ from diffusers.models.attention_processor import Attention
 from torch.nn import functional as F
 from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
     ConfigRule,
@@ -224,6 +224,8 @@ class Flux(ImageModelFoundation):
                     "group_offload_type": "block_level",
                 },
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def control_init(self):

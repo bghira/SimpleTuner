@@ -20,7 +20,7 @@ from huggingface_hub import snapshot_download
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModel, AutoTokenizer, UMT5EncoderModel
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
     ConfigRule,
@@ -216,6 +216,8 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup with fast interconnect.",
                 config={**_base_memory_config, "deepspeed_stage": 2},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def __init__(self, config: dict, accelerator):

@@ -5,7 +5,7 @@ import torch
 from diffusers import AutoencoderKL, ControlNetModel, UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTokenizer
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.sd1x.pipeline import (
     StableDiffusionControlNetPipeline,
@@ -350,6 +350,8 @@ class StableDiffusion2(StableDiffusion1):
                 requires_cuda=True,
                 config={**_base_memory_config, "deepspeed_config": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
 

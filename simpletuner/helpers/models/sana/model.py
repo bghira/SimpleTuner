@@ -8,7 +8,7 @@ from diffusers.pipelines import SanaPipeline
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
     ModelTypes,
@@ -382,6 +382,8 @@ class Sana(ImageModelFoundation):
                 requires_cuda=True,
                 config={**_base_memory_config, "deepspeed_config": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
 

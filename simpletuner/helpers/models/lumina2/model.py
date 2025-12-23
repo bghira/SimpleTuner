@@ -6,7 +6,7 @@ from diffusers import AutoencoderKL, Lumina2Pipeline
 from diffusers.models.attention_processor import Attention
 from transformers import Gemma2Model, PreTrainedTokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.lumina2.transformer import Lumina2Transformer2DModel
 from simpletuner.helpers.training.multi_process import _get_rank
@@ -364,6 +364,8 @@ class Lumina2(ImageModelFoundation):
                 requires_cuda=True,
                 config={**_base_memory_config, "deepspeed_config": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
 

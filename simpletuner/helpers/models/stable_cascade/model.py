@@ -5,7 +5,7 @@ from typing import Dict, Optional
 import torch
 from transformers import CLIPTextModelWithProjection, PreTrainedTokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.multi_process import should_log
@@ -495,6 +495,8 @@ class StableCascadeStageC(ImageModelFoundation):
                 requires_cuda=True,
                 config={**_base_memory_config, "deepspeed_config": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
 

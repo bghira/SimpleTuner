@@ -10,7 +10,7 @@ from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
 from torchvision import transforms
 from transformers import CLIPImageProcessor, CLIPVisionModel, T5TokenizerFast, UMT5EncoderModel
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import (
     ModelTypes,
     PipelineConditioningImageEmbedder,
@@ -400,6 +400,8 @@ class Wan(VideoModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     I2V_FLAVOURS = frozenset(

@@ -9,7 +9,7 @@ from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 from transformers import AutoTokenizer, T5EncoderModel
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 
 logger = logging.getLogger(__name__)
@@ -257,6 +257,8 @@ class DeepFloydIF(ImageModelFoundation):
                 requires_cuda=True,
                 config={**_base_memory_config, "deepspeed_config": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
 

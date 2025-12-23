@@ -6,7 +6,7 @@ import torch
 from diffusers import AutoencoderKL
 from transformers import LlamaTokenizerFast, UMT5EncoderModel
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.auraflow.pipeline import AuraFlowPipeline
 from simpletuner.helpers.models.auraflow.pipeline_controlnet import AuraFlowControlNetModel, AuraFlowControlNetPipeline
 from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
@@ -206,6 +206,8 @@ class Auraflow(ImageModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):

@@ -7,7 +7,7 @@ import torch
 from diffusers.pipelines import LTXPipeline
 from transformers import AutoTokenizer, T5EncoderModel
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.ltxvideo import (
     apply_first_frame_protection,
@@ -177,6 +177,8 @@ class LTXVideo(VideoModelFoundation):
                 tradeoff_notes="Requires multi-GPU setup.",
                 config={**_base_memory_config, "deepspeed": "zero2"},
             ),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
         ]
 
     def apply_i2v_augmentation(self, batch):
