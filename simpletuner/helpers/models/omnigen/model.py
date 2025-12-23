@@ -3,13 +3,13 @@ from typing import Optional
 
 import torch
 from diffusers import AutoencoderKL, OmniGenPipeline
-from diffusers.models.transformers import OmniGenTransformer2DModel
 from diffusers.pipelines.omnigen.processor_omnigen import OmniGenMultiModalProcessor
 from transformers import AutoTokenizer
 
 from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.omnigen.collator import OmniGenTrainingCollator
+from simpletuner.helpers.models.omnigen.transformer import OmniGenTransformer2DModel
 
 logger = logging.getLogger(__name__)
 
