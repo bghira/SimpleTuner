@@ -789,6 +789,20 @@
                         Epoch-based checkpoints fire when an epoch finishes. Combine with step checkpoints for extra safety.
                     </div>
                 </div>
+
+                <div class="wizard-input-group mt-4">
+                    <label>Maximum checkpoints to keep:</label>
+                    <input type="number"
+                           class="form-control"
+                           x-model.number="answers.checkpoints_total_limit"
+                           @input="wizardNavigateToField('checkpoints_total_limit')"
+                           min="0"
+                           step="1"
+                           placeholder="5">
+                    <div class="form-text">
+                        Older checkpoints are deleted when this limit is exceeded. Set to 0 for unlimited.
+                    </div>
+                </div>
             </div>
 
             <!-- Step 7: Validations -->
