@@ -449,10 +449,47 @@ class QwenImageTransformerBlock(PatchableModule):
         self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
         self.txt_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
-    def _modulate(self, x, mod_params):
-        """Apply modulation to input tensor"""
+    def _modulate(self, x, mod_params, modulate_index: Optional[torch.Tensor] = None):
+        """Apply modulation to input tensor.
+
+        Args:
+            x: Input tensor of shape [B, L, D]
+            mod_params: Modulation parameters of shape [B, 3*D] or [2*B, 3*D] when using zero_cond_t
+            modulate_index: Optional tensor of shape [B, L] with values 0 or 1 indicating
+                which modulation set to use per token. When provided, mod_params is expected
+                to have doubled batch size [2*B, 3*D] where first half is for actual timestep
+                and second half is for t=0.
+        """
         shift, scale, gate = mod_params.chunk(3, dim=-1)
-        return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1), gate.unsqueeze(1)
+
+        if modulate_index is not None:
+            # mod_params has shape [2*actual_batch, dim] - split into two sets
+            actual_batch = shift.size(0) // 2
+            shift_0, shift_1 = shift[:actual_batch], shift[actual_batch:]
+            scale_0, scale_1 = scale[:actual_batch], scale[actual_batch:]
+            gate_0, gate_1 = gate[:actual_batch], gate[actual_batch:]
+
+            # modulate_index: [B, L] -> [B, L, 1] for broadcasting
+            index_expanded = modulate_index.unsqueeze(-1)
+
+            # Expand params to [B, 1, D] for broadcasting to [B, L, D]
+            shift_0_exp = shift_0.unsqueeze(1)
+            shift_1_exp = shift_1.unsqueeze(1)
+            scale_0_exp = scale_0.unsqueeze(1)
+            scale_1_exp = scale_1.unsqueeze(1)
+            gate_0_exp = gate_0.unsqueeze(1)
+            gate_1_exp = gate_1.unsqueeze(1)
+
+            # Select based on index: 0 = actual timestep, 1 = zero timestep
+            shift_result = torch.where(index_expanded == 0, shift_0_exp, shift_1_exp)
+            scale_result = torch.where(index_expanded == 0, scale_0_exp, scale_1_exp)
+            gate_result = torch.where(index_expanded == 0, gate_0_exp, gate_1_exp)
+        else:
+            shift_result = shift.unsqueeze(1)
+            scale_result = scale.unsqueeze(1)
+            gate_result = gate.unsqueeze(1)
+
+        return x * (1 + scale_result) + shift_result, gate_result
 
     def forward(
         self,
@@ -462,20 +499,28 @@ class QwenImageTransformerBlock(PatchableModule):
         temb: torch.Tensor,
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        modulate_index: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Get modulation parameters for both streams
-        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
-        txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
+        # Get modulation parameters for image stream
+        # When using zero_cond_t, temb has doubled batch size [2*B, D]
+        img_mod_params = self.img_mod(temb)  # [B, 6*dim] or [2*B, 6*dim]
+
+        # For text stream, use only the actual timestep embedding (first half when zero_cond_t)
+        if modulate_index is not None:
+            txt_temb = torch.chunk(temb, 2, dim=0)[0]
+        else:
+            txt_temb = temb
+        txt_mod_params = self.txt_mod(txt_temb)  # [B, 6*dim]
 
         # Split modulation parameters for norm1 and norm2
-        img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
+        img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim] or [2*B, 3*dim]
         txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
 
-        # Process image stream - norm1 + modulation
+        # Process image stream - norm1 + modulation (with optional per-token index selection)
         img_normed = self.img_norm1(hidden_states)
-        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1)
+        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1, modulate_index)
 
-        # Process text stream - norm1 + modulation
+        # Process text stream - norm1 + modulation (always uses actual timestep)
         txt_normed = self.txt_norm1(encoder_hidden_states)
         txt_modulated, txt_gate1 = self._modulate(txt_normed, txt_mod1)
 
@@ -501,9 +546,9 @@ class QwenImageTransformerBlock(PatchableModule):
         hidden_states = hidden_states + img_gate1 * img_attn_output
         encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
 
-        # Process image stream - norm2 + MLP
+        # Process image stream - norm2 + MLP (with optional per-token index selection)
         img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2)
+        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, modulate_index)
         img_mlp_output = self.img_mlp(img_modulated2)
         hidden_states = hidden_states + img_gate2 * img_mlp_output
 
@@ -710,6 +755,7 @@ class QwenImageTransformer2DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
+        modulate_index: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         The [`QwenTransformer2DModel`] forward method.
@@ -826,6 +872,8 @@ class QwenImageTransformer2DModel(
                     encoder_hidden_states_mask,
                     temb,
                     image_rotary_emb,
+                    None,  # joint_attention_kwargs
+                    modulate_index,
                 )
 
             else:
@@ -836,6 +884,7 @@ class QwenImageTransformer2DModel(
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     joint_attention_kwargs=attention_kwargs,
+                    modulate_index=modulate_index,
                 )
 
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
@@ -869,7 +918,12 @@ class QwenImageTransformer2DModel(
                 musubi_manager.stream_out(block)
 
         # Use only the image part (hidden_states) from the dual-stream blocks
-        hidden_states = self.norm_out(hidden_states, temb)
+        # When using zero_cond_t, use only the actual timestep embedding for final norm
+        if modulate_index is not None:
+            norm_temb = torch.chunk(temb, 2, dim=0)[0]
+        else:
+            norm_temb = temb
+        hidden_states = self.norm_out(hidden_states, norm_temb)
         output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:
