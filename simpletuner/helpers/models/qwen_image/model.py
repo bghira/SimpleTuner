@@ -1297,7 +1297,7 @@ class QwenImage(ImageModelFoundation):
             modulate_index = torch.tensor(
                 modulate_indices,
                 device=self.accelerator.device,
-                dtype=torch.int,
+                dtype=torch.long,
             )
 
             # Validate that the total number of tokens in modulate_indices matches
