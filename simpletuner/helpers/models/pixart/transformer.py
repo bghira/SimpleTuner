@@ -26,6 +26,7 @@ from diffusers.models.normalization import AdaLayerNormSingle
 from diffusers.utils import logging
 from torch import nn
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -118,6 +119,8 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         use_additional_conditions: Optional[bool] = None,
         caption_channels: Optional[int] = None,
         attention_type: Optional[str] = "default",
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
 
@@ -160,6 +163,8 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             use_additional_conditions=use_additional_conditions,
             caption_channels=caption_channels,
             attention_type=attention_type,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
 
         # Set some common variables used across the board.
@@ -223,6 +228,13 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             self.caption_projection = PixArtAlphaTextProjection(
                 in_features=self.config.caption_channels, hidden_size=self.inner_dim
             )
+
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     @property
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
@@ -451,8 +463,18 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             ]
 
         # 2. Blocks
+        # Musubi block swap activation
+        combined_blocks = list(self.transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -507,6 +529,8 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 routing_now = False
                 route_ptr += 1
 
+            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
             global_idx += 1
