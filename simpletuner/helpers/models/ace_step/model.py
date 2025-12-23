@@ -342,8 +342,11 @@ class ACEStep(AudioModelFoundation):
             subfolder="umt5-base",
             torch_dtype=self.config.weight_dtype,
         )
-        if move_to_device:
+        if move_to_device and not self._ramtorch_text_encoders_requested():
             text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(text_encoder, "text_encoder_1")
 
         self.text_encoders = [text_encoder]
         self.text_encoder_1 = text_encoder
