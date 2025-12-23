@@ -865,15 +865,28 @@ class QwenImageTransformer2DModel(
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing:
+
+                def create_custom_forward(module, mod_idx):
+                    def custom_forward(*inputs):
+                        return module(
+                            hidden_states=inputs[0],
+                            encoder_hidden_states=inputs[1],
+                            encoder_hidden_states_mask=inputs[2],
+                            temb=inputs[3],
+                            image_rotary_emb=inputs[4],
+                            joint_attention_kwargs=None,
+                            modulate_index=mod_idx,
+                        )
+
+                    return custom_forward
+
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
-                    block,
+                    create_custom_forward(block, modulate_index),
                     hidden_states,
                     encoder_hidden_states,
                     encoder_hidden_states_mask,
                     temb,
                     image_rotary_emb,
-                    None,  # joint_attention_kwargs
-                    modulate_index,
                 )
 
             else:
