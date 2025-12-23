@@ -3493,10 +3493,32 @@ class Trainer:
         prepare_targets.append(self.train_dataloaders[0])
         prepared_labels.append("train_dataloader")
 
-        results = self.accelerator.prepare(*prepare_targets)
+        # Determine if we should skip automatic device placement for the model.
+        # This is necessary when using memory optimization techniques that keep
+        # parts of the model on CPU (block swap, ramtorch, group offload).
+        musubi_block_swap_active = (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0
+        ramtorch_enabled = getattr(self.config, "ramtorch", False)
+        group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
+        skip_model_device_placement = musubi_block_swap_active or ramtorch_enabled or group_offload_requested
+        if skip_model_device_placement:
+            logger.info(
+                "Skipping automatic device placement for primary model during accelerator.prepare() "
+                "(musubi_block_swap=%s, ramtorch=%s, group_offload=%s)",
+                musubi_block_swap_active,
+                ramtorch_enabled,
+                group_offload_requested,
+            )
+        device_placement = [
+            (False if label == "primary_model" and skip_model_device_placement else True) for label in prepared_labels
+        ]
+
+        results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
         for label, prepared in zip(prepared_labels, results):
             if label == "primary_model":
                 self.model.set_prepared_model(prepared)
+                # If we skipped device placement for block swap, move the model incrementally
+                if musubi_block_swap_active:
+                    self._move_model_with_block_swap(prepared)
             elif label == "lr_scheduler":
                 self.lr_scheduler = prepared
             elif label == "optimizer":
@@ -3711,6 +3733,16 @@ class Trainer:
         checkpoint_dir = os.path.join(self.config.output_dir, path)
         logger.info(f"Resuming from checkpoint {checkpoint_dir}")
         self.accelerator.load_state(checkpoint_dir)
+
+        # Re-apply block swap device placement after checkpoint load
+        # (checkpoint may have restored model to GPU, overwriting our block swap setup)
+        musubi_block_swap_active = (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0
+        if musubi_block_swap_active:
+            prepared_model = self.model.get_trained_component(unwrap_model=False)
+            if prepared_model is not None:
+                logger.info("Re-applying block swap device placement after checkpoint load")
+                self._move_model_with_block_swap(prepared_model)
+
         AttentionBackendController.on_load_checkpoint(checkpoint_dir)
         if getattr(self, "distiller", None) is not None:
             logger.info(f"Loading DCM checkpoint states..")
@@ -3931,6 +3963,74 @@ class Trainer:
 
     def disable_sageattention(self):
         AttentionBackendController.restore_default()
+
+    def _move_model_with_block_swap(self, wrapped_model):
+        """
+        Move model to GPU incrementally while respecting block swap configuration.
+        This avoids OOM by moving modules one at a time and immediately offloading
+        managed blocks to CPU.
+        """
+        target_device = self.accelerator.device
+        blocks_to_swap = getattr(self.config, "musubi_blocks_to_swap", 0) or 0
+
+        # Unwrap the model to get the actual transformer
+        model = wrapped_model
+        while hasattr(model, "module"):
+            model = model.module
+
+        # Get the block swap manager if it exists
+        block_swap_manager = getattr(model, "_musubi_block_swap", None)
+
+        # Collect all transformer blocks in the same order as the musubi manager
+        # For Kandinsky: text_transformer_blocks + visual_transformer_blocks
+        # For Flux: transformer_blocks + single_transformer_blocks
+        text_blocks = list(getattr(model, "text_transformer_blocks", []) or [])
+        visual_blocks = list(getattr(model, "visual_transformer_blocks", []) or [])
+        # For Flux-style: double blocks first, then single blocks (matching combined_blocks order)
+        double_blocks = list(getattr(model, "transformer_blocks", []) or [])
+        single_blocks = list(getattr(model, "single_transformer_blocks", []) or [])
+
+        all_blocks = text_blocks + visual_blocks + double_blocks + single_blocks
+        total_blocks = len(all_blocks)
+
+        # Determine which block indices are managed by block swap
+        managed_indices = set()
+        if block_swap_manager is not None:
+            managed_indices = block_swap_manager.block_indices
+        elif blocks_to_swap > 0 and total_blocks > 0:
+            # If no manager yet, compute which blocks would be managed
+            # Block swap typically manages the last N blocks
+            managed_indices = set(range(max(0, total_blocks - blocks_to_swap), total_blocks))
+
+        logger.info(
+            "Moving model to %s with block swap: %d total blocks, %d managed (staying on CPU)",
+            target_device,
+            total_blocks,
+            len(managed_indices),
+        )
+
+        # Move non-block children first (embeddings, projections, output layers, etc.)
+        block_module_names = {
+            "text_transformer_blocks",
+            "visual_transformer_blocks",
+            "single_transformer_blocks",
+            "transformer_blocks",
+        }
+        for name, child in model.named_children():
+            if name not in block_module_names:
+                child.to(target_device)
+                torch.cuda.empty_cache()
+
+        # Move non-managed blocks to GPU, keep managed blocks on CPU
+        for idx, block in enumerate(all_blocks):
+            if idx in managed_indices:
+                # Keep on CPU - block swap will stream it in during forward
+                logger.debug("Block %d: keeping on CPU (managed by block swap)", idx)
+            else:
+                block.to(target_device)
+                torch.cuda.empty_cache()
+
+        logger.info("Model moved to %s with block swap active", target_device)
 
     def move_models(self, destination: str = "accelerator"):
         is_accelerator_target = destination == "accelerator"
