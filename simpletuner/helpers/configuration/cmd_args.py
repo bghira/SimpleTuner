@@ -709,7 +709,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 )
 
     if quantize_via_pipeline and not (
-        base_precision in pipeline_quant_precisions or args.quantization_config is not None or is_gguf_checkpoint
+        base_precision in pipeline_quant_precisions
+        or base_precision == "no_change"
+        or args.quantization_config is not None
+        or is_gguf_checkpoint
     ):
         raise ValueError(
             "quantize_via=pipeline requires a pipeline-capable base_model_precision, a quantization_config, or a GGUF checkpoint."
