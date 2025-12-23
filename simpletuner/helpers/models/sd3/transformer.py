@@ -27,6 +27,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -88,6 +89,8 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         dual_attention_layers: Tuple[int, ...] = (),  # () for sd3.0; (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12) for sd3.5
         qk_norm: Optional[str] = None,
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         default_out_channels = in_channels
@@ -107,6 +110,8 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
             dual_attention_layers=dual_attention_layers,
             qk_norm=qk_norm,
             enable_time_sign_embed=enable_time_sign_embed,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -151,6 +156,13 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
@@ -408,8 +420,18 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                 for r in routes
             ]
 
+        # Musubi block swap activation
+        combined_blocks = list(self.transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -464,8 +486,6 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                 interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
                 hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
 
-            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
-            capture_idx += 1
             # TREAD: END the current route?
             if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
                 hidden_states = router.end_route(
@@ -476,6 +496,10 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                 routing_now = False
                 route_ptr += 1
 
+            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
             global_idx += 1
 
         hidden_states = self.norm_out(hidden_states, temb)
