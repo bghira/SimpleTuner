@@ -227,10 +227,8 @@ class QwenImage(ImageModelFoundation):
         pipeline_classes = dict(self.PIPELINE_CLASSES)
         if self._is_edit_v1_flavour():
             pipeline_classes[PipelineTypes.TEXT2IMG] = self.EDIT_PIPELINE_CLASS
-        elif self._is_edit_v2_plus_flavour():
-            # edit-v2+ and edit-v3 use the same pipeline as edit-v2
-            pipeline_classes[PipelineTypes.TEXT2IMG] = self.EDIT_PLUS_PIPELINE_CLASS
-        elif self._is_edit_v2_flavour():
+        elif self._is_edit_v2_plus_flavour() or self._is_edit_v2_flavour():
+            # edit-v2+, edit-v3, and edit-v2 use the same pipeline
             pipeline_classes[PipelineTypes.TEXT2IMG] = self.EDIT_PLUS_PIPELINE_CLASS
         self.PIPELINE_CLASSES = pipeline_classes
         self._conditioning_image_embedder = None
