@@ -25,6 +25,7 @@ from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from torch import nn
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -334,6 +335,8 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         norm_eps: float = 1e-6,
         interpolation_scale: Optional[int] = None,
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
 
@@ -371,6 +374,8 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             norm_eps=norm_eps,
             interpolation_scale=interpolation_scale,
             enable_time_sign_embed=enable_time_sign_embed,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
 
         out_channels = effective_out_channels
@@ -433,6 +438,13 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         # tread support
         self._tread_router = None
         self._tread_routes = None
+
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
         """Set TREAD router and routes for token reduction during training."""
@@ -603,8 +615,18 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
 
+        # Musubi block swap activation
+        combined_blocks = list(self.transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         capture_idx = 0
         for i, block in enumerate(self.transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(i):
+                musubi_manager.stream_in(block, hidden_states.device)
             mask_info = None
             original_hidden_states = None
 
@@ -665,6 +687,8 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             if mask_info is not None and router is not None:
                 hidden_states = router.end_route(hidden_states, mask_info, original_x=original_hidden_states)
 
+            if musubi_offload_active and musubi_manager.is_managed_block(i):
+                musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
         tokens = hidden_states.shape[1]

@@ -1470,6 +1470,7 @@ class TestTrainer(unittest.TestCase):
             global_resume_step=1,
             num_train_epochs=0,
             max_train_steps=100,
+            musubi_blocks_to_swap=0,
         )
         trainer.accelerator = Mock(num_processes=1)
         trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
@@ -1509,6 +1510,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler="constant",
             is_schedulefree=False,
             learning_rate=0.001,
+            musubi_blocks_to_swap=0,
         )
         trainer.accelerator = Mock(num_processes=1)
         trainer.accelerator.wait_for_everyone = Mock()
@@ -1569,6 +1571,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler="constant",
             is_schedulefree=False,
             learning_rate=0.001,
+            musubi_blocks_to_swap=0,
         )
         trainer.accelerator = Mock(num_processes=1)
         trainer.accelerator.wait_for_everyone = Mock()

@@ -29,6 +29,7 @@ from diffusers.models.normalization import AdaLayerNormSingle, RMSNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from torch import nn
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -553,6 +554,8 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         qk_norm: Optional[str] = "rms_norm_across_heads",
         rope_max_seq_len: int = 1024,
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
 
@@ -607,6 +610,13 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         self.proj_out = nn.Linear(inner_dim, math.prod(patch_size) * out_channels)
 
         self.gradient_checkpointing = False
+
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def forward(
         self,
@@ -696,9 +706,19 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         captured_frame_hidden: Optional[torch.Tensor] = None
 
         # 2. Transformer blocks
+        # Musubi block swap activation
+        combined_blocks = list(self.transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         capture_idx = 0
         if torch.is_grad_enabled() and self.gradient_checkpointing:
             for index_block, block in enumerate(self.transformer_blocks):
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_in(block, hidden_states.device)
                 hidden_states = self._gradient_checkpointing_func(
                     block,
                     hidden_states,
@@ -722,6 +742,8 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                     )
                     if hidden_state_layer is not None and index_block == hidden_state_layer:
                         output_hidden_states = False
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_out(block)
                 if hidden_states_buffer is not None:
                     tokens_view = hidden_states.reshape(
                         batch_size,
@@ -736,6 +758,8 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
 
         else:
             for index_block, block in enumerate(self.transformer_blocks):
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_in(block, hidden_states.device)
                 hidden_states = block(
                     hidden_states,
                     attention_mask,
@@ -758,6 +782,8 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                     )
                     if hidden_state_layer is not None and index_block == hidden_state_layer:
                         output_hidden_states = False
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_out(block)
                 if hidden_states_buffer is not None:
                     tokens_view = hidden_states.reshape(
                         batch_size,
