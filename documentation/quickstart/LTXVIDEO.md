@@ -373,7 +373,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "repeats": 0,
     "video": {
         "num_frames": 125,
-        "min_frames": 125
+        "min_frames": 125,
+        "bucket_strategy": "aspect_ratio"
     }
   },
   {
@@ -392,13 +393,17 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
 > See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 
 - In the `video` subsection, we have the following keys we can set:
-  - `num_frames` (optional, int) is how many seconds of data we'll train on.
+  - `num_frames` (optional, int) is how many frames of data we'll train on.
     - At 25 fps, 125 frames is 5 seconds of video, standard output. This should be your target.
   - `min_frames` (optional, int) determines the minimum length of a video that will be considered for training.
     - This should be at least equal to `num_frames`. Not setting it ensures it'll be equal.
   - `max_frames` (optional, int) determines the maximum length of a video that will be considered for training.
   - `is_i2v` (optional, bool) determines whether i2v training will be done on a dataset.
     - This is set to True by default for LTX. You can disable it, however.
+  - `bucket_strategy` (optional, string) determines how videos are grouped into buckets:
+    - `aspect_ratio` (default): Group by spatial aspect ratio only (e.g., `1.78`, `0.75`).
+    - `resolution_frames`: Group by resolution and frame count in `WxH@F` format (e.g., `768x512@125`). Useful for mixed-resolution/duration datasets.
+  - `frame_interval` (optional, int) when using `resolution_frames`, round frame counts to this interval. Set this to your model's required frame count factor.
 
 Then, create a `datasets` directory:
 

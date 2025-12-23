@@ -262,10 +262,18 @@ class DiscoveryMetadataBackend(MetadataBackend):
             image_metadata.update(cur_image_metadata)
             logger.debug(f"Image {image_path_str} has metadata: {cur_image_metadata}")
 
-            aspect_ratio_key = str(prepared_sample.aspect_ratio)
-            if aspect_ratio_key not in aspect_ratio_bucket_indices:
-                aspect_ratio_bucket_indices[aspect_ratio_key] = []
-            aspect_ratio_bucket_indices[aspect_ratio_key].append(image_path_str)
+            # Determine bucket key based on strategy
+            is_video = "num_frames" in image_metadata
+            if is_video and self.bucket_strategy == "resolution_frames":
+                target_w, target_h = prepared_sample.target_size
+                num_frames = image_metadata["num_frames"]
+                bucket_key, rounded_frames = self._compute_video_bucket(target_w, target_h, num_frames)
+                image_metadata["bucket_frames"] = rounded_frames
+            else:
+                bucket_key = str(prepared_sample.aspect_ratio)
+            if bucket_key not in aspect_ratio_bucket_indices:
+                aspect_ratio_bucket_indices[bucket_key] = []
+            aspect_ratio_bucket_indices[bucket_key].append(image_path_str)
 
             if metadata_updates is not None:
                 metadata_updates[image_path_str] = image_metadata
