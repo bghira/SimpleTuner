@@ -183,6 +183,78 @@ class SaveHookManager:
                 return cleaned
         return None
 
+    def _collect_trigger_words(self) -> list[str]:
+        """
+        Collect instance_prompt values from all data backends as trigger words.
+        """
+        trigger_words = []
+        seen = set()
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            config = backend.get("config", {})
+            instance_prompt = config.get("instance_prompt")
+            if instance_prompt and instance_prompt not in seen:
+                trigger_words.append(instance_prompt)
+                seen.add(instance_prompt)
+        return trigger_words
+
+    def _build_tag_frequency_from_captions(self) -> dict[str, dict[str, int]]:
+        """
+        Scan all captions from text embed caches, split into tags, and build frequency dict.
+        Returns dict of dataset_id -> {tag: count}.
+        """
+        import re
+
+        ss_tag_frequency = {}
+
+        for backend_id, backend in StateTracker.get_data_backends().items():
+            text_embed_cache = backend.get("text_embed_cache")
+            if text_embed_cache is None:
+                continue
+
+            prompt_records = getattr(text_embed_cache, "prompt_records", [])
+            if not prompt_records:
+                continue
+
+            tag_counts = {}
+            for record in prompt_records:
+                prompt = record.get("prompt", "")
+                if not prompt or prompt == "__caption_dropout__":
+                    continue
+
+                # Split by comma for booru-style tags, or keep as single trigger word
+                # Also handle newlines and other common separators
+                tags = re.split(r"[,\n]+", prompt)
+                for tag in tags:
+                    tag = tag.strip()
+                    if tag:
+                        tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+            if tag_counts:
+                ss_tag_frequency[backend_id] = tag_counts
+
+        return ss_tag_frequency
+
+    def _build_trigger_words_metadata(self) -> dict[str, str]:
+        """
+        Build trigger words metadata in formats compatible with ComfyUI extensions.
+        Returns metadata dict with ss_tag_frequency (for ComfyUI-Lora-Auto-Trigger-Words)
+        and trained_words (instance_prompts as comma-separated list).
+        """
+        metadata = {}
+
+        # trained_words: simple comma-separated list of instance_prompts
+        trigger_words = self._collect_trigger_words()
+        if trigger_words:
+            metadata["trained_words"] = ", ".join(trigger_words)
+
+        # ss_tag_frequency: JSON dict of dataset -> tag -> count
+        # Built from actual caption content for full tag frequency data
+        ss_tag_frequency = self._build_tag_frequency_from_captions()
+        if ss_tag_frequency:
+            metadata["ss_tag_frequency"] = json.dumps(ss_tag_frequency)
+
+        return metadata
+
     def _build_modelspec_metadata(self, checkpoint_dir: str | None = None) -> dict[str, str]:
         metadata = {"modelspec.sai_model_spec": MODEL_SPEC_VERSION}
 
@@ -203,6 +275,10 @@ class SaveHookManager:
         description = getattr(self.model, "MODEL_DESCRIPTION", None)
         if description:
             metadata["modelspec.description"] = str(description)
+
+        # Add trigger words metadata for ComfyUI compatibility
+        trigger_words_metadata = self._build_trigger_words_metadata()
+        metadata.update(trigger_words_metadata)
 
         return {k: str(v) for k, v in metadata.items() if v is not None}
 
