@@ -18,6 +18,7 @@ from diffusers.models.normalization import AdaLayerNormZero, FP32LayerNorm
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
 
@@ -350,6 +351,8 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         out_channels: int = 4,
         pos_embed_max_size: int = 1024,
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         default_out_channels = in_channels
@@ -367,6 +370,8 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             out_channels=effective_out_channels,
             pos_embed_max_size=pos_embed_max_size,
             enable_time_sign_embed=enable_time_sign_embed,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -423,6 +428,14 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+
+        total_layers = num_mmdit_layers + num_single_dit_layers
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=total_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_gradient_checkpointing_interval(self, interval: int):
         """
@@ -658,8 +671,18 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
         total_blocks = len(self.joint_transformer_blocks) + len(self.single_transformer_blocks)
         capture_idx = 0
 
+        # Musubi block swap activation
+        combined_blocks = list(self.joint_transformer_blocks) + list(self.single_transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         # MMDiT blocks.
         for index_block, block in enumerate(self.joint_transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -712,8 +735,6 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                 interval_control = total_blocks // len(block_controlnet_hidden_states)
                 hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
 
-            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
-            capture_idx += 1
             # TREAD: END the current route?
             if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
                 hidden_states = router.end_route(
@@ -724,6 +745,10 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                 routing_now = False
                 route_ptr += 1
 
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+            capture_idx += 1
             global_idx += 1
 
         # Single DiT blocks that combine the `hidden_states` (image) and `encoder_hidden_states` (text)
@@ -733,6 +758,9 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
             for index_block, block in enumerate(self.single_transformer_blocks):
                 actual_index = len(self.joint_transformer_blocks) + index_block
+
+                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                    musubi_manager.stream_in(block, combined_hidden_states.device)
 
                 # TREAD: START a route?
                 if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
@@ -841,6 +869,8 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     routing_now = False
                     route_ptr += 1
 
+                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                    musubi_manager.stream_out(block)
                 global_idx += 1
 
             hidden_states = combined_hidden_states[:, encoder_seq_len:]
