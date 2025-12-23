@@ -15,7 +15,15 @@ from diffusers.models.attention_processor import Attention
 from PIL import Image
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
     ModelTypes,
@@ -196,29 +204,16 @@ class QwenImage(ImageModelFoundation):
                 requires_min_system_ram_gb=128,
                 config={**_base_memory_config, "musubi_blocks_to_swap": 50},
             ),
-            # DeepSpeed presets (Advanced tab)
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO Stage 1",
-                description="Shards optimizer states across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero1"},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO Stage 2",
-                description="Shards optimizer states and gradients across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
-                tradeoff_speed="Moderate communication overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero2"},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
     def __init__(self, config: dict, accelerator):

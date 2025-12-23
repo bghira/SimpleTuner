@@ -82,6 +82,12 @@ class MusubiBlockSwapManager:
 
     def stream_in(self, block: nn.Module, device: torch.device):
         self._move_module(block, device)
+        # Verify the move succeeded
+        if not _module_on_device(block, device):
+            self._logger.error(
+                "stream_in failed: block not fully on %s after move. " "Some parameters may still be on wrong device.",
+                device,
+            )
 
     def stream_out(self, block: nn.Module):
         self._move_module(block, self.offload_device)

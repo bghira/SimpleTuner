@@ -233,6 +233,59 @@ TorchAO includes generally-available 4bit and 8bit optimisers: `ao-adamw8bit`, `
 
 It also provides two optimisers that are directed toward Hopper (H100 or better) users: `ao-adamfp8`, and `ao-adamwfp8`
 
+#### SDNQ (SD.Next Quantization Engine)
+
+[SDNQ](https://github.com/disty0/sdnq) is a quantization library optimized for training that works across all platforms: AMD (ROCm), Apple (MPS), and NVIDIA (CUDA). It provides quantized training with stochastic rounding and quantized optimizer states for memory efficiency.
+
+##### Recommended Precision Levels
+
+**For full finetuning** (model weights are updated):
+- `uint8-sdnq` - Best balance of memory savings and training quality
+- `uint16-sdnq` - Higher precision for maximum quality (e.g., Stable Cascade)
+- `int16-sdnq` - Signed 16-bit alternative
+- `fp16-sdnq` - Quantized FP16, maximum precision with SDNQ benefits
+
+**For LoRA training** (frozen base model weights):
+- `int8-sdnq` - Signed 8-bit, good general purpose choice
+- `int6-sdnq`, `int5-sdnq` - Lower precision, smaller memory
+- `uint5-sdnq`, `uint4-sdnq`, `uint3-sdnq`, `uint2-sdnq` - Aggressive compression
+
+**Note:** `int7-sdnq` is available but not recommended (slow and not much smaller than int8).
+
+**Important:** Below 5-bit precision, SDNQ automatically enables SVD (Singular Value Decomposition) with 8 steps to maintain quality. SVD takes longer to quantize and is non-deterministic, which is why Disty0 provides pre-quantized SVD models on HuggingFace. SVD adds compute overhead during training, so avoid for full finetuning where weights are actively updated.
+
+**Key features:**
+- Cross-platform: Works identically on AMD, Apple, and NVIDIA hardware
+- Training-optimized: Uses stochastic rounding to reduce quantization error accumulation
+- Memory efficient: Supports quantized optimizer state buffers
+- Decoupled matmul: Weight precision and matmul precision are independent (INT8/FP8/FP16 matmul available)
+
+##### SDNQ Optimisers
+
+SDNQ includes optimizers with optional quantized state buffers for additional memory savings:
+
+- `sdnq-adamw` - AdamW with quantized state buffers (uint8, group_size=32)
+- `sdnq-adamw+no_quant` - AdamW without quantized states (for comparison)
+- `sdnq-adafactor` - Adafactor with quantized state buffers
+- `sdnq-came` - CAME optimizer with quantized state buffers
+- `sdnq-lion` - Lion optimizer with quantized state buffers
+- `sdnq-muon` - Muon optimizer with quantized state buffers
+- `sdnq-muon+quantized_matmul` - Muon with INT8 matmul in zeropower computation
+
+All SDNQ optimizers use stochastic rounding by default and can be configured with `--optimizer_config` for custom settings like `use_quantized_buffers=false` to disable state quantization.
+
+**Muon-specific options:**
+- `use_quantized_matmul` - Enable INT8/FP8/FP16 matmul in zeropower_via_newtonschulz5
+- `quantized_matmul_dtype` - Matmul precision: `int8` (consumer GPUs), `fp8` (datacenter), `fp16`
+- `zeropower_dtype` - Precision for zeropower computation (ignored when `use_quantized_matmul=True`)
+- Prefix args with `muon_` or `adamw_` to set different values for Muon vs AdamW fallback
+
+**Pre-quantized models:** Disty0 provides pre-quantized uint4 SVD models at [huggingface.co/collections/Disty0/sdnq](https://huggingface.co/collections/Disty0/sdnq). Load these normally, then convert with `convert_sdnq_model_to_training()` after importing SDNQ (SDNQ must be imported before loading to register with Diffusers).
+
+**Note on checkpointing:** SDNQ training models are saved in both native PyTorch format (`.pt`) for training resumption and safetensors format for inference. The native format is required for proper training resumption as SDNQ's `SDNQTensor` class uses custom serialization.
+
+**Disk space tip:** To save disk space, you can keep only the quantized weights and use SDNQ's [dequantize_sdnq_training.py](https://github.com/Disty0/sdnq/blob/main/scripts/dequantize_sdnq_training.py) script to dequantize when needed for inference.
+
 ### `--quantization_config`
 
 - **What**: JSON object or file path describing Diffusers `quantization_config` overrides when using `--quantize_via=pipeline`.

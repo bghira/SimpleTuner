@@ -81,6 +81,22 @@ except:
             "Could not load prodigyplus library. Prodigy will not be available.",
         )
 
+is_sdnq_available = False
+try:
+    from sdnq.optim import CAME as SDNQCAME
+    from sdnq.optim import Adafactor as SDNQAdafactor
+    from sdnq.optim import AdamW as SDNQAdamW
+    from sdnq.optim import Lion as SDNQLion
+    from sdnq.optim import Muon as SDNQMuon
+
+    is_sdnq_available = True
+except:
+    log_level = logging.DEBUG if should_log() else logging.DEBUG
+    logger.log(
+        log_level,
+        "Could not load sdnq library. SDNQ optimizers will not be available.",
+    )
+
 
 optimizer_choices = {
     "torch-adam": {
@@ -709,6 +725,115 @@ if is_prodigy_available:
                 },
                 "class": prodigyplus.prodigy_plus_schedulefree.ProdigyPlusScheduleFree,
             }
+        }
+    )
+
+if is_sdnq_available:
+    optimizer_choices.update(
+        {
+            "sdnq-adamw": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.95),
+                    "weight_decay": 0.01,
+                    "clip_threshold": (1.0, 1e-3, 1e-3),
+                    "use_stochastic_rounding": True,
+                    "use_stochastic_buffers": True,
+                    "use_quantized_buffers": True,
+                    "quantized_buffers_dtype": "uint8",
+                    "quantized_buffers_group_size": 32,
+                },
+                "class": SDNQAdamW,
+            },
+            "sdnq-adamw+no_quant": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.95),
+                    "weight_decay": 0.01,
+                    "clip_threshold": (1.0, 1e-3, 1e-3),
+                    "use_stochastic_rounding": True,
+                    "use_stochastic_buffers": False,
+                    "use_quantized_buffers": False,
+                },
+                "class": SDNQAdamW,
+            },
+            "sdnq-adafactor": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.95),
+                    "weight_decay": 0.01,
+                    "clip_threshold": (1.0, 1e-3, 1e-3),
+                    "use_stochastic_rounding": True,
+                    "use_stochastic_buffers": True,
+                    "use_quantized_buffers": True,
+                    "quantized_buffers_dtype": "uint8",
+                    "quantized_buffers_group_size": 32,
+                },
+                "class": SDNQAdafactor,
+            },
+            "sdnq-came": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.95),
+                    "weight_decay": 0.01,
+                    "clip_threshold": (1.0, 1e-3, 1e-3),
+                    "use_stochastic_rounding": True,
+                    "use_stochastic_buffers": True,
+                    "use_quantized_buffers": True,
+                    "quantized_buffers_dtype": "uint8",
+                    "quantized_buffers_group_size": 32,
+                },
+                "class": SDNQCAME,
+            },
+            "sdnq-lion": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.01,
+                    "clip_threshold": (1.0, 1e-3, 1e-3),
+                    "use_stochastic_rounding": True,
+                    "use_stochastic_buffers": True,
+                    "use_quantized_buffers": True,
+                    "quantized_buffers_dtype": "uint8",
+                    "quantized_buffers_group_size": 32,
+                },
+                "class": SDNQLion,
+            },
+            "sdnq-muon": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.95),
+                    "weight_decay": 0.01,
+                    "clip_threshold": (1.0, 1e-3, 1e-3),
+                    "use_stochastic_rounding": True,
+                    "use_stochastic_buffers": True,
+                    "use_quantized_buffers": True,
+                    "quantized_buffers_dtype": "uint8",
+                    "quantized_buffers_group_size": 32,
+                    # Muon-specific options for quantized matmul in zeropower_via_newtonschulz5
+                    "use_quantized_matmul": False,
+                    "quantized_matmul_dtype": "int8",
+                    "zeropower_dtype": None,  # Uses bf16 if None
+                },
+                "class": SDNQMuon,
+            },
+            "sdnq-muon+quantized_matmul": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.95),
+                    "weight_decay": 0.01,
+                    "clip_threshold": (1.0, 1e-3, 1e-3),
+                    "use_stochastic_rounding": True,
+                    "use_stochastic_buffers": True,
+                    "use_quantized_buffers": True,
+                    "quantized_buffers_dtype": "uint8",
+                    "quantized_buffers_group_size": 32,
+                    # Enable quantized matmul in zeropower (ignores zeropower_dtype)
+                    "use_quantized_matmul": True,
+                    "quantized_matmul_dtype": "int8",
+                },
+                "class": SDNQMuon,
+            },
         }
     )
 

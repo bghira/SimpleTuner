@@ -6,7 +6,15 @@ import torch
 from diffusers import AutoencoderKL, SD3ControlNetModel
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.sd3.controlnet import StableDiffusion3ControlNetPipeline
 from simpletuner.helpers.models.sd3.pipeline import StableDiffusion3Img2ImgPipeline, StableDiffusion3Pipeline
@@ -250,29 +258,16 @@ class SD3(ImageModelFoundation):
                 requires_min_system_ram_gb=64,
                 config={**_base_memory_config, "musubi_blocks_to_swap": 15},
             ),
-            # DeepSpeed presets (Advanced tab)
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO Stage 1",
-                description="Shards optimizer states across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Not compatible with FSDP.",
-                config={**_base_memory_config, "deepspeed_config": "zero1"},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO Stage 2",
-                description="Shards optimizer states and gradients across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
-                tradeoff_speed="Moderate communication overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero2"},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
     def controlnet_init(self):

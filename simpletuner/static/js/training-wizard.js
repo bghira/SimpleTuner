@@ -61,7 +61,7 @@ function trainingWizardComponent() {
         selectedMemoryTab: 'basic',
         selectedPresets: {},            // Map of backend -> selected level
         customBlockSwapCount: 0,        // For Musubi slider
-        memoryQuantLevel: 'int8-torchao', // Quantization level for memory step: 'disabled', 'int8-torchao', 'nf4-bnb', 'int4-quanto'
+        memoryQuantLevel: 'int8-torchao', // Quantization level for memory step: 'disabled', 'int8-torchao', 'int8-sdnq', 'nf4-bnb', 'int4-quanto'
 
         answers: {
             model_family: null,
