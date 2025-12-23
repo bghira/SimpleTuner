@@ -7,7 +7,15 @@ import torch
 from diffusers import AutoencoderKL
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
     ModelTypes,
@@ -157,31 +165,16 @@ class LongCatImage(ImageModelFoundation):
                 requires_min_system_ram_gb=64,
                 config={**_base_memory_config, "musubi_blocks_to_swap": 42},
             ),
-            # DeepSpeed presets (Advanced tab)
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO-1",
-                description="Optimizer state partitioning across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer VRAM by ~50%",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed_stage": 1},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO-2",
-                description="Optimizer + gradient partitioning across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer + gradient VRAM by ~60%",
-                tradeoff_speed="Slight communication overhead",
-                tradeoff_notes="Requires multi-GPU setup with fast interconnect.",
-                config={**_base_memory_config, "deepspeed_stage": 2},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
             # SDNQ presets (works on AMD, Apple, NVIDIA)
             *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
     TEXT_ENCODER_CONFIGURATION = {

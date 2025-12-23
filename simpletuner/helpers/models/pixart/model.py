@@ -6,7 +6,15 @@ from diffusers import AutoencoderKL
 from peft.utils import get_peft_model_state_dict
 from transformers import AutoTokenizer, T5EncoderModel
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset, get_sdnq_presets
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.pixart.pipeline import (
     PixArtSigmaControlNetLoraLoaderMixin,
@@ -507,33 +515,16 @@ class PixartSigma(ImageModelFoundation):
                     "ramtorch_target_modules": "*",
                 },
             ),
-            # Advanced tab - DeepSpeed options
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO Stage 1",
-                description="Shards optimizer states across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer memory by ~75% per GPU",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Not compatible with FSDP.",
-                requires_cuda=True,
-                config={**_base_memory_config, "deepspeed_config": "zero1"},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO Stage 2",
-                description="Shards optimizer states and gradients across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces memory by ~85% per GPU",
-                tradeoff_speed="Moderate overhead from gradient sync",
-                tradeoff_notes="Not compatible with FSDP.",
-                requires_cuda=True,
-                config={**_base_memory_config, "deepspeed_config": "zero2"},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
             # SDNQ presets (works on AMD, Apple, NVIDIA)
             *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
 

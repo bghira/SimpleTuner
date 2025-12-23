@@ -670,6 +670,15 @@ class MemoryPresetsSession:
                 # Clear custom block swap when selecting RamTorch or Group Offload
                 if backend_name in {"RAMTORCH", "GROUP_OFFLOAD"}:
                     self.custom_block_swap_count = 0
+            # If preset has a group, deselect other presets in the same group
+            if preset.group:
+                for other_preset in self.presets:
+                    if (
+                        other_preset.group == preset.group
+                        and other_preset.backend.name != backend_name
+                        and other_preset.backend.name in self.selected_presets
+                    ):
+                        del self.selected_presets[other_preset.backend.name]
             # Select this preset
             self.selected_presets[backend_name] = preset.level
 

@@ -166,6 +166,9 @@ async def get_acceleration_presets(model_family: str):
                     "tradeoff_notes": p.tradeoff_notes,
                     "requires_cuda": p.requires_cuda,
                     "requires_min_system_ram_gb": p.requires_min_system_ram_gb,
+                    "requires_model_type": p.requires_model_type,
+                    "group": p.group,
+                    "display_group": p.display_group,
                     "config": p.config,
                 }
                 for p in raw_presets
