@@ -15,6 +15,8 @@ from diffusers.models.transformers.transformer_flux import (
     FluxTransformerBlock,
 )
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+
 logger = get_logger(__name__, log_level="INFO")
 
 
@@ -72,6 +74,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         pooled_projection_dim: int = 3584,
         axes_dims_rope: List[int] = [16, 56, 56],
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         self.out_channels = in_channels
@@ -114,6 +118,14 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         self.use_checkpoint = [True] * num_layers
         self.use_single_checkpoint = [True] * num_single_layers
+
+        total_layers = num_layers + num_single_layers
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=total_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def forward(
         self,
@@ -160,8 +172,18 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         ids = torch.cat((txt_ids, img_ids), dim=0)
         image_rotary_emb = self.pos_embed(ids)
 
+        # Musubi block swap activation
+        combined_blocks = list(self.transformer_blocks) + list(self.single_transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_checkpoint[index_block]:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -177,10 +199,14 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                 )
+            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
+                musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
 
         for index_block, block in enumerate(self.single_transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_single_checkpoint[index_block]:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     block,
@@ -196,6 +222,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                 )
+            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
+                musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
 
