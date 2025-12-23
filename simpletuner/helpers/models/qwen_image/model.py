@@ -65,7 +65,7 @@ class QwenImage(ImageModelFoundation):
     EDIT_V2_FLAVOURS = frozenset({"edit-v2"})
     EDIT_V2_PLUS_FLAVOURS = frozenset({"edit-v2+"})
     EDIT_V3_FLAVOURS = frozenset({"edit-v3"})
-    # Flavors that use zero conditional timestep for source images
+    # Flavors that use zero conditional timestep for control/conditioning images
     ZERO_COND_T_FLAVOURS = frozenset({"edit-v2+", "edit-v3"})
 
     # Default model flavor
