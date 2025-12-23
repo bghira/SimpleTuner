@@ -1300,6 +1300,17 @@ class QwenImage(ImageModelFoundation):
                 dtype=torch.int,
             )
 
+            # Validate that the total number of tokens in modulate_indices matches
+            # the sequence length dimension of transformer_inputs. A mismatch here
+            # indicates that img_shapes is inconsistent with the packed latents.
+            expected_token_count = sum(len(sample_index) for sample_index in modulate_indices)
+            actual_token_count = transformer_inputs.size(1)
+            if expected_token_count != actual_token_count:
+                raise ValueError(
+                    f"Inconsistent img_shapes and transformer_inputs: "
+                    f"modulate_index encodes {expected_token_count} tokens, "
+                    f"but transformer_inputs has sequence length {actual_token_count}."
+                )
         with self._force_packed_transformer_output(self.model):
             call_kwargs = {
                 "hidden_states": transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
