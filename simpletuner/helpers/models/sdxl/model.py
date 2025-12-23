@@ -5,6 +5,7 @@ import torch
 from diffusers import AutoencoderKL, UNet2DConditionModel
 from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.sdxl.controlnet import ControlNetModel
 from simpletuner.helpers.models.sdxl.pipeline import (
@@ -255,7 +256,8 @@ class SDXL(ImageModelFoundation):
             f"\n{prepared_batch['add_text_embeds'].shape}"
             f"\n{prepared_batch['added_cond_kwargs']['text_embeds'].shape}"
         )
-        hidden_states_buffer = self._new_hidden_state_buffer()
+        # Note: UNet2DConditionModel does not support hidden_states_buffer parameter
+        # unlike custom transformers (Flux, AuraFlow, etc.)
         return {
             "model_prediction": self.model(
                 prepared_batch["noisy_latents"].to(
@@ -273,9 +275,8 @@ class SDXL(ImageModelFoundation):
                 ),
                 added_cond_kwargs=prepared_batch["added_cond_kwargs"],
                 return_dict=False,
-                hidden_states_buffer=hidden_states_buffer,
             )[0],
-            "hidden_states_buffer": hidden_states_buffer,
+            "hidden_states_buffer": None,
         }
 
     def post_model_load_setup(self):
@@ -335,6 +336,54 @@ class SDXL(ImageModelFoundation):
         output_str = f" (extra parameters={output_args})" if output_args else " (no special parameters set)"
 
         return output_str
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
+        return [
+            # Basic tab - Gradient checkpointing
+            AccelerationPreset(
+                backend=AccelerationBackend.GRADIENT_CHECKPOINTING,
+                level="basic",
+                name="Gradient Checkpointing",
+                description="Trade compute for memory by recomputing activations during backward pass.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~30%",
+                tradeoff_speed="Increases training time by ~20%",
+                tradeoff_notes="Recommended for most users.",
+                config=_base_memory_config,
+            ),
+            # Advanced tab - DeepSpeed options
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
+                level="zero1",
+                name="DeepSpeed ZeRO Stage 1",
+                description="Shards optimizer states across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer memory by ~75% per GPU",
+                tradeoff_speed="Minimal overhead",
+                tradeoff_notes="Not compatible with FSDP.",
+                requires_cuda=True,
+                config={**_base_memory_config, "deepspeed_config": "zero1"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
+                level="zero2",
+                name="DeepSpeed ZeRO Stage 2",
+                description="Shards optimizer states and gradients across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces memory by ~85% per GPU",
+                tradeoff_speed="Moderate overhead from gradient sync",
+                tradeoff_notes="Not compatible with FSDP.",
+                requires_cuda=True,
+                config={**_base_memory_config, "deepspeed_config": "zero2"},
+            ),
+        ]
 
 
 from simpletuner.helpers.models.registry import ModelRegistry

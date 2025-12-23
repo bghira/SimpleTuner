@@ -51,6 +51,18 @@ function trainingWizardComponent() {
         modelDetailsCache: {},
         pendingDatasetPlan: null,  // Holds dataset plan from dataset wizard when using deferred commit
         deepspeedBaseConfig: null,
+
+        // Memory optimization state
+        memoryPresetsLoading: false,
+        memoryPresets: [],              // Model-specific presets from API
+        maxSwappableBlocks: null,       // Model's max block swap count
+        unsupportedBackends: [],        // Backends this model doesn't support
+        systemRamGb: null,
+        selectedMemoryTab: 'basic',
+        selectedPresets: {},            // Map of backend -> selected level
+        customBlockSwapCount: 0,        // For Musubi slider
+        memoryQuantLevel: 'int8-torchao', // Quantization level for memory step: 'disabled', 'int8-torchao', 'nf4-bnb', 'int4-quanto'
+
         answers: {
             model_family: null,
             model_flavour: null,
@@ -164,9 +176,16 @@ function trainingWizardComponent() {
                 validate: function() { return this.answers.model_type !== null; }
             },
             {
+                id: 'memory-optimization',
+                label: 'Memory',
+                title: 'Training Configuration Wizard - Step 4: Memory Optimization',
+                required: false,
+                validate: function() { return true; }  // Always valid, presets are optional
+            },
+            {
                 id: 'training-duration',
                 label: 'Duration',
-                title: 'Training Configuration Wizard - Step 4: Training Duration',
+                title: 'Training Configuration Wizard - Step 5: Training Duration',
                 required: true,
                 validate: function() {
                     const mode = this.answers.training_length_mode;
@@ -700,6 +719,160 @@ function trainingWizardComponent() {
             return ordered;
         },
 
+        // Memory optimization preset methods
+        async loadMemoryPresets() {
+            if (!this.answers.model_family) {
+                console.log('[TRAINING WIZARD] No model family selected, skipping memory presets load');
+                return;
+            }
+
+            console.log('[TRAINING WIZARD] Loading memory presets for', this.answers.model_family);
+            this.memoryPresetsLoading = true;
+
+            try {
+                const [presetsRes, memoryRes] = await Promise.all([
+                    ApiClient.fetch(`/api/models/${this.answers.model_family}/acceleration-presets`),
+                    ApiClient.fetch('/api/hardware/memory')
+                ]);
+
+                if (presetsRes.ok) {
+                    const data = await presetsRes.json();
+                    this.memoryPresets = data.presets || [];
+                    this.maxSwappableBlocks = data.max_swappable_blocks;
+                    this.unsupportedBackends = data.unsupported_backends || [];
+                    console.log('[TRAINING WIZARD] Loaded memory presets:', this.memoryPresets.length);
+                }
+
+                if (memoryRes.ok) {
+                    const memData = await memoryRes.json();
+                    this.systemRamGb = memData.total_gb;
+                    console.log('[TRAINING WIZARD] System RAM:', this.systemRamGb, 'GB');
+                }
+            } catch (error) {
+                console.error('[TRAINING WIZARD] Error loading memory presets:', error);
+            } finally {
+                this.memoryPresetsLoading = false;
+            }
+        },
+
+        get lowSystemRam() {
+            return this.systemRamGb !== null && this.systemRamGb < 64;
+        },
+
+        get hasRamIntensiveSelection() {
+            for (const [backend, level] of Object.entries(this.selectedPresets)) {
+                const preset = this.memoryPresets.find(p => p.backend === backend && p.level === level);
+                if (preset && preset.requires_min_system_ram_gb >= 64) {
+                    return true;
+                }
+            }
+            return this.customBlockSwapCount > 0;
+        },
+
+        get showMemoryQuantSelector() {
+            // Only show quantization selector if the user didn't set custom quant in the training-type step
+            return this.answers.base_model_precision === 'no_change';
+        },
+
+        getPresetsForTab(tab) {
+            return this.memoryPresets.filter(p => {
+                if (p.tab !== tab) return false;
+                // DeepSpeed doesn't work with LoRA
+                if (this.answers.model_type === 'lora' && p.backend.startsWith('DEEPSPEED')) {
+                    return false;
+                }
+                return true;
+            });
+        },
+
+        getPresetsGroupedByBackend(tab) {
+            const presets = this.getPresetsForTab(tab);
+            const groups = {};
+            const order = [];
+
+            for (const preset of presets) {
+                if (!groups[preset.backend]) {
+                    groups[preset.backend] = [];
+                    order.push(preset.backend);
+                }
+                groups[preset.backend].push(preset);
+            }
+
+            return order.map(backend => ({
+                backend,
+                label: this.getBackendLabel(backend),
+                presets: groups[backend]
+            }));
+        },
+
+        getBackendLabel(backend) {
+            const labels = {
+                'RAMTORCH': 'RamTorch',
+                'MUSUBI_BLOCK_SWAP': 'Block Swap',
+                'GROUP_OFFLOAD': 'Group Offload',
+                'DEEPSPEED_ZERO_1': 'DeepSpeed ZeRO 1',
+                'DEEPSPEED_ZERO_2': 'DeepSpeed ZeRO 2',
+                'FSDP2': 'FSDP2'
+            };
+            return labels[backend] || backend;
+        },
+
+        isPresetSelected(preset) {
+            return this.selectedPresets[preset.backend] === preset.level;
+        },
+
+        togglePreset(preset) {
+            // Mutually exclusive backends - can only have one of these active
+            const exclusiveBackends = ['RAMTORCH', 'MUSUBI_BLOCK_SWAP', 'GROUP_OFFLOAD'];
+
+            if (this.isPresetSelected(preset)) {
+                // Deselect
+                delete this.selectedPresets[preset.backend];
+            } else {
+                // If selecting an exclusive backend, deselect the others
+                if (exclusiveBackends.includes(preset.backend)) {
+                    for (const backend of exclusiveBackends) {
+                        if (backend !== preset.backend) {
+                            delete this.selectedPresets[backend];
+                        }
+                    }
+                    // Clear custom block swap when selecting RamTorch or Group Offload
+                    if (preset.backend === 'RAMTORCH' || preset.backend === 'GROUP_OFFLOAD') {
+                        this.customBlockSwapCount = 0;
+                    }
+                }
+                // Select this preset
+                this.selectedPresets[preset.backend] = preset.level;
+            }
+            // Force reactivity
+            this.selectedPresets = { ...this.selectedPresets };
+        },
+
+        getSelectedMemoryConfig() {
+            const mergedConfig = {};
+
+            // Merge all selected presets' configs
+            for (const [backend, level] of Object.entries(this.selectedPresets)) {
+                const preset = this.memoryPresets.find(p => p.backend === backend && p.level === level);
+                if (preset?.config) {
+                    Object.assign(mergedConfig, preset.config);
+                }
+            }
+
+            // Apply custom block swap if set
+            if (this.customBlockSwapCount > 0) {
+                mergedConfig.musubi_blocks_to_swap = this.customBlockSwapCount;
+            }
+
+            // Apply quantization from the memory step selector
+            if (this.memoryQuantLevel !== 'disabled') {
+                mergedConfig.base_model_precision = this.memoryQuantLevel;
+                mergedConfig.quantize_via = 'pipeline';
+            }
+
+            return mergedConfig;
+        },
+
         closeWizard() {
             if (this.currentStepIndex > 0 && this.currentStepIndex < this.visibleSteps.length - 1) {
                 if (!confirm('Exit wizard? Your progress will be lost.')) {
@@ -900,6 +1073,11 @@ function trainingWizardComponent() {
                 if (this.answers.model_type === 'lora') {
                     await this.loadQuantizationOptions();
                 }
+                // Load memory presets for the new model
+                await this.loadMemoryPresets();
+                // Reset memory preset selections
+                this.selectedPresets = {};
+                this.customBlockSwapCount = 0;
             }
 
             if (key === 'model_type') {
@@ -1336,6 +1514,16 @@ function trainingWizardComponent() {
             }
 
             console.log('[TRAINING WIZARD] Applying answers to trainer store...', this.answers);
+
+            // Apply memory optimization presets config to answers
+            const memoryConfig = this.getSelectedMemoryConfig();
+            for (const [key, value] of Object.entries(memoryConfig)) {
+                this.answers[key] = value;
+            }
+            console.log('[TRAINING WIZARD] Applied memory presets:', memoryConfig);
+
+            // Always enable gradient checkpointing - it's sensible for all training types
+            this.answers.gradient_checkpointing = true;
 
             // Apply default for tracker_project_name if empty
             if (!this.answers.tracker_project_name || !this.answers.tracker_project_name.trim()) {

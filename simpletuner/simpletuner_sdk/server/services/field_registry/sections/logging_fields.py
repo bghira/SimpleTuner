@@ -551,7 +551,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             arg_name="--offload_param_path",
             ui_label="Offload Parameter Path",
             field_type=FieldType.TEXT,
-            tab="training",
+            tab="model",
             section="memory_optimization",
             subsection="advanced",
             default_value=None,

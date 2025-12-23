@@ -16,7 +16,6 @@
     "lora_rank": 16,
     "lora_type": "standard",
     "lr_scheduler": "constant",
-    "lr_warmup_steps": 0,
     "max_train_steps": 100,
     "minimum_image_size": 0,
     "mixed_precision": "bf16",
@@ -44,6 +43,5 @@
     "validation_prompt": "🟫 is holding a sign that says hello world from flux",
     "validation_resolution": "512x512",
     "validation_seed": 42,
-    "validation_steps": 50,
-    "validation_torch_compile": false
+    "validation_steps": 50
 }

@@ -139,3 +139,56 @@ async def detect_fsdp_blocks(model_family: str, payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail=exc.message) from exc
 
     return result
+
+
+@router.get("/api/models/{model_family}/acceleration-presets")
+@router.get("/models/{model_family}/acceleration-presets")
+async def get_acceleration_presets(model_family: str):
+    """Return model-specific acceleration presets for memory optimization."""
+    try:
+        model_cls = MODELS_SERVICE._get_model_class(model_family)
+    except ModelServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    presets = []
+    if hasattr(model_cls, "get_acceleration_presets") and callable(model_cls.get_acceleration_presets):
+        try:
+            raw_presets = model_cls.get_acceleration_presets()
+            presets = [
+                {
+                    "backend": p.backend.name,
+                    "level": p.level,
+                    "name": p.name,
+                    "description": p.description,
+                    "tab": p.tab,
+                    "tradeoff_vram": p.tradeoff_vram,
+                    "tradeoff_speed": p.tradeoff_speed,
+                    "tradeoff_notes": p.tradeoff_notes,
+                    "requires_cuda": p.requires_cuda,
+                    "requires_min_system_ram_gb": p.requires_min_system_ram_gb,
+                    "config": p.config,
+                }
+                for p in raw_presets
+            ]
+        except Exception:
+            presets = []
+
+    max_swappable_blocks = None
+    if hasattr(model_cls, "max_swappable_blocks") and callable(model_cls.max_swappable_blocks):
+        try:
+            max_swappable_blocks = model_cls.max_swappable_blocks()
+        except Exception:
+            pass
+
+    unsupported_backends = []
+    if hasattr(model_cls, "UNSUPPORTED_BACKENDS"):
+        try:
+            unsupported_backends = [b.name for b in (model_cls.UNSUPPORTED_BACKENDS or set())]
+        except Exception:
+            pass
+
+    return {
+        "presets": presets,
+        "max_swappable_blocks": max_swappable_blocks,
+        "unsupported_backends": unsupported_backends,
+    }

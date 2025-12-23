@@ -69,6 +69,17 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: Saving fp8-quanto weights can spike VRAM usage (for example, during `state_dict()` serialization). This option keeps the model on the accelerator for training but offloads it briefly when a save is triggered to avoid CUDA OOMs.
 - **Tip**: Enable this only when saving fails with OOM errors; the loader moves the model back afterward so training resumes seamlessly.
 
+### `--delete_model_after_load`
+
+- **What**: Deletes model files from the HuggingFace cache after they are loaded into memory.
+- **Why**: Reduces disk usage for budget-constrained setups that bill by gigabyte used. After models are loaded into VRAM/RAM, the on-disk cache is no longer needed until the next run. This shifts burden from storage to network bandwidth on subsequent runs.
+- **Notes**:
+  - The VAE is **not** deleted if validation is enabled, as it's needed for generating validation images.
+  - Text encoders are deleted after the data backend factory completes startup (after embed caching).
+  - Transformer/UNet models are deleted immediately after loading.
+  - On multi-node setups, only local-rank 0 on each node performs the deletion. Deletion failures are silently ignored to handle race conditions on shared network storage.
+  - This does **not** affect saved training checkpoints — only the pre-trained base model cache.
+
 ### `--enable_group_offload`
 
 - **What**: Enables diffusers' grouped module offloading so model blocks can be staged on CPU (or disk) between forward passes.

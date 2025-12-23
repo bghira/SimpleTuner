@@ -52,6 +52,5 @@
     "validation_prompt_library": false,
     "validation_resolution": "1024x1024",
     "validation_seed": 42,
-    "validation_steps": 50,
-    "validation_torch_compile": false
+    "validation_steps": 50
 }

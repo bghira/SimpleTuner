@@ -388,7 +388,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             arg_name="--accelerator_cache_clear_interval",
             ui_label="Accelerator Cache Clear Interval",
             field_type=FieldType.NUMBER,
-            tab="training",
+            tab="model",
             section="memory_optimization",
             subsection="memory_optimization",
             default_value=None,
@@ -497,6 +497,25 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=17,
             documentation="OPTIONS.md#--offload_during_startup",
+        )
+    )
+
+    # Delete Model After Load
+    registry._add_field(
+        ConfigField(
+            name="delete_model_after_load",
+            arg_name="--delete_model_after_load",
+            ui_label="Delete Model After Load",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_config",
+            subsection="storage",
+            default_value=False,
+            help_text="Delete model files from HuggingFace cache after loading into memory",
+            tooltip="Reduces disk usage by removing cached model files after they're loaded. Useful for storage-constrained setups. VAE is preserved if validation is enabled.",
+            importance=ImportanceLevel.ADVANCED,
+            order=18,
+            documentation="OPTIONS.md#--delete_model_after_load",
         )
     )
 

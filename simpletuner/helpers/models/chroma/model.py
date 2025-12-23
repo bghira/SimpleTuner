@@ -1,12 +1,13 @@
 import logging
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from diffusers import AutoencoderKL
 from torch.nn import functional as F
 from transformers import AutoTokenizer, T5EncoderModel
 
+from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
     ConfigRule,
@@ -69,6 +70,132 @@ class Chroma(ImageModelFoundation):
             "model": T5EncoderModel,
         },
     }
+
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        # Chroma has 19 transformer_blocks + 38 single_transformer_blocks = 57 total blocks
+        # Leave at least 1 block on GPU
+        return 56
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
+        return [
+            # RamTorch presets - 3 levels (Light, Balanced, Aggressive)
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="light",
+                name="RamTorch - Light",
+                description="Streams transformer_blocks only (19 of 57).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~25%",
+                tradeoff_speed="Increases training time by ~15%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={
+                    **_base_memory_config,
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.*",
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="balanced",
+                name="RamTorch - Balanced",
+                description="Streams transformer_blocks + half of single blocks (38 of 57).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~55%",
+                tradeoff_speed="Increases training time by ~35%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={
+                    **_base_memory_config,
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.*,single_transformer_blocks.0,single_transformer_blocks.1,single_transformer_blocks.2,single_transformer_blocks.3,single_transformer_blocks.4,single_transformer_blocks.5,single_transformer_blocks.6,single_transformer_blocks.7,single_transformer_blocks.8,single_transformer_blocks.9,single_transformer_blocks.10,single_transformer_blocks.11,single_transformer_blocks.12,single_transformer_blocks.13,single_transformer_blocks.14,single_transformer_blocks.15,single_transformer_blocks.16,single_transformer_blocks.17,single_transformer_blocks.18",
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="aggressive",
+                name="RamTorch - Aggressive",
+                description="Streams all transformer blocks (57 of 57).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~90%",
+                tradeoff_speed="Increases training time by ~80%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={
+                    **_base_memory_config,
+                    "ramtorch": True,
+                    "ramtorch_target_modules": "transformer_blocks.*,single_transformer_blocks.*",
+                },
+            ),
+            # Block Swap presets - 3 levels (Light, Balanced, Aggressive)
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="light",
+                name="Block Swap - Light",
+                description="Swaps 14 of 57 blocks (~25%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~22%",
+                tradeoff_speed="Increases training time by ~15%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={**_base_memory_config, "musubi_blocks_to_swap": 14},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="balanced",
+                name="Block Swap - Balanced",
+                description="Swaps 28 of 57 blocks (~49%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~45%",
+                tradeoff_speed="Increases training time by ~35%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={**_base_memory_config, "musubi_blocks_to_swap": 28},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="aggressive",
+                name="Block Swap - Aggressive",
+                description="Swaps 48 of 57 blocks (~84%).",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM by ~75%",
+                tradeoff_speed="Increases training time by ~65%",
+                tradeoff_notes="Requires 64GB+ system RAM.",
+                requires_min_system_ram_gb=64,
+                config={**_base_memory_config, "musubi_blocks_to_swap": 48},
+            ),
+            # DeepSpeed presets (Advanced tab)
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
+                level="zero1",
+                name="DeepSpeed ZeRO Stage 1",
+                description="Shards optimizer states across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
+                tradeoff_speed="Minimal overhead",
+                tradeoff_notes="Requires multi-GPU setup.",
+                config={**_base_memory_config, "deepspeed": "zero1"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
+                level="zero2",
+                name="DeepSpeed ZeRO Stage 2",
+                description="Shards optimizer states and gradients across GPUs.",
+                tab="advanced",
+                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
+                tradeoff_speed="Moderate communication overhead",
+                tradeoff_notes="Requires multi-GPU setup.",
+                config={**_base_memory_config, "deepspeed": "zero2"},
+            ),
+        ]
 
     def requires_conditioning_latents(self) -> bool:
         if self.config.controlnet or self.config.control:

@@ -21,7 +21,7 @@
   "model_flavour": "t2v-480p",
   "model_type": "lora",
   "num_train_epochs": 0,
-  "optimizer": "optimi-lion",
+  "optimizer": "adamw_bf16",
   "output_dir": "output/examples/hunyuanvideo-1.5-t2v.peft-lora",
   "pretrained_model_name_or_path": "tencent/HunyuanVideo-1.5",
   "report_to": "none",

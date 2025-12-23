@@ -1,0 +1,425 @@
+<!-- Memory Presets Modal -->
+<div x-data="memoryPresetsComponent()" x-cloak>
+    <template x-if="isOpen">
+        <div class="memory-presets-backdrop" @keydown.escape.window="close()" @click.self="close()">
+            <div class="memory-presets-modal" @click.stop>
+                <div class="modal-header d-flex align-items-start justify-content-between">
+                    <div>
+                        <h5 class="modal-title mb-1">Memory Optimization Presets</h5>
+                        <p class="text-muted small mb-0">
+                            Select presets to configure memory optimization strategies. Changes will be applied to the form but not saved until you click Save.
+                        </p>
+                    </div>
+                    <button type="button" class="btn-close" aria-label="Close" @click="close()"></button>
+                </div>
+
+                <div class="modal-body">
+                    <!-- Loading state -->
+                    <div x-show="loading" class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading presets...</span>
+                        </div>
+                        <p class="text-muted mt-2">Loading presets for your model...</p>
+                    </div>
+
+                    <!-- Error state -->
+                    <div x-show="!loading && error" class="alert alert-danger" role="alert">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <span x-text="error"></span>
+                    </div>
+
+                    <!-- System RAM Warning -->
+                    <div x-show="!loading && !error && lowSystemRam && hasRamIntensiveSelection" class="alert alert-warning mb-3" role="alert">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Low System RAM Detected</strong> (<span x-text="systemRamGb"></span> GB).
+                        Most memory optimization strategies require 64GB+ of system RAM to be effective.
+                    </div>
+
+                    <!-- No presets available -->
+                    <div x-show="!loading && !error && presets.length === 0" class="text-center py-4">
+                        <i class="fas fa-info-circle text-muted fa-2x mb-3"></i>
+                        <p class="text-muted">No presets available for this model.</p>
+                        <p class="text-muted small">Presets are defined per-model. Check that you have selected a model family.</p>
+                    </div>
+
+                    <!-- Presets content -->
+                    <div x-show="!loading && !error && presets.length > 0">
+                        <!-- Tab Navigation -->
+                        <ul class="nav nav-tabs mb-3">
+                            <li class="nav-item">
+                                <button class="nav-link"
+                                        :class="{ 'active': selectedTab === 'basic' }"
+                                        @click.prevent="selectedTab = 'basic'">
+                                    Basic
+                                </button>
+                            </li>
+                            <li class="nav-item">
+                                <button class="nav-link"
+                                        :class="{ 'active': selectedTab === 'advanced' }"
+                                        @click.prevent="selectedTab = 'advanced'">
+                                    Advanced
+                                </button>
+                            </li>
+                        </ul>
+
+                        <!-- Advanced tab warning -->
+                        <div class="alert alert-warning small mb-3" x-show="selectedTab === 'advanced'">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            Advanced strategies require careful configuration and may have stability issues.
+                        </div>
+
+                        <!-- Presets grouped by strategy -->
+                        <template x-for="group in getPresetsGroupedByBackend(selectedTab)" :key="group.backend">
+                            <div class="memory-strategy-row mb-3 p-3 border rounded">
+                                <div class="d-flex align-items-center justify-content-between mb-2">
+                                    <div class="strategy-label fw-semibold" x-text="group.label"></div>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <template x-for="preset in group.presets" :key="preset.level">
+                                            <button type="button" class="btn"
+                                                    :class="isPresetSelected(preset) ? 'btn-primary' : 'btn-outline-secondary'"
+                                                    @click.prevent="togglePreset(preset)"
+                                                    x-text="preset.level.charAt(0).toUpperCase() + preset.level.slice(1)">
+                                            </button>
+                                        </template>
+                                    </div>
+                                </div>
+                                <!-- Show info for selected preset in this group -->
+                                <template x-for="preset in group.presets" :key="'info-' + preset.level">
+                                    <div x-show="isPresetSelected(preset)" class="small">
+                                        <p class="text-muted mb-2" x-text="preset.description"></p>
+                                        <div class="preset-tradeoffs">
+                                            <span class="badge bg-success-subtle text-success-emphasis me-2" x-text="preset.tradeoff_vram"></span>
+                                            <span class="badge bg-warning-subtle text-warning-emphasis me-2" x-text="preset.tradeoff_speed"></span>
+                                            <span class="badge bg-info-subtle text-info-emphasis" x-show="preset.requires_min_system_ram_gb >= 64">Requires 64GB+ RAM</span>
+                                        </div>
+                                        <div class="form-text mt-1" x-show="preset.tradeoff_notes" x-text="preset.tradeoff_notes"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <!-- Empty state for tab -->
+                        <div x-show="getPresetsGroupedByBackend(selectedTab).length === 0" class="text-muted text-center py-4">
+                            No presets available for this tab.
+                        </div>
+
+                        <!-- Custom Block Swap Slider -->
+                        <div x-show="maxSwappableBlocks !== null && selectedTab === 'basic'" class="mt-4 p-3 border rounded">
+                            <label class="form-label d-flex justify-content-between align-items-center">
+                                Custom Block Swap Count
+                                <span class="badge bg-secondary" x-text="customBlockSwapCount + ' / ' + maxSwappableBlocks"></span>
+                            </label>
+                            <input type="range" class="form-range"
+                                   min="0" :max="maxSwappableBlocks"
+                                   x-model.number="customBlockSwapCount"
+                                   @input="onBlockSwapSliderChange()">
+                            <div class="form-text">
+                                Set a custom number of blocks to swap if presets don't match your needs.
+                                Higher values save more VRAM, use more system RAM, and increase training time.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer d-flex justify-content-between">
+                    <div class="text-muted small">
+                        <template x-if="hasSelection">
+                            <span>
+                                <i class="fas fa-check-circle text-success me-1"></i>
+                                <span x-text="Object.keys(selectedPresets).length"></span> preset(s) selected
+                                <span x-show="customBlockSwapCount > 0">, custom block swap: <span x-text="customBlockSwapCount"></span></span>
+                            </span>
+                        </template>
+                        <template x-if="!hasSelection">
+                            <span>No presets selected</span>
+                        </template>
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secondary me-2" @click="close()">
+                            Cancel
+                        </button>
+                        <button type="button" class="btn btn-primary" @click="apply()" :disabled="!hasSelection">
+                            <i class="fas fa-check me-1"></i> Apply to Form
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+
+<style>
+/* Memory Presets Modal - Dark theme matching DeepSpeed builder */
+.memory-presets-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1055;
+    backdrop-filter: blur(4px);
+    padding: 2rem;
+}
+
+.memory-presets-modal {
+    width: 90vw;
+    max-width: 700px;
+    max-height: 85vh;
+    background: rgba(15, 23, 42, 0.98);
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+.memory-presets-modal .modal-header {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 1.5rem 2rem;
+    flex-shrink: 0;
+    background: rgba(30, 41, 59, 0.6);
+    border-radius: 16px 16px 0 0;
+}
+
+.memory-presets-modal .modal-title {
+    color: #f8fafc;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.memory-presets-modal .modal-header p {
+    color: #94a3b8;
+    margin-bottom: 0;
+}
+
+.memory-presets-modal .btn-close {
+    filter: invert(1) grayscale(100%) brightness(200%);
+    opacity: 0.7;
+}
+
+.memory-presets-modal .btn-close:hover {
+    opacity: 1;
+}
+
+.memory-presets-modal .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem 2rem;
+    background: rgba(15, 23, 42, 0.98);
+}
+
+.memory-presets-modal .modal-footer {
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    padding: 1.25rem 2rem;
+    flex-shrink: 0;
+    background: rgba(30, 41, 59, 0.6);
+    border-radius: 0 0 16px 16px;
+}
+
+/* Tab navigation */
+.memory-presets-modal .nav-tabs {
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    margin-bottom: 1rem;
+}
+
+.memory-presets-modal .nav-tabs .nav-link {
+    color: #94a3b8;
+    border: 1px solid transparent;
+    border-bottom: none;
+    padding: 0.5rem 1rem;
+    border-radius: 8px 8px 0 0;
+    transition: all 0.2s ease;
+}
+
+.memory-presets-modal .nav-tabs .nav-link:hover {
+    color: #f8fafc;
+    background: rgba(148, 163, 184, 0.1);
+    border-color: rgba(148, 163, 184, 0.2);
+}
+
+.memory-presets-modal .nav-tabs .nav-link.active {
+    color: #f8fafc;
+    background: rgba(30, 41, 59, 0.8);
+    border-color: rgba(148, 163, 184, 0.2);
+    border-bottom-color: transparent;
+}
+
+/* Strategy rows */
+.memory-presets-modal .memory-strategy-row {
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(148, 163, 184, 0.15) !important;
+    border-radius: 12px !important;
+}
+
+.memory-presets-modal .memory-strategy-row .strategy-label {
+    font-size: 0.95rem;
+    color: #f8fafc;
+}
+
+/* Preset tradeoff badges */
+.memory-presets-modal .preset-tradeoffs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.memory-presets-modal .preset-tradeoffs .badge {
+    font-weight: 500;
+    padding: 0.35em 0.65em;
+}
+
+.memory-presets-modal .badge.bg-success-subtle {
+    background: rgba(34, 197, 94, 0.15) !important;
+    color: #4ade80 !important;
+}
+
+.memory-presets-modal .badge.bg-warning-subtle {
+    background: rgba(245, 158, 11, 0.15) !important;
+    color: #fbbf24 !important;
+}
+
+.memory-presets-modal .badge.bg-info-subtle {
+    background: rgba(59, 130, 246, 0.15) !important;
+    color: #60a5fa !important;
+}
+
+.memory-presets-modal .badge.bg-secondary {
+    background: rgba(148, 163, 184, 0.2) !important;
+    color: #cbd5e1 !important;
+}
+
+/* Text colors */
+.memory-presets-modal .text-muted {
+    color: #94a3b8 !important;
+}
+
+.memory-presets-modal .form-text {
+    color: #64748b !important;
+}
+
+/* Alerts */
+.memory-presets-modal .alert {
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 1rem !important;
+}
+
+.memory-presets-modal .alert-warning {
+    background: rgba(245, 158, 11, 0.1) !important;
+    color: #fbbf24 !important;
+    border: 1px solid rgba(245, 158, 11, 0.2) !important;
+}
+
+.memory-presets-modal .alert-danger {
+    background: rgba(239, 68, 68, 0.1) !important;
+    color: #f87171 !important;
+    border: 1px solid rgba(239, 68, 68, 0.2) !important;
+}
+
+/* Buttons */
+.memory-presets-modal .btn {
+    padding: 0.5rem 1rem !important;
+    font-weight: 600 !important;
+    font-size: 0.875rem !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+}
+
+.memory-presets-modal .btn-primary {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    border: none !important;
+    color: white !important;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
+}
+
+.memory-presets-modal .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+}
+
+.memory-presets-modal .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.memory-presets-modal .btn-secondary {
+    background: rgba(148, 163, 184, 0.2) !important;
+    color: #f8fafc !important;
+    border: 1px solid rgba(148, 163, 184, 0.3) !important;
+}
+
+.memory-presets-modal .btn-secondary:hover {
+    background: rgba(148, 163, 184, 0.3) !important;
+    border-color: rgba(148, 163, 184, 0.4) !important;
+}
+
+.memory-presets-modal .btn-outline-secondary {
+    background: transparent !important;
+    color: #94a3b8 !important;
+    border: 1px solid rgba(148, 163, 184, 0.3) !important;
+}
+
+.memory-presets-modal .btn-outline-secondary:hover {
+    background: rgba(148, 163, 184, 0.1) !important;
+    color: #f8fafc !important;
+}
+
+/* Form range (slider) */
+.memory-presets-modal .form-range {
+    height: 0.5rem;
+    background: transparent;
+}
+
+.memory-presets-modal .form-range::-webkit-slider-track {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 4px;
+}
+
+.memory-presets-modal .form-range::-webkit-slider-thumb {
+    background: #3b82f6;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.memory-presets-modal .form-range::-moz-range-track {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 4px;
+}
+
+.memory-presets-modal .form-range::-moz-range-thumb {
+    background: #3b82f6;
+    border: none;
+}
+
+/* Form label */
+.memory-presets-modal .form-label {
+    color: #f8fafc;
+    font-weight: 500;
+}
+
+/* Spinner */
+.memory-presets-modal .spinner-border {
+    color: #3b82f6 !important;
+}
+
+/* Custom block swap section */
+.memory-presets-modal .border.rounded {
+    border-color: rgba(148, 163, 184, 0.15) !important;
+    background: rgba(30, 41, 59, 0.5);
+    border-radius: 12px !important;
+}
+
+/* Icon colors */
+.memory-presets-modal .fa-check-circle.text-success {
+    color: #4ade80 !important;
+}
+
+.memory-presets-modal .fa-info-circle.text-muted {
+    color: #64748b !important;
+}
+</style>
