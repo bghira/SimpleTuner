@@ -16,7 +16,8 @@ else:
 PIPELINE_QUANTIZATION_PRESETS = {"nf4-bnb", "int4-torchao"}
 MANUAL_QUANTO_PRESETS = {"int2-quanto", "int4-quanto", "int8-quanto", "fp8-quanto", "fp8uz-quanto"}
 MANUAL_TORCHAO_PRESETS = {"int8-torchao", "fp8-torchao"}
-MANUAL_QUANTIZATION_PRESETS = MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS
+MANUAL_SDNQ_PRESETS = {"int8-sdnq", "uint8-sdnq"}
+MANUAL_QUANTIZATION_PRESETS = MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS | MANUAL_SDNQ_PRESETS
 
 
 def _normalize_dtype(weight_dtype: Any):
@@ -301,6 +302,109 @@ def _torchao_model(
     return model
 
 
+def _sdnq_model(
+    model,
+    model_precision,
+    base_model_precision=None,
+    quantize_activations: bool = False,
+):
+    """
+    Quantize a model using SDNQ (SD.Next Quantization Engine).
+
+    SDNQ works on AMD, Apple, and NVIDIA hardware without platform-specific gating.
+    """
+    if model_precision is None:
+        model_precision = base_model_precision
+    if model is None:
+        return model
+    if model_precision == "no_change" or model_precision is None:
+        logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return model
+
+    try:
+        from sdnq.common import use_torch_compile as sdnq_triton_available
+        from sdnq.training import sdnq_training_post_load_quant
+    except ImportError as e:
+        raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
+
+    logger.info(f"Quantising {model.__class__.__name__} using SDNQ. Precision: {model_precision}.")
+
+    # Map precision string to SDNQ weights_dtype
+    if model_precision == "int8-sdnq":
+        weights_dtype = "int8"
+    elif model_precision == "uint8-sdnq":
+        weights_dtype = "uint8"
+    else:
+        raise ValueError(f"Invalid SDNQ precision level: {model_precision}")
+
+    # Get device for quantization
+    quantization_device = None
+    return_device = None
+    if hasattr(model, "device"):
+        quantization_device = model.device
+        return_device = model.device
+
+    # Build exclusion list based on model family
+    modules_to_not_convert = ["correction_coefs", "prediction_coefs", "lm_head", "embedding_projection"]
+    args = StateTracker.get_args()
+    if args.model_family in ["sd3", "ltxvideo", "wan"]:
+        modules_to_not_convert.extend(
+            [
+                "norm",
+                "proj_out",
+                "pos_embed",
+                "patch_embedding",
+                "ffn",
+                "scale_shift_table",
+                "norm_out",
+                "context_embedder",
+                "time_text_embed",
+                "time_proj",
+                "condition_embedder",
+            ]
+        )
+    elif args.model_family == "flux":
+        modules_to_not_convert.extend(
+            [
+                "norm",
+                "norm1",
+                "norm2",
+                "norm2_context",
+                "proj_out",
+                "x_embedder",
+                "norm_out",
+                "context_embedder",
+            ]
+        )
+
+    try:
+        model = sdnq_training_post_load_quant(
+            model,
+            weights_dtype=weights_dtype,
+            quantized_matmul_dtype="int8",
+            group_size=32,
+            svd_rank=32,
+            svd_steps=2,
+            use_svd=False,
+            use_grad_ckpt=getattr(args, "gradient_checkpointing", True),
+            use_quantized_matmul=sdnq_triton_available,
+            use_static_quantization=True,
+            use_stochastic_rounding=True,
+            dequantize_fp32=True,
+            non_blocking=False,
+            add_skip_keys=True,
+            quantization_device=quantization_device,
+            return_device=return_device,
+            modules_to_not_convert=modules_to_not_convert,
+        )
+    except Exception as e:
+        if "out of memory" in str(e).lower():
+            logger.error("GPU ran out of memory during SDNQ quantisation. Use --quantize_via=cpu to use CPU quantisation.")
+        raise e
+
+    return model
+
+
 def get_quant_fn(base_model_precision):
     """
     Determine the quantization function based on the base model precision.
@@ -321,6 +425,8 @@ def get_quant_fn(base_model_precision):
         return _quanto_model
     elif "torchao" in precision:
         return _torchao_model
+    elif "sdnq" in precision:
+        return _sdnq_model
     else:
         return None
 

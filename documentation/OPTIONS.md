@@ -233,6 +233,38 @@ TorchAO includes generally-available 4bit and 8bit optimisers: `ao-adamw8bit`, `
 
 It also provides two optimisers that are directed toward Hopper (H100 or better) users: `ao-adamfp8`, and `ao-adamwfp8`
 
+#### SDNQ (SD.Next Quantization Engine)
+
+[SDNQ](https://github.com/disty0/sdnq) is a quantization library optimized for training that works across all platforms: AMD (ROCm), Apple (MPS), and NVIDIA (CUDA). It provides quantized training with stochastic rounding and quantized optimizer states for memory efficiency.
+
+- `int8-sdnq` uses signed 8-bit integer quantization with stochastic rounding
+  - Best balance of memory savings and training quality
+  - Uses int8 matmul on platforms that support it
+  - Works with gradient checkpointing
+- `uint8-sdnq` uses unsigned 8-bit integer quantization
+  - Slightly different numerical characteristics than int8
+  - May be preferred for certain model architectures
+
+**Key features:**
+- Cross-platform: Works identically on AMD, Apple, and NVIDIA hardware
+- Training-optimized: Uses stochastic rounding to reduce quantization error accumulation
+- Memory efficient: Supports quantized optimizer state buffers
+
+##### SDNQ Optimisers
+
+SDNQ includes optimizers with optional quantized state buffers for additional memory savings:
+
+- `sdnq-adamw` - AdamW with quantized state buffers (uint8, group_size=32)
+- `sdnq-adamw+no_quant` - AdamW without quantized states (for comparison)
+- `sdnq-adafactor` - Adafactor with quantized state buffers
+- `sdnq-came` - CAME optimizer with quantized state buffers
+- `sdnq-lion` - Lion optimizer with quantized state buffers
+- `sdnq-muon` - Muon optimizer with quantized state buffers
+
+All SDNQ optimizers use stochastic rounding by default and can be configured with `--optimizer_config` for custom settings like `use_quantized_buffers=false` to disable state quantization.
+
+**Note on checkpointing:** SDNQ training models are saved in both native PyTorch format (`.pt`) for training resumption and safetensors format for inference. The native format is required for proper training resumption as SDNQ's `SDNQTensor` class uses custom serialization.
+
 ### `--quantization_config`
 
 - **What**: JSON object or file path describing Diffusers `quantization_config` overrides when using `--quantize_via=pipeline`.

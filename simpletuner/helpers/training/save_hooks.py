@@ -540,6 +540,85 @@ class SaveHookManager:
         if loaded:
             logger.info("Loaded lyrics embedder weights for modules: %s", ", ".join(loaded))
 
+    def _is_sdnq_model(self, model) -> bool:
+        """Check if a model is SDNQ quantized."""
+        try:
+            from sdnq.quantizer import QuantizationMethod
+            from sdnq.training import SDNQTensor
+
+            quant_method = getattr(model, "quantization_method", None)
+            if quant_method in (QuantizationMethod.SDNQ, QuantizationMethod.SDNQ_TRAINING):
+                return True
+            # Fallback: check if any parameters are SDNQTensor
+            for param in model.parameters():
+                if isinstance(param, SDNQTensor):
+                    return True
+            return False
+        except ImportError:
+            return False
+
+    def _save_sdnq_model_state(self, model, output_dir: str, model_name: str = "sdnq_model"):
+        """
+        Save an SDNQ model in native format (.pt) for training resumption,
+        and also save a safetensors version for inference compatibility.
+
+        SDNQ training format uses SDNQTensor which requires native .pt serialization
+        for proper training resumption.
+        """
+        try:
+            from sdnq.loader import save_sdnq_model
+            from sdnq.training import convert_training_model_to_sdnq
+        except ImportError:
+            logger.warning("SDNQ not available, skipping SDNQ-specific save.")
+            return
+
+        sdnq_dir = os.path.join(output_dir, "sdnq")
+        os.makedirs(sdnq_dir, exist_ok=True)
+
+        # Save native .pt format for training resumption
+        native_path = os.path.join(sdnq_dir, f"{model_name}_training.pt")
+        logger.info(f"Saving SDNQ training model to {native_path}")
+        try:
+            torch.save(model.state_dict(), native_path)
+        except Exception as e:
+            logger.error(f"Failed to save SDNQ native format: {e}")
+
+        # Also save in standard SDNQ format (safetensors compatible) for inference
+        inference_dir = os.path.join(sdnq_dir, f"{model_name}_inference")
+        logger.info(f"Saving SDNQ inference model to {inference_dir}")
+        try:
+            # Create a copy and convert to inference format
+            import copy
+
+            inference_model = copy.deepcopy(model)
+            inference_model = convert_training_model_to_sdnq(inference_model)
+            save_sdnq_model(inference_model, inference_dir, max_shard_size="10GB", is_pipeline=False)
+            del inference_model
+        except Exception as e:
+            logger.warning(f"Failed to save SDNQ inference format: {e}")
+
+    def _load_sdnq_model_state(self, model, input_dir: str, model_name: str = "sdnq_model"):
+        """
+        Load an SDNQ model from native .pt format for training resumption.
+        """
+        sdnq_dir = os.path.join(input_dir, "sdnq")
+        native_path = os.path.join(sdnq_dir, f"{model_name}_training.pt")
+
+        if not os.path.exists(native_path):
+            logger.debug(f"No SDNQ training checkpoint found at {native_path}")
+            return False
+
+        logger.info(f"Loading SDNQ training model from {native_path}")
+        try:
+            state_dict = torch.load(native_path, map_location="cpu")
+            model.load_state_dict(state_dict, assign=True)
+            del state_dict
+            logger.info("Successfully loaded SDNQ training state.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load SDNQ training state: {e}")
+            return False
+
     def _save_full_model(
         self,
         models,
@@ -601,6 +680,11 @@ class SaveHookManager:
                     state_dict=state_dict,
                 )
                 merge_safetensors_files(save_dir, metadata=modelspec_metadata)
+
+                # Save SDNQ model in native format for training resumption
+                if self._is_sdnq_model(unwrapped_model):
+                    model_name = "transformer" if idx == 0 else f"model_{idx}"
+                    self._save_sdnq_model_state(unwrapped_model, temporary_dir, model_name=model_name)
             finally:
                 del state_dict
 
@@ -712,6 +796,14 @@ class SaveHookManager:
                 try:
                     # pop models so that they are not loaded again
                     model = models.pop()
+
+                    # Try SDNQ training state first if model is SDNQ quantized
+                    if self._is_sdnq_model(model):
+                        model_name = "transformer" if i == 0 else f"model_{i}"
+                        if self._load_sdnq_model_state(model, input_dir, model_name=model_name):
+                            logger.info(f"Loaded SDNQ model state for model {i}")
+                            continue
+
                     load_model = self.denoiser_class.from_pretrained(input_dir, subfolder=self.denoiser_subdir)
                     if self.args.model_family == "sd3" and not self.args.train_text_encoder:
                         logger.info("Unloading text encoders for full SD3 training without --train_text_encoder")

@@ -515,6 +515,10 @@
                                    value="int8-torchao" x-model="memoryQuantLevel">
                             <label class="btn btn-outline-secondary" for="quant-int8">INT8</label>
 
+                            <input type="radio" class="btn-check" name="memoryQuantLevel" id="quant-sdnq"
+                                   value="int8-sdnq" x-model="memoryQuantLevel">
+                            <label class="btn btn-outline-secondary" for="quant-sdnq">SDNQ</label>
+
                             <input type="radio" class="btn-check" name="memoryQuantLevel" id="quant-nf4"
                                    value="nf4-bnb" x-model="memoryQuantLevel">
                             <label class="btn btn-outline-secondary" for="quant-nf4">NF4</label>
@@ -526,6 +530,7 @@
                         <div class="form-text mt-2">
                             <span x-show="memoryQuantLevel === 'disabled'">No quantization applied.</span>
                             <span x-show="memoryQuantLevel === 'int8-torchao'">Recommended default. Good balance of quality and memory savings.</span>
+                            <span x-show="memoryQuantLevel === 'int8-sdnq'">Training-optimized quantization with stochastic rounding. Works on AMD, Apple, and NVIDIA.</span>
                             <span x-show="memoryQuantLevel === 'nf4-bnb'">More aggressive savings. Does not work on AMD or Apple machines.</span>
                             <span x-show="memoryQuantLevel === 'int4-quanto'">Experimental. Maximum savings but may impact quality.</span>
                         </div>

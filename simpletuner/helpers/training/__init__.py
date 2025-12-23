@@ -4,6 +4,9 @@ quantised_precision_levels = [
     "int4-quanto",
     "int2-quanto",
     "int8-torchao",
+    # SDNQ: Works on AMD, Apple, and NVIDIA
+    "int8-sdnq",
+    "uint8-sdnq",
 ]
 import torch
 
