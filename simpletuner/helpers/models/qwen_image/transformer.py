@@ -867,13 +867,31 @@ class QwenImageTransformer2DModel(
             if torch.is_grad_enabled() and self.gradient_checkpointing:
 
                 def create_custom_forward(module, mod_idx):
-                    def custom_forward(*inputs):
+                    def custom_forward(
+                        *inputs,
+                        hidden_states=None,
+                        encoder_hidden_states=None,
+                        encoder_hidden_states_mask=None,
+                        temb=None,
+                        image_rotary_emb=None,
+                        **kwargs,
+                    ):
+                        # Handle both positional args (real checkpoint) and keyword args (test mock)
+                        if inputs:
+                            hs, ehs, ehsm, t, ire = inputs[:5]
+                        else:
+                            hs = hidden_states
+                            ehs = encoder_hidden_states
+                            ehsm = encoder_hidden_states_mask
+                            t = temb
+                            ire = image_rotary_emb
+
                         return module(
-                            hidden_states=inputs[0],
-                            encoder_hidden_states=inputs[1],
-                            encoder_hidden_states_mask=inputs[2],
-                            temb=inputs[3],
-                            image_rotary_emb=inputs[4],
+                            hidden_states=hs,
+                            encoder_hidden_states=ehs,
+                            encoder_hidden_states_mask=ehsm,
+                            temb=t,
+                            image_rotary_emb=ire,
                             joint_attention_kwargs=None,
                             modulate_index=mod_idx,
                         )
