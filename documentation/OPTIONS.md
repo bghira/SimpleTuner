@@ -312,6 +312,17 @@ Using `--sageattention_usage` to enable training with SageAttention should be en
 - **What**: Uploads to Hugging Face Hub from a background worker so checkpoint pushes do not pause the training loop.
 - **Why**: Keeps training and validation running while Hub uploads proceed asynchronously. Final uploads are still awaited before the run exits so failures surface.
 
+### `--webhook_config`
+
+- **What**: Configuration for webhook targets (e.g., Discord, custom endpoints) to receive real-time training events.
+- **Why**: Allows you to monitor training runs with external tools and dashboards, receiving notifications at key training stages.
+- **Notes**: The `job_id` field in webhook payloads can be populated by setting the `SIMPLETUNER_JOB_ID` environment variable before training:
+  ```bash
+  export SIMPLETUNER_JOB_ID="my-training-run-name"
+  python train.py
+  ```
+This is useful for monitoring tools receiving webhooks from multiple training runs to identify which config sent each event. If SIMPLETUNER_JOB_ID is not set, job_id will be null in webhook payloads.
+
 ### `--publishing_config`
 
 - **What**: Optional JSON/dict/file path describing non-Hugging Face publishing targets (S3-compatible storage, Backblaze B2, Azure Blob Storage, Dropbox).
