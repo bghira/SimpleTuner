@@ -5,8 +5,19 @@ quantised_precision_levels = [
     "int2-quanto",
     "int8-torchao",
     # SDNQ: Works on AMD, Apple, and NVIDIA
+    # Full finetune recommended: uint8, uint16, fp16 (int16 also available)
     "int8-sdnq",
     "uint8-sdnq",
+    "int16-sdnq",
+    "uint16-sdnq",
+    "fp16-sdnq",
+    # LoRA-only (frozen weights): lower precision options
+    "int6-sdnq",
+    "int5-sdnq",
+    "uint5-sdnq",
+    "uint4-sdnq",
+    "uint3-sdnq",
+    "uint2-sdnq",
 ]
 import torch
 
