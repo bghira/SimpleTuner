@@ -683,6 +683,15 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
 
+        # Warn about resolution_frames bucket strategy with fixed num_frames
+        bucket_strategy = video_config.get("bucket_strategy", "aspect_ratio")
+        if bucket_strategy == "resolution_frames" and num_frames is not None:
+            warning_log(
+                f"(id={backend['id']}) bucket_strategy='resolution_frames' with num_frames={num_frames} will result in "
+                f"a single frame bucket. Videos with fewer than {num_frames} frames will be discarded. "
+                f"Unset num_frames in the video config if you want multiple frame buckets."
+            )
+
     return output
 
 

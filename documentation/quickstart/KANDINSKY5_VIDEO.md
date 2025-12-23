@@ -136,7 +136,8 @@ Video datasets require careful setup. Create `config/multidatabackend.json`:
     "video": {
         "num_frames": 61,
         "min_frames": 61,
-        "frame_rate": 24
+        "frame_rate": 24,
+        "bucket_strategy": "aspect_ratio"
     },
     "repeats": 10
   },
@@ -150,6 +151,15 @@ Video datasets require careful setup. Create `config/multidatabackend.json`:
   }
 ]
 ```
+
+In the `video` subsection:
+- `num_frames`: Target frame count for training.
+- `min_frames`: Minimum video length (shorter videos are discarded).
+- `max_frames`: Maximum video length filter.
+- `bucket_strategy`: How videos are grouped into buckets:
+  - `aspect_ratio` (default): Group by spatial aspect ratio only.
+  - `resolution_frames`: Group by `WxH@F` format (e.g., `1920x1080@61`) for mixed-resolution/duration datasets.
+- `frame_interval`: When using `resolution_frames`, round frame counts to this interval.
 
 > See caption_strategy options and requirements in [DATALOADER.md](../DATALOADER.md#caption_strategy).
 

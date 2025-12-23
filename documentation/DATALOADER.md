@@ -348,13 +348,40 @@ A video dataset should be a folder of (eg. mp4) video files and the usual method
 ```
 
 - In the `video` subsection, we have the following keys we can set:
-  - `num_frames` (optional, int) is how many seconds of data we'll train on.
+  - `num_frames` (optional, int) is how many frames of data we'll train on.
     - At 25 fps, 125 frames is 5 seconds of video, standard output. This should be your target.
   - `min_frames` (optional, int) determines the minimum length of a video that will be considered for training.
     - This should be at least equal to `num_frames`. Not setting it ensures it'll be equal.
   - `max_frames` (optional, int) determines the maximum length of a video that will be considered for training.
   - `is_i2v` (optional, bool) determines whether i2v training will be done on a dataset.
     - This is set to True by default for LTX. You can disable it, however.
+  - `bucket_strategy` (optional, string) determines how videos are grouped into buckets:
+    - `aspect_ratio` (default): Bucket by spatial aspect ratio only (e.g., `1.78`, `0.75`). Same behavior as image datasets.
+    - `resolution_frames`: Bucket by resolution and frame count in `WxH@F` format (e.g., `1920x1080@125`). Useful for training on datasets with varying resolutions and durations.
+  - `frame_interval` (optional, int) when using `bucket_strategy: "resolution_frames"`, frame counts are rounded down to the nearest multiple of this value. Set this to your model's required frame count factor (some models require `num_frames - 1` to be divisible by a certain value).
+
+**Note:** When using `bucket_strategy: "resolution_frames"` with `num_frames` set, you'll get a single frame bucket and videos shorter than `num_frames` will be discarded. Unset `num_frames` if you want multiple frame buckets with fewer discards.
+
+Example using `resolution_frames` bucketing for mixed-resolution video datasets:
+
+```json
+{
+  "id": "mixed-resolution-videos",
+  "type": "local",
+  "dataset_type": "video",
+  "resolution": 720,
+  "resolution_type": "pixel_area",
+  "instance_data_dir": "datasets/videos",
+  "video": {
+      "bucket_strategy": "resolution_frames",
+      "frame_interval": 25,
+      "min_frames": 25,
+      "max_frames": 250
+  }
+}
+```
+
+This configuration will create buckets like `1280x720@100`, `1920x1080@125`, `640x480@75`, etc. Videos are grouped by their training resolution and frame count (rounded to nearest 25 frames).
 
 
 ##### Configuration

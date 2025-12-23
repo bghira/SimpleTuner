@@ -80,9 +80,11 @@ class MetadataBackend:
         except ValueError:
             self.dataset_type = DatasetType.IMAGE
         self.audio_config = self._extract_audio_config()
+        self.video_config = self._extract_video_config()
         self.bucket_strategy = self._resolve_bucket_strategy()
         self.audio_duration_interval = self._resolve_audio_duration_interval()
         self.audio_max_duration_seconds = self._resolve_audio_max_duration()
+        self.video_frame_interval = self._resolve_video_frame_interval()
         self.audio_truncation_mode = self._resolve_audio_truncation_mode()
         self.audio_lyrics_format = self._resolve_audio_lyrics_format()
         self.audio_lyrics_extension = self._resolve_audio_lyrics_extension()
@@ -161,9 +163,19 @@ class MetadataBackend:
         config = self.dataset_config.get("audio")
         return config if isinstance(config, dict) else {}
 
+    def _extract_video_config(self) -> Dict[str, Any]:
+        if self.dataset_config is None:
+            return {}
+        config = self.dataset_config.get("video")
+        return config if isinstance(config, dict) else {}
+
     def _resolve_bucket_strategy(self) -> str:
         default_strategy = "duration" if self.dataset_type is DatasetType.AUDIO else "aspect_ratio"
-        strategy = self.audio_config.get("bucket_strategy") if isinstance(self.audio_config, dict) else None
+        strategy = None
+        if self.dataset_type is DatasetType.AUDIO:
+            strategy = self.audio_config.get("bucket_strategy") if isinstance(self.audio_config, dict) else None
+        elif self.dataset_type is DatasetType.VIDEO:
+            strategy = self.video_config.get("bucket_strategy") if isinstance(self.video_config, dict) else None
         if not strategy:
             strategy = self.dataset_config.get("bucket_strategy")
         if isinstance(strategy, str):
@@ -200,6 +212,24 @@ class MetadataBackend:
             return None
         return value
 
+    def _resolve_video_frame_interval(self) -> Optional[int]:
+        if self.dataset_type is not DatasetType.VIDEO:
+            return None
+        if self.bucket_strategy != "resolution_frames":
+            return None
+        interval = (self.video_config or {}).get("frame_interval")
+        if interval is None:
+            return None
+        try:
+            interval_value = int(interval)
+        except (TypeError, ValueError):
+            logger.warning(f"(id={self.id}) Ignoring video.frame_interval value '{interval}' because it is not an integer.")
+            return None
+        if interval_value <= 0:
+            logger.warning(f"(id={self.id}) Ignoring non-positive video.frame_interval value '{interval}'.")
+            return None
+        return interval_value
+
     @staticmethod
     def _format_duration_value(value: float) -> str:
         if float(value).is_integer():
@@ -227,6 +257,22 @@ class MetadataBackend:
             truncated = safe_duration
         bucket_key = f"{self._format_duration_value(truncated)}s"
         return bucket_key, truncated
+
+    def _compute_video_bucket(self, width: int, height: int, num_frames: int) -> tuple[str, int]:
+        """
+        Compute video bucket key in WxH@F format.
+        Frame count is rounded down to the nearest interval if frame_interval is set.
+        Returns (bucket_key, rounded_frames).
+        """
+        interval = self.video_frame_interval
+        if interval is not None and interval > 0:
+            rounded_frames = (int(num_frames) // interval) * interval
+            if rounded_frames <= 0:
+                rounded_frames = int(num_frames)
+        else:
+            rounded_frames = int(num_frames)
+        bucket_key = f"{int(width)}x{int(height)}@{rounded_frames}"
+        return bucket_key, rounded_frames
 
     def set_metadata(self, metadata_backend, update_json: bool = True):
         if not isinstance(metadata_backend, MetadataBackend):
