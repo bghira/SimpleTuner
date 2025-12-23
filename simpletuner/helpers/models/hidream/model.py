@@ -115,6 +115,12 @@ class HiDream(ImageModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # RamTorch presets - 6 levels for this 17B model
             AccelerationPreset(
@@ -128,6 +134,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "double_stream_blocks.*",
                 },
@@ -143,6 +150,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "double_stream_blocks.*,single_stream_blocks.0,single_stream_blocks.1,single_stream_blocks.2,single_stream_blocks.3,single_stream_blocks.4,single_stream_blocks.5,single_stream_blocks.6,single_stream_blocks.7",
                 },
@@ -158,6 +166,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "double_stream_blocks.*,single_stream_blocks.0,single_stream_blocks.1,single_stream_blocks.2,single_stream_blocks.3,single_stream_blocks.4,single_stream_blocks.5,single_stream_blocks.6,single_stream_blocks.7,single_stream_blocks.8,single_stream_blocks.9,single_stream_blocks.10,single_stream_blocks.11,single_stream_blocks.12,single_stream_blocks.13,single_stream_blocks.14,single_stream_blocks.15",
                 },
@@ -173,6 +182,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "double_stream_blocks.*,single_stream_blocks.0,single_stream_blocks.1,single_stream_blocks.2,single_stream_blocks.3,single_stream_blocks.4,single_stream_blocks.5,single_stream_blocks.6,single_stream_blocks.7,single_stream_blocks.8,single_stream_blocks.9,single_stream_blocks.10,single_stream_blocks.11,single_stream_blocks.12,single_stream_blocks.13,single_stream_blocks.14,single_stream_blocks.15,single_stream_blocks.16,single_stream_blocks.17,single_stream_blocks.18,single_stream_blocks.19,single_stream_blocks.20,single_stream_blocks.21,single_stream_blocks.22,single_stream_blocks.23",
                 },
@@ -188,6 +198,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "double_stream_blocks.*,single_stream_blocks.0,single_stream_blocks.1,single_stream_blocks.2,single_stream_blocks.3,single_stream_blocks.4,single_stream_blocks.5,single_stream_blocks.6,single_stream_blocks.7,single_stream_blocks.8,single_stream_blocks.9,single_stream_blocks.10,single_stream_blocks.11,single_stream_blocks.12,single_stream_blocks.13,single_stream_blocks.14,single_stream_blocks.15,single_stream_blocks.16,single_stream_blocks.17,single_stream_blocks.18,single_stream_blocks.19,single_stream_blocks.20,single_stream_blocks.21,single_stream_blocks.22,single_stream_blocks.23,single_stream_blocks.24,single_stream_blocks.25,single_stream_blocks.26,single_stream_blocks.27",
                 },
@@ -203,6 +214,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "double_stream_blocks.*,single_stream_blocks.*",
                 },
@@ -218,7 +230,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~10%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 8},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 8},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -230,7 +242,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 12},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 12},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -242,7 +254,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~28%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 20},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 20},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -254,7 +266,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~35%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 24},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 24},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -266,7 +278,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~55%",
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
-                config={"musubi_blocks_to_swap": 36},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 36},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -278,7 +290,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~80%",
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
-                config={"musubi_blocks_to_swap": 47},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 47},
             ),
             # DeepSpeed presets (Advanced tab)
             AccelerationPreset(
@@ -290,7 +302,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer memory by 75% per GPU",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero1"},
+                config={**_base_memory_config, "deepspeed": "zero1"},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -301,7 +313,7 @@ class HiDream(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
                 tradeoff_speed="Moderate communication overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero2"},
+                config={**_base_memory_config, "deepspeed": "zero2"},
             ),
         ]
 

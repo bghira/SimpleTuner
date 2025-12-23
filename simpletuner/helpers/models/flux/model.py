@@ -103,6 +103,12 @@ class Flux(ImageModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # Basic tab - RamTorch presets
             AccelerationPreset(
@@ -117,6 +123,7 @@ class Flux(ImageModelFoundation):
                 requires_cuda=True,
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.*",
                 },
@@ -133,6 +140,7 @@ class Flux(ImageModelFoundation):
                 requires_cuda=True,
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "*",
                 },
@@ -148,7 +156,7 @@ class Flux(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 14},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 14},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -160,7 +168,7 @@ class Flux(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~30%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 28},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 28},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -172,7 +180,7 @@ class Flux(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~50%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 42},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 42},
             ),
             # Advanced tab - DeepSpeed presets
             AccelerationPreset(
@@ -183,9 +191,9 @@ class Flux(ImageModelFoundation):
                 tab="advanced",
                 tradeoff_vram="Reduces optimizer memory by ~75% per GPU",
                 tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Requires multi-GPU. Not compatible with FSDP.",
+                tradeoff_notes="Not compatible with FSDP.",
                 requires_cuda=True,
-                config={"deepspeed_config": "zero1"},
+                config={**_base_memory_config, "deepspeed_config": "zero1"},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -195,9 +203,9 @@ class Flux(ImageModelFoundation):
                 tab="advanced",
                 tradeoff_vram="Reduces memory by ~85% per GPU",
                 tradeoff_speed="Moderate overhead from gradient sync",
-                tradeoff_notes="Requires multi-GPU. Not compatible with FSDP.",
+                tradeoff_notes="Not compatible with FSDP.",
                 requires_cuda=True,
-                config={"deepspeed_config": "zero2"},
+                config={**_base_memory_config, "deepspeed_config": "zero2"},
             ),
             # Advanced tab - Group Offload
             AccelerationPreset(
@@ -210,7 +218,11 @@ class Flux(ImageModelFoundation):
                 tradeoff_speed="Significant overhead from CPU-GPU transfers",
                 tradeoff_notes="Known stability issues. Mutually exclusive with RamTorch.",
                 requires_min_system_ram_gb=64,
-                config={"enable_group_offload": True, "group_offload_type": "block_level"},
+                config={
+                    **_base_memory_config,
+                    "enable_group_offload": True,
+                    "group_offload_type": "block_level",
+                },
             ),
         ]
 

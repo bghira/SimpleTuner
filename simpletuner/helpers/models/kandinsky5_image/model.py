@@ -86,6 +86,12 @@ class Kandinsky5Image(ImageModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # RamTorch presets - 6 levels
             AccelerationPreset(
@@ -99,6 +105,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5",
                 },
@@ -114,6 +121,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5,visual_transformer_blocks.6,visual_transformer_blocks.7,visual_transformer_blocks.8,visual_transformer_blocks.9",
                 },
@@ -129,6 +137,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5,visual_transformer_blocks.6,visual_transformer_blocks.7,visual_transformer_blocks.8,visual_transformer_blocks.9,visual_transformer_blocks.10,visual_transformer_blocks.11,visual_transformer_blocks.12,visual_transformer_blocks.13,visual_transformer_blocks.14,visual_transformer_blocks.15",
                 },
@@ -144,6 +153,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5,visual_transformer_blocks.6,visual_transformer_blocks.7,visual_transformer_blocks.8,visual_transformer_blocks.9,visual_transformer_blocks.10,visual_transformer_blocks.11,visual_transformer_blocks.12,visual_transformer_blocks.13,visual_transformer_blocks.14,visual_transformer_blocks.15,visual_transformer_blocks.16,visual_transformer_blocks.17,visual_transformer_blocks.18,visual_transformer_blocks.19,visual_transformer_blocks.20,visual_transformer_blocks.21",
                 },
@@ -159,6 +169,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "visual_transformer_blocks.0,visual_transformer_blocks.1,visual_transformer_blocks.2,visual_transformer_blocks.3,visual_transformer_blocks.4,visual_transformer_blocks.5,visual_transformer_blocks.6,visual_transformer_blocks.7,visual_transformer_blocks.8,visual_transformer_blocks.9,visual_transformer_blocks.10,visual_transformer_blocks.11,visual_transformer_blocks.12,visual_transformer_blocks.13,visual_transformer_blocks.14,visual_transformer_blocks.15,visual_transformer_blocks.16,visual_transformer_blocks.17,visual_transformer_blocks.18,visual_transformer_blocks.19,visual_transformer_blocks.20,visual_transformer_blocks.21,visual_transformer_blocks.22,visual_transformer_blocks.23,visual_transformer_blocks.24,visual_transformer_blocks.25,visual_transformer_blocks.26,visual_transformer_blocks.27",
                 },
@@ -174,6 +185,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "text_transformer_blocks.*,visual_transformer_blocks.*",
                 },
@@ -189,7 +201,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~10%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 6},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 6},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -201,7 +213,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 9},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 9},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -213,7 +225,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~25%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 14},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 14},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -225,7 +237,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~35%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 17},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 17},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -237,7 +249,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~55%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 26},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 26},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -249,7 +261,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~80%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 33},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 33},
             ),
             # DeepSpeed presets (Advanced tab)
             AccelerationPreset(
@@ -261,7 +273,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer memory by 75% per GPU",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero1"},
+                config={**_base_memory_config, "deepspeed": "zero1"},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -272,7 +284,7 @@ class Kandinsky5Image(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
                 tradeoff_speed="Moderate communication overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero2"},
+                config={**_base_memory_config, "deepspeed": "zero2"},
             ),
         ]
 

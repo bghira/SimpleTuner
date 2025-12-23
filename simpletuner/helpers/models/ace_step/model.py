@@ -100,6 +100,12 @@ class ACEStep(AudioModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # RamTorch presets (Basic tab) - 3 levels for 3.5B model
             AccelerationPreset(
@@ -113,6 +119,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_notes="Requires 24GB+ system RAM.",
                 requires_min_system_ram_gb=24,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19,transformer_blocks.20,transformer_blocks.21,transformer_blocks.22,transformer_blocks.23,transformer_blocks.24,transformer_blocks.25,transformer_blocks.26,transformer_blocks.27",
                 },
@@ -128,6 +135,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_notes="Requires 32GB+ system RAM.",
                 requires_min_system_ram_gb=32,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19,transformer_blocks.20,transformer_blocks.21,transformer_blocks.22,transformer_blocks.23,transformer_blocks.24,transformer_blocks.25,transformer_blocks.26,transformer_blocks.27",
                 },
@@ -143,6 +151,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_notes="Requires 48GB+ system RAM.",
                 requires_min_system_ram_gb=48,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.*",
                 },
@@ -158,7 +167,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 24GB+ system RAM.",
                 requires_min_system_ram_gb=24,
-                config={"musubi_blocks_to_swap": 9},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 9},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -170,7 +179,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_speed="Increases training time by ~25%",
                 tradeoff_notes="Requires 32GB+ system RAM.",
                 requires_min_system_ram_gb=32,
-                config={"musubi_blocks_to_swap": 14},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 14},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -182,7 +191,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_speed="Increases training time by ~40%",
                 tradeoff_notes="Requires 48GB+ system RAM.",
                 requires_min_system_ram_gb=48,
-                config={"musubi_blocks_to_swap": 21},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 21},
             ),
             # DeepSpeed presets (Advanced tab)
             AccelerationPreset(
@@ -194,7 +203,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_vram="Reduces optimizer VRAM by ~50%",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed_stage": 1},
+                config={**_base_memory_config, "deepspeed_stage": 1},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -205,7 +214,7 @@ class ACEStep(AudioModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient VRAM by ~60%",
                 tradeoff_speed="Slight communication overhead",
                 tradeoff_notes="Requires multi-GPU setup with fast interconnect.",
-                config={"deepspeed_stage": 2},
+                config={**_base_memory_config, "deepspeed_stage": 2},
             ),
         ]
 

@@ -64,6 +64,12 @@ class LongCatImage(ImageModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # RamTorch presets (Basic tab) - 3 levels for 6B model
             AccelerationPreset(
@@ -77,6 +83,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_notes="Requires 32GB+ system RAM.",
                 requires_min_system_ram_gb=32,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "single_transformer_blocks.*",
                 },
@@ -92,6 +99,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_notes="Requires 48GB+ system RAM.",
                 requires_min_system_ram_gb=48,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "single_transformer_blocks.*,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18",
                 },
@@ -107,6 +115,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.*,single_transformer_blocks.*",
                 },
@@ -122,7 +131,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 32GB+ system RAM.",
                 requires_min_system_ram_gb=32,
-                config={"musubi_blocks_to_swap": 18},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 18},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -134,7 +143,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~25%",
                 tradeoff_notes="Requires 48GB+ system RAM.",
                 requires_min_system_ram_gb=48,
-                config={"musubi_blocks_to_swap": 28},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 28},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -146,7 +155,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~40%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 42},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 42},
             ),
             # DeepSpeed presets (Advanced tab)
             AccelerationPreset(
@@ -158,7 +167,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer VRAM by ~50%",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed_stage": 1},
+                config={**_base_memory_config, "deepspeed_stage": 1},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -169,7 +178,7 @@ class LongCatImage(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient VRAM by ~60%",
                 tradeoff_speed="Slight communication overhead",
                 tradeoff_notes="Requires multi-GPU setup with fast interconnect.",
-                config={"deepspeed_stage": 2},
+                config={**_base_memory_config, "deepspeed_stage": 2},
             ),
         ]
 

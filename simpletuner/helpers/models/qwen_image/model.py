@@ -97,6 +97,12 @@ class QwenImage(ImageModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # RamTorch presets - 6 levels for this 20B model
             AccelerationPreset(
@@ -110,6 +116,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9",
                 },
@@ -125,6 +132,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19",
                 },
@@ -140,6 +148,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19,transformer_blocks.20,transformer_blocks.21,transformer_blocks.22,transformer_blocks.23,transformer_blocks.24,transformer_blocks.25,transformer_blocks.26,transformer_blocks.27,transformer_blocks.28,transformer_blocks.29",
                 },
@@ -155,6 +164,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19,transformer_blocks.20,transformer_blocks.21,transformer_blocks.22,transformer_blocks.23,transformer_blocks.24,transformer_blocks.25,transformer_blocks.26,transformer_blocks.27,transformer_blocks.28,transformer_blocks.29,transformer_blocks.30,transformer_blocks.31,transformer_blocks.32,transformer_blocks.33,transformer_blocks.34,transformer_blocks.35,transformer_blocks.36,transformer_blocks.37,transformer_blocks.38,transformer_blocks.39",
                 },
@@ -170,6 +180,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14,transformer_blocks.15,transformer_blocks.16,transformer_blocks.17,transformer_blocks.18,transformer_blocks.19,transformer_blocks.20,transformer_blocks.21,transformer_blocks.22,transformer_blocks.23,transformer_blocks.24,transformer_blocks.25,transformer_blocks.26,transformer_blocks.27,transformer_blocks.28,transformer_blocks.29,transformer_blocks.30,transformer_blocks.31,transformer_blocks.32,transformer_blocks.33,transformer_blocks.34,transformer_blocks.35,transformer_blocks.36,transformer_blocks.37,transformer_blocks.38,transformer_blocks.39,transformer_blocks.40,transformer_blocks.41,transformer_blocks.42,transformer_blocks.43,transformer_blocks.44,transformer_blocks.45,transformer_blocks.46,transformer_blocks.47,transformer_blocks.48,transformer_blocks.49",
                 },
@@ -185,6 +196,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.*",
                 },
@@ -200,7 +212,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~10%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 10},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 10},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -212,7 +224,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 15},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 15},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -224,7 +236,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~25%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 24},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 24},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -236,7 +248,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~35%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 30},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 30},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -248,7 +260,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~55%",
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
-                config={"musubi_blocks_to_swap": 45},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 45},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -260,7 +272,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~80%",
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
-                config={"musubi_blocks_to_swap": 59},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 59},
             ),
             # DeepSpeed presets (Advanced tab)
             AccelerationPreset(
@@ -272,7 +284,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer memory by 75% per GPU",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero1"},
+                config={**_base_memory_config, "deepspeed": "zero1"},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -283,7 +295,7 @@ class QwenImage(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
                 tradeoff_speed="Moderate communication overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero2"},
+                config={**_base_memory_config, "deepspeed": "zero2"},
             ),
         ]
 

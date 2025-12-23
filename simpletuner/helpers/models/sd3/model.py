@@ -157,6 +157,12 @@ class SD3(ImageModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # RamTorch presets - 6 levels for this 8B model
             AccelerationPreset(
@@ -170,6 +176,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2",
                 },
@@ -185,6 +192,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5",
                 },
@@ -200,6 +208,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8",
                 },
@@ -215,6 +224,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11",
                 },
@@ -230,6 +240,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.0,transformer_blocks.1,transformer_blocks.2,transformer_blocks.3,transformer_blocks.4,transformer_blocks.5,transformer_blocks.6,transformer_blocks.7,transformer_blocks.8,transformer_blocks.9,transformer_blocks.10,transformer_blocks.11,transformer_blocks.12,transformer_blocks.13,transformer_blocks.14",
                 },
@@ -245,6 +256,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "transformer_blocks.*",
                 },
@@ -260,7 +272,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~10%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 3},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 3},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -272,7 +284,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~18%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 5},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 5},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -284,7 +296,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~25%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 7},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 7},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -296,7 +308,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~35%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 9},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 9},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -308,7 +320,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~55%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 14},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 14},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -320,7 +332,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~80%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 17},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 17},
             ),
             # DeepSpeed presets (Advanced tab)
             AccelerationPreset(
@@ -332,7 +344,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer memory by 75% per GPU",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero1"},
+                config={**_base_memory_config, "deepspeed": "zero1"},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -343,7 +355,7 @@ class SD3(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
                 tradeoff_speed="Moderate communication overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero2"},
+                config={**_base_memory_config, "deepspeed": "zero2"},
             ),
         ]
 

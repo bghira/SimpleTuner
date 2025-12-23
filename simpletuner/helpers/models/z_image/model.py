@@ -60,6 +60,12 @@ class ZImage(ImageModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # RamTorch presets (Basic tab) - 3 levels for 6B model
             AccelerationPreset(
@@ -73,6 +79,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_notes="Requires 32GB+ system RAM.",
                 requires_min_system_ram_gb=32,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "layers.15,layers.16,layers.17,layers.18,layers.19,layers.20,layers.21,layers.22,layers.23,layers.24,layers.25,layers.26,layers.27,layers.28,layers.29",
                 },
@@ -88,6 +95,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_notes="Requires 48GB+ system RAM.",
                 requires_min_system_ram_gb=48,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "layers.8,layers.9,layers.10,layers.11,layers.12,layers.13,layers.14,layers.15,layers.16,layers.17,layers.18,layers.19,layers.20,layers.21,layers.22,layers.23,layers.24,layers.25,layers.26,layers.27,layers.28,layers.29",
                 },
@@ -103,6 +111,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "layers.*",
                 },
@@ -118,7 +127,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 32GB+ system RAM.",
                 requires_min_system_ram_gb=32,
-                config={"musubi_blocks_to_swap": 10},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 10},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -130,7 +139,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~25%",
                 tradeoff_notes="Requires 48GB+ system RAM.",
                 requires_min_system_ram_gb=48,
-                config={"musubi_blocks_to_swap": 15},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 15},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -142,7 +151,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_speed="Increases training time by ~40%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 22},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 22},
             ),
             # DeepSpeed presets (Advanced tab)
             AccelerationPreset(
@@ -154,7 +163,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer VRAM by ~50%",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed_stage": 1},
+                config={**_base_memory_config, "deepspeed_stage": 1},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -165,7 +174,7 @@ class ZImage(ImageModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient VRAM by ~60%",
                 tradeoff_speed="Slight communication overhead",
                 tradeoff_notes="Requires multi-GPU setup with fast interconnect.",
-                config={"deepspeed_stage": 2},
+                config={**_base_memory_config, "deepspeed_stage": 2},
             ),
         ]
 

@@ -300,6 +300,12 @@ class Wan(VideoModelFoundation):
 
     @classmethod
     def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        # Common settings for memory optimization presets
+        _base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
         return [
             # Basic tab - RamTorch options
             AccelerationPreset(
@@ -313,6 +319,7 @@ class Wan(VideoModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "blocks.0,blocks.1,blocks.2,blocks.3,blocks.4,blocks.5,blocks.6,blocks.7,blocks.8,blocks.9,blocks.10,blocks.11,blocks.12,blocks.13,blocks.14,blocks.15,blocks.16,blocks.17,blocks.18,blocks.19",
                 },
@@ -328,6 +335,7 @@ class Wan(VideoModelFoundation):
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
                 config={
+                    **_base_memory_config,
                     "ramtorch": True,
                     "ramtorch_target_modules": "blocks.*",
                 },
@@ -343,7 +351,7 @@ class Wan(VideoModelFoundation):
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 10},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 10},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -355,7 +363,7 @@ class Wan(VideoModelFoundation):
                 tradeoff_speed="Increases training time by ~30%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 20},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 20},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
@@ -367,7 +375,7 @@ class Wan(VideoModelFoundation):
                 tradeoff_speed="Increases training time by ~55%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={"musubi_blocks_to_swap": 30},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 30},
             ),
             # Advanced tab - DeepSpeed options
             AccelerationPreset(
@@ -379,7 +387,7 @@ class Wan(VideoModelFoundation):
                 tradeoff_vram="Reduces optimizer memory by 75% per GPU",
                 tradeoff_speed="Minimal overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero1"},
+                config={**_base_memory_config, "deepspeed": "zero1"},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.DEEPSPEED_ZERO_2,
@@ -390,7 +398,7 @@ class Wan(VideoModelFoundation):
                 tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
                 tradeoff_speed="Moderate communication overhead",
                 tradeoff_notes="Requires multi-GPU setup.",
-                config={"deepspeed": "zero2"},
+                config={**_base_memory_config, "deepspeed": "zero2"},
             ),
         ]
 
