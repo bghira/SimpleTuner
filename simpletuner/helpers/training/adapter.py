@@ -125,7 +125,19 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
         elif ".alpha" in k or ".lora_alpha" in k:
             kk = k.replace(".lora_alpha", "").replace(".alpha", "")
             if kk in lora_layers:
-                lora_layers[kk].lora_alpha[loraKey] = v
+                layer = lora_layers[kk]
+                # Convert tensor alpha to float (tensor may be on CPU from safetensors)
+                if torch.is_tensor(v):
+                    alpha_value = float(v.detach().float().cpu().item())
+                else:
+                    alpha_value = float(v)
+                layer.lora_alpha[loraKey] = alpha_value
+                # Update scaling to match the new alpha value
+                if loraKey in getattr(layer, "r", {}) and layer.r[loraKey]:
+                    if getattr(layer, "use_rslora", False):
+                        layer.scaling[loraKey] = alpha_value / (layer.r[loraKey] ** 0.5)
+                    else:
+                        layer.scaling[loraKey] = alpha_value / layer.r[loraKey]
         elif ".lora_magnitude_vector" in k:
             kk = k.replace(".lora_magnitude_vector.weight", "")
             if kk in lora_layers:
