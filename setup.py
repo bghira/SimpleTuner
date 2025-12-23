@@ -265,7 +265,7 @@ base_deps = [
     "peft-singlora>=0.2.0",
     "cryptography>=41.0.0",
     "torchcodec>=0.8.1",
-    "sdnq>=0.1.3",
+    "sdnq>=0.1.2",
 ]
 
 platform_deps_for_install = get_platform_dependencies()
