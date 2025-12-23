@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Dict, List, Mapping, Optional
 if TYPE_CHECKING:
     from diffusers import DiffusionPipeline
 
+    from simpletuner.helpers.acceleration import AccelerationPreset
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -440,6 +442,28 @@ class ModelFoundation(ABC):
     VALIDATION_USES_NEGATIVE_PROMPT = False
     AUTO_LORA_FORMAT_DETECTION = False
     SUPPORTS_MUON_CLIP = False
+
+    # Acceleration backend support - models declare what they DON'T support
+    UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
+
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        """Return the maximum number of blocks that can be swapped for Musubi block swap.
+
+        Override in subclasses that support block swapping to return the model's
+        maximum swappable block count. Returns None if unknown or varies by variant.
+        """
+        return None
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list["AccelerationPreset"]:
+        """Return model-specific acceleration presets.
+
+        Each model defines its own presets with model-appropriate levels,
+        target modules, block counts, and tradeoff descriptions.
+        Override in subclasses to provide model-specific presets.
+        """
+        return []
 
     def __init__(self, config: dict, accelerator):
         self.config = config

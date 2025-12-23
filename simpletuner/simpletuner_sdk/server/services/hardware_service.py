@@ -134,3 +134,26 @@ def _derive_capabilities(backend: Optional[str]) -> Dict[str, bool]:
         "supports_deepspeed": supports_deepspeed,
         "supports_fsdp": supports_fsdp,
     }
+
+
+def detect_system_memory() -> Dict[str, Any]:
+    """Detect system RAM information.
+
+    Returns:
+        Dictionary with total_gb, available_gb, and percent_used.
+    """
+    try:
+        import psutil
+
+        mem = psutil.virtual_memory()
+        return {
+            "total_gb": round(mem.total / (1024**3), 2),
+            "available_gb": round(mem.available / (1024**3), 2),
+            "percent_used": round(mem.percent, 1),
+        }
+    except ImportError:
+        logger.debug("psutil not available for system memory detection")
+        return {"total_gb": None, "available_gb": None, "percent_used": None}
+    except Exception as e:
+        logger.debug("Failed to detect system memory: %s", e, exc_info=True)
+        return {"total_gb": None, "available_gb": None, "percent_used": None}

@@ -388,7 +388,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             arg_name="--accelerator_cache_clear_interval",
             ui_label="Accelerator Cache Clear Interval",
             field_type=FieldType.NUMBER,
-            tab="training",
+            tab="model",
             section="memory_optimization",
             subsection="memory_optimization",
             default_value=None,
