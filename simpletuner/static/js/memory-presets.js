@@ -242,8 +242,58 @@
                 const config = this.getSelectedConfig();
                 console.log('[MEMORY PRESETS] Applying config:', config);
 
+                // Memory optimization fields that should be reset before applying new presets
+                const memoryOptFields = [
+                    'ramtorch',
+                    'ramtorch_target_modules',
+                    'musubi_blocks_to_swap',
+                    'enable_group_offload',
+                    'group_offload_type',
+                    'deepspeed_config',
+                ];
+
+                // Default/reset values for each field
+                const resetValues = {
+                    'ramtorch': false,
+                    'ramtorch_target_modules': '',
+                    'musubi_blocks_to_swap': 0,
+                    'enable_group_offload': false,
+                    'group_offload_type': '',
+                    'deepspeed_config': '',
+                };
+
                 // Apply to form fields via trainer store
                 const trainerStore = window.Alpine?.store?.('trainer');
+
+                // First, reset all memory optimization fields
+                for (const field of memoryOptFields) {
+                    const canonicalKey = `--${field}`;
+                    const resetValue = resetValues[field];
+
+                    if (trainerStore) {
+                        if (typeof trainerStore.updateConfigValue === 'function') {
+                            trainerStore.updateConfigValue(canonicalKey, resetValue);
+                        } else if (trainerStore.activeEnvironmentConfig) {
+                            trainerStore.activeEnvironmentConfig[canonicalKey] = resetValue;
+                        }
+                        if (trainerStore.configValues) {
+                            trainerStore.configValues[canonicalKey] = resetValue;
+                        }
+                    }
+
+                    // Reset DOM element
+                    const el = document.getElementById(field) || document.querySelector(`[name="${field}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            el.checked = Boolean(resetValue);
+                        } else {
+                            el.value = resetValue;
+                        }
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }
+
+                console.log('[MEMORY PRESETS] Reset existing memory optimization settings');
                 if (trainerStore) {
                     for (const [key, value] of Object.entries(config)) {
                         // Canonicalize key to match store format (add -- prefix)

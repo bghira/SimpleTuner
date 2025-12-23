@@ -1905,6 +1905,16 @@ class SimpleTunerNCurses:
 
         self._display_json(stdscr, config)
 
+    # Memory optimization fields that should be reset before applying new presets
+    MEMORY_OPT_RESET_VALUES: Dict[str, Any] = {
+        "ramtorch": False,
+        "ramtorch_target_modules": "",
+        "musubi_blocks_to_swap": 0,
+        "enable_group_offload": False,
+        "group_offload_type": "",
+        "deepspeed_config": "",
+    }
+
     def _memory_presets_apply(self, stdscr, session: MemoryPresetsSession) -> None:
         """Apply selected presets to the current configuration."""
         if not session.has_selection:
@@ -1918,6 +1928,11 @@ class SimpleTunerNCurses:
 
         # Show what will be applied
         info_lines = ["The following settings will be applied:", ""]
+        info_lines.append("First, these memory optimization fields will be reset:")
+        for key in sorted(self.MEMORY_OPT_RESET_VALUES.keys()):
+            info_lines.append(f"  {key}: {self.MEMORY_OPT_RESET_VALUES[key]}")
+        info_lines.append("")
+        info_lines.append("Then, these preset values will be applied:")
         for key, value in sorted(config.items()):
             info_lines.append(f"  {key}: {value}")
         info_lines.append("")
@@ -1927,7 +1942,11 @@ class SimpleTunerNCurses:
         if choice != 0:
             return
 
-        # Apply to config state
+        # First, reset all memory optimization fields to defaults
+        for key, value in self.MEMORY_OPT_RESET_VALUES.items():
+            self.state.set_value(key, value)
+
+        # Then apply the new preset config
         for key, value in config.items():
             self.state.set_value(key, value)
 
