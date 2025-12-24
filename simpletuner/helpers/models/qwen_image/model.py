@@ -1016,12 +1016,9 @@ class QwenImage(ImageModelFoundation):
             raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         timesteps = raw_timesteps.expand(batch_size) / 1000.0  # Normalize to [0, 1]
 
-        # Get text sequence lengths
-        txt_seq_lens = (
-            prompt_embeds_mask.sum(dim=1).tolist()
-            if prompt_embeds_mask is not None
-            else [prompt_embeds.shape[1]] * batch_size
-        )
+        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
+        # but the tensor includes padding that also needs positional encodings
+        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         # Forward pass through transformer
         with self._force_packed_transformer_output(self.model):
@@ -1150,9 +1147,9 @@ class QwenImage(ImageModelFoundation):
             prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
-            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
-        else:
-            txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
+        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
+        # but the tensor includes padding that also needs positional encodings
+        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         img_shapes = [
             [
@@ -1260,9 +1257,9 @@ class QwenImage(ImageModelFoundation):
             prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
-            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
-        else:
-            txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
+        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
+        # but the tensor includes padding that also needs positional encodings
+        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         hidden_states_buffer = self._new_hidden_state_buffer()
         raw_timesteps = prepared_batch["timesteps"]

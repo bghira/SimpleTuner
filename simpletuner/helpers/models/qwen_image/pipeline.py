@@ -803,9 +803,13 @@ class QwenImageEditPipeline(DiffusionPipeline, QwenImageLoraLoaderMixin):
         if self.attention_kwargs is None:
             self._attention_kwargs = {}
 
-        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
+        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
+        # but the tensor includes padding that also needs positional encodings
+        txt_seq_lens = [prompt_embeds.shape[1]] * prompt_embeds.shape[0]
         negative_txt_seq_lens = (
-            negative_prompt_embeds_mask.sum(dim=1).tolist() if negative_prompt_embeds_mask is not None else None
+            [negative_prompt_embeds.shape[1]] * negative_prompt_embeds.shape[0]
+            if negative_prompt_embeds is not None
+            else None
         )
 
         # 6. Denoising loop
