@@ -2530,9 +2530,43 @@ class Trainer:
                 cache.text_encoders = None
             if hasattr(cache, "pipeline"):
                 cache.pipeline = None
+            # Also clear the model reference which may hold text encoders
+            if hasattr(cache, "model"):
+                cache.model = None
         self._clear_pipeline_caches()
         reclaim_memory()
         self._report_cuda_usage("post_text_encoder_unload")
+
+        # Scan for any CUDA tensors that might be leaked
+        if torch.cuda.is_available():
+            import gc
+
+            gc.collect()
+            cuda_tensor_count = 0
+            cuda_tensor_bytes = 0
+            for obj in gc.get_objects():
+                try:
+                    if torch.is_tensor(obj) and obj.device.type == "cuda":
+                        cuda_tensor_count += 1
+                        cuda_tensor_bytes += obj.numel() * obj.element_size()
+                except Exception:
+                    pass
+            # Check if VAE is still loaded (expected at this point)
+            vae_loaded = getattr(self.model, "vae", None) is not None
+            if cuda_tensor_bytes > 1024**3:  # Only log if > 1GB
+                if vae_loaded:
+                    logger.debug(
+                        "Found %d CUDA tensors totaling %.2f GB (VAE still loaded, will be unloaded next)",
+                        cuda_tensor_count,
+                        cuda_tensor_bytes / (1024**3),
+                    )
+                else:
+                    logger.warning(
+                        "Found %d CUDA tensors totaling %.2f GB that may be leaked",
+                        cuda_tensor_count,
+                        cuda_tensor_bytes / (1024**3),
+                    )
+
         memory_after_unload = self.stats_memory_used()
         memory_saved = memory_after_unload - memory_before_unload
         logger.info(f"After nuking text encoders from orbit, we freed {abs(round(memory_saved, 2))} GB of VRAM.")
@@ -2632,6 +2666,17 @@ class Trainer:
                         args=self.config,
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
+
+        # After quantization, re-move non-ramtorch layers to GPU
+        # Quantization may have moved the model to CPU, leaving normalization weights there
+        if getattr(self.config, "ramtorch", False) and not preprocessing_models_only:
+            from simpletuner.helpers.utils import ramtorch as ramtorch_utils
+
+            model = self.model.unwrap_model(model=self.model.model)
+            if model is not None:
+                moved = ramtorch_utils.move_embeddings_to_device(model, self.accelerator.device)
+                if moved:
+                    logger.debug(f"Post-quantization: moved {moved} non-ramtorch params to GPU")
 
     def init_controlnet_model(self):
         if not self.config.controlnet:

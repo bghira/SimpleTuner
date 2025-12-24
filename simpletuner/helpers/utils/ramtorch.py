@@ -172,6 +172,62 @@ def replace_linear_layers_with_ramtorch(
     return replaced
 
 
+def replace_all_layers_with_ramtorch(
+    module: nn.Module,
+    *,
+    device: object,
+    include_linear: bool = True,
+    include_embedding: bool = True,
+    include_conv: bool = True,
+    include_layernorm: bool = True,
+    target_patterns: Optional[Sequence[str]] = None,
+    name_prefix: str = "",
+) -> dict:
+    """
+    Replace all supported layer types with CPU-bouncing RamTorch versions.
+
+    This includes Linear (via ramtorch library) plus Embedding, Conv, and LayerNorm
+    (via our extensions).
+
+    Args:
+        module: Root module to process.
+        device: Target CUDA/ROCm device identifier.
+        include_linear: Replace nn.Linear layers.
+        include_embedding: Replace nn.Embedding layers.
+        include_conv: Replace nn.Conv2d and nn.Conv3d layers.
+        include_layernorm: Replace nn.LayerNorm layers.
+        target_patterns: Optional glob patterns to filter which modules are replaced.
+        name_prefix: Optional prefix for module names.
+
+    Returns:
+        Dict with counts of each layer type replaced.
+    """
+    from simpletuner.helpers.ramtorch_extensions import replace_module_with_ramtorch
+
+    resolved_device = _normalize_device(device)
+    counts = {"linear": 0, "embedding": 0, "conv": 0, "layernorm": 0}
+
+    # Replace Linear layers using ramtorch library
+    if include_linear:
+        counts["linear"] = replace_linear_layers_with_ramtorch(
+            module,
+            device=resolved_device,
+            target_patterns=target_patterns,
+            name_prefix=name_prefix,
+        )
+
+    # Replace other layers using our extensions
+    counts["other"] = replace_module_with_ramtorch(
+        module,
+        device=str(resolved_device) if isinstance(resolved_device, torch.device) else resolved_device,
+        include_embedding=include_embedding,
+        include_conv=include_conv,
+        include_layernorm=include_layernorm,
+    )
+
+    return counts
+
+
 def register_lora_custom_module(lora_config) -> bool:
     """
     Add RamTorch Linear to PEFT's custom module map so LoRA can wrap CPUBouncingLinear layers.
@@ -532,6 +588,65 @@ def _maybe_patch_peft_inject() -> bool:
 def ramtorch_zero_utils():
     imports = ensure_available()
     return imports["broadcast_zero_params"], imports["create_zero_param_groups"], imports["setup_grad_sharding_hooks"]
+
+
+def move_embeddings_to_device(module: nn.Module, device: object) -> int:
+    """
+    Move all non-RamTorch layers to the specified device.
+
+    When ramtorch is applied to a model, only nn.Linear layers are converted
+    to CPU-bouncing versions. All other layers (Embedding, LayerNorm, etc.)
+    need to be on GPU because:
+    1. Embeddings receive GPU input_ids
+    2. Other layers receive GPU activations from ramtorch Linear outputs
+
+    Args:
+        module: Root module containing layers to move.
+        device: Target device (e.g., "cuda", torch.device("cuda:0")).
+
+    Returns:
+        Number of modules moved.
+    """
+    moved = 0
+
+    def _has_ramtorch_params(mod: nn.Module) -> bool:
+        for param in mod.parameters(recurse=False):
+            if getattr(param, "is_ramtorch", False):
+                return True
+        return False
+
+    def _is_leaf_module(mod: nn.Module) -> bool:
+        for child in mod.children():
+            if any(True for _ in child.parameters(recurse=True)):
+                return False
+        return True
+
+    for name, child in module.named_modules():
+        # Move buffers from all modules (e.g., position_ids in CLIPTextEmbeddings)
+        for buf_name, buf in child.named_buffers(recurse=False):
+            if buf.device.type == "cpu":
+                child.register_buffer(buf_name, buf.to(device))
+
+        # Move non-ramtorch parameters to GPU
+        # This handles both leaf modules AND parameters on parent modules (like pos_embed)
+        for param_name, param in child.named_parameters(recurse=False):
+            if getattr(param, "is_ramtorch", False):
+                continue
+            if param.device.type == "cpu":
+                # Move just this parameter, not the whole module (to avoid moving ramtorch children)
+                param.data = param.data.to(device)
+                moved += 1
+
+    return moved
+
+
+# Backwards compatibility aliases - all point to move_embeddings_to_device above
+def move_non_ramtorch_modules_to_device(module: nn.Module, device: object, **kwargs) -> int:
+    return move_embeddings_to_device(module, device)
+
+
+def move_non_linear_layers_to_device(module: nn.Module, device: object) -> int:
+    return move_embeddings_to_device(module, device)
 
 
 def mark_ddp_ignore_params(module: nn.Module) -> int:
