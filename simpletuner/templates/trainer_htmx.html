@@ -424,6 +424,7 @@ function trainerComponent() {
         _skipNextClean: false,
         originalFormData: {},
         formValueStore: {},
+        changedFieldNames: new Set(),
 
          // Config save dialog state
          showConfigSaveDialog: false,
@@ -484,6 +485,7 @@ function trainerComponent() {
                 this.originalFormData = {};
                 this.formDirty = false;
                 this._skipNextClean = false;
+                this.changedFieldNames.clear();
                 delete this._preservingFormState;
 
                 // Broadcast environment change event for other components
@@ -3917,10 +3919,17 @@ function trainerComponent() {
         markFormClean() {
             this.formDirty = false;
             this._skipNextClean = false;
+            // Clear changed field tracking and remove visual indicators
+            this.changedFieldNames.clear();
+            const formElement = document.getElementById('trainer-form');
+            if (formElement) {
+                formElement.querySelectorAll('.field-valid').forEach(el => {
+                    el.classList.remove('field-valid');
+                });
+            }
             // Capture current values for cross-tab persistence
             this.captureFormValues();
             // Store current form data as original
-            const formElement = document.getElementById('trainer-form');
             if (formElement) {
                 const formData = new FormData(formElement);
                 this.originalFormData = {};
@@ -4117,12 +4126,24 @@ function trainerComponent() {
                         }
                     });
                 }
+
+                // Re-apply field-valid highlight if this field was changed
+                if (this.changedFieldNames.has(name)) {
+                    nodes.forEach((node) => {
+                        if (node.classList.contains('form-control') || node.classList.contains('form-select')) {
+                            node.classList.add('field-valid');
+                        }
+                    });
+                }
             });
         },
 
         handleFieldInput(event) {
             if (event && event.target && event.target.name) {
                 this.updateStoredValue(event.target);
+                // Track this field as changed for visual highlighting
+                const canonicalName = this.canonicalizeKey(event.target.name) || event.target.name;
+                this.changedFieldNames.add(canonicalName);
             }
             this.checkFormDirty();
         },
@@ -5009,9 +5030,8 @@ function trainerComponent() {
                             if ($data._preservingFormState) {
                                 console.log('Applying stored form values after tab switch');
                                 $data.applyStoredValues();
-                                // Mark clean after tab switch - we just loaded fresh content from server
-                                // Don't call checkFormDirty() because originalFormData is from a different tab
-                                $data.markFormClean();
+                                // Do NOT call markFormClean() here - if the user had unsaved changes
+                                // before the tab switch, formDirty should remain true so they can save
                             } else if (!$data._skipNextClean) {
                                 $data.markFormClean();
                             }
