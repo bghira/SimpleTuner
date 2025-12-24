@@ -117,6 +117,14 @@ function trainerComponent() {
     return {
         versionInfo: null,
         _versionLoading: false,
+        // Mobile sidebar state
+        sidebarOpen: false,
+        toggleSidebar() {
+            this.sidebarOpen = !this.sidebarOpen;
+        },
+        closeSidebar() {
+            this.sidebarOpen = false;
+        },
         handleTrainingStatus(e) {
             const detail = e.detail || {};
             const status = (detail.status || '').toLowerCase();
@@ -5265,13 +5273,20 @@ function trainerComponent() {
         </div>
     </div>
 
-    <!-- Mobile sidebar toggle -->
-    <button class="sidebar-toggle" @click="$refs.sidebar.classList.toggle('active')">
-        <i class="fas fa-bars"></i>
-    </button>
+    <!-- Mobile sidebar backdrop - click to close -->
+    <div class="sidebar-backdrop"
+         x-show="sidebarOpen"
+         x-transition:enter="transition-opacity ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition-opacity ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click="closeSidebar()">
+    </div>
 
     <!-- Sidebar -->
-    <aside class="sidebar" x-ref="sidebar">
+    <aside class="sidebar" :class="{ 'active': sidebarOpen }" x-ref="sidebar">
         <div class="sidebar-header">
             <h1>🐈 SimpleTuner</h1>
             <p class="sidebar-version" x-show="sidebarVersionText()" x-text="sidebarVersionText()"></p>
@@ -5379,7 +5394,7 @@ function trainerComponent() {
                                 trainer._preservingFormState = true;
                             }
                         "
-                        @click="switchTab('{{ tab.name }}')">
+                        @click="switchTab('{{ tab.name }}'); closeSidebar()">
                     <i class="{{ tab.icon }}"></i> {{ tab.title }}
                 </button>
                 {% endfor %}
@@ -5391,6 +5406,11 @@ function trainerComponent() {
     <main class="main-content" :style="eventDockPaddingStyle">
         <!-- Top Bar -->
         <div class="topbar">
+
+            <!-- Mobile sidebar toggle button -->
+            <button class="sidebar-toggle" @click="toggleSidebar()" aria-label="Toggle navigation menu">
+                <i class="fas" :class="sidebarOpen ? 'fa-times' : 'fa-bars'"></i>
+            </button>
 
             <!-- Configuration Selector -->
             <script>

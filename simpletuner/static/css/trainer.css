@@ -515,25 +515,51 @@ body {
     border-color: rgba(255, 255, 255, 0.05) !important;
 }
 
-/* Mobile sidebar toggle */
+/* Mobile sidebar toggle - in topbar */
 .sidebar-toggle {
     display: none;
-    background: transparent;
-    border: none;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
     color: var(--text-primary);
-    font-size: var(--typography-font-size-2xl);
+    font-size: var(--typography-font-size-lg);
     cursor: pointer;
-    padding: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    flex-shrink: 0;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.sidebar-toggle:hover {
+    background: var(--hover-bg);
+}
+
+.sidebar-toggle:active {
+    transform: scale(0.95);
+}
+
+/* Mobile sidebar backdrop */
+.sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+    z-index: 999;
 }
 
 /* Responsive */
 @media (max-width: 1024px) {
     .sidebar {
-        transform: translateX(-280px);
+        transform: translateX(-100%);
+        box-shadow: var(--shadow-xl);
     }
 
     .sidebar.active {
         transform: translateX(0);
+    }
+
+    .sidebar-backdrop {
+        display: block;
     }
 
     .main-content {
@@ -541,31 +567,90 @@ body {
     }
 
     .sidebar-toggle {
-        display: block;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .form-grid-2,
     .form-grid-3 {
         grid-template-columns: 1fr;
     }
+
+    /* Ensure topbar has proper flex layout on tablet */
+    .topbar {
+        gap: var(--spacing-md);
+    }
 }
 
 @media (max-width: 768px) {
     .content-wrapper {
-        padding: var(--spacing-lg);
+        padding: var(--spacing-md);
     }
 
     .config-card {
-        padding: var(--spacing-xl);
+        padding: var(--spacing-lg);
     }
 
     .action-buttons {
         flex-direction: column;
-        padding: var(--spacing-lg);
+        padding: var(--spacing-md);
+        gap: var(--spacing-sm);
     }
 
-    .btn {
+    .action-buttons .btn {
         width: 100%;
+    }
+
+    /* Topbar mobile improvements */
+    .topbar {
+        padding: var(--spacing-sm) var(--spacing-md) !important;
+        gap: var(--spacing-sm) !important;
+        flex-wrap: wrap;
+    }
+
+    .topbar-right {
+        flex-wrap: wrap;
+        gap: var(--spacing-xs);
+    }
+
+    .config-selector {
+        min-width: 0;
+        flex: 1;
+    }
+
+    .config-selector__btn {
+        font-size: 0.85rem;
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+
+    /* Sidebar improvements for small screens */
+    .sidebar {
+        width: 85vw;
+        max-width: 300px;
+    }
+
+    .sidebar-header {
+        padding: var(--spacing-lg) var(--spacing-md);
+    }
+
+    .sidebar-header h1 {
+        font-size: var(--typography-font-size-xl);
+    }
+
+    .tab-btn {
+        padding: var(--spacing-md) var(--spacing-lg);
+        font-size: 0.9rem;
+    }
+
+    /* Form improvements */
+    .form-label {
+        font-size: 0.9rem;
+    }
+
+    .form-control,
+    .form-select {
+        font-size: 16px; /* Prevent iOS zoom on input focus */
     }
 }
 
@@ -589,6 +674,35 @@ body {
     0% { opacity: 1; }
     50% { opacity: 0.5; }
     100% { opacity: 1; }
+}
+
+/* Alpine.js transition utilities */
+.transition-opacity {
+    transition-property: opacity;
+}
+
+.ease-out {
+    transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+}
+
+.ease-in {
+    transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
+.duration-200 {
+    transition-duration: 200ms;
+}
+
+.duration-150 {
+    transition-duration: 150ms;
+}
+
+.opacity-0 {
+    opacity: 0;
+}
+
+.opacity-100 {
+    opacity: 1;
 }
 
 /* Utility classes */
@@ -1206,23 +1320,8 @@ optgroup option {
     margin-bottom: 0;
 }
 
-/* Mobile sidebar toggle button */
-.sidebar-toggle {
-    display: none;
-    background: var(--glass-bg);
-    border: var(--layout-border-width) solid var(--glass-border);
-    color: var(--text-primary);
-    padding: var(--spacing-xs-sm) var(--spacing-sm-md);
-    border-radius: var(--radius-sm-md);
-    cursor: pointer;
-    margin-right: var(--spacing-sm);
-}
-
+/* Mobile sidebar toggle button - additional responsive tweaks */
 @media (max-width: 992px) {
-    .sidebar-toggle {
-        display: block !important;
-    }
-
     .header-actions {
         margin-right: var(--spacing-sm) !important;
     }

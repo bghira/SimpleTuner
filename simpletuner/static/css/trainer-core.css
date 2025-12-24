@@ -350,17 +350,46 @@
 @media (max-width: 1024px) {
     .event-dock-shell {
         left: 0;
-        padding: 0 1.25rem;
+        padding: 0 1rem;
     }
 }
 
 @media (max-width: 768px) {
+    .event-dock-shell {
+        padding: 0 0.5rem;
+    }
+
+    .event-dock-toolbar {
+        padding: var(--spacing-sm) var(--spacing-md);
+        flex-wrap: wrap;
+        gap: var(--spacing-sm);
+    }
+
     .event-dock-title span {
-        font-size: 0.9rem;
+        font-size: 0.85rem;
+    }
+
+    .event-dock-sysstat {
+        font-size: 0.75rem;
+        padding: 0 var(--spacing-sm);
+    }
+
+    .event-dock-sysstat .sysstat-items {
+        gap: var(--spacing-sm);
+    }
+
+    .event-dock-actions {
+        gap: var(--spacing-xs);
     }
 
     .event-dock-actions .btn {
-        padding: 0.35rem 0.6rem;
+        padding: 0.3rem 0.5rem;
+        font-size: 0.8rem;
+    }
+
+    /* Hide less important buttons on very small screens */
+    .event-dock-actions .btn-copy-events {
+        display: none;
     }
 }
 
