@@ -1748,6 +1748,15 @@ class ModelFoundation(ABC):
                     self.pipeline_quantization_active = True
                     setattr(self.config, "pipeline_quantization", True)
 
+                # When ramtorch is enabled for text encoders, load on CPU first.
+                # Ramtorch will convert Linear layers to CPU-bouncing, then move
+                # non-Linear layers (Embedding, LayerNorm, etc.) to GPU.
+                if self._ramtorch_text_encoders_requested() and "device_map" not in extra_kwargs:
+                    extra_kwargs["device_map"] = "cpu"
+                    # Force dtype - the signature check may fail for some models
+                    if "torch_dtype" not in extra_kwargs:
+                        extra_kwargs["torch_dtype"] = self.config.weight_dtype
+
                 text_encoder_kwargs = {
                     "pretrained_model_name_or_path": text_encoder_path,
                     "variant": self.config.variant,
@@ -1764,7 +1773,8 @@ class ModelFoundation(ABC):
                     pass
 
                 if self._ramtorch_text_encoders_requested():
-                    self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}")
+                    # Use full ramtorch for text encoders - all layer types stream from CPU
+                    self._apply_ramtorch_layers(text_encoder, f"text_encoder_{text_encoder_idx}", full_ramtorch=True)
 
                 if (
                     move_to_device
@@ -1778,6 +1788,10 @@ class ModelFoundation(ABC):
                     )
                 if hasattr(text_encoder, "eval"):
                     text_encoder.eval()
+                # Disable gradients immediately - text encoders are only used for inference
+                # during embed caching, and keeping requires_grad=True would cause PyTorch
+                # to retain computation graphs in CUDA memory.
+                text_encoder.requires_grad_(False)
                 setattr(self, f"text_encoder_{text_encoder_idx}", text_encoder)
                 self.text_encoders.append(text_encoder)
 
@@ -1791,12 +1805,51 @@ class ModelFoundation(ABC):
                 if text_encoder is None:
                     continue
                 if hasattr(text_encoder, "to"):
+                    # Log memory before move
+                    if torch.cuda.is_available():
+                        mem_before = torch.cuda.memory_allocated() / (1024**3)
+                        logger.info("Text encoder %s: memory before unload: %.2f GB", idx + 1, mem_before)
+
+                        # Count tensors on CUDA before move
+                        cuda_params = sum(1 for p in text_encoder.parameters() if p.device.type == "cuda")
+                        cuda_buffers = sum(1 for b in text_encoder.buffers() if b.device.type == "cuda")
+                        logger.info(
+                            "Text encoder %s: %d params and %d buffers on CUDA before move",
+                            idx + 1,
+                            cuda_params,
+                            cuda_buffers,
+                        )
+
                     # Always move off accelerator; fall back to CPU if meta tensors aren't supported.
                     try:
                         text_encoder.to("meta")
+                        logger.info("Text encoder %s successfully moved to meta device", idx + 1)
                     except Exception as exc:
-                        logger.debug("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
+                        logger.warning("Text encoder %s could not be moved to meta, moving to CPU instead: %s", idx + 1, exc)
                         text_encoder.to("cpu")
+
+                    # Log memory after move
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                        mem_after = torch.cuda.memory_allocated() / (1024**3)
+                        logger.info(
+                            "Text encoder %s: memory after unload: %.2f GB (freed %.2f GB)",
+                            idx + 1,
+                            mem_after,
+                            mem_before - mem_after,
+                        )
+
+                        # Check if any tensors are still on CUDA
+                        cuda_params_after = sum(1 for p in text_encoder.parameters() if p.device.type == "cuda")
+                        cuda_buffers_after = sum(1 for b in text_encoder.buffers() if b.device.type == "cuda")
+                        if cuda_params_after > 0 or cuda_buffers_after > 0:
+                            logger.warning(
+                                "Text encoder %s still has %d params and %d buffers on CUDA after move!",
+                                idx + 1,
+                                cuda_params_after,
+                                cuda_buffers_after,
+                            )
+
                 setattr(self, f"text_encoder_{idx + 1}", None)
             self.text_encoders = None
         if self.tokenizers is not None:
@@ -2483,34 +2536,73 @@ class ModelFoundation(ABC):
         component_label: str,
         *,
         target_patterns: Optional[list[str]] = None,
-        move_embeddings: bool = True,
+        full_ramtorch: bool = False,
     ) -> int:
+        """
+        Apply RamTorch to a module's layers.
+
+        Args:
+            module: The module to apply RamTorch to.
+            component_label: Label for logging.
+            target_patterns: Optional patterns to filter which Linear layers to convert.
+            full_ramtorch: If True, convert all supported layer types (Linear, Embedding,
+                          Conv, LayerNorm) to bouncing versions. If False, only Linear.
+        """
         if module is None or not self._ramtorch_enabled():
             return 0
 
         try:
-            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(
-                module,
-                device=self._ramtorch_device(),
-                target_patterns=self._ramtorch_targets_for_component(target_patterns),
-                name_prefix=component_label,
-            )
+            if full_ramtorch:
+                # Replace all supported layer types with bouncing versions
+                counts = ramtorch_utils.replace_all_layers_with_ramtorch(
+                    module,
+                    device=self._ramtorch_device(),
+                    include_linear=True,
+                    include_embedding=True,
+                    include_conv=True,
+                    include_layernorm=True,
+                )
+                total = counts.get("linear", 0) + counts.get("other", 0)
+                if total:
+                    logger.info(
+                        "Applied full RamTorch to %s: %d Linear, %d other layers.",
+                        component_label,
+                        counts.get("linear", 0),
+                        counts.get("other", 0),
+                    )
+                # Move any remaining non-ramtorch modules to GPU (e.g., custom LayerNorm classes)
+                # and buffers (e.g., position_ids)
+                moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())
+                if moved:
+                    logger.debug(
+                        "Moved %s remaining non-RamTorch layers to %s for %s.",
+                        moved,
+                        self._ramtorch_device(),
+                        component_label,
+                    )
+                return total
+            else:
+                # Only replace Linear layers, move other layers to GPU
+                replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(
+                    module,
+                    device=self._ramtorch_device(),
+                    target_patterns=self._ramtorch_targets_for_component(target_patterns),
+                    name_prefix=component_label,
+                )
+                if replaced:
+                    logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
+
+                # Move non-ramtorch layers to GPU so they can process GPU activations
+                moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())
+                if moved:
+                    logger.debug(
+                        "Moved %s non-RamTorch layers to %s for %s.", moved, self._ramtorch_device(), component_label
+                    )
+
+                return replaced
+
         except Exception as exc:
             raise RuntimeError(f"Failed to apply RamTorch to {component_label}: {exc}") from exc
-
-        if replaced:
-            logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
-        else:
-            logger.debug("RamTorch enabled for %s but no Linear layers matched the configured targets.", component_label)
-
-        # Move embedding layers to GPU - ramtorch only handles nn.Linear,
-        # but nn.Embedding must be on the same device as input_ids
-        if move_embeddings:
-            moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())
-            if moved:
-                logger.debug("Moved %s embedding layers to %s for %s.", moved, self._ramtorch_device(), component_label)
-
-        return replaced
 
     def _ramtorch_text_encoders_requested(self) -> bool:
         return self._ramtorch_enabled() and bool(getattr(self.config, "ramtorch_text_encoder", False))
@@ -3583,6 +3675,7 @@ class ModelFoundation(ABC):
 
         return batch
 
+    @torch.no_grad()
     def encode_text_batch(
         self,
         text_batch: list,
@@ -3636,6 +3729,7 @@ class ModelFoundation(ABC):
         """
         return True
 
+    @torch.no_grad()
     def encode_validation_negative_prompt(self, negative_prompt: str, positive_prompt_embeds: dict = None):
         """
         Encode the negative prompt for validation.
