@@ -1349,16 +1349,23 @@
                     Upload
                 </button>
             </div>
-            <div>
-                <button type="button" class="btn btn-outline-secondary me-2" @click="closeFileBrowser()">
+            <div class="d-flex gap-2 flex-wrap">
+                <button type="button" class="btn btn-outline-secondary" @click="closeFileBrowser()">
                     Cancel
+                </button>
+                <button type="button"
+                        class="btn btn-success"
+                        @click="selectedPath = currentPath; confirmDirectory()"
+                        title="Use the current directory you're browsing">
+                    <i class="fas fa-folder-open me-1"></i>
+                    Use Current
                 </button>
                 <button type="button"
                         class="btn btn-primary"
                         @click="confirmDirectory()"
                         :disabled="!selectedPath">
                     <i class="fas fa-check me-1"></i>
-                    Select Directory
+                    <span x-text="selectedPath ? 'Select: ' + selectedPath.split('/').pop() : 'Select Highlighted'"></span>
                 </button>
             </div>
         </div>

@@ -358,6 +358,13 @@
     }
 }
 
+/* Lower event dock z-index on mobile so modals can appear above */
+@media (max-width: 768px) {
+    .event-dock-shell {
+        z-index: 900;
+    }
+}
+
 @media (max-width: 768px) {
     .event-dock-shell {
         padding: 0 0.5rem;
