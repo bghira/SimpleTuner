@@ -381,8 +381,10 @@
         flex-shrink: 0;
     }
 
+    /* Hide terminal icon and "Training Events" text on mobile, keep badge */
+    .event-dock-title i,
     .event-dock-title span:not(.badge) {
-        display: none; /* Hide "Training Events" text, keep icon */
+        display: none;
     }
 
     .event-dock-title .badge {

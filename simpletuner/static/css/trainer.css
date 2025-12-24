@@ -822,6 +822,129 @@ body {
         right: 10px !important;
         max-width: calc(100vw - 20px) !important;
     }
+
+    /* ===== MOBILE FORM STYLING ===== */
+
+    /* Reduce spacing between page title and first section */
+    .content-wrapper > .config-card:first-child,
+    .tab-fragment > .config-card:first-child {
+        margin-top: 0;
+    }
+
+    .tab-fragment {
+        padding-top: 0;
+    }
+
+    /* Compact config cards */
+    .config-card {
+        padding: var(--spacing-md) !important;
+        margin-bottom: var(--spacing-md) !important;
+        border-radius: var(--radius-md) !important;
+    }
+
+    /* Reduce form section padding */
+    .form-section {
+        padding: 0.5rem !important;
+        margin-bottom: 0.75rem !important;
+        border-radius: 0.25rem !important;
+    }
+
+    .field-section {
+        padding: 0.5rem !important;
+        margin-bottom: 0.75rem !important;
+    }
+
+    /* Compact section titles */
+    .section-title {
+        font-size: 0.9rem !important;
+        margin-bottom: 0.5rem !important;
+        padding-bottom: 0.25rem !important;
+    }
+
+    /* Reduce card header padding */
+    .card-header {
+        padding: 0.5rem 0.75rem !important;
+    }
+
+    .card-body {
+        padding: 0.75rem !important;
+    }
+
+    /* Smaller disclosure/advanced toggle buttons */
+    .disclosure-toggle,
+    .advanced-toggle {
+        padding: 0.5rem 0.75rem !important;
+        font-size: 0.8rem !important;
+        margin: 0.5rem 0 0.25rem 0 !important;
+    }
+
+    /* Hide dividers and advanced toggles when section is collapsed */
+    .config-card.collapsed .subsection-divider,
+    .config-card.collapsed .advanced-section,
+    .config-card.collapsed .disclosure-toggle,
+    .form-section.collapsed .subsection-divider,
+    .form-section.collapsed .advanced-section {
+        display: none !important;
+    }
+
+    /* Reduce subsection spacing */
+    .subsection-divider {
+        margin: 0.5rem 0 !important;
+    }
+
+    .subsection-title {
+        font-size: 0.8rem !important;
+        margin-bottom: 0.5rem !important;
+    }
+
+    /* Reduce nested card borders - flatten hierarchy */
+    .config-card .config-card,
+    .config-card .card,
+    .form-section .card {
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+    }
+
+    /* Compact form groups */
+    .mb-3 {
+        margin-bottom: 0.5rem !important;
+    }
+
+    .mb-4 {
+        margin-bottom: 0.75rem !important;
+    }
+
+    /* Compact form labels */
+    .form-label {
+        margin-bottom: 0.25rem !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* Reduce form control height slightly */
+    .form-control,
+    .form-select {
+        padding: 0.4rem 0.6rem !important;
+    }
+
+    /* Compact button groups */
+    .btn-group-sm .btn {
+        padding: 0.25rem 0.5rem !important;
+        font-size: 0.75rem !important;
+    }
+
+    /* Reduce gap in form grids */
+    .form-grid-2,
+    .form-grid-3 {
+        gap: 0.5rem !important;
+    }
+
+    /* Compact expand/collapse all buttons */
+    .config-card > .d-flex .btn-group {
+        gap: 0.25rem;
+    }
 }
 
 /* Very small screens - further compacting */
