@@ -239,7 +239,6 @@
 .wizard-option-card:hover {
     background: rgba(30, 41, 59, 0.8);
     border-color: rgba(148, 163, 184, 0.4);
-    transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
