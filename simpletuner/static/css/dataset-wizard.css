@@ -100,7 +100,6 @@
 .dataset-wizard-modal .backend-card:hover {
     border-color: rgba(56, 189, 248, 0.5);
     background: rgba(32, 36, 50, 1);
-    transform: translateY(-2px);
 }
 
 .dataset-wizard-modal .backend-card.selected {
@@ -503,7 +502,6 @@
 .crop-style-option:hover {
     border-color: rgba(56, 189, 248, 0.5);
     background: rgba(32, 36, 50, 1);
-    transform: translateY(-2px);
 }
 
 .crop-style-option.selected {

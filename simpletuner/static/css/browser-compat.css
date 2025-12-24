@@ -62,14 +62,7 @@
     transition: all 0.3s ease;
 }
 
-/* Transform fallbacks */
-.dataset-card:hover {
-    -webkit-transform: translateY(-2px);
-    -moz-transform: translateY(-2px);
-    -ms-transform: translateY(-2px);
-    -o-transform: translateY(-2px);
-    transform: translateY(-2px);
-}
+/* Transform fallbacks - translateY removed to prevent layout shift on hover */
 
 /* Box shadow fallbacks */
 .card {

@@ -40,7 +40,6 @@
 .tab-fragment .checkpoint-card:hover,
 .tab-fragment .dataset-card:hover,
 .tab-fragment .config-card:hover {
-    transform: translateY(-2px);
     box-shadow: var(--shadow-panel-hover) !important;
 }
 
