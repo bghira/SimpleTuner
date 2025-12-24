@@ -167,6 +167,18 @@ body {
     min-height: 3.25rem;
 }
 
+/* Topbar left section - config selector */
+.topbar-left {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+/* Topbar right section - pushed to the right */
+.topbar-right {
+    margin-left: auto;
+}
+
 /* Content wrapper */
 .content-wrapper {
     flex: 1;
