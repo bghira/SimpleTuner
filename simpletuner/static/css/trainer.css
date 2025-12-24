@@ -38,7 +38,13 @@ body {
     display: flex;
     flex-direction: column;
     position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
     height: 100vh;
+    height: 100dvh; /* Dynamic viewport height for mobile - accounts for browser chrome */
+    max-height: -webkit-fill-available; /* iOS Safari fix */
+    overflow: hidden;
     z-index: 1060; /* Above backdrop (1050) and event dock (1030) */
     transition: transform 0.3s ease;
 }
@@ -78,8 +84,12 @@ body {
 /* Sidebar navigation */
 .sidebar-nav {
     flex: 1;
+    min-height: 0; /* Critical for flex scrolling */
     padding: var(--spacing-xl) 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y; /* Allow vertical touch scrolling */
 }
 
 .nav-section {
@@ -573,10 +583,18 @@ body {
     .sidebar {
         transform: translateX(-100%);
         box-shadow: var(--shadow-xl);
+        overflow: hidden; /* Let sidebar-nav handle scrolling */
     }
 
     .sidebar.active {
         transform: translateX(0);
+    }
+
+    .sidebar-nav {
+        flex: 1;
+        min-height: 0; /* Allow flex child to shrink and scroll */
+        overflow-y: auto;
+        overflow-x: hidden;
     }
 
     .sidebar-backdrop {
