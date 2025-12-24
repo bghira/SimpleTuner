@@ -4,13 +4,20 @@ import os
 from typing import Dict, Optional
 
 import torch
-import torch.nn.functional as F
-from diffusers import AutoencoderKLHunyuanVideo
 from transformers import CLIPTextModel, CLIPTokenizer, Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.configuration.registry import ConfigRegistry, ConfigRule, RuleType, make_default_rule
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
+from simpletuner.helpers.models.hunyuanvideo_vae import AutoencoderKLHunyuanVideoOptimized
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_i2v import Kandinsky5I2VPipeline
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_t2v import Kandinsky5T2VPipeline
 from simpletuner.helpers.models.kandinsky5_video.transformer_kandinsky5 import Kandinsky5Transformer3DModel
@@ -25,78 +32,6 @@ else:
     logger.setLevel("ERROR")
 
 
-def _patch_diffusers_hunyuanvideo_conv(memory_limit: int = 512 * 1024**2, force_temporal_roll: bool = False):
-    """
-    Monkeypatch diffusers' HunyuanVideo VAE Conv3d to split along time for lower peak VRAM.
-    When force_temporal_roll is True, chunking is always applied to keep temporal memory footprints small.
-    """
-    from diffusers.models.autoencoders import autoencoder_kl_hunyuan_video as hv_mod
-
-    already_patched = getattr(hv_mod, "_st_patch_conv_applied", False)
-    already_rolled = getattr(hv_mod, "_st_patch_conv_roll", False)
-    if already_patched and (force_temporal_roll is False or already_rolled):
-        return hv_mod.HunyuanVideoCausalConv3d
-
-    def find_split_indices(seq_len: int, part_num: int, stride: int):
-        ideal_interval = seq_len / part_num
-        possible_indices = list(range(0, seq_len, stride))
-        selected_indices = []
-
-        for i in range(1, part_num):
-            closest = min(possible_indices, key=lambda x: abs(x - round(i * ideal_interval)))
-            if closest not in selected_indices:
-                selected_indices.append(closest)
-
-        merged_indices = []
-        prev_idx = 0
-        for idx in selected_indices:
-            if idx - prev_idx >= stride:
-                merged_indices.append(idx)
-                prev_idx = idx
-
-        return merged_indices
-
-    def patched_forward(self, hidden_states: torch.Tensor):
-        hidden_states = F.pad(hidden_states, self.time_causal_padding, mode=self.pad_mode)
-        T = hidden_states.shape[2]
-        kernel_size = self.conv.kernel_size[0]
-        stride = self.conv.stride[0]
-        memory_count = torch.prod(torch.tensor(hidden_states.shape)).item() * 2 / memory_limit
-        part_num = int(memory_count / 2) + 1
-
-        use_chunking = force_temporal_roll or (T > kernel_size and memory_count > 0.6 and part_num >= 2)
-        if use_chunking and T > 1:
-            if force_temporal_roll:
-                part_num = max(2, part_num, T // max(kernel_size, 1))
-
-            max_parts = max(1, T // kernel_size)
-            if part_num > max_parts:
-                part_num = max_parts
-            split_indices = find_split_indices(T, part_num, stride)
-            if len(split_indices) == 0 or kernel_size == 1:
-                input_chunks = torch.tensor_split(hidden_states, split_indices, dim=2) if split_indices else [hidden_states]
-            else:
-                boundaries = [0] + split_indices + [T]
-                input_chunks = []
-                for i in range(len(boundaries) - 1):
-                    start = boundaries[i]
-                    end = boundaries[i + 1]
-                    overlap_start = max(start - kernel_size + 1, 0)
-                    if i == 0:
-                        input_chunks.append(hidden_states[:, :, start:end])
-                    else:
-                        input_chunks.append(hidden_states[:, :, overlap_start:end])
-            output_chunks = [self.conv(chunk) for chunk in input_chunks]
-            return torch.cat(output_chunks, dim=2)
-
-        return self.conv(hidden_states)
-
-    hv_mod.HunyuanVideoCausalConv3d.forward = patched_forward
-    hv_mod._st_patch_conv_applied = True
-    hv_mod._st_patch_conv_roll = already_rolled or force_temporal_roll
-    return hv_mod.HunyuanVideoCausalConv3d
-
-
 class Kandinsky5Video(VideoModelFoundation):
     SUPPORTS_MUON_CLIP = True
     """
@@ -109,7 +44,7 @@ class Kandinsky5Video(VideoModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
-    AUTOENCODER_CLASS = AutoencoderKLHunyuanVideo
+    AUTOENCODER_CLASS = AutoencoderKLHunyuanVideoOptimized
     LATENT_CHANNEL_COUNT = 16
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
     MODEL_CLASS = Kandinsky5Transformer3DModel
@@ -250,29 +185,16 @@ class Kandinsky5Video(VideoModelFoundation):
                 requires_min_system_ram_gb=64,
                 config={**_base_memory_config, "musubi_blocks_to_swap": 25},
             ),
-            # Advanced tab - DeepSpeed options
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO Stage 1",
-                description="Shards optimizer states across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero1"},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO Stage 2",
-                description="Shards optimizer states and gradients across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
-                tradeoff_speed="Moderate communication overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero2"},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
@@ -307,15 +229,52 @@ class Kandinsky5Video(VideoModelFoundation):
         }
 
     def load_vae(self, move_to_device: bool = True):
+        """
+        Load the optimized HunyuanVideo VAE with dynamic memory-aware tiling.
+
+        Config options:
+            vae_enable_patch_conv: Enable patched Conv3d that splits along temporal
+                dimension for lower peak VRAM.
+            vae_enable_temporal_roll: More aggressive temporal splitting.
+        """
+        from transformers.utils import ContextManagers
+
+        from simpletuner.helpers.models.common import deepspeed_zero_init_disabled_context_manager
+        from simpletuner.helpers.models.hunyuanvideo_vae import load_optimized_vae
+
+        pretrained_path = self.config.pretrained_model_name_or_path
+        vae_dtype = self.config.weight_dtype
+        if hasattr(self.config, "vae_dtype") and self.config.vae_dtype == "fp32":
+            vae_dtype = torch.float32
+
         enable_patch_conv = getattr(self.config, "vae_enable_patch_conv", False)
         enable_temporal_roll = getattr(self.config, "vae_enable_temporal_roll", False)
+
         if enable_patch_conv or enable_temporal_roll:
             logger.info(
-                "Enabling HunyuanVideo VAE patch-based convolution%s for Kandinsky5 Video.",
-                " with temporal rolling" if enable_temporal_roll else "",
+                "Loading optimized HunyuanVideo VAE from %s with patched conv%s",
+                pretrained_path,
+                " (temporal roll)" if enable_temporal_roll else "",
             )
-            _patch_diffusers_hunyuanvideo_conv(force_temporal_roll=enable_temporal_roll)
-        return super().load_vae(move_to_device)
+        else:
+            logger.info("Loading optimized HunyuanVideo VAE from %s", pretrained_path)
+
+        with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
+            self.vae = load_optimized_vae(
+                pretrained_path=pretrained_path,
+                subfolder="vae",
+                torch_dtype=vae_dtype,
+                enable_temporal_chunking=enable_patch_conv or enable_temporal_roll,
+            )
+
+        if self.vae is None:
+            raise ValueError(f"Could not load VAE from {pretrained_path}/vae.")
+
+        self.vae.requires_grad_(False)
+        if move_to_device and self.vae.device != self.accelerator.device:
+            self.vae.to(self.accelerator.device)
+
+        self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 0.476986)
 
     def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         prompt_embeds = text_embedding["prompt_embeds"]

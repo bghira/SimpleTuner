@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -28,11 +29,14 @@ from diffusers.models.normalization import RMSNorm
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from torch.nn.utils.rnn import pad_sequence
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
 ADALN_EMBED_DIM = 256
 SEQ_MULTI_OF = 32
+
+logger = logging.getLogger(__name__)
 
 
 def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
@@ -402,6 +406,8 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         axes_dims=[32, 48, 48],
         axes_lens=[1024, 512, 512],
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -478,6 +484,13 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.axes_lens = axes_lens
 
         self.rope_embedder = RopeEmbedder(theta=rope_theta, axes_dims=axes_dims, axes_lens=axes_lens)
+
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=n_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
@@ -745,7 +758,17 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         skip_set = set(skip_layers) if skip_layers is not None else set()
         capture_idx = 0
 
+        # Musubi block swap activation
+        combined_blocks = list(self.layers)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, unified.device, grad_enabled)
+
         for idx, layer in enumerate(self.layers):
+            if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                musubi_manager.stream_in(layer, unified.device)
             if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
                 force_keep = torch.zeros_like(unified_attn_mask)
@@ -777,6 +800,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 unified_attn_mask = saved_attn
                 routing_now = False
                 route_ptr += 1
+
+            if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                musubi_manager.stream_out(layer)
 
         unified = self.all_final_layer[f"{patch_size}-{f_patch_size}"](unified, adaln_input)
         unified = list(unified.unbind(dim=0))

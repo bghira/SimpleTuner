@@ -16,7 +16,20 @@ else:
 PIPELINE_QUANTIZATION_PRESETS = {"nf4-bnb", "int4-torchao"}
 MANUAL_QUANTO_PRESETS = {"int2-quanto", "int4-quanto", "int8-quanto", "fp8-quanto", "fp8uz-quanto"}
 MANUAL_TORCHAO_PRESETS = {"int8-torchao", "fp8-torchao"}
-MANUAL_QUANTIZATION_PRESETS = MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS
+MANUAL_SDNQ_PRESETS = {
+    "int8-sdnq",
+    "uint8-sdnq",
+    "int16-sdnq",
+    "uint16-sdnq",
+    "fp16-sdnq",
+    "int6-sdnq",
+    "int5-sdnq",
+    "uint5-sdnq",
+    "uint4-sdnq",
+    "uint3-sdnq",
+    "uint2-sdnq",
+}
+MANUAL_QUANTIZATION_PRESETS = MANUAL_QUANTO_PRESETS | MANUAL_TORCHAO_PRESETS | MANUAL_SDNQ_PRESETS
 
 
 def _normalize_dtype(weight_dtype: Any):
@@ -301,6 +314,127 @@ def _torchao_model(
     return model
 
 
+def _sdnq_model(
+    model,
+    model_precision,
+    base_model_precision=None,
+    quantize_activations: bool = False,
+):
+    """
+    Quantize a model using SDNQ (SD.Next Quantization Engine).
+
+    SDNQ works on AMD, Apple, and NVIDIA hardware without platform-specific gating.
+
+    Precision recommendations from Disty0:
+    - Full finetune: uint8, uint16, fp16
+    - LoRA training (frozen weights): int8, int6, int5, uint5, uint4, uint3, uint2
+    - Below 5 bits: use_svd=True with svd_steps=8 recommended
+    """
+    if model_precision is None:
+        model_precision = base_model_precision
+    if model is None:
+        return model
+    if model_precision == "no_change" or model_precision is None:
+        logger.info(f"...No quantisation applied to {model.__class__.__name__}.")
+        return model
+
+    try:
+        from sdnq.common import use_torch_compile as sdnq_triton_available
+        from sdnq.training import sdnq_training_post_load_quant
+    except ImportError as e:
+        raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
+
+    logger.info(f"Quantising {model.__class__.__name__} using SDNQ. Precision: {model_precision}.")
+
+    # Map precision string to SDNQ weights_dtype
+    sdnq_dtype_map = {
+        "int8-sdnq": "int8",
+        "uint8-sdnq": "uint8",
+        "int16-sdnq": "int16",
+        "uint16-sdnq": "uint16",
+        "fp16-sdnq": "fp16",
+        "int6-sdnq": "int6",
+        "int5-sdnq": "int5",
+        "uint5-sdnq": "uint5",
+        "uint4-sdnq": "uint4",
+        "uint3-sdnq": "uint3",
+        "uint2-sdnq": "uint2",
+    }
+    weights_dtype = sdnq_dtype_map.get(model_precision)
+    if weights_dtype is None:
+        raise ValueError(f"Invalid SDNQ precision level: {model_precision}")
+
+    # Determine bit depth for SVD recommendation
+    # Below 5 bits: use SVD with 8 steps (per Disty0's recommendation)
+    low_bit_dtypes = {"int5", "uint5", "uint4", "uint3", "uint2", "int4", "int3", "int2"}
+    use_svd = weights_dtype in low_bit_dtypes
+    svd_steps = 8 if use_svd else 2
+
+    args = StateTracker.get_args()
+
+    # Determine quantization device
+    # Use GPU for faster quantization: load to CPU, quantize on CUDA, return to CPU
+    quantize_via = getattr(args, "quantize_via", "accelerator")
+    if quantize_via == "cpu":
+        quantization_device = "cpu"
+        return_device = "cpu"
+    elif quantize_via == "accelerator" and torch.cuda.is_available():
+        # Fast GPU quantization: quantize on CUDA, return to original device
+        quantization_device = "cuda"
+        return_device = model.device if hasattr(model, "device") else None
+    else:
+        quantization_device = None
+        return_device = None
+
+    # SDNQ maintains its own module skip keys list, so we rely on add_skip_keys=True
+    # Only add custom exclusions if needed
+    # Use "." prefix for root-level modules (per Disty0's recommendation)
+    modules_to_not_convert = []
+    if args.model_family == "flux":
+        # Use ".proj_out" for root level proj_out in Flux (inner layers also have proj_out)
+        modules_to_not_convert.append(".proj_out")
+
+    # Determine matmul dtype: INT8 preferred for consumer GPUs, FP8 for datacenter
+    # For now, default to INT8 as it works on more hardware
+    quantized_matmul_dtype = "int8"
+
+    # Warn about low-bit precision for full finetune
+    if args.model_type == "full" and weights_dtype in low_bit_dtypes:
+        logger.warning(
+            f"Using {weights_dtype} precision for full finetune is not recommended. "
+            f"Consider uint8, uint16, or fp16 for better training stability."
+        )
+
+    try:
+        model = sdnq_training_post_load_quant(
+            model,
+            weights_dtype=weights_dtype,
+            quantized_matmul_dtype=quantized_matmul_dtype,
+            group_size=32,
+            svd_rank=32,
+            svd_steps=svd_steps,
+            use_svd=use_svd,
+            use_grad_ckpt=getattr(args, "gradient_checkpointing", True),
+            use_quantized_matmul=sdnq_triton_available,
+            use_static_quantization=True,
+            use_stochastic_rounding=True,
+            dequantize_fp32=True,
+            non_blocking=False,
+            add_skip_keys=True,  # Let SDNQ handle module exclusions
+            quantization_device=quantization_device,
+            return_device=return_device,
+            modules_to_not_convert=modules_to_not_convert,
+        )
+        if use_svd:
+            logger.info(f"SDNQ: Using SVD with {svd_steps} steps for {weights_dtype} precision.")
+    except Exception as e:
+        if "out of memory" in str(e).lower():
+            logger.error("GPU ran out of memory during SDNQ quantisation. Use --quantize_via=cpu to use CPU quantisation.")
+        raise e
+
+    return model
+
+
 def get_quant_fn(base_model_precision):
     """
     Determine the quantization function based on the base model precision.
@@ -321,6 +455,8 @@ def get_quant_fn(base_model_precision):
         return _quanto_model
     elif "torchao" in precision:
         return _torchao_model
+    elif "sdnq" in precision:
+        return _sdnq_model
     else:
         return None
 

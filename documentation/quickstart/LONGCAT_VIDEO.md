@@ -83,6 +83,12 @@ Or launch the Web UI and submit a job with the same config.
 - For image‑to‑video runs, include a conditioning image per sample; it is placed in the first latent frame and kept fixed during sampling.
 - LongCat‑Video is 30 fps by design. The default 93 frames is ~3.1 s; if you change frame counts, keep `(frames - 1) % 4 == 0` and remember duration scales with fps.
 
+### Video bucket strategy
+
+In your dataset's `video` section, you can configure how videos are grouped:
+- `bucket_strategy`: `aspect_ratio` (default) groups by spatial aspect ratio. `resolution_frames` groups by `WxH@F` format (e.g., `480x832@93`) for mixed-resolution/duration datasets.
+- `frame_interval`: When using `resolution_frames`, round frame counts to this interval (e.g., set to 4 to match the VAE temporal stride).
+
 ---
 
 ## 5) Validation & inference

@@ -21,6 +21,7 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import AttentionBackendController
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
@@ -470,6 +471,8 @@ class ChromaTransformer2DModel(
         approximator_hidden_dim: int = 5120,
         approximator_layers: int = 5,
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -487,6 +490,8 @@ class ChromaTransformer2DModel(
             approximator_hidden_dim=approximator_hidden_dim,
             approximator_layers=approximator_layers,
             enable_time_sign_embed=enable_time_sign_embed,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = num_attention_heads * attention_head_dim
@@ -541,6 +546,14 @@ class ChromaTransformer2DModel(
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+
+        total_layers = num_layers + num_single_layers
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=total_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
     def set_gradient_checkpointing_interval(self, interval: int):
         """
@@ -673,7 +686,17 @@ class ChromaTransformer2DModel(
                 for r in routes
             ]
 
+        # Musubi block swap activation
+        combined_blocks = list(self.transformer_blocks) + list(self.single_transformer_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         for index_block, block in enumerate(self.transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
             actual_index = global_idx
             img_offset = 3 * len(self.single_transformer_blocks)
             txt_offset = img_offset + 6 * len(self.transformer_blocks)
@@ -777,6 +800,8 @@ class ChromaTransformer2DModel(
                 route_ptr += 1
                 current_rope = image_rotary_emb
 
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", hidden_states)
             global_idx += 1
 
@@ -784,6 +809,8 @@ class ChromaTransformer2DModel(
         txt_len = encoder_hidden_states.shape[1]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(block, hidden_states.device)
             actual_index = global_idx
             start_idx = 3 * index_block
             temb = pooled_temb[:, start_idx : start_idx + 3]
@@ -923,6 +950,8 @@ class ChromaTransformer2DModel(
 
                 current_rope = image_rotary_emb
 
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", hidden_states, image_tokens_start=txt_len)
             global_idx += 1
 

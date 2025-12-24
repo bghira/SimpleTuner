@@ -308,7 +308,8 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
     "repeats": 0,
     "video": {
         "num_frames": 81,
-        "min_frames": 81
+        "min_frames": 81,
+        "bucket_strategy": "aspect_ratio"
     }
   },
   {
@@ -331,6 +332,10 @@ Create a `--data_backend_config` (`config/multidatabackend.json`) document conta
   - `min_frames` (optional, int) determines the minimum length of a video that will be considered for training.
   - `max_frames` (optional, int) determines the maximum length of a video that will be considered for training.
   - `is_i2v` (optional, bool) determines whether i2v training will be done on a dataset.
+  - `bucket_strategy` (optional, string) determines how videos are grouped into buckets:
+    - `aspect_ratio` (default): Group by spatial aspect ratio only (e.g., `1.78`, `0.75`).
+    - `resolution_frames`: Group by resolution and frame count in `WxH@F` format (e.g., `832x480@81`). Useful for mixed-resolution/duration datasets.
+  - `frame_interval` (optional, int) when using `resolution_frames`, round frame counts to this interval.
 
 Then, create a `datasets` directory:
 

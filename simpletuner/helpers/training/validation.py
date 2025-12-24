@@ -622,7 +622,7 @@ def parse_validation_resolution(input_str: str) -> tuple:
     if isinstance(input_str, int) or input_str.isdigit():
         if is_df_ii and int(input_str) < 256:
             raise ValueError("Cannot use less than 256 resolution for DeepFloyd stage 2.")
-        return (input_str, input_str)
+        return (int(input_str), int(input_str))
     if "x" in input_str:
         pieces = input_str.split("x")
         if is_df_ii and (int(pieces[0]) < 256 or int(pieces[1]) < 256):

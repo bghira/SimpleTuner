@@ -1,8 +1,44 @@
+import logging
+
 import optimum
 import torch
+import torch.utils.cpp_extension
 from optimum.quanto.tensor.packed import PackedTensor
 from optimum.quanto.tensor.weights.qbits import WeightQBitsTensor
 from optimum.quanto.tensor.weights.qbytes import WeightQBytesTensor
+
+_quanto_workarounds_logger = logging.getLogger("simpletuner.quanto_workarounds")
+
+# ============================================================================
+# PyTorch cpp_extension fix for ROCm/HIP on systems where ROCM_HOME=/usr
+# ============================================================================
+# When ROCM_HOME is /usr (common on Gentoo and some distros), PyTorch adds
+# -isystem /usr/include to the compile flags. This breaks GCC's #include_next
+# mechanism used by C++ standard library headers like <cstdlib>.
+#
+# PyTorch already has this fix for CUDA (see cpp_extension.py line 1520-1521)
+# but not for HIP/ROCm. This monkeypatch adds the same protection.
+
+_original_include_paths = torch.utils.cpp_extension.include_paths
+
+
+def _patched_include_paths(device_type: str = "cpu") -> list:
+    """Patched include_paths that filters out /usr/include for HIP/ROCm."""
+    paths = _original_include_paths(device_type)
+
+    # Filter out /usr/include - it breaks #include_next in GCC's C++ headers
+    # when passed as -isystem. The compiler already knows about /usr/include.
+    filtered = [p for p in paths if p != "/usr/include"]
+
+    if len(filtered) < len(paths):
+        _quanto_workarounds_logger.debug("Filtered /usr/include from cpp_extension include_paths to fix GCC #include_next")
+
+    return filtered
+
+
+torch.utils.cpp_extension.include_paths = _patched_include_paths
+
+# ============================================================================
 
 _TORCH_TENSOR_DATA_DESCRIPTOR = torch.Tensor.data
 
@@ -102,11 +138,105 @@ class WeightQBytesLinearFunction(optimum.quanto.tensor.function.QuantizedLinearF
             output = torch.ops.quanto.qbytes_mm(input.reshape(-1, in_features), other._data, other._scale)
             output = output.view(output_shape)
         if bias is not None:
+            # Move bias to output device if needed (ramtorch keeps bias on CPU)
+            if bias.device != output.device:
+                bias = bias.to(output.device, non_blocking=True)
             output = output + bias
         return output
 
 
 optimum.quanto.tensor.weights.qbytes.WeightQBytesLinearFunction = WeightQBytesLinearFunction
+
+
+# Save original forward
+_original_qlf_forward = optimum.quanto.tensor.function.QuantizedLinearFunction.forward
+
+# Track whether we've already fallen back to dequantize mode (to avoid repeated warnings)
+_quanto_native_failed = False
+
+
+def _move_qbits_tensor_to_device(tensor, device):
+    """Move a WeightQBitsTensor's internal components to the specified device."""
+    if not hasattr(tensor, "_data"):
+        return tensor
+
+    if tensor._data.device != device:
+        tensor._data = tensor._data.to(device, non_blocking=True)
+    if hasattr(tensor, "_scale") and tensor._scale is not None and tensor._scale.device != device:
+        tensor._scale = tensor._scale.to(device, non_blocking=True)
+    if hasattr(tensor, "_shift") and tensor._shift is not None and tensor._shift.device != device:
+        tensor._shift = tensor._shift.to(device, non_blocking=True)
+    if hasattr(tensor, "_scale_shift") and tensor._scale_shift is not None and tensor._scale_shift.device != device:
+        tensor._scale_shift = tensor._scale_shift.to(device, non_blocking=True)
+
+    return tensor
+
+
+def _dequantize_fallback_forward(ctx, input, other, bias, input_device):
+    """Fallback path: dequantize on CPU, move to GPU, standard matmul."""
+    ctx.save_for_backward(input, other)
+    if type(input) is not torch.Tensor:
+        input = input.dequantize()
+    weight_dequant = other.dequantize().to(input_device, non_blocking=True)
+    in_features = input.shape[-1]
+    out_features = other.shape[0]
+    output_shape = input.shape[:-1] + (out_features,)
+    output = torch.matmul(input.view(-1, in_features), weight_dequant.t())
+    output = output.view(output_shape)
+    if bias is not None:
+        # Move bias to output device if needed (ramtorch keeps bias on CPU)
+        if bias.device != output.device:
+            bias = bias.to(output.device, non_blocking=True)
+        output = output + bias
+    return output
+
+
+def _device_aware_qlf_forward(ctx, input, other, bias=None):
+    """Patched QuantizedLinearFunction.forward that handles device mismatch.
+
+    When ramtorch is used with quanto, weights may be on CPU while input is on GPU.
+    First tries to move the quantized tensor's internals to GPU and use native quanto.
+    If that fails (e.g., HIP/CUDA extension compilation failure), falls back to
+    dequantizing on CPU and using standard matmul.
+    """
+    global _quanto_native_failed
+
+    input_device = input.device if hasattr(input, "device") else None
+
+    if input_device is not None and hasattr(other, "_data"):
+        other_device = other._data.device if hasattr(other._data, "device") else None
+        if other_device is not None and other_device != input_device:
+            # Device mismatch detected - need to handle it
+
+            if _quanto_native_failed:
+                # Already know native path fails, go straight to fallback
+                return _dequantize_fallback_forward(ctx, input, other, bias, input_device)
+
+            # Try native path first: move quantized tensor to GPU
+            try:
+                _move_qbits_tensor_to_device(other, input_device)
+                return _original_qlf_forward(ctx, input, other, bias)
+            except Exception as e:
+                # Native path failed - likely HIP/CUDA extension compilation error
+                _quanto_native_failed = True
+                _quanto_workarounds_logger.error(
+                    "Quanto native extension failed (possibly HIP/CUDA compilation error). "
+                    "Falling back to dequantize-and-matmul path. This may use more memory per layer."
+                )
+                _quanto_workarounds_logger.debug("Quanto native extension error details:", exc_info=True)
+
+                # Move tensors back to CPU to avoid partial state
+                try:
+                    _move_qbits_tensor_to_device(other, other_device)
+                except Exception:
+                    pass
+
+                return _dequantize_fallback_forward(ctx, input, other, bias, input_device)
+
+    return _original_qlf_forward(ctx, input, other, bias)
+
+
+optimum.quanto.tensor.function.QuantizedLinearFunction.forward = _device_aware_qlf_forward
 
 
 def reshape_qlf_backward(ctx, gO):

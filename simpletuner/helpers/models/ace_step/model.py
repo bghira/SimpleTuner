@@ -20,7 +20,15 @@ from huggingface_hub import snapshot_download
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModel, AutoTokenizer, UMT5EncoderModel
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.configuration.registry import (
     ConfigRegistry,
     ConfigRule,
@@ -193,29 +201,16 @@ class ACEStep(AudioModelFoundation):
                 requires_min_system_ram_gb=48,
                 config={**_base_memory_config, "musubi_blocks_to_swap": 21},
             ),
-            # DeepSpeed presets (Advanced tab)
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO-1",
-                description="Optimizer state partitioning across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer VRAM by ~50%",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed_stage": 1},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO-2",
-                description="Optimizer + gradient partitioning across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer + gradient VRAM by ~60%",
-                tradeoff_speed="Slight communication overhead",
-                tradeoff_notes="Requires multi-GPU setup with fast interconnect.",
-                config={**_base_memory_config, "deepspeed_stage": 2},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
     def __init__(self, config: dict, accelerator):
@@ -347,8 +342,11 @@ class ACEStep(AudioModelFoundation):
             subfolder="umt5-base",
             torch_dtype=self.config.weight_dtype,
         )
-        if move_to_device:
+        if move_to_device and not self._ramtorch_text_encoders_requested():
             text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(text_encoder, "text_encoder_1")
 
         self.text_encoders = [text_encoder]
         self.text_encoder_1 = text_encoder

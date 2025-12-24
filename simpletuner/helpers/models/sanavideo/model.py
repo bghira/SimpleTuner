@@ -8,7 +8,15 @@ from diffusers.models import AutoencoderKLWan
 from diffusers.training_utils import compute_loss_weighting_for_sd3
 from transformers import Gemma2Model, GemmaTokenizerFast
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.models.common import (
     ModelTypes,
     PipelineTypes,
@@ -153,29 +161,16 @@ class SanaVideo(VideoModelFoundation):
                 requires_min_system_ram_gb=64,
                 config={**_base_memory_config, "musubi_blocks_to_swap": 15},
             ),
-            # Advanced tab - DeepSpeed options
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO Stage 1",
-                description="Shards optimizer states across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero1"},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO Stage 2",
-                description="Shards optimizer states and gradients across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
-                tradeoff_speed="Moderate communication overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero2"},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
     COMPLEX_HUMAN_INSTRUCTION = [

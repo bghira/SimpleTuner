@@ -80,6 +80,22 @@
                 return modelFamilyEl ? modelFamilyEl.value.trim() : null;
             },
 
+            getModelType() {
+                // Try to get from trainer store first
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    const modelType = config['--model_type'] || config['model_type'];
+                    if (modelType) {
+                        return modelType;
+                    }
+                }
+
+                // Fallback to DOM element
+                const modelTypeEl = document.getElementById('model_type');
+                return modelTypeEl ? modelTypeEl.value.trim() : 'lora';
+            },
+
             async loadPresets() {
                 const modelFamily = this.getModelFamily();
                 if (!modelFamily) {
@@ -134,7 +150,16 @@
             },
 
             getPresetsForTab(tab) {
-                return this.presets.filter(p => p.tab === tab);
+                const modelType = this.getModelType();
+                return this.presets.filter(p => {
+                    // Filter by tab
+                    if (p.tab !== tab) return false;
+                    // Filter by model_type if required
+                    if (p.requires_model_type && !p.requires_model_type.includes(modelType)) {
+                        return false;
+                    }
+                    return true;
+                });
             },
 
             getPresetsGroupedByBackend(tab) {
@@ -143,15 +168,17 @@
                 const order = [];
 
                 for (const preset of presets) {
-                    if (!groups[preset.backend]) {
-                        groups[preset.backend] = {
-                            backend: preset.backend,
-                            label: this.getBackendLabel(preset.backend),
+                    // Use display_group for UI grouping if present, otherwise fall back to backend
+                    const groupKey = preset.display_group || preset.backend;
+                    if (!groups[groupKey]) {
+                        groups[groupKey] = {
+                            backend: groupKey,
+                            label: this.getBackendLabel(groupKey),
                             presets: []
                         };
-                        order.push(preset.backend);
+                        order.push(groupKey);
                     }
-                    groups[preset.backend].presets.push(preset);
+                    groups[groupKey].presets.push(preset);
                 }
 
                 // Sort presets within each group by level (basic < balanced < aggressive)
@@ -160,7 +187,7 @@
                     group.presets.sort((a, b) => (levelOrder[a.level] ?? 99) - (levelOrder[b.level] ?? 99));
                 }
 
-                return order.map(backend => groups[backend]);
+                return order.map(groupKey => groups[groupKey]);
             },
 
             getBackendLabel(backend) {
@@ -168,9 +195,14 @@
                     'RAMTORCH': 'RamTorch Streaming',
                     'MUSUBI_BLOCK_SWAP': 'Block Swap',
                     'GROUP_OFFLOAD': 'Group Offload',
+                    'deepspeed': 'DeepSpeed ZeRO',
                     'DEEPSPEED_ZERO_1': 'DeepSpeed ZeRO',
                     'DEEPSPEED_ZERO_2': 'DeepSpeed ZeRO',
                     'DEEPSPEED_ZERO_3': 'DeepSpeed ZeRO',
+                    'SDNQ': 'SDNQ',
+                    'TORCHAO': 'TorchAO',
+                    'QUANTO': 'Quanto',
+                    'BITSANDBYTES': 'BitsAndBytes',
                 };
                 return labels[backend] || backend;
             },
@@ -196,6 +228,14 @@
                         // Clear custom block swap when selecting RamTorch or Group Offload
                         if (preset.backend === 'RAMTORCH' || preset.backend === 'GROUP_OFFLOAD') {
                             this.customBlockSwapCount = 0;
+                        }
+                    }
+                    // If preset has a group, deselect other presets in the same group
+                    if (preset.group) {
+                        for (const otherPreset of this.presets) {
+                            if (otherPreset.group === preset.group && otherPreset.backend !== preset.backend) {
+                                delete this.selectedPresets[otherPreset.backend];
+                            }
                         }
                     }
                     // Select this preset

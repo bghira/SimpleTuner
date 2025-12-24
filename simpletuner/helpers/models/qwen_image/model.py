@@ -15,7 +15,15 @@ from diffusers.models.attention_processor import Attention
 from PIL import Image
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
 
-from simpletuner.helpers.acceleration import AccelerationBackend, AccelerationPreset
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.models.common import (
     ImageModelFoundation,
     ModelTypes,
@@ -63,6 +71,10 @@ class QwenImage(ImageModelFoundation):
     EDIT_PLUS_PIPELINE_CLASS = QwenImageEditPlusPipeline
     EDIT_V1_FLAVOURS = frozenset({"edit-v1"})
     EDIT_V2_FLAVOURS = frozenset({"edit-v2"})
+    EDIT_V2_PLUS_FLAVOURS = frozenset({"edit-v2+"})
+    EDIT_V3_FLAVOURS = frozenset({"edit-v3"})
+    # Flavors that use zero conditional timestep for control/conditioning images
+    ZERO_COND_T_FLAVOURS = frozenset({"edit-v2+", "edit-v3"})
 
     # Default model flavor
     DEFAULT_MODEL_FLAVOUR = "v1.0"
@@ -70,6 +82,8 @@ class QwenImage(ImageModelFoundation):
         "v1.0": "Qwen/Qwen-Image",
         "edit-v1": "Qwen/Qwen-Image-Edit",
         "edit-v2": "Qwen/Qwen-Image-Edit-2509",
+        "edit-v2+": "Qwen/Qwen-Image-Edit-2509",
+        "edit-v3": "Qwen/Qwen-Image-Edit-2511",
     }
     MODEL_LICENSE = "other"
 
@@ -190,29 +204,16 @@ class QwenImage(ImageModelFoundation):
                 requires_min_system_ram_gb=128,
                 config={**_base_memory_config, "musubi_blocks_to_swap": 50},
             ),
-            # DeepSpeed presets (Advanced tab)
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_1,
-                level="zero1",
-                name="DeepSpeed ZeRO Stage 1",
-                description="Shards optimizer states across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer memory by 75% per GPU",
-                tradeoff_speed="Minimal overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero1"},
-            ),
-            AccelerationPreset(
-                backend=AccelerationBackend.DEEPSPEED_ZERO_2,
-                level="zero2",
-                name="DeepSpeed ZeRO Stage 2",
-                description="Shards optimizer states and gradients across GPUs.",
-                tab="advanced",
-                tradeoff_vram="Reduces optimizer + gradient memory by 85% per GPU",
-                tradeoff_speed="Moderate communication overhead",
-                tradeoff_notes="Requires multi-GPU setup.",
-                config={**_base_memory_config, "deepspeed": "zero2"},
-            ),
+            # DeepSpeed presets (multi-GPU only)
+            *get_deepspeed_presets(_base_memory_config),
+            # SDNQ presets (works on AMD, Apple, NVIDIA)
+            *get_sdnq_presets(_base_memory_config),
+            # TorchAO presets (NVIDIA only)
+            *get_torchao_presets(_base_memory_config),
+            # Quanto presets (works on AMD, Apple, NVIDIA)
+            *get_quanto_presets(_base_memory_config),
+            # BitsAndBytes presets (NVIDIA only)
+            *get_bitsandbytes_presets(_base_memory_config),
         ]
 
     def __init__(self, config: dict, accelerator):
@@ -221,7 +222,8 @@ class QwenImage(ImageModelFoundation):
         pipeline_classes = dict(self.PIPELINE_CLASSES)
         if self._is_edit_v1_flavour():
             pipeline_classes[PipelineTypes.TEXT2IMG] = self.EDIT_PIPELINE_CLASS
-        elif self._is_edit_v2_flavour():
+        elif self._is_edit_v2_plus_flavour() or self._is_edit_v2_flavour():
+            # edit-v2+, edit-v3, and edit-v2 use the same pipeline
             pipeline_classes[PipelineTypes.TEXT2IMG] = self.EDIT_PLUS_PIPELINE_CLASS
         self.PIPELINE_CLASSES = pipeline_classes
         self._conditioning_image_embedder = None
@@ -326,14 +328,43 @@ class QwenImage(ImageModelFoundation):
         return flavour in cls.EDIT_V2_FLAVOURS if flavour is not None else False
 
     @classmethod
+    def _is_edit_v2_plus_config(cls, source) -> bool:
+        flavour = cls._resolve_flavour_from_source(source)
+        return flavour in cls.EDIT_V2_PLUS_FLAVOURS if flavour is not None else False
+
+    @classmethod
+    def _is_edit_v3_config(cls, source) -> bool:
+        flavour = cls._resolve_flavour_from_source(source)
+        return flavour in cls.EDIT_V3_FLAVOURS if flavour is not None else False
+
+    @classmethod
+    def _uses_zero_cond_t_config(cls, source) -> bool:
+        """Check if this model uses zero conditional timestep for source images."""
+        flavour = cls._resolve_flavour_from_source(source)
+        return flavour in cls.ZERO_COND_T_FLAVOURS if flavour is not None else False
+
+    @classmethod
     def _is_edit_config(cls, source) -> bool:
-        return cls._is_edit_v1_config(source) or cls._is_edit_v2_config(source)
+        return (
+            cls._is_edit_v1_config(source)
+            or cls._is_edit_v2_config(source)
+            or cls._is_edit_v2_plus_config(source)
+            or cls._is_edit_v3_config(source)
+        )
 
     def _is_edit_v1_flavour(self) -> bool:
         return QwenImage._is_edit_v1_config(self)
 
     def _is_edit_v2_flavour(self) -> bool:
         return QwenImage._is_edit_v2_config(self)
+
+    def _is_edit_v2_plus_flavour(self) -> bool:
+        """Check if this is edit-v2+ or edit-v3 flavor (uses EDIT_PLUS pipeline with zero_cond_t)."""
+        return QwenImage._is_edit_v2_plus_config(self) or QwenImage._is_edit_v3_config(self)
+
+    def _uses_zero_cond_t(self) -> bool:
+        """Check if this model uses zero conditional timestep for source images."""
+        return QwenImage._uses_zero_cond_t_config(self)
 
     def _is_edit_flavour(self) -> bool:
         return QwenImage._is_edit_config(self)
@@ -912,14 +943,14 @@ class QwenImage(ImageModelFoundation):
         batch = super().prepare_batch(batch, state)
         if self._is_edit_v1_flavour():
             batch = self._prepare_edit_batch_v1(batch)
-        elif self._is_edit_v2_flavour():
+        elif self._is_edit_v2_flavour() or self._is_edit_v2_plus_flavour():
             batch = self._prepare_edit_batch_v2(batch)
         return batch
 
     def model_predict(self, prepared_batch):
         if self._is_edit_v1_flavour():
             return self._model_predict_edit_v1(prepared_batch)
-        if self._is_edit_v2_flavour():
+        if self._is_edit_v2_flavour() or self._is_edit_v2_plus_flavour():
             return self._model_predict_edit_plus(prepared_batch)
         return self._model_predict_standard(prepared_batch)
 
@@ -985,12 +1016,9 @@ class QwenImage(ImageModelFoundation):
             raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         timesteps = raw_timesteps.expand(batch_size) / 1000.0  # Normalize to [0, 1]
 
-        # Get text sequence lengths
-        txt_seq_lens = (
-            prompt_embeds_mask.sum(dim=1).tolist()
-            if prompt_embeds_mask is not None
-            else [prompt_embeds.shape[1]] * batch_size
-        )
+        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
+        # but the tensor includes padding that also needs positional encodings
+        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         # Forward pass through transformer
         with self._force_packed_transformer_output(self.model):
@@ -1119,9 +1147,9 @@ class QwenImage(ImageModelFoundation):
             prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
-            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
-        else:
-            txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
+        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
+        # but the tensor includes padding that also needs positional encodings
+        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         img_shapes = [
             [
@@ -1229,9 +1257,9 @@ class QwenImage(ImageModelFoundation):
             prompt_embeds_mask = prompt_embeds_mask.to(self.accelerator.device, dtype=torch.int64)
             if prompt_embeds_mask.dim() == 3 and prompt_embeds_mask.size(1) == 1:
                 prompt_embeds_mask = prompt_embeds_mask.squeeze(1)
-            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
-        else:
-            txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
+        # Use full sequence length for rotary embeddings - mask.sum() only gives actual content length
+        # but the tensor includes padding that also needs positional encodings
+        txt_seq_lens = [prompt_embeds.shape[1]] * batch_size
 
         hidden_states_buffer = self._new_hidden_state_buffer()
         raw_timesteps = prepared_batch["timesteps"]
@@ -1241,6 +1269,38 @@ class QwenImage(ImageModelFoundation):
             raw_timesteps = raw_timesteps.to(device=self.accelerator.device, dtype=torch.float32)
         timesteps = raw_timesteps.expand(batch_size) / 1000.0
 
+        # For zero_cond_t: double timesteps and compute modulate_index
+        modulate_index = None
+        if self._uses_zero_cond_t():
+            # Double the timesteps: [actual_t, 0] for each batch item
+            timesteps = torch.cat([timesteps, torch.zeros_like(timesteps)], dim=0)
+
+            # Compute modulate_index: target tokens (first shape) get 0, control tokens get 1
+            # img_shapes[i] = [(1, h0, w0), (1, h1, w1), ...] for batch item i
+            # First shape is target, rest are controls
+            modulate_indices = []
+            for sample_shapes in img_shapes:
+                target_tokens = sample_shapes[0][0] * sample_shapes[0][1] * sample_shapes[0][2]
+                control_tokens = sum(s[0] * s[1] * s[2] for s in sample_shapes[1:])
+                sample_index = [0] * target_tokens + [1] * control_tokens
+                modulate_indices.append(sample_index)
+            modulate_index = torch.tensor(
+                modulate_indices,
+                device=self.accelerator.device,
+                dtype=torch.long,
+            )
+
+            # Validate that the total number of tokens in modulate_indices matches
+            # the sequence length dimension of transformer_inputs. A mismatch here
+            # indicates that img_shapes is inconsistent with the packed latents.
+            expected_token_count = sum(len(sample_index) for sample_index in modulate_indices)
+            actual_token_count = transformer_inputs.size(1)
+            if expected_token_count != actual_token_count:
+                raise ValueError(
+                    f"Inconsistent img_shapes and transformer_inputs: "
+                    f"modulate_index encodes {expected_token_count} tokens, "
+                    f"but transformer_inputs has sequence length {actual_token_count}."
+                )
         with self._force_packed_transformer_output(self.model):
             call_kwargs = {
                 "hidden_states": transformer_inputs.to(self.accelerator.device, self.config.weight_dtype),
@@ -1252,6 +1312,8 @@ class QwenImage(ImageModelFoundation):
                 "txt_seq_lens": txt_seq_lens,
                 "return_dict": False,
             }
+            if modulate_index is not None:
+                call_kwargs["modulate_index"] = modulate_index
             if hidden_states_buffer is not None:
                 call_kwargs["hidden_states_buffer"] = hidden_states_buffer
             if (

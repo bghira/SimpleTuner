@@ -12,6 +12,7 @@ from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_l
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from einops import repeat
 
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
@@ -891,6 +892,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         llama_layers: List[int] = None,
         aux_loss_alpha: float = 0.0,
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
         effective_out_channels = out_channels or in_channels
@@ -911,6 +914,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             llama_layers=llama_layers,
             aux_loss_alpha=aux_loss_alpha,
             enable_time_sign_embed=enable_time_sign_embed,
+            musubi_blocks_to_swap=musubi_blocks_to_swap,
+            musubi_block_swap_device=musubi_block_swap_device,
         )
         self.out_channels = effective_out_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
@@ -966,6 +971,14 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         self.max_seq = max_resolution[0] * max_resolution[1] // (patch_size * patch_size)
 
         self.gradient_checkpointing = False
+
+        total_layers = num_layers + num_single_layers
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=total_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
 
         # TREAD support
         self._tread_router = None
@@ -1427,9 +1440,19 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         )
         initial_encoder_hidden_states_seq_len = initial_encoder_hidden_states.shape[1]
 
+        # Musubi block swap activation
+        combined_blocks = list(self.double_stream_blocks) + list(self.single_stream_blocks)
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        grad_enabled = torch.is_grad_enabled()
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
+
         # Process through double stream blocks
         capture_idx = 0
         for bid, block in enumerate(self.double_stream_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(block_id):
+                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD routing for this layer
             if use_routing:
                 # Check if this layer should use routing
@@ -1519,6 +1542,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                 control_idx = min(bid // interval_control, len(controlnet_block_samples) - 1)
                 hidden_states = hidden_states + controlnet_block_samples[control_idx]
 
+            if musubi_offload_active and musubi_manager.is_managed_block(block_id):
+                musubi_manager.stream_out(block)
             block_id += 1
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
             capture_idx += 1
@@ -1542,6 +1567,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
         # 7. Process through single stream blocks
         for bid, block in enumerate(self.single_stream_blocks):
+            if musubi_offload_active and musubi_manager.is_managed_block(block_id):
+                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD routing for single stream layers
             if use_routing:
                 # Check if this layer should use routing
@@ -1649,6 +1676,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
                     hidden_states[:, :image_tokens_seq_len] + controlnet_single_block_samples[control_idx]
                 )
 
+            if musubi_offload_active and musubi_manager.is_managed_block(block_id):
+                musubi_manager.stream_out(block)
             block_id += 1
             _store_hidden_state(
                 hidden_states_buffer, f"layer_{capture_idx}", hidden_states, image_tokens_start=image_tokens_seq_len

@@ -322,6 +322,8 @@ class TextEmbeddingCache(WebhookMixin):
                     f"Loaded tuple format from cache but model doesn't have _format_text_embedding method. "
                     f"This cache file may be incompatible: {filename}"
                 )
+        if self.model is None:
+            self.model = StateTracker.get_model()
         return self.model.unpack_text_embeddings_from_cache(result)
 
     def encode_wan_prompt(
@@ -367,6 +369,8 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
     ):
+        if self.model is None:
+            self.model = StateTracker.get_model()
         if self.model.TEXT_ENCODER_CONFIGURATION == {}:
             # This is a model that doesn't use text encoders.
             self.debug_log(f"Model type {self.model_type} does not use text encoders, skipping text embed caching.")

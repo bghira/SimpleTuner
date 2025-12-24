@@ -683,6 +683,15 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 f"video->min_frames must be greater than or equal to video->num_frames. Received min_frames={min_frames} and num_frames={num_frames}."
             )
 
+        # Warn about resolution_frames bucket strategy with fixed num_frames
+        bucket_strategy = video_config.get("bucket_strategy", "aspect_ratio")
+        if bucket_strategy == "resolution_frames" and num_frames is not None:
+            warning_log(
+                f"(id={backend['id']}) bucket_strategy='resolution_frames' with num_frames={num_frames} will result in "
+                f"a single frame bucket. Videos with fewer than {num_frames} frames will be discarded. "
+                f"Unset num_frames in the video config if you want multiple frame buckets."
+            )
+
     return output
 
 
@@ -769,6 +778,11 @@ def configure_parquet_database(backend: dict, args, data_backend: BaseDataBacken
 def move_text_encoders(args, text_encoders: list, target_device: str, force_move: bool = False):
     """Move text encoders to the target device."""
     if text_encoders is None or (not args.offload_during_startup and not force_move):
+        return
+    # Don't move text encoders to GPU if ramtorch is handling them
+    ramtorch_text_encoders = getattr(args, "ramtorch", False) and getattr(args, "ramtorch_text_encoder", False)
+    if ramtorch_text_encoders and target_device not in ("cpu", "meta"):
+        logger.debug("Skipping text encoder move to %s - ramtorch_text_encoder is enabled", target_device)
         return
     # we'll move text encoder only if their precision arg is no_change
     # otherwise, we assume the user has already moved them to the correct device due to quantisation.

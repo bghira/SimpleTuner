@@ -40,6 +40,180 @@ from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModul
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+# Global flag to force tiled attention (set via config or after OOM).
+# WARNING: If this is set due to OOM during forward, gradient checkpointing may fail
+# because the recomputation will take a different code path than the original forward.
+# For reliable training with checkpointing, set this explicitly before training starts.
+_USE_TILED_ATTENTION = False
+
+
+def _tiled_scaled_dot_product_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor] = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    tile_size: int = 1024,
+) -> torch.Tensor:
+    """
+    Tiled attention that processes queries in chunks to reduce peak memory.
+
+    This is mathematically equivalent to standard scaled dot-product attention
+    because each query position's attention is independent (softmax is per-row).
+
+    Args:
+        query: [B, seq_q, heads, head_dim] or [B, heads, seq_q, head_dim]
+        key: [B, seq_kv, heads, head_dim] or [B, heads, seq_kv, head_dim]
+        value: [B, seq_kv, heads, head_dim] or [B, heads, seq_kv, head_dim]
+        attn_mask: Optional attention mask
+        dropout_p: Dropout probability (only applied in training)
+        is_causal: Whether to use causal masking
+        tile_size: Number of query positions to process at once
+
+    Returns:
+        Attention output with same shape as query
+    """
+    # dispatch_attention_fn uses [B, seq, heads, head_dim] format
+    # but F.scaled_dot_product_attention uses [B, heads, seq, head_dim]
+    # We need to handle the format from dispatch_attention_fn
+    batch_size, seq_q, num_heads, head_dim = query.shape
+    seq_kv = key.shape[1]
+
+    # Transpose to [B, heads, seq, head_dim] for F.sdpa
+    query = query.transpose(1, 2)  # [B, heads, seq_q, head_dim]
+    key = key.transpose(1, 2)  # [B, heads, seq_kv, head_dim]
+    value = value.transpose(1, 2)  # [B, heads, seq_kv, head_dim]
+
+    # Process in tiles along query dimension
+    outputs = []
+    for i in range(0, seq_q, tile_size):
+        end_i = min(i + tile_size, seq_q)
+        q_tile = query[:, :, i:end_i, :]  # [B, heads, tile, head_dim]
+
+        # Handle attention mask tiling if present
+        mask_tile = None
+        if attn_mask is not None:
+            # Mask shape could be [B, 1, seq_q, seq_kv] or [B, heads, seq_q, seq_kv]
+            if attn_mask.dim() == 4:
+                mask_tile = attn_mask[:, :, i:end_i, :]
+            elif attn_mask.dim() == 3:
+                mask_tile = attn_mask[:, i:end_i, :]
+            elif attn_mask.dim() == 2:
+                mask_tile = attn_mask[i:end_i, :]
+
+        # Handle causal masking for tiles
+        tile_is_causal = False
+        if is_causal:
+            # For causal attention, we need to apply causal mask manually for tiles
+            # that don't start at position 0
+            if i == 0:
+                tile_is_causal = True
+            else:
+                # Create causal mask for this tile
+                tile_len = end_i - i
+                causal_mask = torch.ones(tile_len, seq_kv, dtype=torch.bool, device=query.device)
+                # Each query at position j can attend to positions 0..i+j
+                for j in range(tile_len):
+                    causal_mask[j, i + j + 1 :] = False
+                causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, tile, seq_kv]
+                if mask_tile is not None:
+                    mask_tile = mask_tile & causal_mask
+                else:
+                    # Convert bool mask to float mask for SDPA
+                    mask_tile = torch.zeros_like(causal_mask, dtype=query.dtype)
+                    mask_tile.masked_fill_(~causal_mask, float("-inf"))
+
+        # Compute attention for this tile
+        out_tile = F.scaled_dot_product_attention(
+            q_tile,
+            key,
+            value,
+            attn_mask=mask_tile,
+            dropout_p=dropout_p if query.requires_grad else 0.0,
+            is_causal=tile_is_causal,
+        )
+        outputs.append(out_tile)
+
+    # Concatenate tiles
+    output = torch.cat(outputs, dim=2)  # [B, heads, seq_q, head_dim]
+
+    # Transpose back to [B, seq_q, heads, head_dim]
+    output = output.transpose(1, 2)
+
+    return output
+
+
+def attention_with_oom_fallback(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor] = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    backend: Optional[str] = None,
+    tile_size: int = 1024,
+) -> torch.Tensor:
+    """
+    Attention with automatic OOM fallback to tiled computation.
+
+    First tries dispatch_attention_fn, and on OOM falls back to tiled attention
+    which processes queries in chunks to reduce peak memory.
+
+    The tiled version is mathematically equivalent because each query's attention
+    is independent (softmax is computed per query position).
+
+    WARNING: The OOM fallback changes global state mid-forward, which breaks
+    gradient checkpointing (recomputation takes a different path). If you use
+    checkpointing and hit this fallback, training will fail. In that case,
+    set _USE_TILED_ATTENTION = True before training starts.
+    """
+    global _USE_TILED_ATTENTION
+
+    if _USE_TILED_ATTENTION:
+        return _tiled_scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            tile_size=tile_size,
+        )
+
+    try:
+        return dispatch_attention_fn(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            backend=backend,
+        )
+    except torch.cuda.OutOfMemoryError:
+        seq_len = query.shape[1]
+        logger.warning(
+            "OOM during attention (seq_len=%d), falling back to tiled attention (tile_size=%d). "
+            "This will be slower but use less memory. "
+            "NOTE: If using gradient checkpointing, this may cause errors. "
+            "Consider enabling tiled attention explicitly before training.",
+            seq_len,
+            tile_size,
+        )
+        _USE_TILED_ATTENTION = True
+        torch.cuda.empty_cache()
+
+        return _tiled_scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            tile_size=tile_size,
+        )
+
 
 def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
     if buffer is None:
@@ -378,7 +552,7 @@ class QwenDoubleStreamAttnProcessor2_0:
             getattr(attn, "to_q", None) and attn.to_q.weight,
             getattr(attn, "to_k", None) and attn.to_k.weight,
         )
-        joint_hidden_states = dispatch_attention_fn(
+        joint_hidden_states = attention_with_oom_fallback(
             joint_query,
             joint_key,
             joint_value,
@@ -449,10 +623,47 @@ class QwenImageTransformerBlock(PatchableModule):
         self.txt_norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
         self.txt_mlp = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
-    def _modulate(self, x, mod_params):
-        """Apply modulation to input tensor"""
+    def _modulate(self, x, mod_params, modulate_index: Optional[torch.Tensor] = None):
+        """Apply modulation to input tensor.
+
+        Args:
+            x: Input tensor of shape [B, L, D]
+            mod_params: Modulation parameters of shape [B, 3*D] or [2*B, 3*D] when using zero_cond_t
+            modulate_index: Optional tensor of shape [B, L] with values 0 or 1 indicating
+                which modulation set to use per token. When provided, mod_params is expected
+                to have doubled batch size [2*B, 3*D] where first half is for actual timestep
+                and second half is for t=0.
+        """
         shift, scale, gate = mod_params.chunk(3, dim=-1)
-        return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1), gate.unsqueeze(1)
+
+        if modulate_index is not None:
+            # mod_params has shape [2*actual_batch, dim] - split into two sets
+            actual_batch = shift.size(0) // 2
+            shift_0, shift_1 = shift[:actual_batch], shift[actual_batch:]
+            scale_0, scale_1 = scale[:actual_batch], scale[actual_batch:]
+            gate_0, gate_1 = gate[:actual_batch], gate[actual_batch:]
+
+            # modulate_index: [B, L] -> [B, L, 1] for broadcasting
+            index_expanded = modulate_index.unsqueeze(-1)
+
+            # Expand params to [B, 1, D] for broadcasting to [B, L, D]
+            shift_0_exp = shift_0.unsqueeze(1)
+            shift_1_exp = shift_1.unsqueeze(1)
+            scale_0_exp = scale_0.unsqueeze(1)
+            scale_1_exp = scale_1.unsqueeze(1)
+            gate_0_exp = gate_0.unsqueeze(1)
+            gate_1_exp = gate_1.unsqueeze(1)
+
+            # Select based on index: 0 = actual timestep, 1 = zero timestep
+            shift_result = torch.where(index_expanded == 0, shift_0_exp, shift_1_exp)
+            scale_result = torch.where(index_expanded == 0, scale_0_exp, scale_1_exp)
+            gate_result = torch.where(index_expanded == 0, gate_0_exp, gate_1_exp)
+        else:
+            shift_result = shift.unsqueeze(1)
+            scale_result = scale.unsqueeze(1)
+            gate_result = gate.unsqueeze(1)
+
+        return x * (1 + scale_result) + shift_result, gate_result
 
     def forward(
         self,
@@ -462,20 +673,28 @@ class QwenImageTransformerBlock(PatchableModule):
         temb: torch.Tensor,
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        modulate_index: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Get modulation parameters for both streams
-        img_mod_params = self.img_mod(temb)  # [B, 6*dim]
-        txt_mod_params = self.txt_mod(temb)  # [B, 6*dim]
+        # Get modulation parameters for image stream
+        # When using zero_cond_t, temb has doubled batch size [2*B, D]
+        img_mod_params = self.img_mod(temb)  # [B, 6*dim] or [2*B, 6*dim]
+
+        # For text stream, use only the actual timestep embedding (first half when zero_cond_t)
+        if modulate_index is not None:
+            txt_temb = torch.chunk(temb, 2, dim=0)[0]
+        else:
+            txt_temb = temb
+        txt_mod_params = self.txt_mod(txt_temb)  # [B, 6*dim]
 
         # Split modulation parameters for norm1 and norm2
-        img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
+        img_mod1, img_mod2 = img_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim] or [2*B, 3*dim]
         txt_mod1, txt_mod2 = txt_mod_params.chunk(2, dim=-1)  # Each [B, 3*dim]
 
-        # Process image stream - norm1 + modulation
+        # Process image stream - norm1 + modulation (with optional per-token index selection)
         img_normed = self.img_norm1(hidden_states)
-        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1)
+        img_modulated, img_gate1 = self._modulate(img_normed, img_mod1, modulate_index)
 
-        # Process text stream - norm1 + modulation
+        # Process text stream - norm1 + modulation (always uses actual timestep)
         txt_normed = self.txt_norm1(encoder_hidden_states)
         txt_modulated, txt_gate1 = self._modulate(txt_normed, txt_mod1)
 
@@ -501,9 +720,9 @@ class QwenImageTransformerBlock(PatchableModule):
         hidden_states = hidden_states + img_gate1 * img_attn_output
         encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
 
-        # Process image stream - norm2 + MLP
+        # Process image stream - norm2 + MLP (with optional per-token index selection)
         img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2)
+        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, modulate_index)
         img_mlp_output = self.img_mlp(img_modulated2)
         hidden_states = hidden_states + img_gate2 * img_mlp_output
 
@@ -710,6 +929,7 @@ class QwenImageTransformer2DModel(
         force_keep_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         hidden_states_buffer: Optional[dict] = None,
+        modulate_index: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         The [`QwenTransformer2DModel`] forward method.
@@ -819,8 +1039,41 @@ class QwenImageTransformer2DModel(
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_in(block, hidden_states.device)
             if torch.is_grad_enabled() and self.gradient_checkpointing:
+
+                def create_custom_forward(module, mod_idx):
+                    def custom_forward(
+                        *inputs,
+                        hidden_states=None,
+                        encoder_hidden_states=None,
+                        encoder_hidden_states_mask=None,
+                        temb=None,
+                        image_rotary_emb=None,
+                        **kwargs,
+                    ):
+                        # Handle both positional args (real checkpoint) and keyword args (test mock)
+                        if inputs:
+                            hs, ehs, ehsm, t, ire = inputs[:5]
+                        else:
+                            hs = hidden_states
+                            ehs = encoder_hidden_states
+                            ehsm = encoder_hidden_states_mask
+                            t = temb
+                            ire = image_rotary_emb
+
+                        return module(
+                            hidden_states=hs,
+                            encoder_hidden_states=ehs,
+                            encoder_hidden_states_mask=ehsm,
+                            temb=t,
+                            image_rotary_emb=ire,
+                            joint_attention_kwargs=None,
+                            modulate_index=mod_idx,
+                        )
+
+                    return custom_forward
+
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
-                    block,
+                    create_custom_forward(block, modulate_index),
                     hidden_states,
                     encoder_hidden_states,
                     encoder_hidden_states_mask,
@@ -836,6 +1089,7 @@ class QwenImageTransformer2DModel(
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
                     joint_attention_kwargs=attention_kwargs,
+                    modulate_index=modulate_index,
                 )
 
             _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
@@ -869,7 +1123,12 @@ class QwenImageTransformer2DModel(
                 musubi_manager.stream_out(block)
 
         # Use only the image part (hidden_states) from the dual-stream blocks
-        hidden_states = self.norm_out(hidden_states, temb)
+        # When using zero_cond_t, use only the actual timestep embedding for final norm
+        if modulate_index is not None:
+            norm_temb = torch.chunk(temb, 2, dim=0)[0]
+        else:
+            norm_temb = temb
+        hidden_states = self.norm_out(hidden_states, norm_temb)
         output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:

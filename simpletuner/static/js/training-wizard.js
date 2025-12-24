@@ -61,7 +61,7 @@ function trainingWizardComponent() {
         selectedMemoryTab: 'basic',
         selectedPresets: {},            // Map of backend -> selected level
         customBlockSwapCount: 0,        // For Musubi slider
-        memoryQuantLevel: 'int8-torchao', // Quantization level for memory step: 'disabled', 'int8-torchao', 'nf4-bnb', 'int4-quanto'
+        memoryQuantLevel: 'int8-torchao', // Quantization level for memory step: 'disabled', 'int8-torchao', 'int8-sdnq', 'nf4-bnb', 'int4-quanto'
 
         answers: {
             model_family: null,
@@ -76,6 +76,7 @@ function trainingWizardComponent() {
             push_to_hub_background: false,
             checkpoint_step_interval: 100,  // Default to 100 steps
             checkpoint_epoch_interval: null,
+            checkpoints_total_limit: 5,  // Default to keeping 5 checkpoints
             enable_validations: true,
             validation_steps: 100,
             validation_prompt: '',
