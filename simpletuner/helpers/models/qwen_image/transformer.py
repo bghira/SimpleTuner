@@ -40,7 +40,10 @@ from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModul
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
-# Track if we've already fallen back to tiled attention (to avoid repeated OOM attempts)
+# Global flag to force tiled attention (set via config or after OOM).
+# WARNING: If this is set due to OOM during forward, gradient checkpointing may fail
+# because the recomputation will take a different code path than the original forward.
+# For reliable training with checkpointing, set this explicitly before training starts.
 _USE_TILED_ATTENTION = False
 
 
@@ -159,41 +162,57 @@ def attention_with_oom_fallback(
 
     The tiled version is mathematically equivalent because each query's attention
     is independent (softmax is computed per query position).
+
+    WARNING: The OOM fallback changes global state mid-forward, which breaks
+    gradient checkpointing (recomputation takes a different path). If you use
+    checkpointing and hit this fallback, training will fail. In that case,
+    set _USE_TILED_ATTENTION = True before training starts.
     """
     global _USE_TILED_ATTENTION
 
-    if not _USE_TILED_ATTENTION:
-        try:
-            return dispatch_attention_fn(
-                query,
-                key,
-                value,
-                attn_mask=attn_mask,
-                dropout_p=dropout_p,
-                is_causal=is_causal,
-                backend=backend,
-            )
-        except torch.cuda.OutOfMemoryError:
-            logger.warning(
-                "OOM during attention (seq_len=%d), falling back to tiled attention (tile_size=%d). "
-                "This will be slower but use less memory.",
-                query.shape[1],
-                tile_size,
-            )
-            _USE_TILED_ATTENTION = True
-            # Clear memory before retry
-            torch.cuda.empty_cache()
+    if _USE_TILED_ATTENTION:
+        return _tiled_scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            tile_size=tile_size,
+        )
 
-    # Use tiled attention
-    return _tiled_scaled_dot_product_attention(
-        query,
-        key,
-        value,
-        attn_mask=attn_mask,
-        dropout_p=dropout_p,
-        is_causal=is_causal,
-        tile_size=tile_size,
-    )
+    try:
+        return dispatch_attention_fn(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            backend=backend,
+        )
+    except torch.cuda.OutOfMemoryError:
+        seq_len = query.shape[1]
+        logger.warning(
+            "OOM during attention (seq_len=%d), falling back to tiled attention (tile_size=%d). "
+            "This will be slower but use less memory. "
+            "NOTE: If using gradient checkpointing, this may cause errors. "
+            "Consider enabling tiled attention explicitly before training.",
+            seq_len,
+            tile_size,
+        )
+        _USE_TILED_ATTENTION = True
+        torch.cuda.empty_cache()
+
+        return _tiled_scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=dropout_p,
+            is_causal=is_causal,
+            tile_size=tile_size,
+        )
 
 
 def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
