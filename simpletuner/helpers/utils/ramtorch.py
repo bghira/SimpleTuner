@@ -534,6 +534,29 @@ def ramtorch_zero_utils():
     return imports["broadcast_zero_params"], imports["create_zero_param_groups"], imports["setup_grad_sharding_hooks"]
 
 
+def move_embeddings_to_device(module: nn.Module, device: object) -> int:
+    """
+    Move all nn.Embedding layers in a module to the specified device.
+
+    When ramtorch is applied to a model, only nn.Linear layers are converted.
+    The nn.Embedding layers need to be on the same device as their input tensors.
+    This function moves embedding layers to GPU to avoid device mismatch errors.
+
+    Args:
+        module: Root module containing embedding layers.
+        device: Target device (e.g., "cuda", torch.device("cuda:0")).
+
+    Returns:
+        Number of embedding layers moved.
+    """
+    moved = 0
+    for name, child in module.named_modules():
+        if isinstance(child, nn.Embedding):
+            child.to(device)
+            moved += 1
+    return moved
+
+
 def mark_ddp_ignore_params(module: nn.Module) -> int:
     """
     Mark RamTorch parameters on a module to be ignored by DistributedDataParallel.

@@ -2477,7 +2477,14 @@ class ModelFoundation(ABC):
             return override
         return self._ramtorch_targets()
 
-    def _apply_ramtorch_layers(self, module, component_label: str, *, target_patterns: Optional[list[str]] = None) -> int:
+    def _apply_ramtorch_layers(
+        self,
+        module,
+        component_label: str,
+        *,
+        target_patterns: Optional[list[str]] = None,
+        move_embeddings: bool = True,
+    ) -> int:
         if module is None or not self._ramtorch_enabled():
             return 0
 
@@ -2495,6 +2502,13 @@ class ModelFoundation(ABC):
             logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
         else:
             logger.debug("RamTorch enabled for %s but no Linear layers matched the configured targets.", component_label)
+
+        # Move embedding layers to GPU - ramtorch only handles nn.Linear,
+        # but nn.Embedding must be on the same device as input_ids
+        if move_embeddings:
+            moved = ramtorch_utils.move_embeddings_to_device(module, self._ramtorch_device())
+            if moved:
+                logger.debug("Moved %s embedding layers to %s for %s.", moved, self._ramtorch_device(), component_label)
 
         return replaced
 
