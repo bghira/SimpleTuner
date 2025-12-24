@@ -934,10 +934,19 @@
         display: none !important;
     }
 
-    /* Compact card header - just the buttons */
+    /* Overlay buttons on first form section */
+    .tab-fragment > .card {
+        position: relative;
+    }
+
     .tab-fragment > .card > .card-header {
-        padding: 0.5rem !important;
-        justify-content: flex-end !important;
+        position: absolute !important;
+        top: 0.5rem;
+        right: 0.5rem;
+        z-index: 10;
+        padding: 0 !important;
+        background: transparent !important;
+        border: none !important;
     }
 
     /* Reduce space between top of card and first section */
