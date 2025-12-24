@@ -5,6 +5,10 @@
     box-sizing: border-box;
 }
 
+html {
+    overflow-x: hidden;
+}
+
 body {
     background: var(--dark-bg) !important;
     color: var(--text-primary) !important;
@@ -13,6 +17,8 @@ body {
     padding: 0;
     min-height: 100vh;
     overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
 }
 
 /* Dashboard Layout */
@@ -20,6 +26,8 @@ body {
     display: flex;
     min-height: 100vh;
     width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
 }
 
 /* Sidebar */
@@ -31,7 +39,7 @@ body {
     flex-direction: column;
     position: fixed;
     height: 100vh;
-    z-index: 1000;
+    z-index: 1060; /* Above backdrop (1050) and event dock (1030) */
     transition: transform 0.3s ease;
 }
 
@@ -139,6 +147,8 @@ body {
     flex-direction: column;
     min-height: 100vh;
     background: var(--dark-bg);
+    max-width: 100%;
+    overflow-x: clip; /* Clip but don't create scroll - allows dropdowns to escape */
 }
 
 /* Top bar */
@@ -543,7 +553,7 @@ body {
     inset: 0;
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(2px);
-    z-index: 999;
+    z-index: 1050; /* Above event dock (1030) but below sidebar (1060) */
 }
 
 /* Responsive */
@@ -583,8 +593,17 @@ body {
 }
 
 @media (max-width: 768px) {
+    /* Prevent horizontal scroll */
+    body {
+        overflow-x: hidden;
+    }
+
     .content-wrapper {
         padding: var(--spacing-md);
+        max-width: 100vw;
+        overflow: visible; /* Allow dropdown to show above */
+        position: relative;
+        z-index: 1; /* Lower than topbar to allow dropdown visibility */
     }
 
     .config-card {
@@ -601,26 +620,159 @@ body {
         width: 100%;
     }
 
-    /* Topbar mobile improvements */
+    /* Topbar mobile improvements - two rows */
     .topbar {
-        padding: var(--spacing-sm) var(--spacing-md) !important;
-        gap: var(--spacing-sm) !important;
+        padding: var(--spacing-xs) var(--spacing-sm) !important;
+        gap: var(--spacing-xs) !important;
         flex-wrap: wrap;
+        max-width: 100vw;
+        overflow: visible; /* Allow dropdown to show */
+        z-index: 500 !important; /* Higher than cards to show dropdowns */
     }
 
-    .topbar-right {
-        flex-wrap: wrap;
+    /* First row: toggle + config selector */
+    .topbar-left {
+        display: flex;
+        align-items: center;
         gap: var(--spacing-xs);
+        flex: 1;
+        min-width: 0;
+        max-width: 100%;
     }
 
+    .sidebar-toggle {
+        flex-shrink: 0;
+    }
+
+    /* Config selector fills remaining space */
     .config-selector {
         min-width: 0;
-        flex: 1;
+        flex: 1 1 auto;
+        position: relative;
+        z-index: 100; /* Ensure dropdown appears above content */
+    }
+
+    /* Force topbar-right to be full width (second row) */
+    .topbar-right {
+        flex-basis: 100%;
+    }
+
+    /* Ensure dropdown menu is visible above all content */
+    .config-selector__menu {
+        z-index: 2100 !important;
     }
 
     .config-selector__btn {
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         padding: var(--spacing-xs) var(--spacing-sm);
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* View JSON button - icon only on mobile */
+    .btn-view-json {
+        padding: 0.35rem 0.5rem !important;
+        flex-shrink: 0;
+    }
+
+    .btn-view-json .btn-text {
+        display: none !important;
+    }
+
+    /* Collapse All / Expand All buttons - icon only on mobile */
+    #collapse-all-basic,
+    #collapse-all-advanced,
+    #collapse-all-model,
+    #collapse-all-lycoris,
+    #expand-all-basic,
+    #expand-all-advanced,
+    #expand-all-model,
+    #expand-all-lycoris,
+    [id^="collapse-all-"],
+    [id^="expand-all-"] {
+        font-size: 0 !important;
+        padding: 0.3rem 0.5rem !important;
+    }
+
+    [id^="collapse-all-"] i,
+    [id^="expand-all-"] i {
+        font-size: 0.85rem !important;
+    }
+
+    /* Topbar right section - full width, content flows left */
+    .topbar-right {
+        width: 100%;
+        justify-content: flex-start !important;
+    }
+
+    .header-actions {
+        display: flex !important;
+        align-items: center;
+        justify-content: flex-start !important;
+        gap: 6px;
+        width: 100%;
+    }
+
+    /* Flatten ALL wrappers */
+    .header-actions .action-buttons,
+    .header-actions .action-buttons--compact,
+    .header-actions .action-buttons.d-flex,
+    .header-actions #action-buttons,
+    .header-actions .btn-group {
+        display: contents !important;
+    }
+
+    /* Consistent sizing for ALL buttons */
+    .header-actions .btn,
+    .header-actions .trainer-action-btn {
+        margin: 0 !important;
+        padding: 0.4rem 0.5rem !important;
+        width: 36px;
+        height: auto;
+        text-align: center;
+    }
+
+    /* Icon-only buttons in header on mobile - hide ALL text */
+    .header-actions .btn .btn-text,
+    .header-actions .trainer-action-btn .btn-text,
+    .header-actions .btn > span:not(.badge):not(.htmx-indicator),
+    .header-actions #shutdownBtn .btn-text,
+    .header-actions #shutdownBtn > span:not(.badge) {
+        display: none !important;
+    }
+
+    /* Remove margin on shutdown icon */
+    .header-actions #shutdownBtn i {
+        margin: 0 !important;
+    }
+
+    .header-actions .btn,
+    .header-actions .trainer-action-btn {
+        padding: 0.4rem 0.5rem !important;
+        min-width: unset;
+        width: auto;
+        font-size: 0.9rem;
+        overflow: visible;
+    }
+
+    /* Smaller badges */
+    .header-actions .badge {
+        font-size: 0.6rem !important;
+        padding: 0.15rem 0.3rem !important;
+        margin-left: 2px !important;
+    }
+
+    /* Training status pill - compact */
+    .training-status-pill {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+        margin-left: auto;
+        flex-shrink: 0;
+    }
+
+    .training-status-pill span:not(.badge) {
+        display: none;
     }
 
     /* Sidebar improvements for small screens */
@@ -650,6 +802,40 @@ body {
     .form-control,
     .form-select {
         font-size: 16px; /* Prevent iOS zoom on input focus */
+    }
+
+    /* Toast notifications - below two-row topbar on mobile */
+    .toast-container {
+        top: 100px !important;
+        right: 10px !important;
+        max-width: calc(100vw - 20px) !important;
+    }
+}
+
+/* Very small screens - further compacting */
+@media (max-width: 480px) {
+    .topbar {
+        padding: var(--spacing-xs) !important;
+    }
+
+    .config-selector {
+        max-width: calc(100vw - 60px);
+    }
+
+    .config-selector__btn {
+        font-size: 0.75rem;
+        padding: 0.25rem 0.4rem;
+    }
+
+    .header-actions .btn,
+    .header-actions .trainer-action-btn {
+        padding: 0.3rem 0.4rem !important;
+        min-width: 32px;
+        font-size: 0.8rem;
+    }
+
+    .training-status-pill {
+        display: none !important;
     }
 }
 

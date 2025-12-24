@@ -209,6 +209,11 @@
     opacity: 0.7;
 }
 
+/* Short labels hidden by default, shown on mobile */
+.event-dock-sysstat .sysstat-item .label-short {
+    display: none;
+}
+
 .event-dock-sysstat .sysstat-item .value {
     font-weight: 600;
     color: var(--text-primary);
@@ -358,36 +363,119 @@
         padding: 0 0.5rem;
     }
 
+    /* Limit max height to prevent overflow below viewport */
+    .event-dock {
+        max-height: 50vh !important;
+    }
+
     .event-dock-toolbar {
-        padding: var(--spacing-sm) var(--spacing-md);
-        flex-wrap: wrap;
-        gap: var(--spacing-sm);
+        padding: var(--spacing-xs) var(--spacing-sm);
+        flex-wrap: nowrap;
+        gap: var(--spacing-xs);
+        min-height: 44px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
-    .event-dock-title span {
-        font-size: 0.85rem;
+    .event-dock-title {
+        flex-shrink: 0;
     }
 
+    .event-dock-title span:not(.badge) {
+        display: none; /* Hide "Training Events" text, keep icon */
+    }
+
+    .event-dock-title .badge {
+        font-size: 0.7rem;
+        padding: 0.2rem 0.4rem;
+    }
+
+    /* Compact system stats on mobile */
     .event-dock-sysstat {
-        font-size: 0.75rem;
-        padding: 0 var(--spacing-sm);
+        font-size: 0.7rem;
+        padding: 0 var(--spacing-xs);
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
     }
 
     .event-dock-sysstat .sysstat-items {
         gap: var(--spacing-sm);
+        flex-wrap: nowrap;
+    }
+
+    /* Show short labels, hide full labels on mobile */
+    .event-dock-sysstat .sysstat-item .label-full {
+        display: none;
+    }
+
+    .event-dock-sysstat .sysstat-item .label-short {
+        display: inline;
+    }
+
+    /* Connection badge - icon only on mobile */
+    .event-dock-title .badge {
+        font-size: 0 !important;
+        padding: 0.2rem 0.35rem !important;
+        min-width: 20px;
+        text-align: center;
+    }
+
+    .event-dock-title .badge::before {
+        font-size: 0.6rem;
+    }
+
+    .event-dock-title .badge.bg-success::before {
+        content: "●";
+    }
+
+    .event-dock-title .badge.bg-danger::before {
+        content: "○";
+    }
+
+    .event-dock-title .badge.bg-warning::before {
+        content: "◐";
+    }
+
+    .event-dock-title .badge.bg-secondary::before {
+        content: "?";
     }
 
     .event-dock-actions {
-        gap: var(--spacing-xs);
+        flex-shrink: 0;
+        gap: 2px;
     }
 
     .event-dock-actions .btn {
-        padding: 0.3rem 0.5rem;
-        font-size: 0.8rem;
+        padding: 0.25rem 0.4rem;
+        font-size: 0.75rem;
     }
 
-    /* Hide less important buttons on very small screens */
-    .event-dock-actions .btn-copy-events {
+    /* Icon-only buttons on mobile */
+    .event-dock-actions .btn span,
+    .event-dock-actions .btn:not([title=""]):after {
+        display: none;
+    }
+
+    /* Hide button text, keep icons */
+    .event-dock-actions .btn {
+        min-width: 32px;
+    }
+}
+
+/* Very small screens - further simplification */
+@media (max-width: 480px) {
+    .event-dock {
+        max-height: 40vh !important;
+    }
+
+    .event-dock-toolbar {
+        padding: var(--spacing-xs);
+    }
+
+    /* Hide trigger buttons on very small screens when training */
+    .event-dock-actions .btn[title*="Trigger"] {
         display: none;
     }
 }

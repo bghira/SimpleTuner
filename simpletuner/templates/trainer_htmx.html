@@ -2829,6 +2829,7 @@ function trainerComponent() {
             items.push({
                 key: 'load',
                 label: 'Load 5m',
+                shortLabel: 'L',
                 value: load,
                 formatted: load !== null ? load.toFixed(2) : '—',
                 tooltip: '5 minute system load average',
@@ -2837,6 +2838,7 @@ function trainerComponent() {
             items.push({
                 key: 'memory',
                 label: 'Mem',
+                shortLabel: 'M',
                 value: memory,
                 formatted: memory !== null ? `${Math.round(memory)}%` : '—',
                 tooltip: 'System memory usage',
@@ -2872,6 +2874,7 @@ function trainerComponent() {
                 items.push({
                     key: `gpu-${gpu.index ?? index}`,
                     label: displayLabel,
+                    shortLabel: `G${gpu.index ?? index}`,
                     value: util,
                     memory: mem,
                     formatted: formattedDisplay,
@@ -2897,6 +2900,7 @@ function trainerComponent() {
                 items.push({
                     key: 'deepspeed-offload',
                     label: deviceLabel === 'OFFLOAD' ? 'Offload' : deviceLabel,
+                    shortLabel: 'O',
                     value: offloadInfo.size_bytes,
                     formatted: this.formatBytes(offloadInfo.size_bytes),
                     tooltip,
@@ -5427,10 +5431,12 @@ function trainerComponent() {
         <!-- Top Bar -->
         <div class="topbar">
 
-            <!-- Mobile sidebar toggle button -->
-            <button class="sidebar-toggle" @click="toggleSidebar()" aria-label="Toggle navigation menu">
-                <i class="fas" :class="sidebarOpen ? 'fa-times' : 'fa-bars'"></i>
-            </button>
+            <!-- Topbar left: toggle + config selector -->
+            <div class="topbar-left">
+                <!-- Mobile sidebar toggle button -->
+                <button class="sidebar-toggle" @click="toggleSidebar()" aria-label="Toggle navigation menu">
+                    <i class="fas" :class="sidebarOpen ? 'fa-times' : 'fa-bars'"></i>
+                </button>
 
             <!-- Configuration Selector -->
             <script>
@@ -5773,15 +5779,16 @@ function trainerComponent() {
                     </div>
                 </div>
                 <button type="button"
-                        class="btn btn-sm btn-outline-secondary ms-2"
+                        class="btn btn-sm btn-outline-secondary ms-2 btn-view-json"
                         title="View and edit the composed training JSON"
                         :disabled="!$store.trainer.activeEnvironment"
                         @click.stop="$store.trainer.openConfigJsonModal()">
                     <i class="fas fa-code"></i>
-                    View JSON
+                    <span class="btn-text">View JSON</span>
                 </button>
 
             </div>
+            </div><!-- end topbar-left -->
 
             <div class="topbar-right">
                 <div class="header-actions">
@@ -6082,7 +6089,8 @@ function trainerComponent() {
                         <div class="sysstat-items">
                             <template x-for="item in systemStatusItems" :key="item.key">
                                 <span class="sysstat-item" :title="item.tooltip || ''">
-                                    <span class="label" x-text="item.label"></span>
+                                    <span class="label label-full" x-text="item.label"></span>
+                                    <span class="label label-short" x-text="item.shortLabel || item.label.charAt(0)"></span>
                                     <span class="value" x-text="item.formatted"></span>
                                 </span>
                             </template>
