@@ -40,6 +40,161 @@ from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModul
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+# Track if we've already fallen back to tiled attention (to avoid repeated OOM attempts)
+_USE_TILED_ATTENTION = False
+
+
+def _tiled_scaled_dot_product_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor] = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    tile_size: int = 1024,
+) -> torch.Tensor:
+    """
+    Tiled attention that processes queries in chunks to reduce peak memory.
+
+    This is mathematically equivalent to standard scaled dot-product attention
+    because each query position's attention is independent (softmax is per-row).
+
+    Args:
+        query: [B, seq_q, heads, head_dim] or [B, heads, seq_q, head_dim]
+        key: [B, seq_kv, heads, head_dim] or [B, heads, seq_kv, head_dim]
+        value: [B, seq_kv, heads, head_dim] or [B, heads, seq_kv, head_dim]
+        attn_mask: Optional attention mask
+        dropout_p: Dropout probability (only applied in training)
+        is_causal: Whether to use causal masking
+        tile_size: Number of query positions to process at once
+
+    Returns:
+        Attention output with same shape as query
+    """
+    # dispatch_attention_fn uses [B, seq, heads, head_dim] format
+    # but F.scaled_dot_product_attention uses [B, heads, seq, head_dim]
+    # We need to handle the format from dispatch_attention_fn
+    batch_size, seq_q, num_heads, head_dim = query.shape
+    seq_kv = key.shape[1]
+
+    # Transpose to [B, heads, seq, head_dim] for F.sdpa
+    query = query.transpose(1, 2)  # [B, heads, seq_q, head_dim]
+    key = key.transpose(1, 2)  # [B, heads, seq_kv, head_dim]
+    value = value.transpose(1, 2)  # [B, heads, seq_kv, head_dim]
+
+    # Process in tiles along query dimension
+    outputs = []
+    for i in range(0, seq_q, tile_size):
+        end_i = min(i + tile_size, seq_q)
+        q_tile = query[:, :, i:end_i, :]  # [B, heads, tile, head_dim]
+
+        # Handle attention mask tiling if present
+        mask_tile = None
+        if attn_mask is not None:
+            # Mask shape could be [B, 1, seq_q, seq_kv] or [B, heads, seq_q, seq_kv]
+            if attn_mask.dim() == 4:
+                mask_tile = attn_mask[:, :, i:end_i, :]
+            elif attn_mask.dim() == 3:
+                mask_tile = attn_mask[:, i:end_i, :]
+            elif attn_mask.dim() == 2:
+                mask_tile = attn_mask[i:end_i, :]
+
+        # Handle causal masking for tiles
+        tile_is_causal = False
+        if is_causal:
+            # For causal attention, we need to apply causal mask manually for tiles
+            # that don't start at position 0
+            if i == 0:
+                tile_is_causal = True
+            else:
+                # Create causal mask for this tile
+                tile_len = end_i - i
+                causal_mask = torch.ones(tile_len, seq_kv, dtype=torch.bool, device=query.device)
+                # Each query at position j can attend to positions 0..i+j
+                for j in range(tile_len):
+                    causal_mask[j, i + j + 1 :] = False
+                causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, tile, seq_kv]
+                if mask_tile is not None:
+                    mask_tile = mask_tile & causal_mask
+                else:
+                    # Convert bool mask to float mask for SDPA
+                    mask_tile = torch.zeros_like(causal_mask, dtype=query.dtype)
+                    mask_tile.masked_fill_(~causal_mask, float("-inf"))
+
+        # Compute attention for this tile
+        out_tile = F.scaled_dot_product_attention(
+            q_tile,
+            key,
+            value,
+            attn_mask=mask_tile,
+            dropout_p=dropout_p if query.requires_grad else 0.0,
+            is_causal=tile_is_causal,
+        )
+        outputs.append(out_tile)
+
+    # Concatenate tiles
+    output = torch.cat(outputs, dim=2)  # [B, heads, seq_q, head_dim]
+
+    # Transpose back to [B, seq_q, heads, head_dim]
+    output = output.transpose(1, 2)
+
+    return output
+
+
+def attention_with_oom_fallback(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attn_mask: Optional[torch.Tensor] = None,
+    dropout_p: float = 0.0,
+    is_causal: bool = False,
+    backend: Optional[str] = None,
+    tile_size: int = 1024,
+) -> torch.Tensor:
+    """
+    Attention with automatic OOM fallback to tiled computation.
+
+    First tries dispatch_attention_fn, and on OOM falls back to tiled attention
+    which processes queries in chunks to reduce peak memory.
+
+    The tiled version is mathematically equivalent because each query's attention
+    is independent (softmax is computed per query position).
+    """
+    global _USE_TILED_ATTENTION
+
+    if not _USE_TILED_ATTENTION:
+        try:
+            return dispatch_attention_fn(
+                query,
+                key,
+                value,
+                attn_mask=attn_mask,
+                dropout_p=dropout_p,
+                is_causal=is_causal,
+                backend=backend,
+            )
+        except torch.cuda.OutOfMemoryError:
+            logger.warning(
+                "OOM during attention (seq_len=%d), falling back to tiled attention (tile_size=%d). "
+                "This will be slower but use less memory.",
+                query.shape[1],
+                tile_size,
+            )
+            _USE_TILED_ATTENTION = True
+            # Clear memory before retry
+            torch.cuda.empty_cache()
+
+    # Use tiled attention
+    return _tiled_scaled_dot_product_attention(
+        query,
+        key,
+        value,
+        attn_mask=attn_mask,
+        dropout_p=dropout_p,
+        is_causal=is_causal,
+        tile_size=tile_size,
+    )
+
 
 def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor, image_tokens_start: int | None = None):
     if buffer is None:
@@ -378,7 +533,7 @@ class QwenDoubleStreamAttnProcessor2_0:
             getattr(attn, "to_q", None) and attn.to_q.weight,
             getattr(attn, "to_k", None) and attn.to_k.weight,
         )
-        joint_hidden_states = dispatch_attention_fn(
+        joint_hidden_states = attention_with_oom_fallback(
             joint_query,
             joint_key,
             joint_value,
