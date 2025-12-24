@@ -28,10 +28,10 @@ window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
             </div>
             <div class="btn-group btn-group-sm" role="group">
                 <button type="button" class="btn btn-outline-secondary" id="collapse-all-{{ tab_name }}" title="Collapse all sections" aria-label="Collapse all sections">
-                    <i class="fas fa-compress-alt"></i> Collapse All
+                    <i class="fas fa-compress-alt"></i><span class="btn-text"> Collapse All</span>
                 </button>
                 <button type="button" class="btn btn-outline-secondary" id="expand-all-{{ tab_name }}" title="Expand all sections" aria-label="Expand all sections">
-                    <i class="fas fa-expand-alt"></i> Expand All
+                    <i class="fas fa-expand-alt"></i><span class="btn-text"> Expand All</span>
                 </button>
             </div>
         </div>

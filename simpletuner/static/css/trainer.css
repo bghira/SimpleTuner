@@ -693,23 +693,14 @@ body {
     }
 
     /* Collapse All / Expand All buttons - icon only on mobile */
-    #collapse-all-basic,
-    #collapse-all-advanced,
-    #collapse-all-model,
-    #collapse-all-lycoris,
-    #expand-all-basic,
-    #expand-all-advanced,
-    #expand-all-model,
-    #expand-all-lycoris,
     [id^="collapse-all-"],
     [id^="expand-all-"] {
-        font-size: 0 !important;
         padding: 0.3rem 0.5rem !important;
     }
 
-    [id^="collapse-all-"] i,
-    [id^="expand-all-"] i {
-        font-size: 0.85rem !important;
+    [id^="collapse-all-"] .btn-text,
+    [id^="expand-all-"] .btn-text {
+        display: none !important;
     }
 
     /* Topbar right section - full width, content flows left */
