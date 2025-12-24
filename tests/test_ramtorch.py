@@ -222,14 +222,26 @@ class RamTorchTextEncoderEmbeddingTests(unittest.TestCase):
         # Verify embedding starts on CPU
         self.assertEqual(model.embed_tokens.weight.device.type, "cpu")
 
-        # Apply the fix: move embedding layers to GPU
+        # Simulate ramtorch being applied - mark Linear layers as ramtorch
+        # (In real usage, replace_linear_layers_with_ramtorch does this)
+        for name, child in model.named_modules():
+            if isinstance(child, nn.Linear):
+                setattr(child.weight, "is_ramtorch", True)
+                if child.bias is not None:
+                    setattr(child.bias, "is_ramtorch", True)
+
+        # Apply the fix: move non-ramtorch modules to GPU
         moved = ramtorch_utils.move_embeddings_to_device(model, "cuda")
 
-        # Verify one embedding layer was moved
+        # Verify one module was moved (only the embedding, not the ramtorch linears)
         self.assertEqual(moved, 1)
 
         # Verify embedding is now on GPU
         self.assertEqual(model.embed_tokens.weight.device.type, "cuda")
+
+        # Verify Linear layers stayed on CPU (they're ramtorch)
+        self.assertEqual(model.linear1.weight.device.type, "cpu")
+        self.assertEqual(model.linear2.weight.device.type, "cpu")
 
         # Test that embedding lookup works with GPU input_ids
         input_ids = torch.tensor([[1, 2, 3, 4, 5]], dtype=torch.long)
