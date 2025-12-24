@@ -1132,31 +1132,36 @@
                 <button type="button"
                         class="btn btn-outline-secondary"
                         @click="wizardPrevStep()"
-                        x-show="wizardStep > 1 && !editingQueuedDataset">
+                        x-show="wizardStep > 1 && !editingQueuedDataset"
+                        aria-label="Go back to previous step">
                     <i class="fas fa-arrow-left me-1"></i> Back
                 </button>
                 <button type="button"
                         class="btn btn-outline-secondary"
-                        @click="closeWizard()">
+                        @click="closeWizard()"
+                        aria-label="Cancel and close wizard">
                     Cancel
                 </button>
                 <button type="submit"
                         class="btn btn-primary"
                         x-show="!isStepActive('review')"
-                        :disabled="!canProceed">
+                        :disabled="!canProceed"
+                        aria-label="Continue to next step">
                     Next <i class="fas fa-arrow-right ms-1"></i>
                 </button>
                 <button type="button"
                         class="btn btn-success"
                         x-show="isStepActive('review')"
-                        @click="addDatasetToQueue()">
+                        @click="addDatasetToQueue()"
+                        aria-label="Add another dataset">
                     <i class="fas fa-plus me-1"></i> Add Another Dataset
                 </button>
                 <button type="button"
                         class="btn btn-primary"
                         x-show="isStepActive('review')"
                         @click.prevent.stop="confirmAllDatasets()"
-                        :disabled="saving">
+                        :disabled="saving"
+                        aria-label="Confirm and save all datasets">
                     <i class="fas fa-check me-1" x-show="!saving"></i>
                     <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
                     <span x-text="saving ? 'Saving...' : 'Confirm & Save All'"></span>
@@ -1337,33 +1342,37 @@
                 <button type="button"
                         class="btn btn-outline-secondary me-2"
                         @click="openNewFolderDialog()"
-                        :disabled="showNewFolderInput || loadingDirectories || fileBrowserError">
+                        :disabled="showNewFolderInput || loadingDirectories || fileBrowserError"
+                        aria-label="Create new folder">
                     <i class="fas fa-folder-plus me-1"></i>
                     New Folder
                 </button>
                 <button type="button"
                         class="btn btn-outline-primary"
                         @click="openUploadModal()"
-                        :disabled="loadingDirectories || fileBrowserError">
+                        :disabled="loadingDirectories || fileBrowserError"
+                        aria-label="Upload files">
                     <i class="fas fa-upload me-1"></i>
                     Upload
                 </button>
             </div>
             <div class="d-flex gap-2 flex-wrap">
-                <button type="button" class="btn btn-outline-secondary" @click="closeFileBrowser()">
+                <button type="button" class="btn btn-outline-secondary" @click="closeFileBrowser()" aria-label="Cancel and close file browser">
                     Cancel
                 </button>
                 <button type="button"
                         class="btn btn-success"
                         @click="selectedPath = currentPath; confirmDirectory()"
-                        title="Use the current directory you're browsing">
+                        title="Use the current directory you're browsing"
+                        aria-label="Use current directory">
                     <i class="fas fa-folder-open me-1"></i>
                     Use Current
                 </button>
                 <button type="button"
                         class="btn btn-primary"
                         @click="confirmDirectory()"
-                        :disabled="!selectedPath">
+                        :disabled="!selectedPath"
+                        aria-label="Select highlighted directory">
                     <i class="fas fa-check me-1"></i>
                     <span x-text="selectedPath ? 'Select: ' + selectedPath.split('/').pop() : 'Select Highlighted'"></span>
                 </button>
@@ -1517,21 +1526,24 @@
             <button type="button"
                     class="btn btn-outline-secondary"
                     @click="closeUploadModal()"
-                    :disabled="uploading">
+                    :disabled="uploading"
+                    aria-label="Close upload dialog">
                 <span x-text="uploadResult ? 'Close' : 'Cancel'"></span>
             </button>
             <button type="button"
                     class="btn btn-primary"
                     @click="startUpload()"
                     :disabled="selectedUploadFiles.length === 0 || uploading"
-                    x-show="!uploadResult">
+                    x-show="!uploadResult"
+                    aria-label="Upload files">
                 <i class="fas" :class="uploading ? 'fa-spinner fa-spin' : 'fa-upload'" class="me-1"></i>
                 Upload
             </button>
             <button type="button"
                     class="btn btn-success"
                     @click="proceedAfterUpload()"
-                    x-show="uploadResult && uploadResult.success && uploadResult.files_uploaded > 0">
+                    x-show="uploadResult && uploadResult.success && uploadResult.files_uploaded > 0"
+                    aria-label="Continue after upload">
                 <i class="fas fa-arrow-right me-1"></i>
                 Continue
             </button>
@@ -1618,14 +1630,16 @@
             <button type="button"
                     class="btn btn-outline-secondary"
                     @click="skipCaptioning()"
-                    :disabled="savingCaptions">
+                    :disabled="savingCaptions"
+                    aria-label="Skip captioning and use trigger words later">
                 <i class="fas fa-forward me-1"></i>
                 Skip (use trigger words later)
             </button>
             <button type="button"
                     class="btn btn-primary"
                     @click="saveCaptions()"
-                    :disabled="Object.keys(pendingCaptions).length === 0 || savingCaptions">
+                    :disabled="Object.keys(pendingCaptions).length === 0 || savingCaptions"
+                    aria-label="Save captions">
                 <i class="fas" :class="savingCaptions ? 'fa-spinner fa-spin' : 'fa-save'" class="me-1"></i>
                 Save Captions (<span x-text="Object.keys(pendingCaptions).filter(k => pendingCaptions[k]).length"></span>)
             </button>

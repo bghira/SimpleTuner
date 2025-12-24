@@ -5781,6 +5781,7 @@ function trainerComponent() {
                 <button type="button"
                         class="btn btn-sm btn-outline-secondary ms-2 btn-view-json"
                         title="View and edit the composed training JSON"
+                        aria-label="View JSON configuration"
                         :disabled="!$store.trainer.activeEnvironment"
                         @click.stop="$store.trainer.openConfigJsonModal()">
                     <i class="fas fa-code"></i>
@@ -5799,7 +5800,8 @@ function trainerComponent() {
                             x-show="activeTab === 'datasets'"
                             x-transition
                             @click="$store.trainer.saveDatasets && $store.trainer.saveDatasets({ showToast: true, skipConfirmation: true })"
-                            title="Save dataset configuration">
+                            title="Save dataset configuration"
+                            aria-label="Save dataset configuration">
                         <i class="fas fa-database"></i>
                         <span class="btn-text">Save Dataset</span>
                         <span x-show="$store.trainer.hasUnsavedChanges" class="badge bg-danger ms-1" style="font-size: 0.65rem;">
@@ -5811,7 +5813,8 @@ function trainerComponent() {
                             class="trainer-action-btn btn btn-outline-secondary"
                             :class="formDirty ? 'is-active' : ''"
                             :disabled="!formDirty"
-                            @click="saveConfig()">
+                            @click="saveConfig()"
+                            aria-label="Save configuration">
                         <i class="fas fa-save"></i>
                         <span class="btn-text">Save</span>
                     </button>
@@ -6082,6 +6085,7 @@ function trainerComponent() {
                               'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
                           }"
                           :title="connectionMessage || ''"
+                          :aria-label="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"
                           x-text="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"></span>
                 </div>
                 <div class="event-dock-sysstat">
@@ -6105,22 +6109,26 @@ function trainerComponent() {
                     <button type="button" class="btn btn-sm btn-outline-light"
                             x-show="showTrainingProgress"
                             title="Trigger checkpoint save after next gradient sync"
+                            aria-label="Trigger checkpoint save"
                             @click="window.triggerManualCheckpoint()">
                         <i class="fas fa-save"></i> Trigger Checkpoint
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-light"
                             x-show="showTrainingProgress"
                             title="Trigger validation run after next gradient sync"
+                            aria-label="Trigger validation run"
                             @click="window.triggerManualValidation()">
                         <i class="fas fa-check-circle"></i> Trigger Validation
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-light"
                             title="Clear events"
+                            aria-label="Clear events"
                             @click="if (window.EventRenderer) { document.getElementById('eventList').innerHTML = ''; }">
                         <i class="fas fa-trash"></i>
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-light"
                             title="Toggle events panel"
+                            aria-label="Toggle events panel"
                             @click="toggleEventDock()">
                         <i :class="eventDockCollapsed ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
                     </button>

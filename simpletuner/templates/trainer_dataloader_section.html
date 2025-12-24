@@ -117,23 +117,27 @@
             <button type="button" class="btn"
                     :class="{ 'active': dataLoaderMode === 'builder' }"
                     @click="switchDataLoaderMode('builder')"
-                    :disabled="!storeReady">
+                    :disabled="!storeReady"
+                    aria-label="Switch to builder mode">
                 <i class="fas fa-tools"></i><span>Builder</span>
             </button>
             <button type="button" class="btn"
                     :class="{ 'active': dataLoaderMode === 'json' }"
                     @click="switchDataLoaderMode('json')"
-                    :disabled="!storeReady">
+                    :disabled="!storeReady"
+                    aria-label="Switch to JSON mode">
                 <i class="fas fa-code"></i><span>JSON</span>
             </button>
             <button type="button" class="btn btn-primary"
                     @click.prevent="openNewConfigModal ? openNewConfigModal() : null"
-                    title="Create a new multidatabackend configuration file">
+                    title="Create a new multidatabackend configuration file"
+                    aria-label="Create new configuration">
                 <i class="fas fa-file-plus"></i><span>New</span>
             </button>
             <button type="button" class="btn btn-success"
                     @click.prevent="openWizard ? openWizard() : null"
-                    title="Add a dataset to the current configuration">
+                    title="Add a dataset to the current configuration"
+                    aria-label="Open dataset wizard">
                 <i class="fas fa-magic"></i><span>Wizard</span>
             </button>
         </div>
