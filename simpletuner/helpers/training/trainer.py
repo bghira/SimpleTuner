@@ -2667,6 +2667,17 @@ class Trainer:
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
 
+        # After quantization, re-move non-ramtorch layers to GPU
+        # Quantization may have moved the model to CPU, leaving normalization weights there
+        if getattr(self.config, "ramtorch", False) and not preprocessing_models_only:
+            from simpletuner.helpers.utils import ramtorch as ramtorch_utils
+
+            model = self.model.unwrap_model(model=self.model.model)
+            if model is not None:
+                moved = ramtorch_utils.move_embeddings_to_device(model, self.accelerator.device)
+                if moved:
+                    logger.debug(f"Post-quantization: moved {moved} non-ramtorch params to GPU")
+
     def init_controlnet_model(self):
         if not self.config.controlnet:
             return
