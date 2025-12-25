@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Test that invalid fields are not saved to config files."""
 
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -55,7 +56,7 @@ class TestConfigFieldValidation(unittest.TestCase):
     @patch("simpletuner.simpletuner_sdk.server.services.training_service.get_config_store")
     @patch("simpletuner.simpletuner_sdk.server.services.training_service.get_webui_state")
     def test_webhook_config_preserved_in_save(self, mock_state, mock_store):
-        """Test that webhook_config is properly preserved as a list."""
+        """Test that user-provided webhook_config is properly preserved as a list."""
         # Mock the store and state
         mock_store_instance = MagicMock()
         mock_store_instance.get_active_config.return_value = "test_config"
@@ -68,27 +69,29 @@ class TestConfigFieldValidation(unittest.TestCase):
         mock_defaults.output_dir = "/tmp/output"
         mock_state.return_value = (mock_state_instance, mock_defaults)
 
-        # Create form data
+        # Create form data with user-provided webhook config
+        user_webhook = [{"webhook_type": "discord", "webhook_url": "https://discord.com/api/webhooks/123"}]
         form_data = {
             "--model_family": "pixart_sigma",
             "--output_dir": "/tmp/output",
             "--model_type": "lora",
             "--optimizer": "adamw_bf16",
             "--data_backend_config": "/tmp/config.json",
+            "--webhook_config": json.dumps(user_webhook),
         }
 
         bundle = build_config_bundle(form_data)
 
-        # webhook_config should be in save_config as a list
+        # User-provided webhook_config should be in save_config as a list
         self.assertIn("webhook_config", bundle.save_config)
         self.assertIsInstance(bundle.save_config["webhook_config"], list)
         self.assertEqual(len(bundle.save_config["webhook_config"]), 1)
-        self.assertEqual(bundle.save_config["webhook_config"][0]["webhook_type"], "raw")
+        self.assertEqual(bundle.save_config["webhook_config"][0]["webhook_type"], "discord")
 
     @patch("simpletuner.simpletuner_sdk.server.services.training_service.get_config_store")
     @patch("simpletuner.simpletuner_sdk.server.services.training_service.get_webui_state")
     def test_ssl_no_verify_true_for_localhost_https(self, mock_state, mock_store):
-        """Test that ssl_no_verify is True for localhost HTTPS webhooks."""
+        """Test that ssl_no_verify is True for localhost HTTPS webhooks at runtime."""
         # Mock the store and state
         mock_store_instance = MagicMock()
         mock_store_instance.get_active_config.return_value = "test_config"
@@ -129,11 +132,19 @@ class TestConfigFieldValidation(unittest.TestCase):
             ):
                 bundle = build_config_bundle(form_data)
 
-                # webhook_config should have ssl_no_verify=True for localhost HTTPS
-                webhook_config = bundle.save_config.get("webhook_config")
+                # WebUI callback with ssl_no_verify should be in complete_config (runtime)
+                # not in save_config (the WebUI callback is merged at runtime, not saved)
+                webhook_config = bundle.complete_config.get("--webhook_config")
                 self.assertIsNotNone(webhook_config)
-                self.assertTrue(webhook_config[0].get("ssl_no_verify"))
-                self.assertTrue(webhook_config[0]["callback_url"].startswith("https://"))
+                self.assertIsInstance(webhook_config, list)
+                self.assertTrue(len(webhook_config) > 0)
+                # Find the WebUI callback webhook (uses localhost by default)
+                webui_webhook = next(
+                    (w for w in webhook_config if w.get("callback_url", "").startswith("https://localhost")), None
+                )
+                self.assertIsNotNone(webui_webhook, "WebUI callback should be in complete_config")
+                self.assertTrue(webui_webhook.get("ssl_no_verify"))
+                self.assertTrue(webui_webhook["callback_url"].startswith("https://"))
 
 
 class TestValidationPreviewField(unittest.TestCase):

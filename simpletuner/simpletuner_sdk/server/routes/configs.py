@@ -207,6 +207,84 @@ async def get_active_config() -> Dict[str, Any]:
     return _call_service(CONFIGS_SERVICE.get_active_config)
 
 
+# Webhook Configuration endpoints
+# Note: These routes must come before /{name} to avoid path parameter conflicts
+class WebhookConfigRequest(BaseModel):
+    """Request model for Webhook configuration operations."""
+
+    name: str
+    config: Dict[str, Any]
+
+
+@router.post("/webhooks/validate")
+async def validate_webhook_config(request: LycorisConfigRequest) -> Dict[str, Any]:
+    """Validate webhook configuration without saving."""
+    return _call_service(CONFIGS_SERVICE.validate_webhook_config, request.config)
+
+
+@router.post("/webhooks")
+async def create_webhook_config(request: WebhookConfigRequest) -> Dict[str, Any]:
+    """Create a new webhook configuration."""
+    # Validate first
+    validation = _call_service(CONFIGS_SERVICE.validate_webhook_config, request.config)
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Invalid webhook configuration", "errors": validation["errors"]},
+        )
+    result = _call_service(CONFIGS_SERVICE.save_webhook_config, request.name, request.config)
+    return {
+        "message": f"Webhook configuration '{request.name}' created",
+        **result,
+    }
+
+
+@router.get("/webhooks/{name}")
+async def get_webhook_config(name: str) -> Dict[str, Any]:
+    """Get a webhook configuration by name."""
+    webhook_config = _call_service(CONFIGS_SERVICE.get_webhook_config, name)
+    if webhook_config is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Webhook configuration '{name}' not found",
+        )
+    return {"name": name, "config": webhook_config}
+
+
+@router.put("/webhooks/{name}")
+async def update_webhook_config(name: str, request: LycorisConfigRequest) -> Dict[str, Any]:
+    """Update an existing webhook configuration."""
+    # Validate first
+    validation = _call_service(CONFIGS_SERVICE.validate_webhook_config, request.config)
+    if not validation["valid"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Invalid webhook configuration", "errors": validation["errors"]},
+        )
+    result = _call_service(CONFIGS_SERVICE.save_webhook_config, name, request.config)
+    return {
+        "message": f"Webhook configuration '{name}' updated",
+        **result,
+    }
+
+
+@router.delete("/webhooks/{name}")
+async def delete_webhook_config(name: str) -> Dict[str, Any]:
+    """Delete a webhook configuration."""
+    result = _call_service(CONFIGS_SERVICE.delete_webhook_config, name)
+    return {
+        "message": f"Webhook configuration '{name}' deleted",
+        **result,
+    }
+
+
+@router.post("/webhooks/{name}/test")
+async def test_webhook_config(name: str) -> Dict[str, Any]:
+    """Test a webhook configuration by sending a test message."""
+    result = _call_service(CONFIGS_SERVICE.test_webhook_config, name)
+    return result
+
+
 @router.get("/{name}")
 async def get_config(name: str, config_type: str = "model") -> Dict[str, Any]:
     """Get a specific configuration by name."""

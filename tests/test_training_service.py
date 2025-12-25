@@ -393,12 +393,14 @@ class TrainingServiceTests(unittest.TestCase):
                 self.validation_rules = []
 
         def mock_get_field(name):
-            if name in ("webhook_config", "webhook_reporting_interval", "num_validation_images", "configs_dir"):
+            # Note: webhook_config is NOT webui_only anymore - users can save their own webhooks
+            if name in ("webhook_reporting_interval", "num_validation_images", "configs_dir"):
                 return MockField(name, webui_only=True)
             return None
 
+        user_webhook = [{"webhook_type": "raw", "callback_url": "https://example.com/webhook"}]
         form_data = {
-            "--webhook_config": '[{"webhook_type": "raw", "callback_url": "https://example.com/webhook"}]',
+            "--webhook_config": json.dumps(user_webhook),
             "--webhook_reporting_interval": "60",
             "--num_validation_images": "5",
             "--configs_dir": "/custom/configs",
@@ -412,16 +414,22 @@ class TrainingServiceTests(unittest.TestCase):
 
         # WebUI-only fields should NOT appear in save_config (this prevents them from being saved to disk)
         # This is the critical check - we don't want WebUI-only fields persisted to config files
-        self.assertNotIn("webhook_config", bundle.save_config)
         self.assertNotIn("webhook_reporting_interval", bundle.save_config)
         self.assertNotIn("num_validation_images", bundle.save_config)
         self.assertNotIn("datasets_dir", bundle.save_config)
 
-        # webhook_config IS in complete_config because it's injected at runtime by the WebUI for trainer use
-        # This is intentional - the trainer needs the webhook config to send callbacks, but it shouldn't
-        # be saved to disk config files
+        # User-provided webhook_config SHOULD be in save_config (users can save their webhooks)
+        self.assertIn("webhook_config", bundle.save_config)
+        self.assertEqual(bundle.save_config["webhook_config"], user_webhook)
+
+        # webhook_config in complete_config should contain MERGED webhooks (WebUI callback + user webhooks)
         self.assertIn("--webhook_config", bundle.complete_config)
-        self.assertEqual(bundle.complete_config["--webhook_config"], training_service.DEFAULT_WEBHOOK_CONFIG)
+        merged_webhooks = bundle.complete_config["--webhook_config"]
+        self.assertIsInstance(merged_webhooks, list)
+        # Should have WebUI callback(s) + user webhook
+        self.assertTrue(len(merged_webhooks) > 1)
+        # User webhook should be in the merged list
+        self.assertTrue(any(w.get("callback_url") == "https://example.com/webhook" for w in merged_webhooks))
 
         # Other WebUI-only fields should NOT appear in complete_config
         self.assertNotIn("--num_validation_images", bundle.complete_config)

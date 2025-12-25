@@ -343,16 +343,16 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             name="webhook_config",
             arg_name="--webhook_config",
             ui_label="Webhook Configuration",
-            field_type=FieldType.TEXT,
+            field_type=FieldType.SELECT,
             tab="basic",
             section="project_settings",
             subsection="advanced",
             default_value=None,
-            placeholder="path/to/webhook_config.json",
-            help_text="Path to webhook configuration file",
-            tooltip="JSON config for external monitoring webhooks. See docs for format.",
+            choices=[],
+            help_text="Select a saved webhook config (managed in Environments tab)",
+            tooltip="Pick which webhook configuration to use. Create or edit webhooks in the Environments tab → Webhook Configs.",
             importance=ImportanceLevel.ADVANCED,
-            webui_only=True,  # WebUI manages webhooks internally, trainer receives webhook_config as runtime param
+            dynamic_choices=True,
             order=6,
         )
     )

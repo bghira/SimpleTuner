@@ -301,8 +301,6 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         "--uploadMode",
         "ui-accelerate-mode",
         "--ui-accelerate-mode",
-        "discord_webhooks",
-        "--discord_webhooks",
     }
     for key in config_dict.keys():
         if key in non_registry_webui_fields:
@@ -718,9 +716,21 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         complete_config.pop(ui_field, None)
         complete_config.pop(f"--{ui_field}", None)
 
-    # Ensure WebUI jobs always use the raw callback webhook configuration
-    complete_config["--webhook_config"] = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG)
-    config_dict["--webhook_config"] = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG)
+    # Parse user webhook_config for both runtime merge and persistence
+    user_webhooks_raw = config_dict.get("--webhook_config") or config_dict.get("webhook_config") or []
+    if isinstance(user_webhooks_raw, str):
+        try:
+            user_webhooks_raw = json.loads(user_webhooks_raw)
+        except (json.JSONDecodeError, TypeError):
+            user_webhooks_raw = []
+    if not isinstance(user_webhooks_raw, list):
+        user_webhooks_raw = [user_webhooks_raw] if user_webhooks_raw else []
+    # Keep original user webhooks for persistence (without WebUI callback)
+    user_webhooks_for_save = copy.deepcopy(user_webhooks_raw)
+
+    # Merge with WebUI callback for runtime only
+    merged_webhooks = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG) + user_webhooks_raw
+    complete_config["--webhook_config"] = merged_webhooks
     config_dict["--webhook_reporting_interval"] = 1
 
     save_config: Dict[str, Any] = {}
@@ -729,6 +739,8 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         "accelerate_strategy",
         "--accelerate_visible_devices",
         "--accelerate_strategy",
+        "webhook_config",  # Handled separately to avoid saving merged WebUI callback
+        "--webhook_config",
     }
 
     # Build set of valid field names from registry for validation
@@ -795,6 +807,10 @@ def build_config_bundle(form_data: Dict[str, Any]) -> TrainingConfigBundle:
         if isinstance(raw_value, str) and scientific_pattern.fullmatch(raw_value.strip()):
             if clean_key in save_config and isinstance(save_config[clean_key], (int, float)):
                 save_config[clean_key] = raw_value.strip()
+
+    # Add user's original webhook_config (without WebUI callback) if any were configured
+    if user_webhooks_for_save:
+        save_config["webhook_config"] = user_webhooks_for_save
 
     return TrainingConfigBundle(
         store=store,
@@ -976,7 +992,19 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
     job_id = str(uuid.uuid4())[:8]
 
     runtime_payload = dict(runtime_config)
-    runtime_payload.setdefault("--webhook_config", copy.deepcopy(DEFAULT_WEBHOOK_CONFIG))
+
+    # Merge user webhook_config with WebUI callback
+    user_webhooks = runtime_payload.get("--webhook_config") or runtime_payload.get("webhook_config") or []
+    if isinstance(user_webhooks, str):
+        try:
+            user_webhooks = json.loads(user_webhooks)
+        except (json.JSONDecodeError, TypeError):
+            user_webhooks = []
+    if not isinstance(user_webhooks, list):
+        user_webhooks = [user_webhooks] if user_webhooks else []
+
+    merged_webhooks = copy.deepcopy(DEFAULT_WEBHOOK_CONFIG) + user_webhooks
+    runtime_payload["--webhook_config"] = merged_webhooks
 
     # Resolve the prompt library into a job-scoped path if one was configured.
     try:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
@@ -23,7 +24,6 @@ from ..utils.paths import resolve_config_path
 from .dataset_plan import DatasetPlanStore
 from .dataset_service import normalize_dataset_config_value
 from .field_registry import FieldType
-from .webhook_defaults import DEFAULT_WEBHOOK_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -102,16 +102,18 @@ class FieldService:
         "uploadMode",
         "ui-accelerate-mode",
         "discord_webhooks",
-        "webhook_config",
+        # webhook_config is NOT webui-only - users can save their own webhook configs
+        # The WebUI callback is merged at runtime in training_service.py
         "webhook_reporting_interval",
     }
     # Fields that the WebUI manages internally so users cannot override them
     _WEBUI_FORCED_VALUES = {
-        "webhook_config": DEFAULT_WEBHOOK_CONFIG,
+        # webhook_config removed - users can now save their own webhooks
+        # WebUI callback is merged at runtime in training_service.py
         "webhook_reporting_interval": 1,
     }
     _WEBUI_FIELD_HINTS = {
-        "webhook_config": "Managed by the WebUI so training callbacks can reach the server. Use the CLI to supply custom webhooks.",
+        # webhook_config hint removed - now user-configurable via Publishing tab
     }
     _VIDEO_ONLY_FIELDS = {
         "framerate",
@@ -1482,6 +1484,41 @@ class FieldService:
                         normalized_options.append({"value": current_value, "label": current_value})
 
                     field_dict["options"] = normalized_options
+                elif field.name == "webhook_config":
+                    try:
+                        from .config_store import ConfigStore
+
+                        config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR", "./config")
+                        store = ConfigStore(Path(config_dir), config_type="webhook")
+                        webhook_configs = store.list_configs()
+
+                        webhook_choices = [{"value": "", "label": "None (No webhook)"}]
+                        for cfg in webhook_configs:
+                            name = cfg.get("name", "")
+                            webhook_type = cfg.get("webhook_type", "discord")
+                            webhook_choices.append(
+                                {
+                                    "value": f"webhooks/{name}.json",
+                                    "label": f"{name} ({webhook_type})",
+                                }
+                            )
+
+                        # Handle external/custom path that may not be in the list
+                        if field_value:
+                            current_path = str(field_value)
+                            if not any(opt.get("value") == current_path for opt in webhook_choices):
+                                webhook_choices.insert(
+                                    1,
+                                    {
+                                        "value": current_path,
+                                        "label": f"External: {current_path}",
+                                    },
+                                )
+
+                        field_dict["options"] = webhook_choices
+                    except Exception as exc:
+                        logger.warning("Failed to build webhook choices: %s", exc)
+                        field_dict["options"] = [{"value": "", "label": "None (No webhook)"}]
             elif choices:
                 normalized_options = []
                 for choice in choices:

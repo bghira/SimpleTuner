@@ -89,6 +89,48 @@ document.addEventListener('alpine:init', () => {
             });
         }
     });
+
+    // Shared webhook configs store
+    Alpine.store('webhookConfigs', {
+        configs: [],
+        loaded: false,
+        loading: false,
+
+        async load(force = false) {
+            if (this.loading) return;
+            if (this.loaded && !force) return;
+
+            this.loading = true;
+            try {
+                const response = await fetch('/api/configs/?config_type=webhook');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.configs = (data.configs || []).map(item => ({
+                        name: item.name,
+                        webhook_type: item.webhook_type || 'discord',
+                        log_level: item.log_level || 'info',
+                        path: `webhooks/${item.name}.json`
+                    }));
+                    this.loaded = true;
+                }
+            } catch (error) {
+                console.error('Failed to load webhook configs:', error);
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        getByName(name) {
+            return this.configs.find(c => c.name === name);
+        },
+
+        getChoices() {
+            return this.configs.map(c => ({
+                value: c.path,
+                label: `${c.name} (${c.webhook_type})`
+            }));
+        }
+    });
 });
 
 const sanitizeConfigName = (name) => {
@@ -3684,6 +3726,14 @@ function trainerComponent() {
                     await dataloaderStore.load(true);
                 } catch (error) {
                     console.error('Failed to refresh dataloader configs after onboarding:', error);
+                }
+            }
+            const webhookStore = Alpine.store('webhookConfigs');
+            if (webhookStore) {
+                try {
+                    await webhookStore.load(true);
+                } catch (error) {
+                    console.error('Failed to refresh webhook configs after onboarding:', error);
                 }
             }
             if (environment && typeof this.switchEnvironment === 'function') {

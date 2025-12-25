@@ -942,6 +942,9 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.switch_to_datasets_tab()
             trainer_page.wait_for_tab("datasets")
 
+            # Dismiss any visible toast that might block the button
+            trainer_page.dismiss_toast()
+
             trainer_page.wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "button[title='Add a dataset to the current configuration']"))
             ).click()
