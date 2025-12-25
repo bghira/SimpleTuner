@@ -1,10 +1,8 @@
 """Cog predictor entrypoint using the SimpleTuner trainer directly."""
 
-from __future__ import annotations
-
 import json
 import pathlib
-from typing import Optional
+from typing import Optional, Tuple
 
 from cog import BasePredictor, Input, Path, Secret
 
@@ -17,7 +15,7 @@ class Predictor(BasePredictor):
 
         self.runner = SimpleTunerCogRunner()
 
-    def _parse_json_or_path(self, value: str, param_name: str) -> tuple[Optional[pathlib.Path], Optional[dict]]:
+    def _parse_json_or_path(self, value: str, param_name: str) -> Tuple[Optional[pathlib.Path], Optional[dict]]:
         """Parse a string as either inline JSON or a file path.
 
         Returns (path, None) if it's a file path, or (None, dict) if it's inline JSON.
