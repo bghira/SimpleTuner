@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +19,27 @@ class Predictor(BasePredictor):
 
         self.runner = SimpleTunerCogRunner()
 
+    def _parse_json_or_path(self, value: str, param_name: str) -> tuple[Optional[Path], Optional[dict]]:
+        """Parse a string as either inline JSON or a file path.
+
+        Returns (path, None) if it's a file path, or (None, dict) if it's inline JSON.
+        """
+        value = value.strip()
+
+        # Try parsing as JSON first
+        if value.startswith("{") or value.startswith("["):
+            try:
+                parsed = json.loads(value)
+                return None, parsed
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{param_name} looks like JSON but failed to parse: {e}")
+
+        # Treat as file path
+        path = Path(value)
+        if not path.exists():
+            raise FileNotFoundError(f"{param_name} file not found: {value}")
+        return path, None
+
     def predict(
         self,
         images: Optional[CogPath] = Input(
@@ -28,12 +50,12 @@ class Predictor(BasePredictor):
             description="Hugging Face token for model downloads (set if the base model requires auth).",
             default=None,
         ),
-        config_json: Optional[CogPath] = Input(
-            description="Training config JSON (config.json). Defaults to config/config.json if present.",
+        config_json: Optional[str] = Input(
+            description="Training config: either a JSON string or path to config.json. Defaults to config/config.json if present.",
             default=None,
         ),
-        dataloader_json: Optional[CogPath] = Input(
-            description="Multidatabackend config JSON. If not provided, a simple config is auto-generated from the images archive.",
+        dataloader_json: Optional[str] = Input(
+            description="Multidatabackend config: either a JSON string or path to file. If not provided, auto-generated from images.",
             default=None,
         ),
         max_train_steps: Optional[int] = Input(
@@ -48,9 +70,19 @@ class Predictor(BasePredictor):
         """Launch a SimpleTuner training job and return a zipped output directory."""
 
         token_value = hf_token.get_secret_value() if hf_token else None
-        config_path = Path(config_json) if config_json else None
-        dataloader_path = Path(dataloader_json) if dataloader_json else None
         dataset_archive = Path(images) if images else None
+
+        # Parse config_json - can be JSON string or file path
+        config_path = None
+        config_dict = None
+        if config_json:
+            config_path, config_dict = self._parse_json_or_path(config_json, "config_json")
+
+        # Parse dataloader_json - can be JSON string or file path
+        dataloader_path = None
+        dataloader_dict = None
+        if dataloader_json:
+            dataloader_path, dataloader_dict = self._parse_json_or_path(dataloader_json, "dataloader_json")
 
         # Start the webhook receiver to capture training events in Cog logs
         with CogWebhookReceiver() as webhook_receiver:
@@ -60,7 +92,9 @@ class Predictor(BasePredictor):
                 dataset_archive=dataset_archive,
                 hf_token=token_value,
                 base_config_path=config_path,
+                base_config_dict=config_dict,
                 dataloader_config_path=dataloader_path,
+                dataloader_config_dict=dataloader_dict,
                 max_train_steps=max_train_steps,
                 webhook_config=webhook_config,
             )

@@ -238,7 +238,9 @@ class SimpleTunerCogRunner:
         dataset_archive: Optional[Path] = None,
         hf_token: Optional[str] = None,
         base_config_path: Optional[Path] = None,
+        base_config_dict: Optional[Dict[str, Any]] = None,
         dataloader_config_path: Optional[Path] = None,
+        dataloader_config_dict: Optional[Any] = None,
         config_overrides: Optional[Dict[str, Any]] = None,
         max_train_steps: Optional[int] = None,
         job_id: Optional[str] = None,
@@ -247,8 +249,11 @@ class SimpleTunerCogRunner:
         """Stage data, build configs, and launch training via run_trainer_job.
 
         Args:
-            dataset_archive: Zip/tar of training images. Not required if dataloader_config_path is provided.
-            dataloader_config_path: User-provided multidatabackend config. If not provided, one is auto-generated.
+            dataset_archive: Zip/tar of training images. Not required if dataloader config is provided.
+            base_config_path: Path to training config JSON.
+            base_config_dict: Training config as a dict (alternative to base_config_path).
+            dataloader_config_path: Path to multidatabackend config JSON.
+            dataloader_config_dict: Multidatabackend config as a dict/list (alternative to path).
 
         Returns a result dict containing:
         - job_id
@@ -260,7 +265,12 @@ class SimpleTunerCogRunner:
 
         job = job_id or self._new_job_id()
 
-        base_config = self._load_base_config(base_config_path)
+        # Load base config from path or use provided dict
+        if base_config_dict:
+            base_config = base_config_dict
+        else:
+            base_config = self._load_base_config(base_config_path)
+
         merged_config = dict(base_config)
         if config_overrides:
             merged_config.update(config_overrides)
@@ -268,16 +278,22 @@ class SimpleTunerCogRunner:
             merged_config["--max_train_steps"] = max_train_steps
 
         output_dir = self.output_root / job
+        output_dir.mkdir(parents=True, exist_ok=True)
 
         # Use provided dataloader config, or auto-generate one from the images archive
         dataset_dir = None
-        if dataloader_config_path:
+        if dataloader_config_dict is not None:
+            # Write the provided dict to a temp file
+            dataset_config_path = self.config_root / f"{job}_multidatabackend.json"
+            with dataset_config_path.open("w", encoding="utf-8") as handle:
+                json.dump(dataloader_config_dict, handle, indent=2)
+        elif dataloader_config_path:
             dataset_config_path = Path(dataloader_config_path)
             if not dataset_config_path.exists():
                 raise FileNotFoundError(f"Dataloader config not found: {dataloader_config_path}")
         else:
             if not dataset_archive:
-                raise ValueError("Either dataset_archive or dataloader_config_path must be provided.")
+                raise ValueError("Either dataset_archive or dataloader config must be provided.")
             dataset_dir = self._stage_dataset(dataset_archive, job)
             dataset_config_path = self._write_dataset_config(job, dataset_dir, merged_config, output_dir)
 
