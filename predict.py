@@ -6,12 +6,12 @@ from typing import Optional, Tuple
 
 from cog import BasePredictor, Input, Path, Secret
 
-from simpletuner.cog import CogWebhookReceiver, SimpleTunerCogRunner
-
 
 class Predictor(BasePredictor):
     def setup(self) -> None:
         """Initialise reusable runner state for Cog."""
+        # Lazy import to avoid colored output during Cog introspection
+        from simpletuner.cog import SimpleTunerCogRunner
 
         self.runner = SimpleTunerCogRunner()
 
@@ -81,6 +81,8 @@ class Predictor(BasePredictor):
             dataloader_path, dataloader_dict = self._parse_json_or_path(dataloader_json, "dataloader_json")
 
         # Start the webhook receiver to capture training events in Cog logs
+        from simpletuner.cog import CogWebhookReceiver
+
         with CogWebhookReceiver() as webhook_receiver:
             webhook_config = [CogWebhookReceiver.build_webhook_config(webhook_receiver.url)]
 
