@@ -6,12 +6,12 @@ import json
 import pathlib
 from typing import Optional
 
-import cog
+from cog import BasePredictor, Input, Path, Secret
 
 from simpletuner.cog import CogWebhookReceiver, SimpleTunerCogRunner
 
 
-class Predictor(cog.BasePredictor):
+class Predictor(BasePredictor):
     def setup(self) -> None:
         """Initialise reusable runner state for Cog."""
 
@@ -40,31 +40,31 @@ class Predictor(cog.BasePredictor):
 
     def predict(
         self,
-        images: cog.Path = cog.Input(
+        images: Path = Input(
             description="Zip or tar archive of training images. Not required if dataloader_json points to external data.",
             default=None,
         ),
-        hf_token: cog.Secret = cog.Input(
+        hf_token: Secret = Input(
             description="Hugging Face token for model downloads (set if the base model requires auth).",
             default=None,
         ),
-        config_json: str = cog.Input(
+        config_json: str = Input(
             description="Training config: either a JSON string or path to config.json. Defaults to config/config.json if present.",
             default=None,
         ),
-        dataloader_json: str = cog.Input(
+        dataloader_json: str = Input(
             description="Multidatabackend config: either a JSON string or path to file. If not provided, auto-generated from images.",
             default=None,
         ),
-        max_train_steps: int = cog.Input(
+        max_train_steps: int = Input(
             description="Override --max_train_steps for quicker Cog runs.",
             default=None,
         ),
-        return_logs: bool = cog.Input(
+        return_logs: bool = Input(
             description="Print the tail of debug.log to Cog output.",
             default=True,
         ),
-    ) -> cog.Path:
+    ) -> Path:
         """Launch a SimpleTuner training job and return a zipped output directory."""
 
         token_value = hf_token.get_secret_value() if hf_token else None
@@ -105,4 +105,4 @@ class Predictor(cog.BasePredictor):
                 print("\n=== debug.log tail ===")
                 print(log_tail[-5000:])
 
-        return cog.Path(archive_path)
+        return Path(archive_path)
