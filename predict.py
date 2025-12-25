@@ -42,23 +42,23 @@ class Predictor(BasePredictor):
 
     def predict(
         self,
-        images: Optional[CogPath] = Input(
+        images: CogPath = Input(
             description="Zip or tar archive of training images. Not required if dataloader_json points to external data.",
             default=None,
         ),
-        hf_token: Optional[Secret] = Input(
+        hf_token: Secret = Input(
             description="Hugging Face token for model downloads (set if the base model requires auth).",
             default=None,
         ),
-        config_json: Optional[str] = Input(
+        config_json: str = Input(
             description="Training config: either a JSON string or path to config.json. Defaults to config/config.json if present.",
             default=None,
         ),
-        dataloader_json: Optional[str] = Input(
+        dataloader_json: str = Input(
             description="Multidatabackend config: either a JSON string or path to file. If not provided, auto-generated from images.",
             default=None,
         ),
-        max_train_steps: Optional[int] = Input(
+        max_train_steps: int = Input(
             description="Override --max_train_steps for quicker Cog runs.",
             default=None,
         ),
