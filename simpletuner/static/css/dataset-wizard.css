@@ -131,10 +131,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 9999;
+    z-index: 10100;
     padding: 1.5rem;
     overflow-y: auto;
     pointer-events: auto !important;
+    /* Prevent scroll bleed to background on mobile */
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: contain;
 }
 
 .dataset-wizard-modal {
@@ -188,6 +192,10 @@
     overflow-y: auto;
     flex: 1;
     min-height: 0;
+    /* Contain scroll within modal */
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 .dataset-wizard-modal .modal-footer {
@@ -282,6 +290,12 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* Hide area resolution type option - not useful in webui */
+.dataset-wizard-modal #res-type-area,
+.dataset-wizard-modal label[for="res-type-area"] {
+    display: none !important;
+}
+
 .dataset-wizard-modal .wizard-step-content .card-body {
     padding: 1rem;
 }
@@ -290,6 +304,9 @@
 .dataset-wizard-backdrop.file-browser-backdrop {
     z-index: 10500;
     background: rgba(0, 0, 0, 0.85);
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: contain;
 }
 
 .file-browser-backdrop .modal-dialog {
@@ -311,22 +328,95 @@
 .file-browser-backdrop .modal-header {
     padding: 1rem 1.5rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
 }
 
 .file-browser-backdrop .modal-body {
     pointer-events: auto;
     padding: 1.5rem;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
 }
 
 .file-browser-backdrop .modal-footer {
     padding: 1rem 1.5rem;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
 }
 
 .file-browser-backdrop button,
 .file-browser-backdrop input,
 .file-browser-backdrop .list-group-item {
     pointer-events: auto;
+}
+
+/* File browser mobile styles */
+@media (max-width: 768px) {
+    .dataset-wizard-backdrop.file-browser-backdrop {
+        padding: 0;
+        align-items: stretch;
+        z-index: 100000 !important;
+    }
+
+    .file-browser-backdrop .modal-dialog {
+        position: fixed !important;
+        inset: 0 !important;
+        max-width: 100%;
+        max-height: 100dvh;
+        max-height: 100vh;
+        border-radius: 0;
+        z-index: 100000 !important;
+    }
+
+    .file-browser-backdrop .modal-header {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .file-browser-backdrop .modal-title {
+        font-size: 0.9rem;
+    }
+
+    .file-browser-backdrop .modal-body {
+        padding: 0.75rem;
+    }
+
+    .file-browser-backdrop .modal-footer {
+        padding: 0.5rem 0.75rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .file-browser-backdrop .modal-footer .btn {
+        padding: 0.35rem 0.6rem;
+        font-size: 0.75rem;
+    }
+
+    .file-browser-backdrop .directory-list-container {
+        height: 200px;
+        min-height: 150px;
+        max-height: 250px;
+    }
+
+    /* Upload modal on mobile - stacks above file browser */
+    .dataset-wizard-backdrop.upload-modal-backdrop {
+        z-index: 100001 !important;
+    }
+
+    .upload-modal-backdrop .modal-dialog {
+        z-index: 100001 !important;
+    }
+
+    /* Caption modal on mobile - stacks above upload */
+    .dataset-wizard-backdrop.caption-modal-backdrop {
+        z-index: 100002 !important;
+    }
+
+    .caption-modal-backdrop .modal-dialog {
+        z-index: 100002 !important;
+    }
 }
 
 /* Upload modal - stacks above file browser */
@@ -603,29 +693,348 @@ textarea.resizable-path::-webkit-scrollbar {
     margin-left: -1px;
 }
 
+
+/* Hide sidebar and event dock when wizard is open on mobile, lock body scroll */
+@media (max-width: 768px) {
+    body:has(.dataset-wizard-backdrop:not([style*="display: none"])) {
+        overflow: hidden !important;
+        position: fixed !important;
+        width: 100% !important;
+        height: 100% !important;
+    }
+
+    body:has(.dataset-wizard-backdrop:not([style*="display: none"])) .sidebar,
+    body:has(.dataset-wizard-backdrop:not([style*="display: none"])) .sidebar-backdrop,
+    body:has(.dataset-wizard-backdrop:not([style*="display: none"])) .event-dock-shell,
+    body:has(.dataset-wizard-backdrop:not([style*="display: none"])) .topbar {
+        display: none !important;
+    }
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
+    .dataset-wizard-backdrop {
+        padding: 0;
+        align-items: stretch;
+        justify-content: stretch;
+        z-index: 99999 !important;
+    }
+
+    .dataset-wizard-modal {
+        position: fixed !important;
+        inset: 0 !important;
+        width: 100% !important;
+        height: 100dvh !important;
+        height: 100vh !important;
+        max-width: 100% !important;
+        max-height: 100dvh !important;
+        max-height: 100vh !important;
+        border-radius: 0;
+        margin: 0;
+        z-index: 99999 !important;
+    }
+
+    .dataset-wizard-modal form {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .dataset-wizard-modal .modal-body {
+        flex: 1;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
+        overscroll-behavior: contain;
+        min-height: 0;
+        height: auto;
+        padding: 4.5rem 0.5rem 4rem 0.5rem;
+    }
+
+    .dataset-wizard-modal .modal-footer {
+        position: fixed !important;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #1c1f2e;
+        border-top: 1px solid rgba(255, 255, 255, 0.15);
+        padding: 0.3rem;
+        z-index: 100000;
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        justify-content: stretch;
+        gap: 3px;
+    }
+
+    .dataset-wizard-modal .modal-footer .btn:not([style*="display: none"]) {
+        padding: 0.25rem 0.15rem !important;
+        font-size: 0.5rem !important;
+        flex: 1 1 auto;
+        text-align: center !important;
+        line-height: 1.2;
+        border-radius: 3px;
+    }
+
+    /* Hide icons in footer buttons on mobile to save space */
+    .dataset-wizard-modal .modal-footer .btn i,
+    .dataset-wizard-modal .modal-footer .btn .fa-arrow-left,
+    .dataset-wizard-modal .modal-footer .btn .fa-arrow-right,
+    .dataset-wizard-modal .modal-footer .btn .fa-plus,
+    .dataset-wizard-modal .modal-footer .btn .fa-check,
+    .dataset-wizard-modal .modal-footer .btn .fa-spinner {
+        display: none !important;
+    }
+
+    .dataset-wizard-modal .modal-footer .btn .me-1,
+    .dataset-wizard-modal .modal-footer .btn .ms-1,
+    .dataset-wizard-modal .modal-footer .btn .me-2 {
+        margin: 0 !important;
+    }
+
+    .dataset-wizard-modal .modal-header {
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 0.4rem 0.75rem;
+        background: #1c1f2e;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+        z-index: 100000;
+    }
+
+    .dataset-wizard-modal .modal-title {
+        font-size: 0.85rem;
+    }
+
     .dataset-wizard-modal .wizard-progress {
-        padding: 1rem;
+        position: fixed !important;
+        top: 1.75rem; /* Below header */
+        left: 0;
+        right: 0;
+        padding: 0.4rem 0.5rem;
+        gap: 0.15rem;
+        background: #1c1f2e;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        z-index: 100000;
     }
 
     .dataset-wizard-modal .step-label {
         display: none;
     }
 
-    .dataset-wizard-modal {
-        max-width: 100%;
-        margin: 0;
-        height: 100vh;
-        max-height: 100vh;
-        border-radius: 0;
+    .dataset-wizard-modal .step-number {
+        width: 22px;
+        height: 22px;
+        font-size: 0.65rem;
+        margin-bottom: 0;
+    }
+
+    .dataset-wizard-modal .wizard-step:not(:last-child)::after {
+        top: 11px;
+    }
+
+    .dataset-wizard-modal .wizard-step-content {
+        padding: 0.25rem 0;
+    }
+
+    /* Backend cards - compact grid on mobile */
+    .dataset-wizard-modal .wizard-step-content .row.g-3 {
+        --bs-gutter-x: 0.5rem;
+        --bs-gutter-y: 0.5rem;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .col-md-4,
+    .dataset-wizard-modal .wizard-step-content .col-md-6 {
+        flex: 0 0 50%;
+        max-width: 50%;
     }
 
     .dataset-wizard-modal .backend-card {
-        padding: 1rem;
+        padding: 0.4rem;
+        min-height: auto;
     }
 
     .dataset-wizard-modal .backend-icon {
-        font-size: 2rem;
+        font-size: 1rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .dataset-wizard-modal .backend-card h6 {
+        font-size: 0.65rem;
+        margin-bottom: 0.15rem;
+    }
+
+    .dataset-wizard-modal .backend-card p {
+        font-size: 0.55rem;
+        line-height: 1.2;
+        margin-bottom: 0;
+    }
+
+    /* Crop style options - 4 per row on mobile */
+    .dataset-wizard-modal .wizard-step-content .row.g-3:has(.crop-style-option) {
+        --bs-gutter-x: 4px;
+        --bs-gutter-y: 4px;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .row.g-3:has(.crop-style-option) > div {
+        flex: 0 0 25% !important;
+        max-width: 25% !important;
+        padding: 0 2px;
+    }
+
+    .crop-style-option {
+        padding: 0.25rem;
+    }
+
+    .crop-style-option i {
+        font-size: 0.9rem;
+        margin-bottom: 0.15rem;
+    }
+
+    .crop-style-option span {
+        font-size: 0.5rem;
+        line-height: 1.1;
+    }
+
+    /* Step 3 - Config step text sizing */
+    .dataset-wizard-modal .wizard-step-content h6 {
+        font-size: 0.85rem;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .form-label {
+        font-size: 0.75rem;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .form-text {
+        font-size: 0.65rem;
+        line-height: 1.3;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .form-check-label {
+        font-size: 0.65rem;
+        margin-left: 0 !important;
+        padding-left: 0 !important;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .form-check-label strong {
+        font-size: 0.65rem;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .form-control,
+    .dataset-wizard-modal .wizard-step-content .form-select {
+        font-size: 0.75rem;
+        padding: 0.35rem 0.5rem;
+    }
+
+    .dataset-wizard-modal .wizard-step-content code {
+        font-size: 0.65rem;
+    }
+
+    /* Cache options box - compact */
+    .dataset-wizard-modal .wizard-step-content .mb-4.p-3 {
+        padding: 0.5rem !important;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .mb-4.p-3 h6 {
+        font-size: 0.75rem;
+        margin-bottom: 0.35rem !important;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .mb-4.p-3 .form-text {
+        font-size: 0.6rem;
+        margin-bottom: 0.5rem !important;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .form-check {
+        margin-bottom: 0.35rem;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .ms-4 {
+        margin-left: 1rem !important;
+    }
+
+    /* Step 4 - Resolution step fixes */
+
+    /* Title row - keep on one line */
+    .dataset-wizard-modal .wizard-step-content .d-flex.justify-content-between.align-items-center h6 {
+        white-space: nowrap;
+        font-size: 0.7rem;
+    }
+
+    /* Skip button - compact (only the one with fa-forward icon) */
+    .dataset-wizard-modal .wizard-step-content .btn-sm.btn-outline-secondary:has(.fa-forward) {
+        font-size: 0 !important;
+        padding: 0.25rem 0.5rem;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .btn-sm.btn-outline-secondary:has(.fa-forward) i {
+        font-size: 0.7rem;
+        margin-right: 0 !important;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .btn-sm.btn-outline-secondary:has(.fa-forward)::after {
+        content: " Skip";
+        font-size: 0.65rem;
+    }
+
+    /* Resolution type button group - full width, outlines */
+    .dataset-wizard-modal .wizard-step-content .btn-group.w-100 {
+        display: flex;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .btn-group.w-100 .btn {
+        flex: 1;
+        padding: 0.3rem 0.25rem;
+        border: 1px solid rgba(255, 255, 255, 0.25) !important;
+        white-space: nowrap;
+        text-indent: -9999px;
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* Hide check icon on mobile */
+    .dataset-wizard-modal .wizard-step-content .btn-group.w-100 .fa-check-circle {
+        display: none !important;
+    }
+
+    /* Replace button text with short versions */
+    .dataset-wizard-modal .wizard-step-content .btn-group.w-100 label[for="res-type-pixel-area"]::after {
+        content: "Pixel (area)";
+        font-size: 0.55rem;
+        text-indent: 0;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+    }
+
+    .dataset-wizard-modal .wizard-step-content .btn-group.w-100 label[for="res-type-pixel"]::after {
+        content: "Pixel (edge)";
+        font-size: 0.55rem;
+        text-indent: 0;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+    }
+
+    /* Base resolution preset buttons - single compact row */
+    .dataset-wizard-modal .wizard-step-content .row.g-2.mb-2 {
+        --bs-gutter-x: 2px;
+        --bs-gutter-y: 2px;
+        display: flex !important;
+        flex-wrap: nowrap !important;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .row.g-2.mb-2 .col {
+        flex: 1;
+        padding: 0 1px;
+    }
+
+    .dataset-wizard-modal .wizard-step-content .row.g-2.mb-2 .col .btn {
+        font-size: 0.55rem;
+        padding: 0.2rem 0.1rem;
+        width: 100%;
     }
 }

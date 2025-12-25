@@ -138,6 +138,11 @@
     border-color: transparent;
 }
 
+/* Unified actions row - hidden on desktop, shown on mobile */
+.dataset-actions-row {
+    display: none;
+}
+
 /* Dataset List */
 .dataset-list {
     display: flex;
@@ -1385,17 +1390,168 @@
         justify-content: flex-end;
     }
 
+    /* Quick Start Presets - horizontal scrolling row on mobile */
     .preset-grid {
-        grid-template-columns: 1fr;
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        gap: 0.5rem;
+        padding-bottom: 0.5rem;
+        scrollbar-width: thin;
     }
 
+    .preset-btn {
+        flex: 0 0 auto !important;
+        min-width: 140px;
+        max-width: 160px;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .preset-btn .preset-name {
+        font-size: 0.8rem;
+    }
+
+    .preset-btn .preset-description {
+        font-size: 0.65rem;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    /* Add Dataset Manually - horizontal scrolling row on mobile */
     .add-dataset-container {
-        flex-direction: column;
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 0.5rem;
+        scrollbar-width: thin;
     }
 
     .add-dataset-btn {
-        width: 100%;
+        flex: 0 0 auto !important;
+        width: auto !important;
+        min-width: 120px;
+        white-space: nowrap;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+    }
+
+    /* ============================================
+       Datasets Tab Card Header - Mobile Layout
+       ============================================ */
+
+    /* Override the general card-header hiding for datasets tab */
+    #datasets-tab-content > .card > .card-header {
+        position: static !important;
+        padding: 0.75rem !important;
+        background: var(--card-bg) !important;
+        border-bottom: 1px solid var(--glass-border) !important;
+        display: flex !important;
+        flex-direction: column-reverse !important;
+        gap: 0.5rem;
+    }
+
+    /* Dataloader config selector row */
+    #datasets-tab-content > .card > .card-header > .d-flex.align-items-center.gap-3 {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 0.5rem !important;
+    }
+
+    /* Hide the title row entirely on mobile - buttons moved to card-body */
+    #datasets-tab-content > .card > .card-header > .d-flex.justify-content-between {
+        display: none !important;
+    }
+
+    /* Unified button row in card-body */
+    #datasets-tab-content .dataset-actions-row {
+        display: flex !important;
+        flex-direction: row !important;
+        flex-wrap: nowrap !important;
+        gap: 3px;
+        margin-bottom: 0.5rem;
+    }
+
+    #datasets-tab-content .dataset-actions-row .btn {
+        flex: 1 1 0;
+        padding: 0.25rem 0.2rem;
+        font-size: 0.6rem;
+        min-width: 0;
+        line-height: 1.2;
+        text-align: center;
         justify-content: center;
+        border: 1px solid var(--border-soft, rgba(255, 255, 255, 0.2)) !important;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Hide icons on mobile to save space and fix centering */
+    #datasets-tab-content .dataset-actions-row .btn i {
+        display: none;
+    }
+
+    /* Hide original mode switcher on mobile - replaced by unified row */
+    #datasets-tab-content .mode-switcher {
+        display: none !important;
+    }
+
+    /* Dataloader dropdown - full width */
+    #datasets-tab-content .dataset-dropdown {
+        width: 100% !important;
+    }
+
+    #datasets-tab-content .dataset-dropdown .dataset-toggle {
+        font-size: 0.8rem;
+        padding: 0.4rem 0.75rem;
+    }
+
+    #datasets-tab-content .dataset-dropdown .dataset-env {
+        font-size: 0.75rem;
+    }
+
+    #datasets-tab-content .dataset-dropdown .dataset-path {
+        font-size: 0.7rem;
+    }
+
+    /* Filter checkbox - compact */
+    #datasets-tab-content .form-check {
+        padding-top: 0 !important;
+    }
+
+    #datasets-tab-content #filterByEnvironment + label {
+        font-size: 0.75rem;
+        line-height: 1.3;
+    }
+
+    #datasets-tab-content #current-env-badge {
+        font-size: 0.65rem;
+        padding: 0.15rem 0.35rem;
+    }
+
+    /* Mode switcher - compact buttons */
+    .mode-switcher {
+        margin-bottom: 0.75rem;
+    }
+
+    .mode-switcher .btn {
+        padding: 0.35rem 0.75rem;
+        font-size: 0.8rem;
+    }
+
+    /* Subsection titles - compact */
+    .preset-container .subsection-title,
+    #dataloaderSection .subsection-title {
+        font-size: 0.8rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .preset-container {
+        margin-bottom: 1rem;
     }
 }
 

@@ -18,6 +18,7 @@
                 class="trainer-action-btn btn {{ btn_size }}btn-primary me-2"
                 id="validateBtn"
                 title="Validate configuration"
+                aria-label="Validate configuration"
                 hx-post="/api/training/validate"
                 hx-include="#trainer-form"
                 hx-target="#validation-results"
@@ -43,6 +44,7 @@
                 class="trainer-action-btn btn {{ btn_size }}btn-success me-2"
                 id="runBtn"
                 title="Start training"
+                aria-label="Start training"
                 hx-post="/api/training/start"
                 hx-include="#trainer-form"
                 hx-target="#training-status"
@@ -68,6 +70,7 @@
                 class="trainer-action-btn btn {{ btn_size }}btn-danger"
                 id="cancelBtn"
                 title="Cancel training"
+                aria-label="Cancel training"
                 disabled
                 hx-post="/api/training/cancel"
                 hx-target="#training-status"
@@ -94,6 +97,7 @@
                 class="trainer-action-btn btn {{ btn_size }}btn-outline-danger ms-2"
                 id="shutdownBtn"
                 title="Shut down SimpleTuner"
+                aria-label="Shut down SimpleTuner"
                 data-bs-toggle="modal"
                 data-bs-target="#shutdownConfirmModal">
             <i class="fas fa-power-off me-1"></i>
