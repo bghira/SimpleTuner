@@ -1449,16 +1449,9 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 this.webhookEditor.open = true;
                 this.loadWebhookConfig(config.name);
             } else {
-                // Creating new webhook
-                const name = prompt('Enter a name for the webhook config');
-                if (!name) return;
-                const normalized = this.normalizeConfigNameForType(name);
-                if (!normalized) {
-                    window.showToast('Name is required', 'warning');
-                    return;
-                }
+                // Creating new webhook - name entered in modal
                 this.webhookEditor.isNew = true;
-                this.webhookEditor.editingName = normalized;
+                this.webhookEditor.editingName = '';
                 this.webhookEditor.loading = false;
                 this.resetWebhookConfig();
                 this.webhookEditor.open = true;
@@ -1508,10 +1501,20 @@ window.environmentsTabComponent = function environmentsTabComponent() {
         },
 
         async saveWebhookConfig() {
-            const name = this.webhookEditor.editingName;
-            if (!name) {
+            let name = this.webhookEditor.editingName;
+            if (!name || !name.trim()) {
                 window.showToast('Webhook name is required', 'error');
                 return;
+            }
+
+            // Normalize the name for new webhooks
+            if (this.webhookEditor.isNew) {
+                name = this.normalizeConfigNameForType(name);
+                if (!name) {
+                    window.showToast('Invalid name: only letters, numbers, dots, underscores, and hyphens allowed', 'error');
+                    return;
+                }
+                this.webhookEditor.editingName = name;
             }
 
             // Build the config object based on type
@@ -1568,6 +1571,72 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 window.showToast(error.message || 'Failed to save webhook configuration', 'error');
             } finally {
                 this.webhookEditor.loading = false;
+            }
+        },
+
+        async testWebhook(name) {
+            if (!name) {
+                window.showToast('No webhook specified', 'error');
+                return;
+            }
+            window.showToast(`Testing webhook "${name}"...`, 'info');
+            try {
+                const response = await fetch(`/api/configs/webhooks/${encodeURIComponent(name)}/test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.detail || 'Test failed');
+                }
+                if (result.success) {
+                    window.showToast(`Webhook test successful: ${result.message || 'Message sent'}`, 'success');
+                } else {
+                    window.showToast(`Webhook test failed: ${result.error || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                console.error('Webhook test failed:', error);
+                window.showToast(error.message || 'Failed to test webhook', 'error');
+            }
+        },
+
+        async linkWebhookToEnvironment(envName, webhookName) {
+            try {
+                // Load the current config
+                const getResponse = await fetch(`/api/configs/${encodeURIComponent(envName)}?config_type=model`);
+                if (!getResponse.ok) {
+                    throw new Error('Failed to load environment config');
+                }
+                const data = await getResponse.json();
+                const config = data.config || {};
+
+                // Update the webhook_config field
+                if (webhookName) {
+                    config['--webhook_config'] = webhookName;
+                } else {
+                    delete config['--webhook_config'];
+                    delete config['webhook_config'];
+                }
+
+                // Save the updated config
+                const putResponse = await fetch(`/api/configs/${encodeURIComponent(envName)}?config_type=model`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: envName, config })
+                });
+                if (!putResponse.ok) {
+                    const error = await putResponse.json().catch(() => ({}));
+                    throw new Error(error.detail || 'Failed to save environment config');
+                }
+
+                window.showToast(
+                    webhookName ? `Linked webhook "${webhookName}" to ${envName}` : `Removed webhook from ${envName}`,
+                    'success'
+                );
+                await this.loadConfigs();
+            } catch (error) {
+                console.error('Failed to link webhook:', error);
+                window.showToast(error.message || 'Failed to link webhook', 'error');
             }
         },
 
@@ -2344,6 +2413,10 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                             <span x-show="config.model_flavour" class="text-muted small">
                                                 (<span x-text="config.model_flavour"></span>)
                                             </span>
+                                            <span x-show="config.webhook_config" class="ms-2">
+                                                • <i class="fas fa-plug text-success"></i>
+                                                <span x-text="config.webhook_config"></span>
+                                            </span>
                                         </span>
                                     </template>
                                     <template x-if="configType === 'dataloader'">
@@ -2383,6 +2456,32 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                         title="Edit LyCORIS Config">
                                     <i class="fas fa-brain"></i>
                                 </button>
+                                <div class="btn-group" x-show="configType === 'model'" x-data="{ webhookDropdownOpen: false }">
+                                    <button type="button"
+                                            class="btn btn-outline-secondary dropdown-toggle"
+                                            :class="{ 'btn-outline-success': config.webhook_config }"
+                                            @click.stop="webhookDropdownOpen = !webhookDropdownOpen"
+                                            @click.away="webhookDropdownOpen = false"
+                                            :title="config.webhook_config ? 'Change webhook: ' + config.webhook_config : 'Link webhook'">
+                                        <i class="fas fa-plug"></i>
+                                    </button>
+                                    <div class="dropdown-menu dropdown-menu-end" :class="{ 'show': webhookDropdownOpen }" style="min-width: 200px;">
+                                        <button class="dropdown-item" :class="{ 'active': !config.webhook_config }"
+                                                @click="linkWebhookToEnvironment(config.name, null); webhookDropdownOpen = false">
+                                            <i class="fas fa-times me-2"></i>None
+                                        </button>
+                                        <div class="dropdown-divider"></div>
+                                        <template x-for="wh in $store.webhookConfigs.list" :key="wh.name">
+                                            <button class="dropdown-item" :class="{ 'active': config.webhook_config === wh.name }"
+                                                    @click="linkWebhookToEnvironment(config.name, wh.name); webhookDropdownOpen = false">
+                                                <i class="fas fa-plug me-2"></i><span x-text="wh.name"></span>
+                                            </button>
+                                        </template>
+                                        <template x-if="$store.webhookConfigs.list.length === 0">
+                                            <span class="dropdown-item text-muted small">No webhooks configured</span>
+                                        </template>
+                                    </div>
+                                </div>
                                 <button type="button"
                                         class="btn btn-outline-primary"
                                         x-show="configType === 'lycoris'"
@@ -2395,6 +2494,13 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                         x-show="configType === 'webhook'"
                                         @click="openWebhookEditor(config)"
                                         title="Edit Webhook Config">
+                                    <i class="fas fa-cog"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-success"
+                                        x-show="configType === 'webhook'"
+                                        @click="testWebhook(config.name)"
+                                        title="Test Webhook">
                                     <i class="fas fa-plug"></i>
                                 </button>
                                 <button type="button"
@@ -2548,6 +2654,10 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                         <span x-show="config.model_flavour" class="text-muted small">
                                             (<span x-text="config.model_flavour"></span>)
                                         </span>
+                                        <span x-show="config.webhook_config" class="ms-2">
+                                            <i class="fas fa-plug text-success"></i>
+                                            <span x-text="config.webhook_config"></span>
+                                        </span>
                                     </span>
                                 </template>
                                 <template x-if="configType === 'dataloader'">
@@ -2583,6 +2693,32 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                             title="Edit LyCORIS Config">
                                         <i class="fas fa-brain"></i>
                                     </button>
+                                    <div class="btn-group" x-show="configType === 'model'" x-data="{ webhookDropdownOpen: false }">
+                                        <button type="button"
+                                                class="btn btn-outline-secondary dropdown-toggle"
+                                                :class="{ 'btn-outline-success': config.webhook_config }"
+                                                @click.stop="webhookDropdownOpen = !webhookDropdownOpen"
+                                                @click.away="webhookDropdownOpen = false"
+                                                :title="config.webhook_config ? 'Change webhook: ' + config.webhook_config : 'Link webhook'">
+                                            <i class="fas fa-plug"></i>
+                                        </button>
+                                        <div class="dropdown-menu dropdown-menu-end" :class="{ 'show': webhookDropdownOpen }" style="min-width: 200px;">
+                                            <button class="dropdown-item" :class="{ 'active': !config.webhook_config }"
+                                                    @click="linkWebhookToEnvironment(config.name, null); webhookDropdownOpen = false">
+                                                <i class="fas fa-times me-2"></i>None
+                                            </button>
+                                            <div class="dropdown-divider"></div>
+                                            <template x-for="wh in $store.webhookConfigs.list" :key="wh.name">
+                                                <button class="dropdown-item" :class="{ 'active': config.webhook_config === wh.name }"
+                                                        @click="linkWebhookToEnvironment(config.name, wh.name); webhookDropdownOpen = false">
+                                                    <i class="fas fa-plug me-2"></i><span x-text="wh.name"></span>
+                                                </button>
+                                            </template>
+                                            <template x-if="$store.webhookConfigs.list.length === 0">
+                                                <span class="dropdown-item text-muted small">No webhooks configured</span>
+                                            </template>
+                                        </div>
+                                    </div>
                                     <button type="button"
                                             class="btn btn-outline-primary"
                                             x-show="configType === 'lycoris'"
@@ -2595,6 +2731,13 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                             x-show="configType === 'webhook'"
                                             @click="openWebhookEditor(config)"
                                             title="Edit Webhook Config">
+                                        <i class="fas fa-cog"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-success"
+                                            x-show="configType === 'webhook'"
+                                            @click="testWebhook(config.name)"
+                                            title="Test Webhook">
                                         <i class="fas fa-plug"></i>
                                     </button>
                                     <button type="button"
@@ -3261,6 +3404,18 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                     </div>
 
                     <div x-show="!webhookEditor.loading">
+                        <!-- Config Name (new webhooks only) -->
+                        <div class="mb-3" x-show="webhookEditor.isNew">
+                            <label class="form-label">Config Name <span class="text-danger">*</span></label>
+                            <input type="text"
+                                   x-model="webhookEditor.editingName"
+                                   class="form-control"
+                                   placeholder="my-discord-webhook"
+                                   pattern="[a-zA-Z0-9._\-]+"
+                                   :required="webhookEditor.isNew">
+                            <div class="form-text">Only letters, numbers, dots, underscores, and hyphens allowed</div>
+                        </div>
+
                         <!-- Webhook Type -->
                         <div class="mb-3">
                             <label class="form-label">Webhook Type <span class="text-danger">*</span></label>

@@ -24,7 +24,6 @@ from ..utils.paths import resolve_config_path
 from .dataset_plan import DatasetPlanStore
 from .dataset_service import normalize_dataset_config_value
 from .field_registry import FieldType
-from .webhook_defaults import DEFAULT_WEBHOOK_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +102,18 @@ class FieldService:
         "uploadMode",
         "ui-accelerate-mode",
         "discord_webhooks",
-        "webhook_config",
+        # webhook_config is NOT webui-only - users can save their own webhook configs
+        # The WebUI callback is merged at runtime in training_service.py
         "webhook_reporting_interval",
     }
     # Fields that the WebUI manages internally so users cannot override them
     _WEBUI_FORCED_VALUES = {
-        "webhook_config": DEFAULT_WEBHOOK_CONFIG,
+        # webhook_config removed - users can now save their own webhooks
+        # WebUI callback is merged at runtime in training_service.py
         "webhook_reporting_interval": 1,
     }
     _WEBUI_FIELD_HINTS = {
-        "webhook_config": "Managed by the WebUI so training callbacks can reach the server. Use the CLI to supply custom webhooks.",
+        # webhook_config hint removed - now user-configurable via Publishing tab
     }
     _VIDEO_ONLY_FIELDS = {
         "framerate",

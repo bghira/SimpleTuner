@@ -498,6 +498,11 @@ class ConfigStore:
                                     elif "lora_type" in config_data:
                                         metadata["lora_type"] = config_data["lora_type"]
 
+                                    if "--webhook_config" in config_data:
+                                        metadata["webhook_config"] = config_data["--webhook_config"]
+                                    elif "webhook_config" in config_data:
+                                        metadata["webhook_config"] = config_data["webhook_config"]
+
                             if backend_path:
                                 metadata.setdefault("dataloader_path", backend_path)
                                 metadata.setdefault("data_backend_config", backend_path)
@@ -574,6 +579,11 @@ class ConfigStore:
                                     metadata["lora_type"] = config_data["--lora_type"]
                                 elif "lora_type" in config_data:
                                     metadata["lora_type"] = config_data["lora_type"]
+
+                                if "--webhook_config" in config_data:
+                                    metadata["webhook_config"] = config_data["--webhook_config"]
+                                elif "webhook_config" in config_data:
+                                    metadata["webhook_config"] = config_data["webhook_config"]
 
                         if backend_path:
                             metadata.setdefault("dataloader_path", backend_path)

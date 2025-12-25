@@ -1190,6 +1190,86 @@ class ConfigsService:
             "warnings": warnings,
         }
 
+    def test_webhook_config(self, name: str) -> Dict:
+        """Test a webhook configuration by sending a test message.
+
+        Args:
+            name: Name of the webhook configuration to test
+
+        Returns:
+            Dict with test results: {
+                "success": bool,
+                "message": str (on success),
+                "error": str (on failure)
+            }
+        """
+        import requests
+
+        # Load the webhook config
+        webhook_config = self.get_webhook_config(name)
+        if webhook_config is None:
+            raise ConfigServiceError(
+                f"Webhook configuration '{name}' not found",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        webhook_type = webhook_config.get("webhook_type")
+        test_message = f"SimpleTuner webhook test from '{name}'"
+
+        try:
+            if webhook_type == "discord":
+                webhook_url = webhook_config.get("webhook_url")
+                if not webhook_url:
+                    return {"success": False, "error": "No webhook URL configured"}
+
+                prefix = webhook_config.get("message_prefix", "")
+                content = f"{prefix} {test_message}".strip()
+
+                response = requests.post(
+                    webhook_url,
+                    json={"content": content},
+                    timeout=10,
+                )
+                if response.status_code in (200, 204):
+                    return {"success": True, "message": "Discord message sent successfully"}
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Discord returned status {response.status_code}: {response.text[:200]}",
+                    }
+
+            elif webhook_type == "raw":
+                callback_url = webhook_config.get("callback_url")
+                if not callback_url:
+                    return {"success": False, "error": "No callback URL configured"}
+
+                response = requests.post(
+                    callback_url,
+                    json={
+                        "event": "test",
+                        "message": test_message,
+                        "webhook_name": name,
+                    },
+                    timeout=10,
+                )
+                if response.ok:
+                    return {"success": True, "message": f"Raw webhook returned status {response.status_code}"}
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Webhook returned status {response.status_code}: {response.text[:200]}",
+                    }
+
+            else:
+                return {"success": False, "error": f"Unknown webhook type: {webhook_type}"}
+
+        except requests.exceptions.Timeout:
+            return {"success": False, "error": "Request timed out after 10 seconds"}
+        except requests.exceptions.ConnectionError as exc:
+            return {"success": False, "error": f"Connection failed: {exc}"}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
     # ------------------------------------------------------------------
     # Shared helpers for config normalization
     # ------------------------------------------------------------------
