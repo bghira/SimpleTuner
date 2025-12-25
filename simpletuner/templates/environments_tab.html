@@ -108,6 +108,15 @@ const fallbackState = {
         block_size: null,
         apply_preset: {},
     },
+    // Webhook editor state
+    webhookEditor: { open: false, loading: false, isNew: true, editingName: null },
+    webhookConfig: {
+        webhook_type: 'discord',
+        webhook_url: '',
+        callback_url: '',
+        message_prefix: '',
+        log_level: 'info',
+    },
 };
 
 Object.entries(fallbackState).forEach(([key, value]) => {
@@ -202,6 +211,20 @@ window.environmentsTabComponent = function environmentsTabComponent() {
             exclude_name: '',
         },
         lycorisCollapsedSections: buildLycorisCollapsedDefaults(),
+        // Webhook editor state
+        webhookEditor: {
+            open: false,
+            loading: false,
+            isNew: true,
+            editingName: null
+        },
+        webhookConfig: {
+            webhook_type: 'discord',
+            webhook_url: '',
+            callback_url: '',
+            message_prefix: '',
+            log_level: 'info'
+        },
         promptLibraries: Array.isArray(window.__initialPromptLibraries)
             ? window.__initialPromptLibraries.slice()
             : [],
@@ -1413,6 +1436,141 @@ window.environmentsTabComponent = function environmentsTabComponent() {
             this.nudgeLycorisModal();
         },
 
+        // ------------------------------------------------------------------
+        // Webhook Configuration Editor
+        // ------------------------------------------------------------------
+
+        openWebhookEditor(config = null) {
+            if (config && config.name) {
+                // Editing existing webhook
+                this.webhookEditor.isNew = false;
+                this.webhookEditor.editingName = config.name;
+                this.webhookEditor.loading = true;
+                this.webhookEditor.open = true;
+                this.loadWebhookConfig(config.name);
+            } else {
+                // Creating new webhook
+                const name = prompt('Enter a name for the webhook config');
+                if (!name) return;
+                const normalized = this.normalizeConfigNameForType(name);
+                if (!normalized) {
+                    window.showToast('Name is required', 'warning');
+                    return;
+                }
+                this.webhookEditor.isNew = true;
+                this.webhookEditor.editingName = normalized;
+                this.webhookEditor.loading = false;
+                this.resetWebhookConfig();
+                this.webhookEditor.open = true;
+            }
+        },
+
+        resetWebhookConfig() {
+            this.webhookConfig = {
+                webhook_type: 'discord',
+                webhook_url: '',
+                callback_url: '',
+                message_prefix: '',
+                log_level: 'info'
+            };
+        },
+
+        async loadWebhookConfig(name) {
+            try {
+                const response = await fetch(`/api/configs/webhooks/${encodeURIComponent(name)}`);
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail || 'Failed to load webhook configuration');
+                }
+                const data = await response.json();
+                this.webhookConfig = {
+                    webhook_type: data.config.webhook_type || 'discord',
+                    webhook_url: data.config.webhook_url || '',
+                    callback_url: data.config.callback_url || '',
+                    message_prefix: data.config.message_prefix || '',
+                    log_level: data.config.log_level || 'info'
+                };
+            } catch (error) {
+                console.error('Failed to load webhook config:', error);
+                window.showToast(error.message || 'Failed to load webhook configuration', 'error');
+                this.closeWebhookEditor();
+            } finally {
+                this.webhookEditor.loading = false;
+            }
+        },
+
+        closeWebhookEditor() {
+            this.webhookEditor.open = false;
+            this.webhookEditor.loading = false;
+            this.webhookEditor.isNew = true;
+            this.webhookEditor.editingName = null;
+            this.resetWebhookConfig();
+        },
+
+        async saveWebhookConfig() {
+            const name = this.webhookEditor.editingName;
+            if (!name) {
+                window.showToast('Webhook name is required', 'error');
+                return;
+            }
+
+            // Build the config object based on type
+            const config = {
+                webhook_type: this.webhookConfig.webhook_type,
+                log_level: this.webhookConfig.log_level
+            };
+
+            if (this.webhookConfig.webhook_type === 'discord') {
+                if (!this.webhookConfig.webhook_url) {
+                    window.showToast('Discord webhook URL is required', 'error');
+                    return;
+                }
+                config.webhook_url = this.webhookConfig.webhook_url;
+                if (this.webhookConfig.message_prefix) {
+                    config.message_prefix = this.webhookConfig.message_prefix;
+                }
+            } else {
+                if (!this.webhookConfig.callback_url) {
+                    window.showToast('Callback URL is required', 'error');
+                    return;
+                }
+                config.callback_url = this.webhookConfig.callback_url;
+            }
+
+            this.webhookEditor.loading = true;
+            try {
+                const url = this.webhookEditor.isNew
+                    ? '/api/configs/webhooks'
+                    : `/api/configs/webhooks/${encodeURIComponent(name)}`;
+                const method = this.webhookEditor.isNew ? 'POST' : 'PUT';
+
+                const response = await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(
+                        this.webhookEditor.isNew ? { name, config } : { config }
+                    )
+                });
+
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.detail?.message || error.detail || 'Failed to save webhook configuration');
+                }
+
+                window.showToast(
+                    this.webhookEditor.isNew ? 'Webhook configuration created' : 'Webhook configuration updated',
+                    'success'
+                );
+                this.closeWebhookEditor();
+                await this.loadConfigs();
+            } catch (error) {
+                console.error('Failed to save webhook config:', error);
+                window.showToast(error.message || 'Failed to save webhook configuration', 'error');
+            } finally {
+                this.webhookEditor.loading = false;
+            }
+        },
+
         async loadLycorisConfig(envId) {
             if (!envId) return;
             await this.ensureLycorisMetadata();
@@ -1915,6 +2073,9 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 <button type="button" class="btn btn-sm btn-success" x-show="activePanel === 'configs' && configType === 'lycoris'" @click="openLycorisLibraryCreator()" title="New LyCORIS">
                     <i class="fas fa-plus me-1"></i>New
                 </button>
+                <button type="button" class="btn btn-sm btn-success" x-show="activePanel === 'configs' && configType === 'webhook'" @click="openWebhookEditor()" title="New Webhook">
+                    <i class="fas fa-plus me-1"></i>New
+                </button>
                 <button type="button" class="btn btn-sm btn-success" x-show="activePanel === 'filters'" @click="openFilterEditor()" title="New Filter">
                     <i class="fas fa-plus me-1"></i>New
                 </button>
@@ -2072,6 +2233,14 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 <i class="fas fa-plus"></i><span class="btn-text"> New</span>
             </button>
             <button type="button"
+                    class="btn btn-sm btn-success"
+                    x-show="configType === 'webhook'"
+                    @click="openWebhookEditor()"
+                    title="New Webhook Config"
+                    aria-label="New Webhook Config">
+                <i class="fas fa-plus"></i><span class="btn-text"> New</span>
+            </button>
+            <button type="button"
                     class="btn btn-sm btn-primary"
                     onclick="document.getElementById('import-file').click()"
                     title="Import configuration"
@@ -2220,6 +2389,13 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                         @click="handleLycorisCardEdit(config)"
                                         :title="config.source === 'library' ? 'Edit LyCORIS config' : 'Edit attached environment config'">
                                     <i class="fas fa-brain"></i>
+                                </button>
+                                <button type="button"
+                                        class="btn btn-outline-primary"
+                                        x-show="configType === 'webhook'"
+                                        @click="openWebhookEditor(config)"
+                                        title="Edit Webhook Config">
+                                    <i class="fas fa-plug"></i>
                                 </button>
                                 <button type="button"
                                         class="btn btn-outline-secondary"
@@ -2413,6 +2589,13 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                                             @click="handleLycorisCardEdit(config)"
                                             :title="config.source === 'library' ? 'Edit LyCORIS config' : 'Edit attached environment config'">
                                         <i class="fas fa-brain"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-primary"
+                                            x-show="configType === 'webhook'"
+                                            @click="openWebhookEditor(config)"
+                                            title="Edit Webhook Config">
+                                        <i class="fas fa-plug"></i>
                                     </button>
                                     <button type="button"
                                             class="btn btn-outline-secondary"
@@ -3048,6 +3231,113 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                     <button type="submit" class="btn btn-primary" :disabled="lycorisEditor.loading">
                         <span x-show="!lycorisEditor.loading"><i class="fas fa-save"></i> Save Configuration</span>
                         <span x-show="lycorisEditor.loading"><i class="fas fa-spinner fa-spin"></i> Saving...</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Webhook Editor Modal -->
+    <div x-cloak
+        x-show="webhookEditor.open"
+        class="environment-modal-backdrop webhook-modal-backdrop"
+        @keydown.escape.window="closeWebhookEditor()"
+        x-transition.opacity>
+        <div class="modal-dialog" @click.stop>
+            <form @submit.prevent="saveWebhookConfig()">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-plug"></i>
+                        <span x-text="webhookEditor.isNew ? 'New Webhook Config' : 'Edit Webhook Config'"></span>
+                        <span class="text-muted ms-2" x-show="webhookEditor.editingName" x-text="webhookEditor.editingName"></span>
+                    </h5>
+                    <button type="button" class="btn-close" aria-label="Close" @click="closeWebhookEditor()"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Loading state -->
+                    <div x-show="webhookEditor.loading" class="text-center py-4">
+                        <i class="fas fa-spinner fa-spin fa-2x"></i>
+                        <p class="mt-2 mb-0">Loading webhook configuration...</p>
+                    </div>
+
+                    <div x-show="!webhookEditor.loading">
+                        <!-- Webhook Type -->
+                        <div class="mb-3">
+                            <label class="form-label">Webhook Type <span class="text-danger">*</span></label>
+                            <select x-model="webhookConfig.webhook_type" class="form-select">
+                                <option value="discord">Discord</option>
+                                <option value="raw">Custom (Raw JSON)</option>
+                            </select>
+                            <div class="form-text">
+                                <template x-if="webhookConfig.webhook_type === 'discord'">
+                                    <span>Discord webhooks receive formatted messages with images</span>
+                                </template>
+                                <template x-if="webhookConfig.webhook_type === 'raw'">
+                                    <span>Custom webhooks receive raw JSON payloads</span>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Discord Webhook URL -->
+                        <div class="mb-3" x-show="webhookConfig.webhook_type === 'discord'">
+                            <label class="form-label">Discord Webhook URL <span class="text-danger">*</span></label>
+                            <input type="password"
+                                   x-model="webhookConfig.webhook_url"
+                                   class="form-control font-monospace"
+                                   placeholder="https://discord.com/api/webhooks/...">
+                            <div class="form-text">
+                                <i class="fas fa-lock me-1"></i>
+                                Get from Discord: Server Settings → Integrations → Webhooks
+                            </div>
+                        </div>
+
+                        <!-- Raw Callback URL -->
+                        <div class="mb-3" x-show="webhookConfig.webhook_type === 'raw'">
+                            <label class="form-label">Callback URL <span class="text-danger">*</span></label>
+                            <input type="password"
+                                   x-model="webhookConfig.callback_url"
+                                   class="form-control font-monospace"
+                                   placeholder="https://example.com/callback">
+                            <div class="form-text">URL that accepts POST requests with JSON data</div>
+                        </div>
+
+                        <!-- Message Prefix (Discord only) -->
+                        <div class="mb-3" x-show="webhookConfig.webhook_type === 'discord'">
+                            <label class="form-label">Message Prefix (Optional)</label>
+                            <input type="text"
+                                   x-model="webhookConfig.message_prefix"
+                                   class="form-control"
+                                   placeholder="My Training">
+                            <div class="form-text">Prefix for all Discord messages</div>
+                        </div>
+
+                        <!-- Log Level -->
+                        <div class="mb-3">
+                            <label class="form-label">Minimum Log Level <span class="text-danger">*</span></label>
+                            <select x-model="webhookConfig.log_level" class="form-select">
+                                <option value="debug">Debug (All messages)</option>
+                                <option value="info">Info (Normal progress)</option>
+                                <option value="warning">Warning (Issues only)</option>
+                                <option value="error">Error (Errors only)</option>
+                                <option value="critical">Critical (Critical errors only)</option>
+                            </select>
+                            <div class="form-text">Only send messages at this level or higher</div>
+                        </div>
+
+                        <!-- Info Box -->
+                        <div class="alert alert-info mb-0">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>Tip:</strong> Webhook configs can be linked to environments via the training form's webhook_config field.
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="closeWebhookEditor()">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                    <button type="submit" class="btn btn-primary" :disabled="webhookEditor.loading">
+                        <span x-show="!webhookEditor.loading"><i class="fas fa-save"></i> Save</span>
+                        <span x-show="webhookEditor.loading"><i class="fas fa-spinner fa-spin"></i> Saving...</span>
                     </button>
                 </div>
             </form>

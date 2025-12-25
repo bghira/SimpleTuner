@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
@@ -1482,6 +1483,41 @@ class FieldService:
                         normalized_options.append({"value": current_value, "label": current_value})
 
                     field_dict["options"] = normalized_options
+                elif field.name == "webhook_config":
+                    try:
+                        from .config_store import ConfigStore
+
+                        config_dir = os.environ.get("SIMPLETUNER_CONFIG_DIR", "./config")
+                        store = ConfigStore(Path(config_dir), config_type="webhook")
+                        webhook_configs = store.list_configs()
+
+                        webhook_choices = [{"value": "", "label": "None (No webhook)"}]
+                        for cfg in webhook_configs:
+                            name = cfg.get("name", "")
+                            webhook_type = cfg.get("webhook_type", "discord")
+                            webhook_choices.append(
+                                {
+                                    "value": f"webhooks/{name}.json",
+                                    "label": f"{name} ({webhook_type})",
+                                }
+                            )
+
+                        # Handle external/custom path that may not be in the list
+                        if field_value:
+                            current_path = str(field_value)
+                            if not any(opt.get("value") == current_path for opt in webhook_choices):
+                                webhook_choices.insert(
+                                    1,
+                                    {
+                                        "value": current_path,
+                                        "label": f"External: {current_path}",
+                                    },
+                                )
+
+                        field_dict["options"] = webhook_choices
+                    except Exception as exc:
+                        logger.warning("Failed to build webhook choices: %s", exc)
+                        field_dict["options"] = [{"value": "", "label": "None (No webhook)"}]
             elif choices:
                 normalized_options = []
                 for choice in choices:

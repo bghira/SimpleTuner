@@ -1024,6 +1024,173 @@ class ConfigsService:
         }
 
     # ------------------------------------------------------------------
+    # Webhook Configuration Management
+    # ------------------------------------------------------------------
+
+    def get_webhook_config(self, name: str) -> Optional[Dict]:
+        """Load a webhook configuration from file.
+
+        Args:
+            name: The webhook config name (without .json extension)
+
+        Returns:
+            The webhook configuration dict, or None if not found
+        """
+        name = self._validate_config_name(name)
+        store = self._get_store("model")  # Use model store for base path
+        webhooks_dir = Path(store.config_dir) / "webhooks"
+
+        # Try webhooks/{name}.json first
+        webhook_path = webhooks_dir / f"{name}.json"
+        if not webhook_path.exists():
+            # Also try webhooks/{name}/webhook_config.json
+            webhook_path = webhooks_dir / name / "webhook_config.json"
+
+        if not webhook_path.exists():
+            return None
+
+        try:
+            with webhook_path.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def save_webhook_config(self, name: str, webhook_config: Dict) -> Dict:
+        """Save a webhook configuration to file.
+
+        Args:
+            name: The webhook config name (without .json extension)
+            webhook_config: The webhook configuration to save
+
+        Returns:
+            Dict with success status and path information
+
+        Raises:
+            ConfigServiceError: If save fails
+        """
+        name = self._validate_config_name(name)
+        store = self._get_store("model")  # Use model store for base path
+        webhooks_dir = Path(store.config_dir) / "webhooks"
+
+        # Ensure webhooks directory exists
+        webhooks_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save as webhooks/{name}.json
+        webhook_path = webhooks_dir / f"{name}.json"
+
+        try:
+            with webhook_path.open("w", encoding="utf-8") as handle:
+                json.dump(webhook_config, handle, indent=2)
+                handle.write("\n")
+        except OSError as exc:
+            raise ConfigServiceError(
+                f"Failed to write webhook config: {exc}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            ) from exc
+
+        webhook_rel = self._format_relative_to_configs(webhook_path, Path(store.config_dir))
+
+        return {
+            "success": True,
+            "name": name,
+            "path": webhook_rel,
+            "absolute_path": str(webhook_path),
+        }
+
+    def delete_webhook_config(self, name: str) -> Dict:
+        """Delete a webhook configuration file.
+
+        Args:
+            name: The webhook config name (without .json extension)
+
+        Returns:
+            Dict with success status
+
+        Raises:
+            ConfigServiceError: If webhook not found or delete fails
+        """
+        name = self._validate_config_name(name)
+        store = self._get_store("model")
+        webhooks_dir = Path(store.config_dir) / "webhooks"
+
+        # Try webhooks/{name}.json first
+        webhook_path = webhooks_dir / f"{name}.json"
+        if not webhook_path.exists():
+            # Also try webhooks/{name}/webhook_config.json
+            webhook_path = webhooks_dir / name / "webhook_config.json"
+
+        if not webhook_path.exists():
+            raise ConfigServiceError(
+                f"Webhook config '{name}' not found",
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            webhook_path.unlink()
+            # Clean up empty parent directory if it was a subdirectory
+            if webhook_path.parent != webhooks_dir and not any(webhook_path.parent.iterdir()):
+                webhook_path.parent.rmdir()
+        except OSError as exc:
+            raise ConfigServiceError(
+                f"Failed to delete webhook config: {exc}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+            ) from exc
+
+        return {"success": True, "name": name}
+
+    def validate_webhook_config(self, webhook_config: Dict) -> Dict:
+        """Validate webhook configuration structure.
+
+        Args:
+            webhook_config: The webhook configuration to validate
+
+        Returns:
+            Dict with validation results: {
+                "valid": bool,
+                "errors": list[str],
+                "warnings": list[str]
+            }
+        """
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        # Check webhook_type
+        webhook_type = webhook_config.get("webhook_type")
+        if not webhook_type:
+            errors.append("Missing required field: 'webhook_type'")
+        elif webhook_type not in ("discord", "raw"):
+            errors.append(f"Invalid webhook_type: '{webhook_type}'. Must be 'discord' or 'raw'")
+
+        # Check URL based on type
+        if webhook_type == "discord":
+            webhook_url = webhook_config.get("webhook_url")
+            if not webhook_url:
+                errors.append("Missing required field: 'webhook_url' for Discord webhook")
+            elif not isinstance(webhook_url, str):
+                errors.append("Field 'webhook_url' must be a string")
+            elif "discord.com/api/webhooks/" not in webhook_url:
+                warnings.append("Discord webhook URL should contain 'discord.com/api/webhooks/'")
+        elif webhook_type == "raw":
+            callback_url = webhook_config.get("callback_url")
+            if not callback_url:
+                errors.append("Missing required field: 'callback_url' for raw webhook")
+            elif not isinstance(callback_url, str):
+                errors.append("Field 'callback_url' must be a string")
+
+        # Check log_level if present
+        log_level = webhook_config.get("log_level")
+        if log_level is not None:
+            valid_levels = ("debug", "info", "warning", "error", "critical")
+            if log_level not in valid_levels:
+                errors.append(f"Invalid log_level: '{log_level}'. Must be one of: {', '.join(valid_levels)}")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+    # ------------------------------------------------------------------
     # Shared helpers for config normalization
     # ------------------------------------------------------------------
     @staticmethod
