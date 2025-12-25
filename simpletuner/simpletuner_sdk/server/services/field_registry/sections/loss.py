@@ -263,6 +263,24 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             documentation="OPTIONS.md#--crepa_model",
         )
     )
+    
+    registry._add_field(
+        ConfigField(
+            name="crepa_encoder_frames_batch_size",
+            arg_name="--crepa_encoder_frames_batch_size",
+            ui_label="CREPA image encoder frames batch size",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=-1,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="How many frames the external feature encoder processes in parallel. Zero or negative for all frames of the whole batch simultaneously.",
+            tooltip='Since DINO-like encoders are image models, they can process frames in sliced batches for lower VRAM usage at cost of speed.',
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=14,
+            documentation="OPTIONS.md#--crepa_encoder_frames_batch_size",
+        )
+    )
 
     registry._add_field(
         ConfigField(
@@ -277,7 +295,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Align student/teacher transformer layers instead of an external vision encoder.",
             tooltip="Skips loading DINO when a stronger semantic layer exists inside the backbone.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=14,
+            order=15,
             documentation="OPTIONS.md#--crepa_use_backbone_features",
         )
     )
@@ -295,7 +313,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Teacher block index when using backbone features (defaults to the student block).",
             tooltip="Pick a later/stronger layer to supervise the student when skipping DINO.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=15,
+            order=16,
             documentation="OPTIONS.md#--crepa_teacher_block_index",
         )
     )
@@ -314,7 +332,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Input resolution for the vision encoder preprocessing.",
             tooltip="Set to the pretrained encoder's default (518 for DINOv2-G/14; 224 for ViT-S/14).",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=16,
+            order=17,
             documentation="OPTIONS.md#--crepa_encoder_image_size",
         )
     )
@@ -332,7 +350,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Release VAE encoder/quant_conv after load to save memory when only decoding latents.",
             tooltip="Enable only if latents come from caches or elsewhere; encoding new pixels will no longer work.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=17,
+            order=18,
             documentation="OPTIONS.md#--crepa_drop_vae_encoder",
         )
     )
@@ -350,7 +368,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Divide alignment similarity by the number of frames to keep loss scale stable.",
             tooltip="Turn off to let longer clips contribute proportionally more alignment signal.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=18,
+            order=19,
             documentation="OPTIONS.md#--crepa_normalize_by_frames",
         )
     )
@@ -368,7 +386,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Interpolate patch tokens to match encoder/DiT token counts instead of global pooling.",
             tooltip="Disable to pool both sides before similarity if memory is tight.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=19,
+            order=20,
             documentation="OPTIONS.md#--crepa_spatial_align",
         )
     )
@@ -395,7 +413,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Enable RCGM-based consistency training for few-step generation. Uses recursive consistency gradient matching to train models for 1-4 step inference with CFG baked in.",
             tooltip="Adds RCGM consistency loss for flow-matching models. Validation uses the target step count with zero CFG. Based on TwinFlow/RCGM paper.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=20,
+            order=21,
             documentation="OPTIONS.md#--twinflow_enabled",
         )
     )
@@ -425,7 +443,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Target number of inference steps. Validation will run with this many steps using the UCGM sampler. Recommended: 1-4 NFE.",
             tooltip="1 = one-step generation, 2-4 = few-step generation (better quality). Validation uses zero CFG since guidance is baked in during training.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=21,
+            order=22,
             documentation="OPTIONS.md#--twinflow_target_step_count",
         )
     )
@@ -442,7 +460,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Enable LayerSync self-alignment between two transformer blocks.",
             tooltip="Adds a cosine-similarity regularizer between student/teacher layers captured from the backbone.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=22,
+            order=23,
             documentation="OPTIONS.md#--layersync_enabled",
         )
     )
@@ -460,7 +478,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Block index to treat as the student for LayerSync (1-based depths accepted).",
             tooltip="Pick an earlier/weaker layer to receive guidance; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=23,
+            order=24,
             documentation="OPTIONS.md#--layersync_student_block",
         )
     )
@@ -478,7 +496,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Teacher block index; defaults to the student block when omitted (1-based depths accepted).",
             tooltip="Use a later/stronger layer to supervise the student; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=24,
+            order=25,
             documentation="OPTIONS.md#--layersync_teacher_block",
         )
     )
@@ -497,7 +515,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Strength multiplier for LayerSync alignment loss.",
             tooltip="Set >0 to activate LayerSync when enabled.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=25,
+            order=26,
             documentation="OPTIONS.md#--layersync_lambda",
         )
     )
