@@ -6,6 +6,7 @@ This module provides a small orchestration layer that:
 - loads a JSON training config (defaulting to config/config.json if present)
 - launches SimpleTuner training via run_trainer_job
 - packages the output directory for return to Cog callers
+- captures webhook events and prints them to Cog logs
 """
 
 from __future__ import annotations
@@ -14,13 +15,199 @@ import json
 import os
 import shutil
 import tarfile
+import threading
 import uuid
 import zipfile
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from simpletuner.helpers.configuration.loader import load_config
 from simpletuner.helpers.training.trainer import run_trainer_job
+
+
+class CogWebhookReceiver:
+    """
+    Local HTTP server that receives SimpleTuner webhook events and prints them
+    to stdout for Cog's log capture system.
+    """
+
+    def __init__(self, port: int = 0):
+        """
+        Initialize the webhook receiver.
+
+        Args:
+            port: Port to listen on. 0 means pick a free port automatically.
+        """
+        self._port = port
+        self._server: Optional[HTTPServer] = None
+        self._thread: Optional[threading.Thread] = None
+
+    @property
+    def port(self) -> int:
+        """Return the actual port the server is listening on."""
+        if self._server is None:
+            raise RuntimeError("Server not started")
+        return self._server.server_address[1]
+
+    @property
+    def url(self) -> str:
+        """Return the callback URL for SimpleTuner webhook config."""
+        return f"http://127.0.0.1:{self.port}/webhook"
+
+    def start(self) -> "CogWebhookReceiver":
+        """Start the webhook receiver server in a background thread."""
+        handler = self._create_handler()
+        self._server = HTTPServer(("127.0.0.1", self._port), handler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        print(f"[COG] Webhook receiver started on {self.url}")
+        return self
+
+    def stop(self) -> None:
+        """Stop the webhook receiver server."""
+        if self._server is not None:
+            self._server.shutdown()
+            self._server = None
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        print("[COG] Webhook receiver stopped")
+
+    def __enter__(self) -> "CogWebhookReceiver":
+        return self.start()
+
+    def __exit__(self, *_) -> None:
+        self.stop()
+
+    def _create_handler(self):
+        """Create the HTTP request handler class."""
+
+        class WebhookHandler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                # Suppress default HTTP logging
+                pass
+
+            def do_POST(self):
+                try:
+                    content_length = int(self.headers.get("Content-Length", 0))
+                    body = self.rfile.read(content_length)
+                    data = json.loads(body.decode("utf-8"))
+                    self._handle_event(data)
+                    self.send_response(200)
+                    self.end_headers()
+                except Exception as e:
+                    print(f"[COG] Webhook error: {e}")
+                    self.send_response(500)
+                    self.end_headers()
+
+            def do_GET(self):
+                # Health check endpoint
+                self.send_response(200)
+                self.end_headers()
+
+            def _handle_event(self, data: dict):
+                """Format and print the webhook event."""
+                event_type = data.get("type", "unknown")
+
+                if event_type == "lifecycle.stage":
+                    self._handle_lifecycle_stage(data)
+                elif event_type == "training.status":
+                    self._handle_training_status(data)
+                elif event_type == "training.checkpoint":
+                    self._handle_checkpoint(data)
+                elif event_type == "notification":
+                    self._handle_notification(data)
+                elif event_type == "error":
+                    self._handle_error(data)
+                else:
+                    # Generic fallback
+                    message = data.get("message", data.get("title", ""))
+                    if message:
+                        print(f"[EVENT] {event_type}: {message}")
+
+            def _handle_lifecycle_stage(self, data: dict):
+                """Handle lifecycle.stage events."""
+                stage = data.get("stage", {})
+                label = stage.get("label", stage.get("key", "unknown"))
+                status = stage.get("status", "")
+                message = data.get("message", "")
+
+                progress = stage.get("progress", {})
+                progress_str = ""
+                if progress.get("percent") is not None:
+                    progress_str = f" ({progress['percent']:.1f}%)"
+                elif progress.get("current") is not None and progress.get("total") is not None:
+                    progress_str = f" ({progress['current']}/{progress['total']})"
+
+                status_icon = {"running": "⏳", "completed": "✓", "failed": "✗"}.get(status, "•")
+
+                if message:
+                    print(f"[STAGE] {status_icon} {label}{progress_str}: {message}")
+                else:
+                    print(f"[STAGE] {status_icon} {label}{progress_str}")
+
+            def _handle_training_status(self, data: dict):
+                """Handle training.status events."""
+                status = data.get("status", "")
+                message = data.get("message", "")
+
+                step_info = ""
+                if "step" in data:
+                    step = data.get("step", 0)
+                    total_steps = data.get("total_steps", 0)
+                    if total_steps > 0:
+                        pct = (step / total_steps) * 100
+                        step_info = f"Step {step}/{total_steps} ({pct:.1f}%) "
+
+                if message:
+                    print(f"[TRAINING] {step_info}{message}")
+                elif status:
+                    print(f"[TRAINING] {step_info}Status: {status}")
+
+            def _handle_checkpoint(self, data: dict):
+                """Handle training.checkpoint events."""
+                label = data.get("label", "Checkpoint saved")
+                print(f"[CHECKPOINT] {label}")
+
+            def _handle_notification(self, data: dict):
+                """Handle notification events."""
+                message = data.get("message", "")
+                title = data.get("title", "")
+                severity = data.get("severity", "info")
+
+                prefix = {"error": "ERROR", "warning": "WARN", "info": "INFO", "debug": "DEBUG"}.get(severity, "INFO")
+
+                if title and message:
+                    print(f"[{prefix}] {title}: {message}")
+                elif message:
+                    print(f"[{prefix}] {message}")
+
+            def _handle_error(self, data: dict):
+                """Handle error events."""
+                message = data.get("message", "Unknown error")
+                title = data.get("title", "Error")
+                print(f"[ERROR] {title}: {message}")
+
+        return WebhookHandler
+
+    @staticmethod
+    def build_webhook_config(callback_url: str) -> Dict[str, Any]:
+        """
+        Build a SimpleTuner webhook config dict for the Cog receiver.
+
+        Args:
+            callback_url: The URL to receive webhook events.
+
+        Returns:
+            A webhook config dict suitable for SimpleTuner.
+        """
+        return {
+            "webhook_type": "raw",
+            "callback_url": callback_url,
+            "log_level": "info",
+            "message_prefix": "cog",
+        }
 
 
 class SimpleTunerCogRunner:
@@ -54,6 +241,7 @@ class SimpleTunerCogRunner:
         config_overrides: Optional[Dict[str, Any]] = None,
         max_train_steps: Optional[int] = None,
         job_id: Optional[str] = None,
+        webhook_config: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Stage data, build configs, and launch training via run_trainer_job.
 
@@ -81,6 +269,9 @@ class SimpleTunerCogRunner:
         merged_config.setdefault("--output_dir", str(output_dir))
         merged_config["--data_backend_config"] = str(dataset_config_path)
         merged_config["__job_id__"] = job
+
+        if webhook_config:
+            merged_config["webhook_config"] = webhook_config
 
         self._apply_hf_token(hf_token)
 
