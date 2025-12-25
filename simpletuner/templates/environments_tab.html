@@ -154,6 +154,10 @@ window.environmentsTabComponent = function environmentsTabComponent() {
          viewMode: safeGetPreferredViewMode(),
          configType: 'model',  // 'model', 'dataloader', 'webhook', or 'lycoris'
          createEnvironmentModal: false,
+         // Mobile dropdown states
+         mobilePanelMenuOpen: false,
+         mobileConfigMenuOpen: false,
+         mobileMoreMenuOpen: false,
         dataloaderConfigs: [],
         expandedEnvironments: {},
         dataloaderModal: {
@@ -1856,7 +1860,105 @@ window.environmentsTabComponent = function environmentsTabComponent() {
 
     <!-- Main Card -->
     <div class="card mb-4">
-        <div class="card-header">
+        <!-- Mobile Toolbar - visible only on mobile -->
+        <div class="env-mobile-toolbar">
+            <!-- Row 1: [Configs] [Model] ... [New] -->
+            <div class="env-mobile-toolbar-row">
+                <!-- Panel Dropdown -->
+                <div class="dropdown" @click.away="mobilePanelMenuOpen = false">
+                    <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" @click.stop="mobilePanelMenuOpen = !mobilePanelMenuOpen; mobileConfigMenuOpen = false; mobileMoreMenuOpen = false">
+                        <i class="fas" :class="activePanel === 'configs' ? 'fa-folder' : activePanel === 'filters' ? 'fa-filter' : 'fa-book'"></i>
+                        <span class="env-mobile-dropdown-label" x-text="activePanel === 'configs' ? 'Configs' : activePanel === 'filters' ? 'Filters' : 'Prompts'"></span>
+                    </button>
+                    <div class="dropdown-menu" :class="{ 'show': mobilePanelMenuOpen }">
+                        <button class="dropdown-item" :class="{ 'active': activePanel === 'configs' }" @click="switchPanel('configs'); mobilePanelMenuOpen = false">
+                            <i class="fas fa-folder me-2"></i>Configurations
+                        </button>
+                        <button class="dropdown-item" :class="{ 'active': activePanel === 'filters' }" @click="switchPanel('filters'); mobilePanelMenuOpen = false">
+                            <i class="fas fa-filter me-2"></i>Caption Filters
+                        </button>
+                        <button class="dropdown-item" :class="{ 'active': activePanel === 'promptLibraries' }" @click="switchPanel('promptLibraries'); mobilePanelMenuOpen = false">
+                            <i class="fas fa-book me-2"></i>Prompt Libraries
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Config Type Dropdown (only when in configs panel) -->
+                <div class="dropdown" x-show="activePanel === 'configs'" @click.away="mobileConfigMenuOpen = false">
+                    <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" @click.stop="mobileConfigMenuOpen = !mobileConfigMenuOpen; mobilePanelMenuOpen = false; mobileMoreMenuOpen = false">
+                        <i class="fas" :class="configType === 'model' ? 'fa-cog' : configType === 'dataloader' ? 'fa-database' : configType === 'webhook' ? 'fa-plug' : 'fa-brain'"></i>
+                        <span class="env-mobile-dropdown-label" x-text="configType === 'model' ? 'Model' : configType === 'dataloader' ? 'Data' : configType === 'webhook' ? 'Hook' : 'LyCORIS'"></span>
+                    </button>
+                    <div class="dropdown-menu" :class="{ 'show': mobileConfigMenuOpen }">
+                        <button class="dropdown-item" :class="{ 'active': configType === 'model' }" @click="switchConfigType('model'); mobileConfigMenuOpen = false">
+                            <i class="fas fa-cog me-2"></i>Model Configs
+                        </button>
+                        <button class="dropdown-item" :class="{ 'active': configType === 'dataloader' }" @click="switchConfigType('dataloader'); mobileConfigMenuOpen = false">
+                            <i class="fas fa-database me-2"></i>Dataloader Configs
+                        </button>
+                        <button class="dropdown-item" :class="{ 'active': configType === 'webhook' }" @click="switchConfigType('webhook'); mobileConfigMenuOpen = false">
+                            <i class="fas fa-plug me-2"></i>Webhook Configs
+                        </button>
+                        <button class="dropdown-item" :class="{ 'active': configType === 'lycoris' }" @click="switchConfigType('lycoris'); mobileConfigMenuOpen = false">
+                            <i class="fas fa-brain me-2"></i>LyCORIS Configs
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Spacer -->
+                <div class="flex-grow-1"></div>
+
+                <!-- New Button - pushed right -->
+                <button type="button" class="btn btn-sm btn-success" x-show="activePanel === 'configs' && configType === 'model'" @click="openCreateEnvironmentModal()" title="New Environment">
+                    <i class="fas fa-plus me-1"></i>New
+                </button>
+                <button type="button" class="btn btn-sm btn-success" x-show="activePanel === 'configs' && configType === 'lycoris'" @click="openLycorisLibraryCreator()" title="New LyCORIS">
+                    <i class="fas fa-plus me-1"></i>New
+                </button>
+                <button type="button" class="btn btn-sm btn-success" x-show="activePanel === 'filters'" @click="openFilterEditor()" title="New Filter">
+                    <i class="fas fa-plus me-1"></i>New
+                </button>
+            </div>
+
+            <!-- Row 2: [Search] ... [grid|list] [hamburger] -->
+            <div class="env-mobile-toolbar-row env-mobile-toolbar-row-2">
+                <!-- Search -->
+                <div class="env-mobile-search">
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" placeholder="Search..." x-model="searchTerm">
+                        <span class="input-group-text"><i class="fas fa-search"></i></span>
+                    </div>
+                </div>
+
+                <!-- View Toggle -->
+                <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn" :class="viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary'" @click="setViewMode('cards')" title="Card view">
+                        <i class="fas fa-th-large"></i>
+                    </button>
+                    <button type="button" class="btn" :class="viewMode === 'list' ? 'btn-primary' : 'btn-outline-secondary'" @click="setViewMode('list')" title="List view">
+                        <i class="fas fa-list"></i>
+                    </button>
+                </div>
+
+                <!-- More Actions Dropdown -->
+                <div class="dropdown" @click.away="mobileMoreMenuOpen = false">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @click.stop="mobileMoreMenuOpen = !mobileMoreMenuOpen; mobilePanelMenuOpen = false; mobileConfigMenuOpen = false" title="More actions">
+                        <i class="fas fa-ellipsis-v"></i>
+                    </button>
+                    <div class="dropdown-menu dropdown-menu-end" :class="{ 'show': mobileMoreMenuOpen }">
+                        <button class="dropdown-item" @click="document.getElementById('import-file').click(); mobileMoreMenuOpen = false">
+                            <i class="fas fa-upload me-2"></i>Import
+                        </button>
+                        <button class="dropdown-item text-danger" @click="deleteSelected(); mobileMoreMenuOpen = false" :disabled="selectedConfigs.length === 0">
+                            <i class="fas fa-trash me-2"></i>Delete Selected
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Desktop Card Header - hidden on mobile -->
+        <div class="card-header env-desktop-only">
             <h5 class="mb-1"><i class="fas fa-folder-open me-2"></i>Configuration Environments</h5>
             <p class="text-muted mb-3">Manage training configurations and caption filters</p>
 
@@ -1866,22 +1968,22 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 <button type="button" class="btn btn-sm"
                         :class="activePanel === 'configs' ? 'btn-primary' : 'btn-outline-secondary'"
                         @click="switchPanel('configs')">
-                    <i class="fas fa-folder"></i> Configurations
+                    <i class="fas fa-folder me-1"></i>Configurations
                 </button>
                 <button type="button" class="btn btn-sm"
                         :class="activePanel === 'filters' ? 'btn-primary' : 'btn-outline-secondary'"
                         @click="switchPanel('filters')">
-                    <i class="fas fa-filter"></i> Caption Filters
+                    <i class="fas fa-filter me-1"></i>Caption Filters
                 </button>
                 <button type="button" class="btn btn-sm"
                         :class="activePanel === 'promptLibraries' ? 'btn-primary' : 'btn-outline-secondary'"
                         @click="switchPanel('promptLibraries')">
-                    <i class="fas fa-book"></i> Validation Prompt Libraries
+                    <i class="fas fa-book me-1"></i>Prompt Libraries
                 </button>
             </div>
                 <div x-show="activePanel === 'filters'">
-                    <button type="button" class="btn btn-sm btn-success" @click="openFilterEditor()">
-                        <i class="fas fa-plus"></i> New Filter
+                    <button type="button" class="btn btn-sm btn-success" @click="openFilterEditor()" title="New Filter" aria-label="New Filter">
+                        <i class="fas fa-plus"></i><span class="btn-text"> New Filter</span>
                     </button>
                 </div>
             </div>
@@ -1889,32 +1991,32 @@ window.environmentsTabComponent = function environmentsTabComponent() {
 
         <div class="card-body">
     <div x-show="activePanel === 'configs'">
-    <!-- Config Type Tabs -->
-    <div class="btn-group mb-3" role="group">
+    <!-- Config Type Tabs - desktop only -->
+    <div class="btn-group mb-3 env-desktop-only" role="group">
         <button type="button" class="btn"
                 :class="configType === 'model' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="switchConfigType('model')">
-            <i class="fas fa-cog"></i> Model Configs
+            <i class="fas fa-cog me-1"></i>Model
         </button>
         <button type="button" class="btn"
                 :class="configType === 'dataloader' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="switchConfigType('dataloader')">
-            <i class="fas fa-database"></i> Dataloader Configs
+            <i class="fas fa-database me-1"></i>Dataloader
         </button>
         <button type="button" class="btn"
                 :class="configType === 'webhook' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="switchConfigType('webhook')">
-            <i class="fas fa-webhook"></i> Webhook Configs
+            <i class="fas fa-plug me-1"></i>Webhook
         </button>
         <button type="button" class="btn"
                 :class="configType === 'lycoris' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="switchConfigType('lycoris')">
-            <i class="fas fa-brain"></i> LyCORIS Configs
+            <i class="fas fa-brain me-1"></i>LyCORIS
         </button>
     </div>
 
-    <!-- Header -->
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <!-- Header - desktop only -->
+    <div class="d-flex justify-content-between align-items-center mb-4 env-desktop-only">
         <h5>
             <i class="fas fa-folder-open"></i>
             <span x-text="configType === 'lycoris' ? 'LyCORIS Configuration Library' : 'Configuration Environments'"></span>
@@ -1937,13 +2039,17 @@ window.environmentsTabComponent = function environmentsTabComponent() {
                 <button type="button"
                         class="btn"
                         :class="viewMode === 'cards' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="setViewMode('cards')">
+                        @click="setViewMode('cards')"
+                        title="Card view"
+                        aria-label="Card view">
                     <i class="fas fa-th-large"></i>
                 </button>
                 <button type="button"
                         class="btn"
                         :class="viewMode === 'list' ? 'btn-primary' : 'btn-outline-secondary'"
-                        @click="setViewMode('list')">
+                        @click="setViewMode('list')"
+                        title="List view"
+                        aria-label="List view">
                     <i class="fas fa-list"></i>
                 </button>
             </div>
@@ -1952,19 +2058,25 @@ window.environmentsTabComponent = function environmentsTabComponent() {
             <button type="button"
                     class="btn btn-sm btn-success"
                     x-show="configType === 'model'"
-                    @click="openCreateEnvironmentModal()">
-                <i class="fas fa-plus"></i> Create Environment
+                    @click="openCreateEnvironmentModal()"
+                    title="Create Environment"
+                    aria-label="Create Environment">
+                <i class="fas fa-plus"></i><span class="btn-text"> New</span>
             </button>
             <button type="button"
                     class="btn btn-sm btn-success"
                     x-show="configType === 'lycoris'"
-                    @click="openLycorisLibraryCreator()">
-                <i class="fas fa-plus"></i> New LyCORIS Config
+                    @click="openLycorisLibraryCreator()"
+                    title="New LyCORIS Config"
+                    aria-label="New LyCORIS Config">
+                <i class="fas fa-plus"></i><span class="btn-text"> New</span>
             </button>
             <button type="button"
                     class="btn btn-sm btn-primary"
-                    onclick="document.getElementById('import-file').click()">
-                <i class="fas fa-upload"></i> Import
+                    onclick="document.getElementById('import-file').click()"
+                    title="Import configuration"
+                    aria-label="Import configuration">
+                <i class="fas fa-upload"></i><span class="btn-text"> Import</span>
             </button>
             <input type="file"
                    id="import-file"
@@ -1975,8 +2087,10 @@ window.environmentsTabComponent = function environmentsTabComponent() {
             <button type="button"
                     class="btn btn-sm btn-danger"
                     @click="deleteSelected()"
-                    :disabled="selectedConfigs.length === 0">
-                <i class="fas fa-trash"></i> Delete Selected
+                    :disabled="selectedConfigs.length === 0"
+                    title="Delete selected"
+                    aria-label="Delete selected">
+                <i class="fas fa-trash"></i><span class="btn-text"> Delete</span>
             </button>
         </div>
     </div>
@@ -3253,9 +3367,91 @@ window.environmentsTabComponent = function environmentsTabComponent() {
 }
 
 @media (max-width: 768px) {
-    .lycoris-modal-backdrop .modal-dialog {
-        max-width: 95vw;
-        max-height: 95vh;
+    /* Environment modals - fullscreen on mobile */
+    .environment-modal-backdrop {
+        padding: 0 !important;
+        align-items: stretch !important;
+    }
+
+    .environment-modal-backdrop .modal-dialog {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100vh !important;
+        max-height: 100vh !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+    }
+
+    .environment-modal-backdrop .modal-header {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 10 !important;
+        flex-shrink: 0 !important;
+        border-radius: 0 !important;
+        padding: 0.75rem 1rem !important;
+        background: #1c1f2e !important;
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+    }
+
+    .environment-modal-backdrop .modal-header .btn-close {
+        filter: invert(1) !important;
+        opacity: 0.8 !important;
+    }
+
+    /* Handle both direct form and form inside wrapper div */
+    .environment-modal-backdrop .modal-dialog > form,
+    .environment-modal-backdrop .modal-dialog > div:not(.modal-header):not(.modal-footer) {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    .environment-modal-backdrop .modal-dialog > div:not(.modal-header):not(.modal-footer) form {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    .environment-modal-backdrop .modal-body {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch;
+        padding: 0.75rem !important;
+        padding-top: 1rem !important;
+        padding-bottom: 16rem !important;
+    }
+
+    .environment-modal-backdrop .modal-footer {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        z-index: 100000 !important;
+        border-radius: 0 !important;
+        padding: 0.75rem 1rem !important;
+        background: #1c1f2e !important;
+        border-top: 1px solid rgba(255,255,255,0.1) !important;
+    }
+
+    .environment-modal-backdrop .card {
+        margin-bottom: 0.75rem !important;
+    }
+
+    .environment-modal-backdrop .card-header,
+    .environment-modal-backdrop .card-body {
+        padding: 0.75rem !important;
     }
 }
 </style>
