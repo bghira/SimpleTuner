@@ -235,9 +235,10 @@ class SimpleTunerCogRunner:
     def run(
         self,
         *,
-        dataset_archive: Path,
+        dataset_archive: Optional[Path] = None,
         hf_token: Optional[str] = None,
         base_config_path: Optional[Path] = None,
+        dataloader_config_path: Optional[Path] = None,
         config_overrides: Optional[Dict[str, Any]] = None,
         max_train_steps: Optional[int] = None,
         job_id: Optional[str] = None,
@@ -245,16 +246,19 @@ class SimpleTunerCogRunner:
     ) -> Dict[str, Any]:
         """Stage data, build configs, and launch training via run_trainer_job.
 
+        Args:
+            dataset_archive: Zip/tar of training images. Not required if dataloader_config_path is provided.
+            dataloader_config_path: User-provided multidatabackend config. If not provided, one is auto-generated.
+
         Returns a result dict containing:
         - job_id
-        - dataset_dir
+        - dataset_dir (None if using user-provided dataloader config)
         - output_dir
         - dataset_config_path
         - training_result (whatever run_trainer_job returns)
         """
 
         job = job_id or self._new_job_id()
-        dataset_dir = self._stage_dataset(dataset_archive, job)
 
         base_config = self._load_base_config(base_config_path)
         merged_config = dict(base_config)
@@ -264,7 +268,18 @@ class SimpleTunerCogRunner:
             merged_config["--max_train_steps"] = max_train_steps
 
         output_dir = self.output_root / job
-        dataset_config_path = self._write_dataset_config(job, dataset_dir, merged_config, output_dir)
+
+        # Use provided dataloader config, or auto-generate one from the images archive
+        dataset_dir = None
+        if dataloader_config_path:
+            dataset_config_path = Path(dataloader_config_path)
+            if not dataset_config_path.exists():
+                raise FileNotFoundError(f"Dataloader config not found: {dataloader_config_path}")
+        else:
+            if not dataset_archive:
+                raise ValueError("Either dataset_archive or dataloader_config_path must be provided.")
+            dataset_dir = self._stage_dataset(dataset_archive, job)
+            dataset_config_path = self._write_dataset_config(job, dataset_dir, merged_config, output_dir)
 
         merged_config.setdefault("--output_dir", str(output_dir))
         merged_config["--data_backend_config"] = str(dataset_config_path)
@@ -279,7 +294,7 @@ class SimpleTunerCogRunner:
 
         return {
             "job_id": job,
-            "dataset_dir": str(dataset_dir),
+            "dataset_dir": str(dataset_dir) if dataset_dir else None,
             "output_dir": str(output_dir),
             "dataset_config_path": str(dataset_config_path),
             "training_result": training_result,
