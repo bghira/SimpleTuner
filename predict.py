@@ -1,6 +1,7 @@
 """Cog predictor entrypoint using the SimpleTuner trainer directly."""
 
 import json
+import os
 import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -137,8 +138,16 @@ class Predictor(BasePredictor):
         if hub_model_id:
             if not token_value:
                 raise ValueError("hf_token is required when using hub_model_id for HuggingFace Hub publishing.")
+            # Strip any URL prefix from hub_model_id (Replicate's proxy can add prefixes)
+            clean_hub_model_id = hub_model_id
+            for prefix in ["https://huggingface.co/", "http://huggingface.co/", "huggingface.co/"]:
+                if clean_hub_model_id.startswith(prefix):
+                    clean_hub_model_id = clean_hub_model_id[len(prefix):]
+                    break
+            # Override HF_ENDPOINT to bypass Replicate's proxy for Hub uploads
+            os.environ["HF_ENDPOINT"] = "https://huggingface.co"
             config_overrides["--push_to_hub"] = True
-            config_overrides["--hub_model_id"] = hub_model_id
+            config_overrides["--hub_model_id"] = clean_hub_model_id
             config_overrides["--push_checkpoints_to_hub"] = True
 
         # Start the webhook receiver to capture training events in Cog logs
