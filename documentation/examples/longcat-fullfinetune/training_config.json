@@ -1,0 +1,59 @@
+{
+  "_comment": "LongCat Video Full Finetune - 8x A100 80GB / 8x H200",
+
+  "model_type": "full",
+  "model_family": "longcat_video",
+  "model_flavour": "final",
+  "pretrained_model_name_or_path": null,
+
+  "base_model_precision": "bf16",
+  "attention_implementation": "sdpa",
+
+  "output_dir": "output/longcat-fullfinetune",
+  "data_backend_config": "documentation/examples/longcat-fullfinetune/databackend.json",
+
+  "train_batch_size": 1,
+  "gradient_accumulation_steps": 4,
+  "gradient_checkpointing": true,
+
+  "learning_rate": 1e-5,
+  "lr_scheduler": "cosine",
+  "lr_warmup_steps": 500,
+  "max_train_steps": 30000,
+  "checkpointing_steps": 2500,
+  "checkpoints_total_limit": 5,
+
+  "optimizer": "adamw_bf16",
+  "adam_beta1": 0.9,
+  "adam_beta2": 0.999,
+  "adam_weight_decay": 0.01,
+  "adam_epsilon": 1e-8,
+  "max_grad_norm": 1.0,
+
+  "fsdp_enable": true,
+  "fsdp_version": 2,
+  "fsdp_state_dict_type": "SHARDED_STATE_DICT",
+  "fsdp_auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+  "fsdp_cpu_ram_efficient_loading": true,
+
+  "validation_prompt": "A professional video showing the main subject in high quality, smooth motion, natural lighting",
+  "validation_negative_prompt": "",
+  "validation_resolution": "480x832",
+  "validation_num_video_frames": 93,
+  "validation_num_inference_steps": 40,
+  "validation_guidance": 4.0,
+  "validation_every_n_steps": 2500,
+  "num_validation_videos": 2,
+
+  "seed": 42,
+  "mixed_precision": "bf16",
+  "report_to": "tensorboard",
+  "logging_dir": "logs/longcat-fullfinetune",
+
+  "dataloader_num_workers": 4,
+  "allow_tf32": true,
+
+  "_comment_vram": "Para economizar VRAM se necessário, descomente as opções abaixo",
+  "_musubi_blocks_to_swap": 4,
+  "_musubi_block_swap_device": "cpu"
+}
