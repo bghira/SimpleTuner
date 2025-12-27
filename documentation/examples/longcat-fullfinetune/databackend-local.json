@@ -1,0 +1,42 @@
+[
+  {
+    "_comment": "Use esta configuração se você baixou os vídeos localmente",
+
+    "id": "longcat-video-dataset",
+    "type": "local",
+    "dataset_type": "video",
+
+    "instance_data_dir": "/mnt/nvme/data/videos",
+
+    "caption_strategy": "textfile",
+
+    "resolution": 480,
+    "resolution_type": "pixel_area",
+    "minimum_image_size": 256,
+    "maximum_image_size": 1024,
+
+    "crop": true,
+    "crop_style": "center",
+    "crop_aspect": "preserve",
+
+    "cache_dir_vae": "/mnt/nvme/cache/vae/longcat",
+    "preserve_data_backend_cache": true,
+
+    "video": {
+      "bucket_strategy": "aspect_ratio",
+      "min_frames": 93,
+      "max_frames": 93,
+      "frame_interval": 4
+    },
+
+    "repeats": 0
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "/mnt/nvme/cache/text/longcat",
+    "write_batch_size": 128
+  }
+]

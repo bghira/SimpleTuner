@@ -1,0 +1,47 @@
+[
+  {
+    "id": "longcat-video-dataset",
+    "type": "aws",
+    "dataset_type": "video",
+
+    "aws_bucket_name": "YOUR_BUCKET_NAME",
+    "aws_region_name": "us-east-1",
+    "aws_endpoint_url": null,
+    "aws_access_key_id": "YOUR_ACCESS_KEY",
+    "aws_secret_access_key": "YOUR_SECRET_KEY",
+    "aws_data_prefix": "",
+
+    "caption_strategy": "textfile",
+    "instance_data_dir": "",
+
+    "resolution": 480,
+    "resolution_type": "pixel_area",
+    "minimum_image_size": 256,
+    "maximum_image_size": 1024,
+
+    "crop": true,
+    "crop_style": "center",
+    "crop_aspect": "preserve",
+
+    "cache_dir_vae": "/mnt/nvme/cache/vae/longcat",
+    "preserve_data_backend_cache": true,
+
+    "video": {
+      "bucket_strategy": "aspect_ratio",
+      "min_frames": 93,
+      "max_frames": 93,
+      "frame_interval": 4
+    },
+
+    "repeats": 0,
+    "skip_file_discovery": ""
+  },
+  {
+    "id": "text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "/mnt/nvme/cache/text/longcat",
+    "write_batch_size": 128
+  }
+]
