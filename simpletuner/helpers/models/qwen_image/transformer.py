@@ -441,22 +441,28 @@ class QwenEmbedRope(nn.Module):
     def forward(
         self,
         video_fhw: Union[Tuple[int, int, int], List[Tuple[int, int, int]]],
-        max_txt_seq_len: Union[int, torch.Tensor],
+        txt_seq_lens: Union[int, torch.Tensor, List[int]],
         device: torch.device = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             video_fhw (`Tuple[int, int, int]` or `List[Tuple[int, int, int]]`):
                 A list of 3 integers [frame, height, width] representing the shape of the video.
-            max_txt_seq_len (`int` or `torch.Tensor`):
-                The maximum text sequence length for RoPE computation. This should match the encoder hidden states
-                sequence length. Can be either an int or a scalar tensor (for torch.compile compatibility).
+            txt_seq_lens (`int`, `torch.Tensor`, or `List[int]`):
+                The text sequence length(s) for RoPE computation. If a list is provided, the maximum
+                value is used. Can be an int, list of ints, or scalar tensor (for torch.compile).
             device: (`torch.device`, *optional*):
                 The device on which to perform the RoPE computation.
         """
         # Move to device unconditionally to avoid graph breaks in torch.compile
         self.pos_freqs = self.pos_freqs.to(device)
         self.neg_freqs = self.neg_freqs.to(device)
+
+        # Compute max text sequence length
+        if isinstance(txt_seq_lens, list):
+            max_txt_seq_len = max(txt_seq_lens)
+        else:
+            max_txt_seq_len = txt_seq_lens
 
         if isinstance(video_fhw, list):
             video_fhw = video_fhw[0]
@@ -471,10 +477,10 @@ class QwenEmbedRope(nn.Module):
 
             if not torch.compiler.is_compiling():
                 if rope_key not in self.rope_cache:
-                    self.rope_cache[rope_key] = self._compute_video_freqs(frame, height, width, idx, device)
+                    self.rope_cache[rope_key] = self._compute_video_freqs(frame, height, width, idx)
                 video_freq = self.rope_cache[rope_key]
             else:
-                video_freq = self._compute_video_freqs(frame, height, width, idx, device)
+                video_freq = self._compute_video_freqs(frame, height, width, idx)
             video_freq = video_freq.to(device)
             vid_freqs.append(video_freq)
 
@@ -1061,7 +1067,7 @@ class QwenImageTransformer2DModel(
             else self.time_text_embed(timestep, guidance, hidden_states, timestep_sign=timestep_sign)
         )
 
-        image_rotary_emb = self.pos_embed(img_shapes, max_txt_seq_len=text_seq_len, device=hidden_states.device)
+        image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens=text_seq_len, device=hidden_states.device)
 
         # TREAD initialization
         routes = self._tread_routes or []
