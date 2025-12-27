@@ -90,7 +90,7 @@ COPY scripts/ /workspace/scripts/
 COPY configs/ ${CONFIG_DIR}/
 
 # Torna scripts executáveis
-RUN chmod +x /workspace/scripts/*.sh /workspace/scripts/*.py
+RUN find /workspace/scripts -type f \( -name "*.sh" -o -name "*.py" \) -exec chmod +x {} \;
 
 # Script de entrada
 COPY entrypoint.sh /entrypoint.sh
