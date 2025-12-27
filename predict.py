@@ -93,6 +93,10 @@ class Predictor(BasePredictor):
             description="Hugging Face token for model downloads and Hub publishing.",
             default=None,
         ),
+        lycoris_config: str = Input(
+            description="LyCORIS config: either a JSON string or path to lycoris_config.json. Required when lora_type is 'lycoris'.",
+            default=None,
+        ),
         return_logs: bool = Input(
             description="Print the tail of debug.log to Cog output.",
             default=True,
@@ -115,8 +119,25 @@ class Predictor(BasePredictor):
         if dataloader_json:
             dataloader_path, dataloader_dict = self._parse_json_or_path(dataloader_json, "dataloader_json")
 
+        # Parse lycoris_config - can be JSON string or file path
+        lycoris_config_path = None
+        if lycoris_config:
+            lycoris_path, lycoris_dict = self._parse_json_or_path(lycoris_config, "lycoris_config")
+            if lycoris_dict is not None:
+                # Write inline JSON to disk
+                lycoris_config_path = pathlib.Path("config") / "cog" / "lycoris_config.json"
+                lycoris_config_path.parent.mkdir(parents=True, exist_ok=True)
+                with lycoris_config_path.open("w", encoding="utf-8") as handle:
+                    json.dump(lycoris_dict, handle, indent=2)
+            else:
+                lycoris_config_path = lycoris_path
+
         # Build config overrides for publishing
         config_overrides: Dict[str, Any] = {}
+
+        # LyCORIS config
+        if lycoris_config_path:
+            config_overrides["--lycoris_config"] = str(lycoris_config_path)
 
         # S3 publishing config
         publishing_config: Optional[List[Dict[str, Any]]] = None
