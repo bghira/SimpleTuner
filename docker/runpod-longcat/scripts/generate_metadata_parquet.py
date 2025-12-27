@@ -170,8 +170,9 @@ def main():
     print(f"  Frames médios: {df['num_frames'].mean():.0f}")
     print(f"  FPS médio: {df['fps'].mean():.1f}")
 
-    # Filtra vídeos muito curtos ou com problemas
-    min_frames = 93  # Mínimo para LongCat
+    # Filtra vídeos corrompidos ou muito curtos (< 10 frames)
+    # Nota: com amostragem uniforme no VAE cache, vídeos com FPS variado são aceitos
+    min_frames = 10  # Mínimo para filtrar arquivos corrompidos
     df_valid = df[df["num_frames"] >= min_frames].copy()
     print(f"  Vídeos válidos (>= {min_frames} frames): {len(df_valid)}")
 

@@ -200,8 +200,8 @@ if [ "$USE_PARQUET" = "true" ] && [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
 
     "video": {
       "bucket_strategy": "aspect_ratio",
-      "min_frames": 93,
-      "max_frames": 93,
+      "min_frames": 1,
+      "max_frames": 500,
       "frame_interval": 4
     },
 
@@ -250,8 +250,8 @@ else
 
     "video": {
       "bucket_strategy": "aspect_ratio",
-      "min_frames": 93,
-      "max_frames": 93,
+      "min_frames": 1,
+      "max_frames": 500,
       "frame_interval": 4
     },
 
