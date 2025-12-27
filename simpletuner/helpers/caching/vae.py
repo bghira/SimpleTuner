@@ -520,7 +520,15 @@ class VAECache(WebhookMixin):
 
             num_frames = samples.shape[2]
             if self.num_video_frames is not None and self.num_video_frames != num_frames:
-                samples = samples[:, :, : self.num_video_frames, :, :]
+                if num_frames > self.num_video_frames:
+                    # Uniform sampling: extract evenly-spaced frames across the entire video.
+                    # This normalizes perceived duration across different FPS sources
+                    # (e.g., 5s@60fps and 5s@30fps both result in 5s of content).
+                    indices = torch.linspace(0, num_frames - 1, self.num_video_frames).long()
+                    samples = samples[:, :, indices, :, :]
+                else:
+                    # Fewer frames than target - use what we have
+                    samples = samples[:, :, : self.num_video_frames, :, :]
 
             spatial_ratio = getattr(self.vae, "spatial_compression_ratio", None)
             if spatial_ratio and spatial_ratio > 1:
