@@ -40,6 +40,27 @@ fi
 echo "  [OK] AWS credentials configured"
 
 # -----------------------------------------------------------------------------
+# 1.5. Update SimpleTuner code (get latest fixes)
+# -----------------------------------------------------------------------------
+echo "[1.5/6] Updating SimpleTuner code..."
+
+# Allow skipping update with SKIP_CODE_UPDATE=true
+if [ "${SKIP_CODE_UPDATE}" != "true" ]; then
+    if [ -d "${SIMPLETUNER_DIR}/.git" ]; then
+        cd "${SIMPLETUNER_DIR}"
+        # Fetch and pull latest changes from main branch
+        git fetch origin main --quiet 2>/dev/null || true
+        git reset --hard origin/main --quiet 2>/dev/null || true
+        echo "  [OK] SimpleTuner updated to latest version"
+        cd /workspace
+    else
+        echo "  [WARN] SimpleTuner .git directory not found, skipping update"
+    fi
+else
+    echo "  [SKIP] Code update disabled (SKIP_CODE_UPDATE=true)"
+fi
+
+# -----------------------------------------------------------------------------
 # 2. Set default values for optional variables
 # -----------------------------------------------------------------------------
 echo "[2/6] Applying configuration..."
