@@ -73,6 +73,9 @@ export CACHE_DIR="${CACHE_DIR:-/workspace/cache}"
 export OUTPUT_DIR="${OUTPUT_DIR:-/workspace/output}"
 export SIMPLETUNER_DIR="${SIMPLETUNER_DIR:-/workspace/SimpleTuner}"
 
+# Set CONFIG_PATH for SimpleTuner to find the configuration file
+export CONFIG_PATH="${CONFIG_DIR}/config.json"
+
 echo "  [OK] Bucket: $AWS_BUCKET_NAME"
 echo "  [OK] Region: $AWS_REGION"
 echo "  [OK] Prefix: ${AWS_DATA_PREFIX:-<bucket root>}"
@@ -83,6 +86,7 @@ echo "  [OK] Max Steps: $MAX_TRAIN_STEPS"
 echo "  [OK] GPUs: $NUM_GPUS"
 echo "  [OK] Use Parquet: $USE_PARQUET"
 echo "  [OK] Auto Start: $AUTO_START_TRAINING"
+echo "  [OK] Config Path: $CONFIG_PATH"
 
 # -----------------------------------------------------------------------------
 # 3. Generate configuration files
@@ -98,8 +102,8 @@ else
     LORA_CONFIG=""
 fi
 
-# Generate training_config.json
-cat > "${CONFIG_DIR}/training_config.json" << EOF
+# Generate config.json (SimpleTuner configuration)
+cat > "${CONFIG_DIR}/config.json" << EOF
 {
   "model_type": "${EFFECTIVE_MODEL_TYPE}",
   "model_family": "longcat_video",
@@ -156,7 +160,7 @@ cat > "${CONFIG_DIR}/training_config.json" << EOF
 }
 EOF
 
-echo "  [OK] training_config.json generated"
+echo "  [OK] config.json generated"
 
 # Generate databackend.json
 if [ "$USE_PARQUET" = "true" ] && [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
@@ -311,6 +315,9 @@ export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512"
 export NCCL_P2P_DISABLE=0
 export NCCL_IB_DISABLE=0
 
+# Set CONFIG_PATH for SimpleTuner to find the configuration file
+export CONFIG_PATH="${CONFIG_DIR}/config.json"
+
 # Detect NVLink
 if nvidia-smi topo -m 2>/dev/null | grep -q "NV"; then
     echo "NVLink detected"
@@ -318,6 +325,7 @@ if nvidia-smi topo -m 2>/dev/null | grep -q "NV"; then
 fi
 
 echo "Starting with ${NUM_GPUS} GPUs..."
+echo "Config: ${CONFIG_PATH}"
 echo ""
 
 accelerate launch \
@@ -325,7 +333,6 @@ accelerate launch \
     --mixed_precision=bf16 \
     --dynamo_backend=no \
     -m simpletuner.train \
-    --config "${CONFIG_DIR}/training_config.json" \
     "$@"
 SCRIPT
 chmod +x /workspace/start_training.sh
@@ -399,7 +406,7 @@ else
     echo "    3. Monitor: /workspace/monitor.sh"
     echo ""
     echo "  Configuration files:"
-    echo "    - ${CONFIG_DIR}/training_config.json"
+    echo "    - ${CONFIG_DIR}/config.json"
     echo "    - ${CONFIG_DIR}/databackend.json"
     echo ""
     echo "  Directories:"

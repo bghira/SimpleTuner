@@ -194,7 +194,7 @@ First, check that everything is set up correctly:
 
 ```bash
 # View the generated training configuration
-cat /workspace/config/training_config.json
+cat /workspace/config/config.json
 
 # View the data backend configuration
 cat /workspace/config/databackend.json
@@ -331,7 +331,7 @@ After the pod starts, you'll find:
 /workspace/
 ├── SimpleTuner/              # SimpleTuner source code
 ├── config/                   # Generated configurations
-│   ├── training_config.json  # Training hyperparameters
+│   ├── config.json           # Training hyperparameters
 │   ├── databackend.json      # Dataset configuration
 │   └── metadata.parquet      # (if generated)
 ├── cache/
