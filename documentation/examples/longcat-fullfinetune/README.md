@@ -201,8 +201,8 @@ Para um domínio muito diferente do pré-treino:
 
 ```json
 {
-  "validation_every_n_steps": 1000,
-  "num_validation_videos": 4
+  "validation_step_interval": 1000,
+  "num_validation_images": 4
 }
 ```
 

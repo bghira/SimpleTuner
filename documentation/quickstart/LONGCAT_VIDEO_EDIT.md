@@ -53,7 +53,7 @@ Fill in `model_family`, `model_flavour`, `output_dir`, `data_backend_config`, an
 
 CUDA attention options:
 - On CUDA, LongCat‑Video automatically prefers the bundled block‑sparse Triton kernel when present and falls back to the standard dispatcher otherwise. No manual toggle is required.
-- To force xFormers instead, set `attention_implementation: "xformers"` in your config/CLI.
+- To force xFormers instead, set `attention_mechanism: "xformers"` in your config/CLI.
 
 ---
 

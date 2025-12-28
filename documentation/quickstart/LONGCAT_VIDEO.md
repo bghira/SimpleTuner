@@ -66,7 +66,7 @@ Optional VRAM savers:
 - Reduce `lora_rank` (4–8) and use `int8-quanto` base precision.
 - Enable group offload: `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`.
 - Lower `validation_resolution`, frames, or steps first if previews OOM.
-- Attention defaults: on CUDA, LongCat‑Video will automatically use the bundled block‑sparse Triton kernel when it’s available and fall back to the standard dispatcher otherwise. No toggle needed. If you specifically want xFormers, set `attention_implementation: "xformers"` in your config/CLI.
+- Attention defaults: on CUDA, LongCat‑Video will automatically use the bundled block‑sparse Triton kernel when it's available and fall back to the standard dispatcher otherwise. No toggle needed. If you specifically want xFormers, set `attention_mechanism: "xformers"` in your config/CLI.
 
 ### Start training (CLI)
 ```bash

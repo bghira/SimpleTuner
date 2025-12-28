@@ -7,7 +7,7 @@
   "pretrained_model_name_or_path": null,
 
   "base_model_precision": "bf16",
-  "attention_implementation": "sdpa",
+  "attention_mechanism": "diffusers",
 
   "output_dir": "output/longcat-fullfinetune",
   "data_backend_config": "documentation/examples/longcat-fullfinetune/databackend.json",
@@ -42,16 +42,15 @@
   "validation_num_video_frames": 93,
   "validation_num_inference_steps": 40,
   "validation_guidance": 4.0,
-  "validation_every_n_steps": 2500,
-  "num_validation_videos": 2,
+  "validation_step_interval": 2500,
+  "num_validation_images": 2,
 
   "seed": 42,
   "mixed_precision": "bf16",
   "report_to": "tensorboard",
   "logging_dir": "logs/longcat-fullfinetune",
 
-  "dataloader_num_workers": 4,
-  "allow_tf32": true,
+  "disable_tf32": false,
 
   "_comment_vram": "Para economizar VRAM se necessário, descomente as opções abaixo",
   "_musubi_blocks_to_swap": 4,
