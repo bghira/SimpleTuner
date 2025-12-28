@@ -82,6 +82,11 @@ export CHECKPOINTING_STEPS="${CHECKPOINTING_STEPS:-2500}"
 export VALIDATION_EVERY_N_STEPS="${VALIDATION_EVERY_N_STEPS:-2500}"
 export NUM_GPUS="${NUM_GPUS:-8}"
 
+# Video configuration
+export VIDEO_NUM_FRAMES="${VIDEO_NUM_FRAMES:-93}"
+# min_frames must be >= num_frames (minimum video length must cover the sampling requirement)
+export VIDEO_MIN_FRAMES="${VIDEO_MIN_FRAMES:-${VIDEO_NUM_FRAMES}}"
+
 # LoRA (if set, uses LoRA instead of full finetune)
 export LORA_RANK="${LORA_RANK:-}"
 
@@ -234,7 +239,8 @@ if [ "$USE_PARQUET" = "true" ] && [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
 
     "video": {
       "bucket_strategy": "aspect_ratio",
-      "min_frames": 1,
+      "num_frames": ${VIDEO_NUM_FRAMES},
+      "min_frames": ${VIDEO_MIN_FRAMES},
       "max_frames": 500,
       "frame_interval": 4
     },
@@ -285,7 +291,8 @@ else
 
     "video": {
       "bucket_strategy": "aspect_ratio",
-      "min_frames": 1,
+      "num_frames": ${VIDEO_NUM_FRAMES},
+      "min_frames": ${VIDEO_MIN_FRAMES},
       "max_frames": 500,
       "frame_interval": 4
     },
