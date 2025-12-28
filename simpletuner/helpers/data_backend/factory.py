@@ -626,6 +626,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             framerate = _get_arg_value(args, "framerate", None)
             if framerate is None:
                 framerate = 30
+            else:
+                framerate = int(framerate)
             video_duration_in_frames = framerate * default_num_seconds
             warning_log(
                 f"No `num_frames` was provided for video backend. Defaulting to {video_duration_in_frames} ({default_num_seconds} seconds @ {framerate}fps) to avoid memory implosion/explosion. Reduce value further for lower memory use."
@@ -672,7 +674,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         min_frames = output["config"]["video"]["min_frames"]
         num_frames = output["config"]["video"]["num_frames"]
         # both should be integers
-        if not any([isinstance(min_frames, int), isinstance(num_frames, int)]):
+        if not all([isinstance(min_frames, int), isinstance(num_frames, int)]):
             raise ValueError(
                 f"video->min_frames and video->num_frames must be integers. Received min_frames={min_frames} and num_frames={num_frames}."
             )
