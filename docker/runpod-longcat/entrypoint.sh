@@ -111,7 +111,7 @@ cat > "${CONFIG_DIR}/config.json" << EOF
   "pretrained_model_name_or_path": null,
 
   "base_model_precision": "${BASE_MODEL_PRECISION}",
-  "attention_implementation": "sdpa",
+  "attention_mechanism": "diffusers",
 
   "output_dir": "${OUTPUT_DIR}",
   "data_backend_config": "${CONFIG_DIR}/databackend.json",
@@ -147,16 +147,15 @@ cat > "${CONFIG_DIR}/config.json" << EOF
   "validation_num_video_frames": 93,
   "validation_num_inference_steps": 40,
   "validation_guidance": 4.0,
-  "validation_every_n_steps": ${VALIDATION_EVERY_N_STEPS},
-  "num_validation_videos": 2,
+  "validation_step_interval": ${VALIDATION_EVERY_N_STEPS},
+  "num_validation_images": 2,
 
   "seed": 42,
   "mixed_precision": "bf16",
   "report_to": "tensorboard",
   "logging_dir": "/workspace/logs",
 
-  "dataloader_num_workers": 4,
-  "allow_tf32": true
+  "disable_tf32": false
 }
 EOF
 
