@@ -27,6 +27,7 @@
     "resolution_type": "pixel_area",
     "minimum_image_size": 256,
     "maximum_image_size": 1024,
+    "target_downsample_size": 512,
 
     "crop": true,
     "crop_style": "center",
