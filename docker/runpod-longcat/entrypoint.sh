@@ -102,6 +102,13 @@ else
     LORA_CONFIG=""
 fi
 
+# Format AWS_ENDPOINT_URL as proper JSON (string or null)
+if [ -n "$AWS_ENDPOINT_URL" ]; then
+    AWS_ENDPOINT_JSON="\"$AWS_ENDPOINT_URL\""
+else
+    AWS_ENDPOINT_JSON="null"
+fi
+
 # Generate config.json (SimpleTuner configuration)
 cat > "${CONFIG_DIR}/config.json" << EOF
 {
@@ -174,7 +181,7 @@ if [ "$USE_PARQUET" = "true" ] && [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
 
     "aws_bucket_name": "${AWS_BUCKET_NAME}",
     "aws_region_name": "${AWS_REGION}",
-    "aws_endpoint_url": ${AWS_ENDPOINT_URL:+\"$AWS_ENDPOINT_URL\"}${AWS_ENDPOINT_URL:-null},
+    "aws_endpoint_url": ${AWS_ENDPOINT_JSON},
     "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
     "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY}",
     "aws_data_prefix": "${AWS_DATA_PREFIX}",
@@ -233,7 +240,7 @@ else
 
     "aws_bucket_name": "${AWS_BUCKET_NAME}",
     "aws_region_name": "${AWS_REGION}",
-    "aws_endpoint_url": ${AWS_ENDPOINT_URL:+\"$AWS_ENDPOINT_URL\"}${AWS_ENDPOINT_URL:-null},
+    "aws_endpoint_url": ${AWS_ENDPOINT_JSON},
     "aws_access_key_id": "${AWS_ACCESS_KEY_ID}",
     "aws_secret_access_key": "${AWS_SECRET_ACCESS_KEY}",
     "aws_data_prefix": "${AWS_DATA_PREFIX}",
