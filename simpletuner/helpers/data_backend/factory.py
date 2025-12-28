@@ -642,7 +642,18 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             warning_log(
                 f"No `max_frames` was provided for video backend. Set this value to avoid scanning huge video files."
             )
+        # Convert max_frames and frame_interval to int if provided as strings from JSON config
         video_config = output["config"]["video"]
+        for int_field in ["max_frames", "frame_interval"]:
+            if int_field in video_config and video_config[int_field] is not None:
+                if not isinstance(video_config[int_field], int):
+                    try:
+                        video_config[int_field] = int(video_config[int_field])
+                    except (ValueError, TypeError):
+                        warning_log(
+                            f"Could not convert video->{int_field}={video_config[int_field]} to integer, ignoring."
+                        )
+                        video_config[int_field] = None
         model_family_raw = _get_arg_value(args, "model_family", "")
         model_flavour_raw = str(_get_arg_value(args, "model_flavour", "") or "")
         model_family = str(model_family_raw).lower()
@@ -671,12 +682,20 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 warning_log(f"No value for is_i2v was supplied for your dataset. Assuming it is disabled.")
                 video_config["is_i2v"] = False
 
+        # Ensure min_frames and num_frames are integers (may come as strings from JSON config)
         min_frames = output["config"]["video"]["min_frames"]
         num_frames = output["config"]["video"]["num_frames"]
-        # both should be integers
-        if not all([isinstance(min_frames, int), isinstance(num_frames, int)]):
+        try:
+            if not isinstance(min_frames, int):
+                min_frames = int(min_frames)
+                output["config"]["video"]["min_frames"] = min_frames
+            if not isinstance(num_frames, int):
+                num_frames = int(num_frames)
+                output["config"]["video"]["num_frames"] = num_frames
+        except (ValueError, TypeError) as e:
             raise ValueError(
-                f"video->min_frames and video->num_frames must be integers. Received min_frames={min_frames} and num_frames={num_frames}."
+                f"video->min_frames and video->num_frames must be integers or numeric strings. "
+                f"Received min_frames={output['config']['video']['min_frames']} and num_frames={output['config']['video']['num_frames']}. Error: {e}"
             )
         if min_frames < 1 or num_frames < 1:
             raise ValueError(
