@@ -10,46 +10,46 @@ echo "============================================="
 echo ""
 
 # -----------------------------------------------------------------------------
-# 1. Verifica variáveis obrigatórias
+# 1. Check required environment variables
 # -----------------------------------------------------------------------------
-echo "[1/6] Verificando configuração..."
+echo "[1/6] Checking configuration..."
 
-# Verifica secrets obrigatórios (podem vir como RUNPOD_SECRET_ ou diretamente)
+# Check required secrets (can come as RUNPOD_SECRET_ or directly)
 AWS_BUCKET_NAME="${AWS_BUCKET_NAME:-${RUNPOD_SECRET_AWS_BUCKET_NAME}}"
 AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-${RUNPOD_SECRET_AWS_ACCESS_KEY_ID}}"
 AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-${RUNPOD_SECRET_AWS_SECRET_ACCESS_KEY}}"
 
 if [ -z "$AWS_BUCKET_NAME" ]; then
-    echo "ERRO: AWS_BUCKET_NAME não definido!"
-    echo "Configure o secret AWS_BUCKET_NAME no template do RunPod"
+    echo "ERROR: AWS_BUCKET_NAME not set!"
+    echo "Please configure the AWS_BUCKET_NAME secret in your RunPod template"
     exit 1
 fi
 
 if [ -z "$AWS_ACCESS_KEY_ID" ]; then
-    echo "ERRO: AWS_ACCESS_KEY_ID não definido!"
-    echo "Configure o secret AWS_ACCESS_KEY_ID no template do RunPod"
+    echo "ERROR: AWS_ACCESS_KEY_ID not set!"
+    echo "Please configure the AWS_ACCESS_KEY_ID secret in your RunPod template"
     exit 1
 fi
 
 if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
-    echo "ERRO: AWS_SECRET_ACCESS_KEY não definido!"
-    echo "Configure o secret AWS_SECRET_ACCESS_KEY no template do RunPod"
+    echo "ERROR: AWS_SECRET_ACCESS_KEY not set!"
+    echo "Please configure the AWS_SECRET_ACCESS_KEY secret in your RunPod template"
     exit 1
 fi
 
-echo "  ✓ Credenciais AWS configuradas"
+echo "  [OK] AWS credentials configured"
 
 # -----------------------------------------------------------------------------
-# 2. Configura variáveis com defaults
+# 2. Set default values for optional variables
 # -----------------------------------------------------------------------------
-echo "[2/6] Aplicando configurações..."
+echo "[2/6] Applying configuration..."
 
 # AWS
 export AWS_REGION="${AWS_REGION:-us-east-1}"
 export AWS_DATA_PREFIX="${AWS_DATA_PREFIX:-}"
 export AWS_ENDPOINT_URL="${AWS_ENDPOINT_URL:-}"
 
-# Treinamento
+# Training
 export USE_PARQUET="${USE_PARQUET:-false}"
 export AUTO_START_TRAINING="${AUTO_START_TRAINING:-false}"
 export MODEL_TYPE="${MODEL_TYPE:-full}"
@@ -61,35 +61,35 @@ export CHECKPOINTING_STEPS="${CHECKPOINTING_STEPS:-2500}"
 export VALIDATION_EVERY_N_STEPS="${VALIDATION_EVERY_N_STEPS:-2500}"
 export NUM_GPUS="${NUM_GPUS:-8}"
 
-# LoRA (se definido, usa LoRA em vez de full)
+# LoRA (if set, uses LoRA instead of full finetune)
 export LORA_RANK="${LORA_RANK:-}"
 
-# Precisão
+# Precision
 export BASE_MODEL_PRECISION="${BASE_MODEL_PRECISION:-bf16}"
 
-# Diretórios
+# Directories
 export CONFIG_DIR="${CONFIG_DIR:-/workspace/config}"
 export CACHE_DIR="${CACHE_DIR:-/workspace/cache}"
 export OUTPUT_DIR="${OUTPUT_DIR:-/workspace/output}"
 export SIMPLETUNER_DIR="${SIMPLETUNER_DIR:-/workspace/SimpleTuner}"
 
-echo "  ✓ Bucket: $AWS_BUCKET_NAME"
-echo "  ✓ Região: $AWS_REGION"
-echo "  ✓ Prefixo: ${AWS_DATA_PREFIX:-<raiz do bucket>}"
-echo "  ✓ Tipo de treino: ${LORA_RANK:+LoRA rank $LORA_RANK}${LORA_RANK:-Full Finetune}"
-echo "  ✓ Precisão: $BASE_MODEL_PRECISION"
-echo "  ✓ Learning Rate: $LEARNING_RATE"
-echo "  ✓ Max Steps: $MAX_TRAIN_STEPS"
-echo "  ✓ GPUs: $NUM_GPUS"
-echo "  ✓ Use Parquet: $USE_PARQUET"
-echo "  ✓ Auto Start: $AUTO_START_TRAINING"
+echo "  [OK] Bucket: $AWS_BUCKET_NAME"
+echo "  [OK] Region: $AWS_REGION"
+echo "  [OK] Prefix: ${AWS_DATA_PREFIX:-<bucket root>}"
+echo "  [OK] Training type: ${LORA_RANK:+LoRA rank $LORA_RANK}${LORA_RANK:-Full Finetune}"
+echo "  [OK] Precision: $BASE_MODEL_PRECISION"
+echo "  [OK] Learning Rate: $LEARNING_RATE"
+echo "  [OK] Max Steps: $MAX_TRAIN_STEPS"
+echo "  [OK] GPUs: $NUM_GPUS"
+echo "  [OK] Use Parquet: $USE_PARQUET"
+echo "  [OK] Auto Start: $AUTO_START_TRAINING"
 
 # -----------------------------------------------------------------------------
-# 3. Gera arquivos de configuração
+# 3. Generate configuration files
 # -----------------------------------------------------------------------------
-echo "[3/6] Gerando arquivos de configuração..."
+echo "[3/6] Generating configuration files..."
 
-# Determina model_type
+# Determine model_type
 if [ -n "$LORA_RANK" ]; then
     EFFECTIVE_MODEL_TYPE="lora"
     LORA_CONFIG='"lora_rank": '$LORA_RANK','
@@ -98,7 +98,7 @@ else
     LORA_CONFIG=""
 fi
 
-# Gera training_config.json
+# Generate training_config.json
 cat > "${CONFIG_DIR}/training_config.json" << EOF
 {
   "model_type": "${EFFECTIVE_MODEL_TYPE}",
@@ -156,11 +156,11 @@ cat > "${CONFIG_DIR}/training_config.json" << EOF
 }
 EOF
 
-echo "  ✓ training_config.json gerado"
+echo "  [OK] training_config.json generated"
 
-# Gera databackend.json
+# Generate databackend.json
 if [ "$USE_PARQUET" = "true" ] && [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
-    # Versão com Parquet
+    # Parquet mode
     cat > "${CONFIG_DIR}/databackend.json" << EOF
 [
   {
@@ -217,9 +217,9 @@ if [ "$USE_PARQUET" = "true" ] && [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
   }
 ]
 EOF
-    echo "  ✓ databackend.json gerado (modo Parquet)"
+    echo "  [OK] databackend.json generated (Parquet mode)"
 else
-    # Versão direta do S3
+    # Direct S3 mode
     cat > "${CONFIG_DIR}/databackend.json" << EOF
 [
   {
@@ -267,18 +267,18 @@ else
   }
 ]
 EOF
-    echo "  ✓ databackend.json gerado (modo S3 direto)"
+    echo "  [OK] databackend.json generated (direct S3 mode)"
 fi
 
 # -----------------------------------------------------------------------------
-# 4. Cria scripts de conveniência
+# 4. Create convenience scripts
 # -----------------------------------------------------------------------------
-echo "[4/6] Criando scripts de conveniência..."
+echo "[4/6] Creating convenience scripts..."
 
-# Script para gerar Parquet
+# Script to generate Parquet
 cat > /workspace/generate_parquet.sh << 'SCRIPT'
 #!/bin/bash
-echo "Gerando Parquet de metadados..."
+echo "Generating Parquet metadata..."
 python /workspace/scripts/generate_metadata_parquet.py \
     --bucket "$AWS_BUCKET_NAME" \
     --prefix "$AWS_DATA_PREFIX" \
@@ -288,36 +288,36 @@ python /workspace/scripts/generate_metadata_parquet.py \
     --workers 32
 
 if [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
-    echo "✓ Parquet gerado com sucesso!"
-    echo "Execute: USE_PARQUET=true para usar no próximo treino"
+    echo "[OK] Parquet generated successfully!"
+    echo "Set USE_PARQUET=true to use it in your next training run"
 else
-    echo "✗ Erro ao gerar Parquet"
+    echo "[ERROR] Failed to generate Parquet"
     exit 1
 fi
 SCRIPT
 chmod +x /workspace/generate_parquet.sh
 
-# Script para iniciar treino
+# Script to start training
 cat > /workspace/start_training.sh << 'SCRIPT'
 #!/bin/bash
 echo "============================================="
-echo "  Iniciando Treinamento LongCat Video"
+echo "  Starting LongCat Video Training"
 echo "============================================="
 
 cd "${SIMPLETUNER_DIR}"
 
-# Configura ambiente
+# Configure environment
 export PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:512"
 export NCCL_P2P_DISABLE=0
 export NCCL_IB_DISABLE=0
 
-# Detecta NVLink
+# Detect NVLink
 if nvidia-smi topo -m 2>/dev/null | grep -q "NV"; then
-    echo "NVLink detectado"
+    echo "NVLink detected"
     export NCCL_P2P_LEVEL=NVL
 fi
 
-echo "Iniciando com ${NUM_GPUS} GPUs..."
+echo "Starting with ${NUM_GPUS} GPUs..."
 echo ""
 
 accelerate launch \
@@ -330,10 +330,10 @@ accelerate launch \
 SCRIPT
 chmod +x /workspace/start_training.sh
 
-# Script para monitorar
+# Script to monitor training
 cat > /workspace/monitor.sh << 'SCRIPT'
 #!/bin/bash
-echo "Monitorando treinamento..."
+echo "Starting training monitor..."
 echo "TensorBoard: http://localhost:6006"
 echo ""
 tensorboard --logdir /workspace/logs --port 6006 --bind_all &
@@ -341,15 +341,15 @@ watch -n 5 nvidia-smi
 SCRIPT
 chmod +x /workspace/monitor.sh
 
-echo "  ✓ Scripts criados em /workspace/"
+echo "  [OK] Scripts created in /workspace/"
 echo "    - generate_parquet.sh"
 echo "    - start_training.sh"
 echo "    - monitor.sh"
 
 # -----------------------------------------------------------------------------
-# 5. Exibe informações do sistema
+# 5. Display system information
 # -----------------------------------------------------------------------------
-echo "[5/6] Informações do sistema..."
+echo "[5/6] System information..."
 
 echo "  Python: $(python --version 2>&1 | cut -d' ' -f2)"
 echo "  PyTorch: $(python -c 'import torch; print(torch.__version__)')"
@@ -363,14 +363,14 @@ if command -v nvidia-smi &> /dev/null; then
 fi
 
 # -----------------------------------------------------------------------------
-# 6. Ação final
+# 6. Final action
 # -----------------------------------------------------------------------------
-echo "[6/6] Finalizando setup..."
+echo "[6/6] Finalizing setup..."
 
 if [ "$USE_PARQUET" = "true" ] && [ ! -f "${CONFIG_DIR}/metadata.parquet" ]; then
     echo ""
-    echo "  ⚠ USE_PARQUET=true mas metadata.parquet não existe"
-    echo "  Execute: /workspace/generate_parquet.sh"
+    echo "  [WARNING] USE_PARQUET=true but metadata.parquet does not exist"
+    echo "  Run: /workspace/generate_parquet.sh"
     echo ""
 fi
 
@@ -378,42 +378,42 @@ if [ "$AUTO_START_TRAINING" = "true" ]; then
     echo ""
     echo "============================================="
     echo "  AUTO_START_TRAINING=true"
-    echo "  Iniciando treinamento automaticamente..."
+    echo "  Starting training automatically..."
     echo "============================================="
     echo ""
 
-    # Inicia TensorBoard em background
+    # Start TensorBoard in background
     tensorboard --logdir /workspace/logs --port 6006 --bind_all &
 
-    # Inicia treinamento
+    # Start training
     exec /workspace/start_training.sh
 else
     echo ""
     echo "============================================="
-    echo "  Setup concluído!"
+    echo "  Setup complete!"
     echo "============================================="
     echo ""
-    echo "  Próximos passos:"
-    echo "    1. (Opcional) Gerar Parquet: /workspace/generate_parquet.sh"
-    echo "    2. Iniciar treino: /workspace/start_training.sh"
-    echo "    3. Monitorar: /workspace/monitor.sh"
+    echo "  Next steps:"
+    echo "    1. (Optional) Generate Parquet: /workspace/generate_parquet.sh"
+    echo "    2. Start training: /workspace/start_training.sh"
+    echo "    3. Monitor: /workspace/monitor.sh"
     echo ""
-    echo "  Arquivos de configuração:"
+    echo "  Configuration files:"
     echo "    - ${CONFIG_DIR}/training_config.json"
     echo "    - ${CONFIG_DIR}/databackend.json"
     echo ""
-    echo "  Diretórios:"
-    echo "    - Cache VAE: ${CACHE_DIR}/vae"
-    echo "    - Cache Text: ${CACHE_DIR}/text"
+    echo "  Directories:"
+    echo "    - VAE Cache: ${CACHE_DIR}/vae"
+    echo "    - Text Cache: ${CACHE_DIR}/text"
     echo "    - Output: ${OUTPUT_DIR}"
     echo "    - Logs: /workspace/logs"
     echo ""
 
-    # Mantém container rodando (para JupyterLab/SSH do RunPod)
+    # Keep container running (for RunPod JupyterLab/SSH)
     if [ -f /start.sh ]; then
         exec /start.sh
     else
-        # Fallback: mantém rodando
+        # Fallback: keep running
         tail -f /dev/null
     fi
 fi

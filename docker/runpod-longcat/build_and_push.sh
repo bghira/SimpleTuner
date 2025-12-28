@@ -3,12 +3,12 @@
 # Build and Push LongCat Video Finetune Docker Image
 # =============================================================================
 #
-# Uso:
+# Usage:
 #   ./build_and_push.sh [--no-push]
 #
-# Requer:
-#   - Docker instalado
-#   - Login no Docker Hub: docker login
+# Requirements:
+#   - Docker installed
+#   - Docker Hub login: docker login
 #
 # =============================================================================
 
@@ -24,7 +24,7 @@ echo "============================================="
 
 cd "$SCRIPT_DIR"
 
-# Build para linux/amd64 (compatível com RunPod)
+# Build for linux/amd64 (RunPod compatible)
 echo ""
 echo "[1/3] Building Docker image..."
 docker build \
@@ -44,7 +44,7 @@ if [ "$1" != "--no-push" ]; then
 
     echo ""
     echo "============================================="
-    echo "  Imagem publicada!"
+    echo "  Image published!"
     echo "  ${IMAGE_NAME}:${TAG}"
     echo "  ${IMAGE_NAME}:$(date +%Y%m%d)"
     echo "============================================="
@@ -53,7 +53,7 @@ else
     echo "[3/3] Skipping push (--no-push)"
     echo ""
     echo "============================================="
-    echo "  Build concluído (local apenas)"
+    echo "  Build complete (local only)"
     echo "  ${IMAGE_NAME}:${TAG}"
     echo "============================================="
 fi
