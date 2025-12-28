@@ -116,6 +116,7 @@ cat > "${CONFIG_DIR}/config.json" << EOF
   "model_family": "longcat_video",
   "model_flavour": "final",
   "pretrained_model_name_or_path": null,
+  "framerate": 30,
 
   "base_model_precision": "${BASE_MODEL_PRECISION}",
   "attention_mechanism": "diffusers",

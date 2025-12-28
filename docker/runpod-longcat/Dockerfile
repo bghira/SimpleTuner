@@ -61,8 +61,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && git lfs install
 
-# Clone and install SimpleTuner
-RUN git clone https://github.com/bghira/SimpleTuner.git ${SIMPLETUNER_DIR} \
+# Clone and install SimpleTuner (using fork with RunPod fixes)
+RUN git clone https://github.com/danielxmed/SimpleTuner.git ${SIMPLETUNER_DIR} \
     && cd ${SIMPLETUNER_DIR} \
     && pip install --no-cache-dir -e ".[cuda]"
 
