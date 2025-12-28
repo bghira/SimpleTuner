@@ -1,171 +1,284 @@
 # RunPod Template: LongCat Video Full Finetune
 
-Imagem Docker pré-configurada para full finetune do modelo **LongCat Video (13.6B)** usando SimpleTuner, otimizada para 8× A100 80GB ou 8× H200.
+Pre-configured Docker image for full finetuning the **LongCat Video (13.6B)** model using SimpleTuner, optimized for 8x A100 80GB or 8x H200.
 
-## Imagem Docker
+## Docker Image
 
 ```
 danielxmed/longcat-video-finetune:latest
 ```
 
-## Características
+## Features
 
-- **SimpleTuner** pré-instalado e configurado
-- **FSDP2** para distributed training
-- Suporte a **AWS S3** para datasets
-- Geração automática de **Parquet** para datasets grandes
-- Configuração via **secrets** e variáveis de ambiente
-- Opção de **auto-start** do treinamento
-- TensorBoard integrado
+- **SimpleTuner** pre-installed and configured
+- **FSDP2** for distributed training across multiple GPUs
+- **AWS S3** support for large video datasets
+- Automatic **Parquet** metadata generation for fast startup
+- Configuration via **secrets** and environment variables
+- Optional **auto-start** training mode
+- Integrated TensorBoard monitoring
 
-## Configuração do Template no RunPod
+---
 
-### 1. Criar Template
+## Quick Start Guide
 
-No console do RunPod:
-1. Vá para **Templates** → **New Template**
-2. Configure:
+This guide walks you through the complete setup process step by step.
 
-| Campo | Valor |
+### Prerequisites
+
+Before you begin, make sure you have:
+
+- [ ] A RunPod account with GPU credits
+- [ ] An AWS S3 bucket (or S3-compatible storage like Cloudflare R2)
+- [ ] Your video dataset uploaded to S3 with caption files
+- [ ] AWS credentials (Access Key ID and Secret Access Key)
+
+---
+
+## Step 1: Prepare Your Dataset
+
+Your videos must be uploaded to an S3 bucket with matching caption files.
+
+### Expected S3 Structure
+
+```
+s3://your-bucket-name/
+├── video_001.mp4
+├── video_001.txt    ← Caption for video_001.mp4
+├── video_002.mp4
+├── video_002.txt    ← Caption for video_002.mp4
+├── subfolder/
+│   ├── clip_a.mp4
+│   ├── clip_a.txt
+│   └── ...
+└── ...
+```
+
+### Video Requirements
+
+| Requirement | Details |
+|-------------|---------|
+| **Formats** | MP4, MOV, AVI, WebM |
+| **Minimum duration** | ~3.1 seconds (93 frames @ 30fps) |
+| **Caption file** | `.txt` file with the same name as the video |
+| **Caption content** | Plain text description of the video |
+
+### Example Caption File
+
+For `video_001.mp4`, create `video_001.txt` containing:
+```
+A golden retriever running through a sunny meadow, slow motion, cinematic lighting
+```
+
+---
+
+## Step 2: Create RunPod Secrets
+
+Secrets keep your AWS credentials secure. You only need to set them up once.
+
+### 2.1 Navigate to Secrets
+
+1. Log in to [RunPod Console](https://www.runpod.io/console)
+2. Click on **Settings** in the left sidebar
+3. Select **Secrets**
+
+### 2.2 Create Required Secrets
+
+Click **Add Secret** for each of the following:
+
+| Secret Name | Value | Example |
+|-------------|-------|---------|
+| `AWS_BUCKET_NAME` | Your S3 bucket name | `my-video-dataset` |
+| `AWS_ACCESS_KEY_ID` | Your AWS access key | `AKIAIOSFODNN7EXAMPLE` |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS secret key | `wJalrXUtnFEMI/K7MDENG/...` |
+
+> **Security Note**: Never share your AWS credentials. RunPod Secrets are encrypted and secure.
+
+---
+
+## Step 3: Create the Template
+
+### 3.1 Navigate to Templates
+
+1. In RunPod Console, click **Templates** in the left sidebar
+2. Click **New Template**
+
+### 3.2 Configure Basic Settings
+
+Fill in the following fields:
+
+| Field | Value |
 |-------|-------|
-| **Name** | LongCat Video Full Finetune |
+| **Template Name** | `LongCat Video Full Finetune` |
 | **Container Image** | `danielxmed/longcat-video-finetune:latest` |
-| **Container Disk** | 50 GB (mínimo) |
-| **Volume Disk** | 500 GB+ (para cache e checkpoints) |
+| **Container Disk** | `50 GB` (minimum) |
+| **Volume Disk** | `500 GB` or more (for VAE cache and checkpoints) |
 | **Volume Mount Path** | `/workspace` |
 
-### 2. Configurar Secrets (Obrigatórios)
+### 3.3 Configure Environment Variables
 
-No RunPod, vá para **Secrets** e crie:
+In the **Environment Variables** section, add:
 
-| Secret Name | Descrição |
-|-------------|-----------|
-| `AWS_BUCKET_NAME` | Nome do bucket S3 com os vídeos |
-| `AWS_ACCESS_KEY_ID` | Access key da AWS |
-| `AWS_SECRET_ACCESS_KEY` | Secret key da AWS |
+#### Required Variables (Using Secrets)
 
-### 3. Configurar Environment Variables
-
-No template, adicione as variáveis de ambiente:
-
-#### Obrigatórias (via Secrets)
 ```
 AWS_BUCKET_NAME={{ RUNPOD_SECRET_AWS_BUCKET_NAME }}
 AWS_ACCESS_KEY_ID={{ RUNPOD_SECRET_AWS_ACCESS_KEY_ID }}
 AWS_SECRET_ACCESS_KEY={{ RUNPOD_SECRET_AWS_SECRET_ACCESS_KEY }}
 ```
 
-#### Opcionais
-| Variável | Default | Descrição |
-|----------|---------|-----------|
-| `AWS_REGION` | `us-east-1` | Região do bucket |
-| `AWS_DATA_PREFIX` | `""` | Prefixo/pasta no bucket |
-| `AWS_ENDPOINT_URL` | `null` | Para S3-compatible (R2, MinIO) |
-| `USE_PARQUET` | `false` | Usar metadata Parquet |
-| `AUTO_START_TRAINING` | `false` | Iniciar treino automaticamente |
-| `MODEL_TYPE` | `full` | `full` ou `lora` |
-| `LORA_RANK` | - | Se definido, usa LoRA |
-| `BASE_MODEL_PRECISION` | `bf16` | `bf16`, `int8-quanto`, `fp8-torchao` |
-| `LEARNING_RATE` | `1e-5` | Taxa de aprendizado |
-| `MAX_TRAIN_STEPS` | `30000` | Número máximo de steps |
-| `TRAIN_BATCH_SIZE` | `1` | Batch size por GPU |
-| `GRADIENT_ACCUMULATION_STEPS` | `4` | Gradient accumulation |
-| `CHECKPOINTING_STEPS` | `2500` | Salvar checkpoint a cada N steps |
-| `NUM_GPUS` | `8` | Número de GPUs |
+#### Optional Variables
 
-### 4. Configurar Portas
+Add any of these to customize your training:
 
-| Label | Port |
-|-------|------|
-| HTTP (TensorBoard) | 6006 |
-| HTTP (Jupyter) | 8888 |
-| TCP (SSH) | 22 |
+```
+AWS_REGION=us-east-1
+AUTO_START_TRAINING=false
+USE_PARQUET=false
+MAX_TRAIN_STEPS=30000
+LEARNING_RATE=1e-5
+```
 
-## Uso
+See [Configuration Reference](#configuration-reference) for all options.
 
-### Modo Interativo (Recomendado para primeira vez)
+### 3.4 Configure Exposed Ports
 
-1. Inicie o Pod com `AUTO_START_TRAINING=false`
-2. Conecte via SSH ou Web Terminal
-3. Execute:
+| Label | Port | Protocol |
+|-------|------|----------|
+| TensorBoard | 6006 | HTTP |
+| Jupyter | 8888 | HTTP |
+| SSH | 22 | TCP |
+
+### 3.5 Save Template
+
+Click **Save Template**. You can now deploy pods using this template.
+
+---
+
+## Step 4: Deploy a Pod
+
+### 4.1 Select GPU Configuration
+
+For full finetuning, you need:
+
+| Configuration | VRAM Required | Recommended |
+|---------------|---------------|-------------|
+| Full Finetune (bf16) | 8x 80GB | 8x A100 80GB or 8x H200 |
+| Full Finetune (int8) | 8x 48GB | 8x A40 or 8x L40S |
+| LoRA Training | 4x 24GB | 4x RTX 4090 or 4x L4 |
+
+### 4.2 Launch Pod
+
+1. Go to **GPU Cloud** → **Deploy**
+2. Select your GPU configuration (e.g., 8x A100 80GB)
+3. Choose your template: `LongCat Video Full Finetune`
+4. Click **Deploy**
+
+---
+
+## Step 5: Start Training
+
+### 5.1 Connect to Your Pod
+
+Once the pod is running:
+
+1. Click on the pod name in your RunPod dashboard
+2. Choose one of:
+   - **Web Terminal** - Browser-based terminal
+   - **SSH** - For local terminal access
+   - **Jupyter** - Opens JupyterLab interface
+
+### 5.2 Verify Configuration
+
+First, check that everything is set up correctly:
 
 ```bash
-# Ver configuração gerada
+# View the generated training configuration
 cat /workspace/config/training_config.json
+
+# View the data backend configuration
 cat /workspace/config/databackend.json
 
-# (Opcional) Gerar Parquet para startup mais rápido
+# Test S3 connection (should list your videos)
+aws s3 ls s3://$AWS_BUCKET_NAME/ --human-readable | head -20
+```
+
+### 5.3 (Optional) Generate Parquet Metadata
+
+For large datasets (500K+ videos), generating Parquet metadata dramatically speeds up startup:
+
+```bash
 /workspace/generate_parquet.sh
+```
 
-# Iniciar treinamento
+This may take several hours for very large datasets, but only needs to be done once.
+
+### 5.4 Start Training
+
+```bash
 /workspace/start_training.sh
+```
 
-# Em outro terminal, monitorar
+### 5.5 Monitor Training
+
+In a separate terminal (or tmux session):
+
+```bash
+# Start TensorBoard and GPU monitoring
 /workspace/monitor.sh
 ```
 
-### Modo Automático
+Access TensorBoard via the pod's HTTP port 6006.
 
-Configure no template:
-```
-AUTO_START_TRAINING=true
-```
+---
 
-O treinamento inicia automaticamente quando o Pod sobe.
+## Step 6: Auto-Start Mode (Optional)
 
-### Usando Parquet (Recomendado para 500K+ vídeos)
+For subsequent training runs, you can enable auto-start:
 
-1. Primeira vez: gere o Parquet
-```bash
-/workspace/generate_parquet.sh
-```
+1. Edit your template's environment variables
+2. Change: `AUTO_START_TRAINING=true`
+3. If using Parquet: `USE_PARQUET=true`
 
-2. Configure `USE_PARQUET=true` no template
+Now the pod will automatically begin training when it starts.
 
-3. Nas próximas vezes, o startup será muito mais rápido
+---
 
-## Estrutura de Diretórios
+## Configuration Reference
 
-```
-/workspace/
-├── SimpleTuner/          # Código do SimpleTuner
-├── config/               # Configurações geradas
-│   ├── training_config.json
-│   ├── databackend.json
-│   └── metadata.parquet  # (se gerado)
-├── cache/
-│   ├── vae/              # Cache de VAE latents
-│   └── text/             # Cache de text embeddings
-├── output/               # Checkpoints salvos
-├── logs/                 # TensorBoard logs
-├── scripts/              # Scripts auxiliares
-├── generate_parquet.sh   # Gera Parquet de metadados
-├── start_training.sh     # Inicia treinamento
-└── monitor.sh            # Monitora com TensorBoard
-```
+### Required Environment Variables
 
-## Dataset Esperado no S3
+| Variable | Description |
+|----------|-------------|
+| `AWS_BUCKET_NAME` | S3 bucket containing your videos |
+| `AWS_ACCESS_KEY_ID` | AWS access key for S3 |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key for S3 |
 
-```
-s3://seu-bucket/
-├── video_001.mp4
-├── video_001.txt    # Caption
-├── video_002.mp4
-├── video_002.txt
-└── ...
-```
+### Optional Environment Variables
 
-### Requisitos dos Vídeos
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AWS_REGION` | `us-east-1` | AWS region of your bucket |
+| `AWS_DATA_PREFIX` | `""` | Subfolder/prefix in the bucket |
+| `AWS_ENDPOINT_URL` | `null` | Custom endpoint (for R2, MinIO, etc.) |
+| `USE_PARQUET` | `false` | Use pre-generated Parquet metadata |
+| `AUTO_START_TRAINING` | `false` | Start training automatically on pod boot |
+| `MODEL_TYPE` | `full` | Training type: `full` or `lora` |
+| `LORA_RANK` | - | If set, enables LoRA training with this rank |
+| `BASE_MODEL_PRECISION` | `bf16` | Model precision: `bf16`, `int8-quanto`, `fp8-torchao` |
+| `LEARNING_RATE` | `1e-5` | Training learning rate |
+| `MAX_TRAIN_STEPS` | `30000` | Maximum training steps |
+| `TRAIN_BATCH_SIZE` | `1` | Batch size per GPU |
+| `GRADIENT_ACCUMULATION_STEPS` | `4` | Gradient accumulation steps |
+| `CHECKPOINTING_STEPS` | `2500` | Save checkpoint every N steps |
+| `VALIDATION_EVERY_N_STEPS` | `2500` | Run validation every N steps |
+| `NUM_GPUS` | `8` | Number of GPUs to use |
 
-| Requisito | Valor |
-|-----------|-------|
-| Formato | MP4, MOV, AVI, WebM |
-| Duração mínima | ~3.1s (93 frames @ 30fps) |
-| Caption | Arquivo .txt com mesmo nome |
+---
 
-## Exemplos de Configuração
+## Configuration Examples
 
-### Full Finetune Padrão (8× A100 80GB)
+### Example 1: Basic Full Finetune (8x A100 80GB)
 
 ```
 AWS_BUCKET_NAME={{ RUNPOD_SECRET_AWS_BUCKET_NAME }}
@@ -174,7 +287,7 @@ AWS_SECRET_ACCESS_KEY={{ RUNPOD_SECRET_AWS_SECRET_ACCESS_KEY }}
 AUTO_START_TRAINING=false
 ```
 
-### Full Finetune com Auto-Start
+### Example 2: Full Finetune with Auto-Start
 
 ```
 AWS_BUCKET_NAME={{ RUNPOD_SECRET_AWS_BUCKET_NAME }}
@@ -182,9 +295,12 @@ AWS_ACCESS_KEY_ID={{ RUNPOD_SECRET_AWS_ACCESS_KEY_ID }}
 AWS_SECRET_ACCESS_KEY={{ RUNPOD_SECRET_AWS_SECRET_ACCESS_KEY }}
 AUTO_START_TRAINING=true
 USE_PARQUET=true
+MAX_TRAIN_STEPS=30000
 ```
 
-### LoRA para Prova de Conceito
+### Example 3: LoRA Training (Lower VRAM)
+
+For proof-of-concept or limited VRAM:
 
 ```
 AWS_BUCKET_NAME={{ RUNPOD_SECRET_AWS_BUCKET_NAME }}
@@ -195,7 +311,7 @@ BASE_MODEL_PRECISION=int8-quanto
 MAX_TRAIN_STEPS=5000
 ```
 
-### Cloudflare R2 (Egress Grátis)
+### Example 4: Cloudflare R2 (Free Egress)
 
 ```
 AWS_BUCKET_NAME={{ RUNPOD_SECRET_AWS_BUCKET_NAME }}
@@ -205,63 +321,113 @@ AWS_ENDPOINT_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com
 AWS_REGION=auto
 ```
 
-## Estimativas de Tempo
+---
 
-### 8× A100 80GB
+## Directory Structure
 
-| Fase | 100K vídeos | 500K vídeos |
-|------|-------------|-------------|
-| VAE Cache | ~10h | ~50-70h |
-| Treino 10K steps | ~40h | ~40h |
-| Treino 30K steps | ~120h | ~120h |
+After the pod starts, you'll find:
 
-### 8× H200
+```
+/workspace/
+├── SimpleTuner/              # SimpleTuner source code
+├── config/                   # Generated configurations
+│   ├── training_config.json  # Training hyperparameters
+│   ├── databackend.json      # Dataset configuration
+│   └── metadata.parquet      # (if generated)
+├── cache/
+│   ├── vae/                  # VAE latent cache
+│   └── text/                 # Text embedding cache
+├── output/                   # Saved checkpoints
+├── logs/                     # TensorBoard logs
+├── scripts/                  # Utility scripts
+├── generate_parquet.sh       # Generate Parquet metadata
+├── start_training.sh         # Start training
+└── monitor.sh                # Start monitoring tools
+```
 
-| Fase | 100K vídeos | 500K vídeos |
-|------|-------------|-------------|
-| VAE Cache | ~6h | ~30-40h |
-| Treino 10K steps | ~25h | ~25h |
-| Treino 30K steps | ~75h | ~75h |
+---
+
+## Time Estimates
+
+### 8x A100 80GB
+
+| Phase | 100K videos | 500K videos |
+|-------|-------------|-------------|
+| VAE Cache | ~10 hours | ~50-70 hours |
+| Training 10K steps | ~40 hours | ~40 hours |
+| Training 30K steps | ~120 hours | ~120 hours |
+
+### 8x H200
+
+| Phase | 100K videos | 500K videos |
+|-------|-------------|-------------|
+| VAE Cache | ~6 hours | ~30-40 hours |
+| Training 10K steps | ~25 hours | ~25 hours |
+| Training 30K steps | ~75 hours | ~75 hours |
+
+---
 
 ## Troubleshooting
 
-### OOM (Out of Memory)
+### Out of Memory (OOM) Errors
 
-```bash
-# Use quantização
+**Solution 1**: Enable quantization
+```
 BASE_MODEL_PRECISION=int8-quanto
+```
 
-# Ou reduza batch
+**Solution 2**: Reduce batch size
+```
 TRAIN_BATCH_SIZE=1
 GRADIENT_ACCUMULATION_STEPS=8
 ```
 
-### Startup Lento
+### Slow Startup with Large Datasets
 
+**Solution**: Generate Parquet metadata once, then reuse:
 ```bash
-# Gere Parquet uma vez
+# Run once
 /workspace/generate_parquet.sh
 
-# Configure USE_PARQUET=true
+# Then set in your template
+USE_PARQUET=true
 ```
 
-### Verificar Logs
+### Check Training Logs
 
 ```bash
-# Logs do SimpleTuner
+# View SimpleTuner logs
 tail -f /workspace/logs/*/events.out.tfevents.*
 
-# TensorBoard
+# Start TensorBoard manually
 tensorboard --logdir /workspace/logs --port 6006 --bind_all
 ```
 
-## Build Local (Desenvolvimento)
+### S3 Connection Issues
+
+```bash
+# Test S3 connectivity
+aws s3 ls s3://$AWS_BUCKET_NAME/
+
+# Check credentials
+echo "Bucket: $AWS_BUCKET_NAME"
+echo "Region: $AWS_REGION"
+echo "Access Key: ${AWS_ACCESS_KEY_ID:0:5}..."
+```
+
+---
+
+## Local Development
+
+For building and testing the Docker image locally:
 
 ```bash
 cd docker/runpod-longcat
+
+# Build the image
 docker build -t longcat-video-finetune:latest .
 
-# Testar
+# Test locally
 docker run --rm -it \
     -e AWS_BUCKET_NAME=test \
     -e AWS_ACCESS_KEY_ID=test \
@@ -269,8 +435,10 @@ docker run --rm -it \
     longcat-video-finetune:latest /bin/bash
 ```
 
+---
+
 ## Links
 
-- [SimpleTuner](https://github.com/bghira/SimpleTuner)
-- [RunPod Docs](https://docs.runpod.io)
-- [LongCat Video](https://huggingface.co/LongCat-Video)
+- [SimpleTuner Documentation](https://github.com/bghira/SimpleTuner)
+- [RunPod Documentation](https://docs.runpod.io)
+- [LongCat Video Model](https://huggingface.co/LongCat-Video)

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Script para gerar Parquet de metadados do dataset de vídeos no S3.
+Script to generate Parquet metadata from an S3 video dataset.
 
-Isso acelera MUITO o startup do SimpleTuner para datasets massivos,
-evitando que ele precise escanear cada arquivo individualmente.
+This dramatically speeds up SimpleTuner startup for massive datasets
+by avoiding individual file scanning.
 
-Uso:
+Usage:
     python generate_metadata_parquet.py \
         --bucket YOUR_BUCKET_NAME \
         --prefix "videos/" \
@@ -27,7 +27,7 @@ from tqdm import tqdm
 
 
 def get_s3_client(region: str, endpoint_url: str = None):
-    """Cria cliente S3."""
+    """Create an S3 client."""
     return boto3.client(
         "s3",
         region_name=region,
@@ -38,11 +38,11 @@ def get_s3_client(region: str, endpoint_url: str = None):
 
 
 def list_s3_videos(client, bucket: str, prefix: str) -> list[str]:
-    """Lista todos os arquivos .mp4 no bucket S3."""
+    """List all video files (.mp4, .mov, etc.) in the S3 bucket."""
     videos = []
     paginator = client.get_paginator("list_objects_v2")
 
-    print(f"Listando vídeos em s3://{bucket}/{prefix}...")
+    print(f"Listing videos in s3://{bucket}/{prefix}...")
 
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
@@ -50,18 +50,18 @@ def list_s3_videos(client, bucket: str, prefix: str) -> list[str]:
             if key.lower().endswith((".mp4", ".mov", ".avi", ".webm")):
                 videos.append(key)
 
-    print(f"Encontrados {len(videos)} vídeos")
+    print(f"Found {len(videos)} videos")
     return videos
 
 
 def get_video_metadata(client, bucket: str, video_key: str) -> dict | None:
-    """Extrai metadados de um vídeo (baixa temporariamente)."""
+    """Extract metadata from a video (downloads temporarily)."""
     try:
-        # Baixa o vídeo para um arquivo temporário
+        # Download video to a temporary file
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
             client.download_file(bucket, video_key, tmp.name)
 
-            # Abre com OpenCV para extrair metadados
+            # Open with OpenCV to extract metadata
             cap = cv2.VideoCapture(tmp.name)
             if not cap.isOpened():
                 return None
@@ -74,16 +74,16 @@ def get_video_metadata(client, bucket: str, video_key: str) -> dict | None:
 
             cap.release()
 
-        # Tenta ler a caption do arquivo .txt correspondente
+        # Try to read caption from corresponding .txt file
         caption = ""
         txt_key = Path(video_key).with_suffix(".txt").as_posix()
         try:
             response = client.get_object(Bucket=bucket, Key=txt_key)
             caption = response["Body"].read().decode("utf-8").strip()
-            # Pega apenas a primeira linha se houver múltiplas
+            # Take only the first line if there are multiple
             caption = caption.split("\n")[0].strip()
         except Exception:
-            # Se não encontrar o .txt, usa o nome do arquivo
+            # If .txt not found, use filename as caption
             caption = Path(video_key).stem.replace("_", " ").replace("-", " ")
 
         return {
@@ -98,12 +98,12 @@ def get_video_metadata(client, bucket: str, video_key: str) -> dict | None:
         }
 
     except Exception as e:
-        print(f"Erro processando {video_key}: {e}")
+        print(f"Error processing {video_key}: {e}")
         return None
 
 
 def process_video_batch(args):
-    """Processa um batch de vídeos (para paralelização)."""
+    """Process a batch of videos (for parallelization)."""
     client, bucket, video_keys = args
     results = []
     for key in video_keys:
@@ -115,75 +115,75 @@ def process_video_batch(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Gera Parquet de metadados para dataset de vídeos no S3"
+        description="Generate Parquet metadata for an S3 video dataset"
     )
-    parser.add_argument("--bucket", required=True, help="Nome do bucket S3")
-    parser.add_argument("--prefix", default="", help="Prefixo/pasta no S3")
-    parser.add_argument("--output", default="metadata.parquet", help="Arquivo de saída")
-    parser.add_argument("--region", default="us-east-1", help="Região AWS")
-    parser.add_argument("--endpoint-url", default=None, help="Endpoint URL (para R2, MinIO, etc)")
-    parser.add_argument("--workers", type=int, default=16, help="Número de workers paralelos")
-    parser.add_argument("--batch-size", type=int, default=100, help="Tamanho do batch por worker")
-    parser.add_argument("--sample", type=int, default=None, help="Processar apenas N vídeos (para teste)")
+    parser.add_argument("--bucket", required=True, help="S3 bucket name")
+    parser.add_argument("--prefix", default="", help="S3 prefix/folder")
+    parser.add_argument("--output", default="metadata.parquet", help="Output file path")
+    parser.add_argument("--region", default="us-east-1", help="AWS region")
+    parser.add_argument("--endpoint-url", default=None, help="Endpoint URL (for R2, MinIO, etc.)")
+    parser.add_argument("--workers", type=int, default=16, help="Number of parallel workers")
+    parser.add_argument("--batch-size", type=int, default=100, help="Batch size per worker")
+    parser.add_argument("--sample", type=int, default=None, help="Process only N videos (for testing)")
 
     args = parser.parse_args()
 
-    # Cria cliente S3
+    # Create S3 client
     client = get_s3_client(args.region, args.endpoint_url)
 
-    # Lista todos os vídeos
+    # List all videos
     videos = list_s3_videos(client, args.bucket, args.prefix)
 
     if args.sample:
         import random
         videos = random.sample(videos, min(args.sample, len(videos)))
-        print(f"Amostrando {len(videos)} vídeos para teste")
+        print(f"Sampling {len(videos)} videos for testing")
 
-    # Divide em batches
+    # Split into batches
     batches = []
     for i in range(0, len(videos), args.batch_size):
         batch = videos[i : i + args.batch_size]
-        # Cada worker precisa de seu próprio cliente S3
+        # Each worker needs its own S3 client
         batches.append((get_s3_client(args.region, args.endpoint_url), args.bucket, batch))
 
-    # Processa em paralelo
+    # Process in parallel
     all_metadata = []
 
-    print(f"Processando {len(videos)} vídeos com {args.workers} workers...")
+    print(f"Processing {len(videos)} videos with {args.workers} workers...")
 
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         futures = [executor.submit(process_video_batch, batch) for batch in batches]
 
-        with tqdm(total=len(videos), desc="Extraindo metadados") as pbar:
+        with tqdm(total=len(videos), desc="Extracting metadata") as pbar:
             for future in as_completed(futures):
                 results = future.result()
                 all_metadata.extend(results)
                 pbar.update(len(results))
 
-    # Cria DataFrame e salva
+    # Create DataFrame and save
     df = pd.DataFrame(all_metadata)
 
-    print(f"\nEstatísticas do dataset:")
-    print(f"  Total de vídeos processados: {len(df)}")
-    print(f"  Resoluções únicas: {df.groupby(['width', 'height']).size().shape[0]}")
-    print(f"  Duração média: {df['duration_seconds'].mean():.2f}s")
-    print(f"  Frames médios: {df['num_frames'].mean():.0f}")
-    print(f"  FPS médio: {df['fps'].mean():.1f}")
+    print(f"\nDataset statistics:")
+    print(f"  Total videos processed: {len(df)}")
+    print(f"  Unique resolutions: {df.groupby(['width', 'height']).size().shape[0]}")
+    print(f"  Average duration: {df['duration_seconds'].mean():.2f}s")
+    print(f"  Average frames: {df['num_frames'].mean():.0f}")
+    print(f"  Average FPS: {df['fps'].mean():.1f}")
 
-    # Filtra vídeos corrompidos ou muito curtos (< 10 frames)
-    # Nota: com amostragem uniforme no VAE cache, vídeos com FPS variado são aceitos
-    min_frames = 10  # Mínimo para filtrar arquivos corrompidos
+    # Filter corrupted or very short videos (< 10 frames)
+    # Note: with uniform frame sampling in VAE cache, videos with varying FPS are accepted
+    min_frames = 10  # Minimum to filter corrupted files
     df_valid = df[df["num_frames"] >= min_frames].copy()
-    print(f"  Vídeos válidos (>= {min_frames} frames): {len(df_valid)}")
+    print(f"  Valid videos (>= {min_frames} frames): {len(df_valid)}")
 
-    # Salva Parquet
+    # Save Parquet
     df_valid.to_parquet(args.output, index=False)
-    print(f"\nParquet salvo em: {args.output}")
+    print(f"\nParquet saved to: {args.output}")
 
-    # Também salva uma versão CSV para inspeção manual
+    # Also save a CSV sample for manual inspection
     csv_path = args.output.replace(".parquet", ".csv")
     df_valid.head(1000).to_csv(csv_path, index=False)
-    print(f"Amostra CSV salva em: {csv_path}")
+    print(f"CSV sample saved to: {csv_path}")
 
 
 if __name__ == "__main__":
