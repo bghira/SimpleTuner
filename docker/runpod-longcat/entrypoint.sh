@@ -200,6 +200,7 @@ if [ "$USE_PARQUET" = "true" ] && [ -f "${CONFIG_DIR}/metadata.parquet" ]; then
     "resolution_type": "pixel_area",
     "minimum_image_size": 256,
     "maximum_image_size": 1024,
+    "target_downsample_size": 512,
 
     "crop": true,
     "crop_style": "center",
@@ -251,6 +252,7 @@ else
     "resolution_type": "pixel_area",
     "minimum_image_size": 256,
     "maximum_image_size": 1024,
+    "target_downsample_size": 512,
 
     "crop": true,
     "crop_style": "center",
