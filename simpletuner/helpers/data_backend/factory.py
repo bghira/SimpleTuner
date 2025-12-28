@@ -623,7 +623,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             output["config"]["video"].update(backend["video"])
         if "num_frames" not in output["config"]["video"]:
             default_num_seconds = 5
-            framerate = _get_arg_value(args, "framerate", 30)
+            framerate = _get_arg_value(args, "framerate", None)
+            if framerate is None:
+                framerate = 30
             video_duration_in_frames = framerate * default_num_seconds
             warning_log(
                 f"No `num_frames` was provided for video backend. Defaulting to {video_duration_in_frames} ({default_num_seconds} seconds @ {framerate}fps) to avoid memory implosion/explosion. Reduce value further for lower memory use."

@@ -182,6 +182,8 @@ class LongCatVideo(VideoModelFoundation):
             self.config.aspect_bucket_alignment = 64
         if getattr(self.config, "flow_schedule_shift", None) is None:
             self.config.flow_schedule_shift = 12.0
+        if getattr(self.config, "framerate", None) is None:
+            self.config.framerate = 24
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)
