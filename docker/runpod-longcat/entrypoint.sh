@@ -125,6 +125,7 @@ cat > "${CONFIG_DIR}/config.json" << EOF
   "lr_scheduler": "cosine",
   "lr_warmup_steps": 500,
   "max_train_steps": ${MAX_TRAIN_STEPS},
+  "num_train_epochs": 0,
   "checkpointing_steps": ${CHECKPOINTING_STEPS},
   "checkpoints_total_limit": 5,
 
