@@ -1,0 +1,180 @@
+<!-- Admin - Audit Tab -->
+<div x-show="activeTab === 'audit'" x-transition>
+    <!-- Audit Stats Bar -->
+    <div class="admin-stats-bar mb-3">
+        <div class="stat-item">
+            <span class="stat-value" x-text="audit.stats.total_entries || 0"></span>
+            <span class="stat-label">Total Events</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="audit.stats.entries_24h || 0"></span>
+            <span class="stat-label">24h Activity</span>
+        </div>
+        <div class="stat-item" x-show="audit.stats.failed_logins_24h > 0">
+            <span class="stat-value text-danger" x-text="audit.stats.failed_logins_24h"></span>
+            <span class="stat-label">Failed Logins</span>
+        </div>
+        <div class="stat-item" x-show="audit.stats.permission_denials_24h > 0">
+            <span class="stat-value text-warning" x-text="audit.stats.permission_denials_24h"></span>
+            <span class="stat-label">Denials</span>
+        </div>
+    </div>
+
+    <!-- Audit Toolbar -->
+    <div class="admin-toolbar">
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+            <!-- Event Type Filter -->
+            <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                    style="max-width: 180px;"
+                    x-model="audit.eventTypeFilter"
+                    @change="applyAuditFilters()">
+                <option value="">All Event Types</option>
+                <template x-for="et in audit.eventTypes" :key="et">
+                    <option :value="et" x-text="et"></option>
+                </template>
+            </select>
+
+            <!-- Actor Search -->
+            <div class="input-group input-group-sm" style="max-width: 200px;">
+                <span class="input-group-text bg-dark border-secondary">
+                    <i class="fas fa-user text-muted"></i>
+                </span>
+                <input type="text"
+                       class="form-control bg-dark text-light border-secondary"
+                       placeholder="Actor ID..."
+                       x-model="audit.actorSearch"
+                       @keyup.enter="applyAuditFilters()">
+            </div>
+
+            <!-- Date Range -->
+            <div class="input-group input-group-sm" style="max-width: 180px;">
+                <span class="input-group-text bg-dark border-secondary">
+                    <i class="fas fa-calendar text-muted"></i>
+                </span>
+                <input type="date"
+                       class="form-control bg-dark text-light border-secondary"
+                       x-model="audit.sinceDate"
+                       @change="applyAuditFilters()">
+            </div>
+            <span class="text-muted">to</span>
+            <input type="date"
+                   class="form-control form-control-sm bg-dark text-light border-secondary"
+                   style="max-width: 150px;"
+                   x-model="audit.untilDate"
+                   @change="applyAuditFilters()">
+
+            <!-- Security Toggle -->
+            <button class="btn btn-sm"
+                    :class="audit.securityOnly ? 'btn-warning' : 'btn-outline-warning'"
+                    @click="toggleSecurityOnly()"
+                    title="Show security events only">
+                <i class="fas fa-shield-alt me-1"></i>
+                <span class="d-none d-md-inline">Security</span>
+            </button>
+
+            <!-- Clear Filters -->
+            <button class="btn btn-sm btn-outline-secondary"
+                    @click="clearAuditFilters()"
+                    title="Clear filters">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="ms-auto">
+                <!-- Verify Chain -->
+                <button class="btn btn-sm btn-outline-info"
+                        @click="verifyAuditChain()"
+                        :disabled="audit.verifying">
+                    <i class="fas" :class="audit.verifying ? 'fa-spinner fa-spin' : 'fa-link'"></i>
+                    <span class="ms-1 d-none d-md-inline">Verify Chain</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chain Verification Result -->
+    <div class="m-3" x-show="audit.verifyResult" x-transition>
+        <div class="alert mb-0 py-2"
+             :class="audit.verifyResult?.valid ? 'alert-success' : 'alert-danger'">
+            <i class="fas me-2" :class="audit.verifyResult?.valid ? 'fa-check-circle' : 'fa-exclamation-triangle'"></i>
+            <span x-text="audit.verifyResult?.valid ? 'Audit chain integrity verified' : 'Chain integrity check failed'"></span>
+            <span class="small ms-2" x-show="audit.verifyResult?.entries_checked"
+                  x-text="'(' + (audit.verifyResult?.entries_checked || 0) + ' entries checked)'"></span>
+        </div>
+    </div>
+
+    <!-- Audit Table -->
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th style="width: 160px;">Timestamp</th>
+                    <th style="width: 140px;">Event Type</th>
+                    <th>Actor</th>
+                    <th class="d-none d-md-table-cell">Target</th>
+                    <th class="d-none d-lg-table-cell">Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="audit.loading">
+                    <tr>
+                        <td colspan="5" class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin me-2"></i>Loading audit log...
+                        </td>
+                    </tr>
+                </template>
+                <template x-if="!audit.loading && audit.entries.length === 0">
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">
+                            <i class="fas fa-clipboard-list me-2"></i>No audit entries found
+                        </td>
+                    </tr>
+                </template>
+                <template x-for="entry in audit.entries" :key="entry.id">
+                    <tr>
+                        <td>
+                            <span class="small" x-text="formatAuditTimestamp(entry.timestamp)"></span>
+                        </td>
+                        <td>
+                            <span class="badge" :class="getEventTypeBadgeClass(entry.event_type)"
+                                  x-text="entry.event_type"></span>
+                        </td>
+                        <td>
+                            <span x-text="entry.actor_id || '-'"></span>
+                        </td>
+                        <td class="d-none d-md-table-cell">
+                            <span class="small text-muted" x-text="entry.target_type || ''"></span>
+                            <span class="small" x-show="entry.target_id" x-text="entry.target_id"></span>
+                        </td>
+                        <td class="d-none d-lg-table-cell">
+                            <span class="small text-muted text-truncate d-inline-block"
+                                  style="max-width: 300px;"
+                                  x-text="getAuditDetails(entry)"
+                                  :title="getAuditDetails(entry)"></span>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="d-flex justify-content-between align-items-center px-3 py-2 border-top border-secondary"
+         x-show="audit.entries.length > 0 || audit.offset > 0">
+        <div class="small text-muted">
+            Showing <span x-text="audit.offset + 1"></span>-<span x-text="audit.offset + audit.entries.length"></span>
+            <span x-show="audit.hasMore">of more</span>
+        </div>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-secondary"
+                    @click="auditPrevPage()"
+                    :disabled="audit.offset === 0">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <button class="btn btn-outline-secondary"
+                    @click="auditNextPage()"
+                    :disabled="!audit.hasMore">
+                <i class="fas fa-chevron-right"></i>
+            </button>
+        </div>
+    </div>
+</div>

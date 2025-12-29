@@ -1,0 +1,114 @@
+<!-- Admin - Quotas Tab -->
+<div x-show="activeTab === 'quotas'" x-transition>
+    <!-- Quotas Hint -->
+    <div class="admin-hint admin-hint-inline" x-show="hints.quotas" x-transition>
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="small">
+                <i class="fas fa-lightbulb text-warning me-2"></i>
+                <strong>Quotas:</strong>
+                Limit spending and job submissions. Quota types: <code>COST_MONTHLY</code>/<code>COST_DAILY</code> (USD limits),
+                <code>CONCURRENT_JOBS</code>, <code>JOBS_PER_DAY</code>, <code>JOBS_PER_HOUR</code>.
+                Actions: <strong>BLOCK</strong> (reject), <strong>WARN</strong> (allow with warning), <strong>REQUIRE_APPROVAL</strong>.
+                Quotas can be global, per-level, or per-user. User-specific quotas take highest priority.
+            </div>
+            <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('quotas')"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
+    <!-- User Quota Status Lookup -->
+    <div class="card bg-dark border-secondary mb-3">
+        <div class="card-header py-2 border-secondary d-flex justify-content-between align-items-center">
+            <span class="small fw-medium"><i class="fas fa-user-check me-2"></i>User Quota Status</span>
+        </div>
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label small mb-1">Select User</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                            x-model="quotaLookupUserId"
+                            @change="lookupUserQuotas()">
+                        <option value="">-- Select a user --</option>
+                        <template x-for="u in users" :key="u.id">
+                            <option :value="u.id" x-text="u.display_name || u.username + ' (' + u.email + ')'"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="col-md-8">
+                    <template x-if="quotaLookupLoading">
+                        <div class="text-muted small"><i class="fas fa-spinner fa-spin me-2"></i>Loading quota status...</div>
+                    </template>
+                    <template x-if="!quotaLookupLoading && quotaLookupUserId && quotaLookupResult">
+                        <div class="d-flex align-items-center gap-3">
+                            <span class="badge" :class="quotaLookupResult.can_submit ? 'bg-success' : 'bg-danger'">
+                                <i class="fas" :class="quotaLookupResult.can_submit ? 'fa-check' : 'fa-ban'"></i>
+                                <span x-text="quotaLookupResult.can_submit ? 'Can Submit' : 'Blocked'"></span>
+                            </span>
+                            <button class="btn btn-sm btn-outline-info" @click="quotaLookupDetailOpen = true"
+                                    x-show="quotaLookupResult.statuses && quotaLookupResult.statuses.length > 0">
+                                <i class="fas fa-list me-1"></i>View Details
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <!-- Blocking reasons -->
+            <template x-if="quotaLookupResult && quotaLookupResult.blocking_reasons && quotaLookupResult.blocking_reasons.length > 0">
+                <div class="mt-2">
+                    <template x-for="reason in quotaLookupResult.blocking_reasons" :key="reason">
+                        <div class="text-danger small"><i class="fas fa-exclamation-triangle me-1"></i><span x-text="reason"></span></div>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <div class="admin-toolbar">
+        <button class="btn btn-sm btn-primary" @click="showCreateQuotaForm()">
+            <i class="fas fa-plus me-1"></i>Add Quota
+        </button>
+    </div>
+
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Target</th>
+                    <th>Limit</th>
+                    <th>Action</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="quotasLoading">
+                    <tr><td colspan="5" class="text-center py-4"><i class="fas fa-spinner fa-spin me-2"></i>Loading...</td></tr>
+                </template>
+                <template x-if="!quotasLoading && quotas.length === 0">
+                    <tr>
+                        <td colspan="5" class="text-center py-4 text-muted">
+                            <i class="fas fa-tachometer-alt me-2"></i>No quotas configured
+                            <div class="mt-2 small">Default limits apply: 5 concurrent jobs, 20/day, $500/month</div>
+                        </td>
+                    </tr>
+                </template>
+                <template x-for="quota in quotas" :key="quota.id">
+                    <tr>
+                        <td><span class="fw-medium" x-text="getQuotaTypeName(quota.quota_type)"></span></td>
+                        <td>
+                            <span class="badge bg-secondary" x-text="quota.target_type"></span>
+                            <span class="small ms-1" x-show="quota.target_id" x-text="quota.target_name || quota.target_id"></span>
+                        </td>
+                        <td><span class="fw-medium" x-text="quota.limit_value"></span></td>
+                        <td><span class="badge" :class="getQuotaActionClass(quota.action)" x-text="quota.action"></span></td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" @click="showEditQuotaForm(quota)" title="Edit"><i class="fas fa-edit"></i></button>
+                                <button class="btn btn-outline-danger" @click="deleteQuota(quota)" title="Delete"><i class="fas fa-trash"></i></button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</div>

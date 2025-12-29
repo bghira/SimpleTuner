@@ -1,0 +1,78 @@
+<!-- User Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': userFormOpen }" tabindex="-1"
+     x-show="userFormOpen" @keydown.escape="userFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="editingUser ? 'Edit User' : 'Create Local User'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="userFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <form @submit.prevent="saveUser()">
+                    <div class="mb-3">
+                        <label class="form-label small">Email</label>
+                        <input type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="userForm.email" required placeholder="user@example.com"
+                               :disabled="editingUser">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Username</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="userForm.username" required placeholder="username"
+                               pattern="^[a-zA-Z0-9_\-]+$" minlength="3" maxlength="50"
+                               :disabled="editingUser">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Display Name</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="userForm.display_name" placeholder="(optional)">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small" x-text="editingUser ? 'New Password (leave empty to keep)' : 'Password'"></label>
+                        <input type="password" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="userForm.password" minlength="8"
+                               :required="!editingUser" placeholder="Minimum 8 characters">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Levels</label>
+                        <div class="d-flex flex-wrap gap-2">
+                            <template x-for="level in levels" :key="level.id">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox"
+                                           :id="'user-level-' + level.id"
+                                           :checked="userForm.level_names.includes(level.name)"
+                                           @change="toggleUserLevel(level.name)">
+                                    <label class="form-check-label small" :for="'user-level-' + level.id" x-text="level.name"></label>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="user-is-admin" x-model="userForm.is_admin">
+                                <label class="form-check-label small" for="user-is-admin">
+                                    <i class="fas fa-crown text-warning me-1"></i>Administrator
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-6" x-show="editingUser">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="user-is-active" x-model="userForm.is_active">
+                                <label class="form-check-label small" for="user-is-active">Active</label>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="userFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveUser()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="editingUser ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="userFormOpen" @click="userFormOpen = false"></div>

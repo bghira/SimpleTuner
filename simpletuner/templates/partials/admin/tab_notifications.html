@@ -1,0 +1,222 @@
+<!-- Admin - Notifications Tab -->
+<div x-show="activeTab === 'notifications'" x-transition>
+    <!-- Notifications Hero CTA (show if no channels configured) -->
+    <div class="admin-hint" x-show="notifications.channels.length === 0 && !notifications.skipped" x-transition>
+        <div class="text-center py-4">
+            <i class="fas fa-bell fa-3x text-muted mb-3"></i>
+            <h5>Set Up Notifications</h5>
+            <p class="text-muted mb-4">
+                Get notified about approvals, job completions, quota warnings, and more.
+                Connect an email provider to enable mobile approvals via email reply.
+            </p>
+            <div class="d-flex justify-content-center gap-3 flex-wrap mb-4">
+                <template x-for="preset in notifications.presets" :key="preset.name">
+                    <button class="btn btn-outline-primary"
+                            @click="showChannelFormWithPreset(preset.name)">
+                        <i class="fas me-2" :class="preset.name === 'gmail' ? 'fa-google' : preset.name === 'outlook' ? 'fa-microsoft' : preset.name === 'custom' ? 'fa-cog' : 'fa-envelope'"></i>
+                        <span x-text="preset.display_name || preset.name"></span>
+                    </button>
+                </template>
+            </div>
+            <div>
+                <button class="btn btn-sm btn-link text-muted" @click="skipNotificationsSetup()">
+                    <i class="fas fa-times me-1"></i>Skip - I'll configure later
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Notifications Content -->
+    <template x-if="notifications.channels.length > 0 || notifications.skipped">
+        <div>
+            <!-- Notification Hint -->
+            <div class="admin-hint admin-hint-inline" x-show="hints.notifications" x-transition>
+                <div class="d-flex justify-content-between align-items-start">
+                    <div class="small">
+                        <i class="fas fa-lightbulb text-warning me-2"></i>
+                        <strong>Notification Channels:</strong>
+                        Configure where notifications are sent. Email channels with IMAP can receive approval responses
+                        - just reply "ok" or "no" to approve or reject jobs from your phone.
+                    </div>
+                    <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('notifications')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Toolbar -->
+            <div class="admin-toolbar">
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <span class="small text-muted">
+                        <span x-text="notifications.channels.length"></span> channel(s) configured
+                    </span>
+                    <div class="ms-auto">
+                        <button class="btn btn-sm btn-primary" @click="showChannelForm()">
+                            <i class="fas fa-plus me-1"></i>Add Channel
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Channels Table -->
+            <div class="admin-table-container">
+                <table class="table table-dark table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;">Status</th>
+                            <th>Channel</th>
+                            <th class="d-none d-md-table-cell">Type</th>
+                            <th class="d-none d-md-table-cell">Configuration</th>
+                            <th style="width: 150px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-if="notifications.loading">
+                            <tr>
+                                <td colspan="5" class="text-center py-4">
+                                    <i class="fas fa-spinner fa-spin me-2"></i>Loading channels...
+                                </td>
+                            </tr>
+                        </template>
+                        <template x-if="!notifications.loading && notifications.channels.length === 0">
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-muted">
+                                    <i class="fas fa-bell-slash me-2"></i>No channels configured
+                                </td>
+                            </tr>
+                        </template>
+                        <template x-for="channel in notifications.channels" :key="channel.id">
+                            <tr>
+                                <td>
+                                    <span class="badge" :class="channel.is_enabled ? 'bg-success' : 'bg-secondary'"
+                                          :title="channel.is_enabled ? 'Enabled' : 'Disabled'">
+                                        <i class="fas" :class="channel.is_enabled ? 'fa-check' : 'fa-pause'"></i>
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="fw-medium" x-text="channel.name"></div>
+                                    <div class="text-muted small" x-show="channel.smtp_from_address" x-text="channel.smtp_from_address"></div>
+                                </td>
+                                <td class="d-none d-md-table-cell">
+                                    <span class="badge"
+                                          :class="channel.channel_type === 'email' ? 'bg-info' : channel.channel_type === 'slack' ? 'bg-warning' : 'bg-secondary'"
+                                          x-text="channel.channel_type"></span>
+                                    <span class="badge bg-success ms-1" x-show="channel.channel_type === 'email' && channel.imap_enabled"
+                                          title="IMAP enabled for email replies">
+                                        <i class="fas fa-reply"></i>
+                                    </span>
+                                </td>
+                                <td class="d-none d-md-table-cell text-muted small">
+                                    <span x-show="channel.channel_type === 'email'" x-text="channel.smtp_host + ':' + channel.smtp_port"></span>
+                                    <span x-show="channel.channel_type !== 'email'" x-text="channel.webhook_url ? channel.webhook_url.substring(0, 40) + '...' : '-'"></span>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-info"
+                                                @click="testChannel(channel)"
+                                                :disabled="notifications.testing === channel.id"
+                                                title="Test connection">
+                                            <i class="fas" :class="notifications.testing === channel.id ? 'fa-spinner fa-spin' : 'fa-plug'"></i>
+                                        </button>
+                                        <button class="btn btn-outline-primary" @click="showEditChannelForm(channel)" title="Edit">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger" @click="deleteChannel(channel)" title="Delete">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Test Result -->
+            <div class="mx-3 mt-2" x-show="notifications.testResult" x-transition>
+                <div class="alert py-2 mb-0"
+                     :class="notifications.testResult?.success ? 'alert-success' : 'alert-danger'">
+                    <i class="fas me-2" :class="notifications.testResult?.success ? 'fa-check-circle' : 'fa-times-circle'"></i>
+                    <span x-text="notifications.testResult?.success ? 'Connection successful (' + notifications.testResult?.latency_ms?.toFixed(0) + 'ms)' : 'Connection failed: ' + notifications.testResult?.error"></span>
+                </div>
+            </div>
+
+            <!-- Event Routing Preferences Section -->
+            <div class="mt-4" x-show="notifications.channels.length > 0">
+                <div class="admin-toolbar">
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <h6 class="mb-0">
+                            <i class="fas fa-route me-2"></i>Event Routing
+                        </h6>
+                        <span class="small text-muted ms-2">
+                            Configure which events are sent to which channels
+                        </span>
+                        <div class="ms-auto">
+                            <button class="btn btn-sm btn-primary" @click="showPreferenceForm()">
+                                <i class="fas fa-plus me-1"></i>Add Routing
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="admin-table-container">
+                    <table class="table table-dark table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width: 50px;">Status</th>
+                                <th>Event Type</th>
+                                <th>Channel</th>
+                                <th class="d-none d-md-table-cell">Severity</th>
+                                <th class="d-none d-lg-table-cell">Recipients</th>
+                                <th style="width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-if="notifications.preferences.length === 0">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4 text-muted">
+                                        <i class="fas fa-info-circle me-2"></i>No event routing configured.
+                                        All events will use default channel settings.
+                                    </td>
+                                </tr>
+                            </template>
+                            <template x-for="pref in notifications.preferences" :key="pref.id">
+                                <tr :class="{ 'opacity-50': !pref.is_enabled }">
+                                    <td>
+                                        <span class="badge" :class="pref.is_enabled ? 'bg-success' : 'bg-secondary'">
+                                            <i class="fas" :class="pref.is_enabled ? 'fa-check' : 'fa-pause'"></i>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div class="fw-medium" x-text="getEventTypeName(pref.event_type)"></div>
+                                        <div class="text-muted small" x-text="getEventTypeCategory(pref.event_type)"></div>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-info" x-text="getChannelName(pref.channel_id)"></span>
+                                    </td>
+                                    <td class="d-none d-md-table-cell">
+                                        <span class="badge" :class="getSeverityBadgeClass(pref.min_severity)"
+                                              x-text="pref.min_severity"></span>
+                                    </td>
+                                    <td class="d-none d-lg-table-cell text-muted small">
+                                        <span x-text="pref.recipients && pref.recipients.length > 0 ? pref.recipients.join(', ') : 'Channel default'"></span>
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-primary" @click="showEditPreferenceForm(pref)" title="Edit">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn btn-outline-danger" @click="deletePreference(pref)" title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>

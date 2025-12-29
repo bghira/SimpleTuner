@@ -1,0 +1,201 @@
+<!-- templates/admin_tab.html - Administration Panel -->
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-admin">
+<link rel="stylesheet" href="/static/css/admin.css" id="css-admin">
+
+<div class="tab-fragment"
+     id="admin-tab-content"
+     data-tab-name="admin"
+     x-data="adminPanelComponent()"
+     x-init="init()">
+
+    <!-- Page Header -->
+    <div class="admin-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1"><i class="fas fa-users-cog me-2"></i>Administration</h4>
+                <p class="text-muted small mb-0">Manage users, access levels, quotas, and authentication</p>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-sm btn-outline-secondary"
+                        x-show="anyHintsDismissed()"
+                        @click="restoreAllHints()"
+                        title="Show all hints">
+                    <i class="fas fa-question-circle me-1"></i>Show Hints
+                </button>
+                <div class="admin-user-info" x-show="currentUser">
+                    <span class="badge bg-warning">
+                        <i class="fas fa-crown me-1"></i>
+                        <span x-text="currentUser?.username"></span>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overview Hint -->
+    <div class="admin-hint" x-show="hints.overview" x-transition>
+        <div class="admin-hint-content">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h6 class="mb-2"><i class="fas fa-info-circle text-info me-2"></i>Welcome to Administration</h6>
+                    <p class="small mb-2">
+                        This panel lets you manage multi-user access to SimpleTuner. You can skip this entirely if you're the only user.
+                    </p>
+                    <div class="row g-3 small">
+                        <div class="col-md-4">
+                            <strong><i class="fas fa-users me-1"></i>Users</strong>
+                            <p class="text-muted mb-0">Create local accounts or connect external identity providers (OIDC, LDAP)</p>
+                        </div>
+                        <div class="col-md-4">
+                            <strong><i class="fas fa-layer-group me-1"></i>Levels & Rules</strong>
+                            <p class="text-muted mb-0">Define access levels (viewer, researcher, lead) and what resources each can access</p>
+                        </div>
+                        <div class="col-md-4">
+                            <strong><i class="fas fa-tachometer-alt me-1"></i>Quotas & Approvals</strong>
+                            <p class="text-muted mb-0">Set spending limits, job quotas, and approval workflows for expensive jobs</p>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-link text-muted" @click="dismissHint('overview')" title="Dismiss">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Enterprise Onboarding CTA (Progressive Disclosure) -->
+    {% include 'partials/admin_enterprise_cta.html' %}
+
+    <!-- Main Admin Content (hidden while enterprise onboarding is active) -->
+    <template x-if="!shouldShowEnterpriseOnboarding()">
+        <div class="admin-main-content">
+
+    <!-- Stats Bar -->
+    <div class="admin-stats-bar">
+        <div class="stat-item">
+            <span class="stat-value" x-text="stats.userCount"></span>
+            <span class="stat-label">Users</span>
+        </div>
+        <div class="stat-item" x-show="stats.externalUserCount > 0">
+            <span class="stat-value" x-text="stats.externalUserCount"></span>
+            <span class="stat-label">External</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="stats.levelCount"></span>
+            <span class="stat-label">Levels</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="stats.ruleCount"></span>
+            <span class="stat-label">Rules</span>
+        </div>
+        <div class="stat-item" x-show="stats.quotaCount > 0">
+            <span class="stat-value" x-text="stats.quotaCount"></span>
+            <span class="stat-label">Quotas</span>
+        </div>
+        <div class="stat-item" x-show="stats.pendingApprovals > 0">
+            <span class="stat-value text-warning" x-text="stats.pendingApprovals"></span>
+            <span class="stat-label">Pending</span>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="admin-tabs">
+        <ul class="nav nav-tabs border-0">
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'users' }"
+                        @click="activeTab = 'users'">
+                    <i class="fas fa-users me-1"></i>Users
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'levels' }"
+                        @click="activeTab = 'levels'">
+                    <i class="fas fa-layer-group me-1"></i>Levels
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'rules' }"
+                        @click="activeTab = 'rules'">
+                    <i class="fas fa-shield-alt me-1"></i>Rules
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'quotas' }"
+                        @click="activeTab = 'quotas'">
+                    <i class="fas fa-tachometer-alt me-1"></i>Quotas
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'approvals' }"
+                        @click="activeTab = 'approvals'">
+                    <i class="fas fa-check-double me-1"></i>Approvals
+                    <span class="badge bg-warning ms-1" x-show="stats.pendingApprovals > 0" x-text="stats.pendingApprovals"></span>
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'orgs' }"
+                        @click="activeTab = 'orgs'">
+                    <i class="fas fa-building me-1"></i>Orgs
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'auth' }"
+                        @click="activeTab = 'auth'">
+                    <i class="fas fa-key me-1"></i>Auth
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'audit' }"
+                        @click="activeTab = 'audit'; loadAuditEntriesIfNeeded()">
+                    <i class="fas fa-history me-1"></i>Audit
+                </button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link" :class="{ active: activeTab === 'notifications' }"
+                        @click="activeTab = 'notifications'; loadNotificationsIfNeeded()">
+                    <i class="fas fa-bell me-1"></i>Notifications
+                </button>
+            </li>
+        </ul>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="admin-content">
+
+        <!-- Users Tab -->
+        {% include 'partials/admin/tab_users.html' %}
+
+        <!-- Levels Tab -->
+        {% include 'partials/admin/tab_levels.html' %}
+
+        <!-- Rules Tab -->
+        {% include 'partials/admin/tab_rules.html' %}
+
+        <!-- Quotas Tab -->
+        {% include 'partials/admin/tab_quotas.html' %}
+
+        <!-- Approvals Tab -->
+        {% include 'partials/admin/tab_approvals.html' %}
+
+        <!-- Organizations Tab -->
+        {% include 'partials/admin/tab_orgs.html' %}
+
+        <!-- Auth Tab -->
+        {% include 'partials/admin/tab_auth.html' %}
+
+        <!-- Audit Tab -->
+        {% include 'partials/admin/tab_audit.html' %}
+
+        <!-- Notifications Tab -->
+        {% include 'partials/admin/tab_notifications.html' %}
+
+    </div>
+
+    <!-- Modals -->
+    {% include 'partials/admin/modals.html' %}
+
+        </div><!-- /.admin-main-content -->
+    </template><!-- End of main content wrapper (shown after enterprise onboarding) -->
+
+</div><!-- /.tab-fragment -->

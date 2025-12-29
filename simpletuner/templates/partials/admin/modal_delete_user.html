@@ -1,0 +1,24 @@
+<!-- Delete User Confirmation -->
+<div class="modal fade" :class="{ 'show d-block': deleteUserOpen }" tabindex="-1"
+     x-show="deleteUserOpen" @keydown.escape="deleteUserOpen = false">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title text-danger"><i class="fas fa-exclamation-triangle me-2"></i>Delete User</h6>
+                <button type="button" class="btn-close btn-close-white" @click="deleteUserOpen = false"></button>
+            </div>
+            <div class="modal-body text-center">
+                <p class="mb-2">Delete user:</p>
+                <p class="fw-bold mb-3" x-text="deletingUser?.display_name || deletingUser?.username"></p>
+                <p class="text-muted small mb-0">This cannot be undone.</p>
+            </div>
+            <div class="modal-footer border-secondary py-2 justify-content-center">
+                <button type="button" class="btn btn-secondary btn-sm" @click="deleteUserOpen = false">Cancel</button>
+                <button type="button" class="btn btn-danger btn-sm" @click="deleteUser()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="deleteUserOpen" @click="deleteUserOpen = false"></div>

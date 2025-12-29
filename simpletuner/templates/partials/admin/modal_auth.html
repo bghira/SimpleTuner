@@ -1,0 +1,108 @@
+<!-- Auth Provider Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': authProviderFormOpen }" tabindex="-1"
+     x-show="authProviderFormOpen" @keydown.escape="authProviderFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">
+                    <i class="fas me-2" :class="authProviderForm.provider_type === 'oidc' ? 'fa-openid' : 'fa-sitemap'"></i>
+                    <span x-text="editingAuthProvider ? 'Edit Auth Provider' : 'Add Auth Provider'"></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" @click="authProviderFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label small">Provider Name</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="authProviderForm.name" required placeholder="e.g., Corporate SSO">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Type</label>
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                x-model="authProviderForm.provider_type" :disabled="editingAuthProvider">
+                            <option value="oidc">OIDC</option>
+                            <option value="ldap">LDAP</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="auth-provider-enabled" x-model="authProviderForm.enabled">
+                            <label class="form-check-label small" for="auth-provider-enabled">Enabled</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- OIDC Configuration -->
+                <div x-show="authProviderForm.provider_type === 'oidc'">
+                    <h6 class="small text-muted mb-2"><i class="fab fa-openid me-1"></i>OIDC Configuration</h6>
+                    <div class="mb-3">
+                        <label class="form-label small">Issuer URL</label>
+                        <input type="url" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="authProviderForm.config.issuer_url" placeholder="https://auth.example.com/realms/myrealm">
+                        <div class="form-text small">The OpenID Connect discovery URL (without .well-known/openid-configuration)</div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small">Client ID</label>
+                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   x-model="authProviderForm.config.client_id" placeholder="simpletuner">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">Client Secret</label>
+                            <input type="password" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   x-model="authProviderForm.config.client_secret" placeholder="••••••••">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Scopes</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="authProviderForm.config.scopes" placeholder="openid email profile">
+                    </div>
+                </div>
+
+                <!-- LDAP Configuration -->
+                <div x-show="authProviderForm.provider_type === 'ldap'">
+                    <h6 class="small text-muted mb-2"><i class="fas fa-sitemap me-1"></i>LDAP Configuration</h6>
+                    <div class="mb-3">
+                        <label class="form-label small">Server URL</label>
+                        <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="authProviderForm.config.server_url" placeholder="ldap://ldap.example.com:389">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small">Bind DN</label>
+                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   x-model="authProviderForm.config.bind_dn" placeholder="cn=admin,dc=example,dc=com">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">Bind Password</label>
+                            <input type="password" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   x-model="authProviderForm.config.bind_password" placeholder="••••••••">
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small">User Base DN</label>
+                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   x-model="authProviderForm.config.user_base_dn" placeholder="ou=users,dc=example,dc=com">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label small">User Search Filter</label>
+                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   x-model="authProviderForm.config.user_search_filter" placeholder="(uid={username})">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="authProviderFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveAuthProvider()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="editingAuthProvider ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="authProviderFormOpen" @click="authProviderFormOpen = false"></div>

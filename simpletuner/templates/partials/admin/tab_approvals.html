@@ -1,0 +1,158 @@
+<!-- Admin - Approvals Tab -->
+<div x-show="activeTab === 'approvals'" x-transition>
+    <!-- Approvals Hint -->
+    <div class="admin-hint admin-hint-inline" x-show="hints.approvals" x-transition>
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="small">
+                <i class="fas fa-lightbulb text-warning me-2"></i>
+                <strong>Approval Workflows:</strong>
+                Require manager approval for certain jobs. Triggers include:
+                <code>cost_exceeds</code> (jobs over $X),
+                <code>hardware_type</code> (specific GPUs),
+                <code>provider</code> (specific cloud),
+                <code>user_level</code> (below threshold),
+                <code>daily_jobs_exceed</code> (rate limit),
+                <code>first_job</code> (new users),
+                <code>config_pattern</code> (name matching).
+                Approvers are users with the specified <strong>required level</strong>.
+                Pending requests auto-expire after 24 hours.
+            </div>
+            <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('approvals')"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
+    <!-- Pending Approvals Panel -->
+    <div class="pending-approvals-section mx-3 mt-3" x-show="pendingApprovals.length > 0" x-transition>
+        <div class="card bg-dark border-warning">
+            <div class="card-header bg-warning bg-opacity-25 d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center gap-2">
+                    <h6 class="mb-0">
+                        <i class="fas fa-clock text-warning me-2"></i>
+                        Pending Approvals (<span x-text="pendingApprovals.length"></span>)
+                    </h6>
+                    <!-- Bulk selection indicator -->
+                    <template x-if="selectedApprovalIds.length > 0">
+                        <span class="badge bg-info ms-2">
+                            <span x-text="selectedApprovalIds.length"></span> selected
+                        </span>
+                    </template>
+                </div>
+                <div class="d-flex gap-2">
+                    <!-- Bulk actions -->
+                    <template x-if="selectedApprovalIds.length > 0">
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-success" @click="bulkApproveRequests()" :disabled="bulkProcessing">
+                                <i class="fas" :class="bulkProcessing ? 'fa-spinner fa-spin' : 'fa-check-double'"></i>
+                                <span class="ms-1">Approve All</span>
+                            </button>
+                            <button class="btn btn-danger" @click="bulkRejectRequests()" :disabled="bulkProcessing">
+                                <i class="fas" :class="bulkProcessing ? 'fa-spinner fa-spin' : 'fa-times'"></i>
+                                <span class="ms-1">Reject All</span>
+                            </button>
+                        </div>
+                    </template>
+                    <button class="btn btn-sm btn-outline-light" @click="loadPendingApprovals()" :disabled="pendingApprovalsLoading">
+                        <i class="fas fa-sync-alt" :class="{ 'fa-spin': pendingApprovalsLoading }"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <!-- Select All header -->
+                <div class="list-group-item bg-dark border-secondary d-flex align-items-center py-2"
+                     x-show="pendingApprovals.length > 1">
+                    <div class="form-check">
+                        <input type="checkbox" class="form-check-input"
+                               :checked="selectedApprovalIds.length === pendingApprovals.length && pendingApprovals.length > 0"
+                               @change="toggleSelectAllApprovals()">
+                        <label class="form-check-label small text-muted">Select All</label>
+                    </div>
+                </div>
+                <div class="list-group list-group-flush">
+                    <template x-for="req in pendingApprovals" :key="req.id">
+                        <div class="list-group-item bg-dark border-secondary d-flex justify-content-between align-items-center">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="form-check">
+                                    <input type="checkbox" class="form-check-input"
+                                           :value="req.id"
+                                           :checked="selectedApprovalIds.includes(req.id)"
+                                           @change="toggleApprovalSelection(req.id)">
+                                </div>
+                                <div>
+                                    <div class="fw-medium">
+                                        <span class="badge bg-info me-2" x-text="req.job_name || 'Job #' + req.job_id"></span>
+                                        <span class="text-muted small" x-text="'by ' + (req.user_email || 'User #' + req.user_id)"></span>
+                                    </div>
+                                    <div class="small mt-1">
+                                        <span class="badge bg-secondary me-2" x-text="getTriggerTypeName(req.trigger_type)"></span>
+                                        <code class="text-warning" x-text="req.trigger_value"></code>
+                                        <span class="text-muted ms-2" x-text="'Est. cost: $' + (req.estimated_cost || '?').toFixed(2)"></span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-success" @click="approveRequest(req.id)" title="Approve">
+                                    <i class="fas fa-check me-1"></i>Approve
+                                </button>
+                                <button class="btn btn-danger" @click="rejectRequest(req.id, prompt('Rejection reason:'))" title="Reject">
+                                    <i class="fas fa-times me-1"></i>Reject
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="admin-toolbar">
+        <button class="btn btn-sm btn-primary" @click="showCreateApprovalRuleForm()">
+            <i class="fas fa-plus me-1"></i>Add Approval Rule
+        </button>
+    </div>
+
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Rule</th>
+                    <th>Trigger</th>
+                    <th>Value</th>
+                    <th>Approver Level</th>
+                    <th style="width: 80px;">Status</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="approvalRulesLoading">
+                    <tr><td colspan="6" class="text-center py-4"><i class="fas fa-spinner fa-spin me-2"></i>Loading...</td></tr>
+                </template>
+                <template x-if="!approvalRulesLoading && approvalRules.length === 0">
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">
+                            <i class="fas fa-check-double me-2"></i>No approval rules configured
+                            <div class="mt-2 small">Jobs will be submitted without approval</div>
+                        </td>
+                    </tr>
+                </template>
+                <template x-for="rule in approvalRules" :key="rule.id">
+                    <tr :class="{ 'opacity-50': !rule.enabled }">
+                        <td><span class="fw-medium" x-text="rule.name"></span></td>
+                        <td><span class="badge bg-info" x-text="getTriggerTypeName(rule.trigger_type)"></span></td>
+                        <td><code class="small" x-text="rule.trigger_value"></code></td>
+                        <td><span class="badge bg-primary" x-text="rule.required_level"></span></td>
+                        <td>
+                            <span class="badge" :class="rule.enabled ? 'bg-success' : 'bg-secondary'"
+                                  x-text="rule.enabled ? 'Active' : 'Disabled'"></span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" @click="showEditApprovalRuleForm(rule)" title="Edit"><i class="fas fa-edit"></i></button>
+                                <button class="btn btn-outline-danger" @click="deleteApprovalRule(rule)" title="Delete"><i class="fas fa-trash"></i></button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</div>

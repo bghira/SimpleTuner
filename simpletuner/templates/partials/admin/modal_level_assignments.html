@@ -1,0 +1,77 @@
+<!-- Level Rules Assignment Modal -->
+<div class="modal fade" :class="{ 'show d-block': levelRulesOpen }" tabindex="-1"
+     x-show="levelRulesOpen" @keydown.escape="levelRulesOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">
+                    <i class="fas fa-shield-alt me-2"></i>Rules for <span class="text-info" x-text="editingLevel?.name"></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" @click="levelRulesOpen = false"></button>
+            </div>
+            <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <template x-if="rules.length === 0">
+                    <div class="text-center text-muted py-3">No resource rules defined. Create rules first.</div>
+                </template>
+                <template x-for="rule in rules" :key="rule.id">
+                    <div class="form-check py-2 border-bottom border-secondary">
+                        <input class="form-check-input" type="checkbox" :id="'level-rule-' + rule.id"
+                               :checked="selectedLevelRules.includes(rule.id)" @change="toggleLevelRule(rule.id)">
+                        <label class="form-check-label w-100" :for="'level-rule-' + rule.id">
+                            <div class="fw-medium" x-text="rule.name"></div>
+                            <div class="text-muted small">
+                                <span class="badge me-1" :class="getTypeBadgeClass(rule.resource_type)" x-text="rule.resource_type" style="font-size: 0.65rem;"></span>
+                                <span class="badge" :class="getActionBadgeClass(rule.action)" x-text="rule.action" style="font-size: 0.65rem;"></span>
+                                <code class="ms-1" x-text="rule.pattern"></code>
+                            </div>
+                        </label>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="levelRulesOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveLevelRules()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>Save
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="levelRulesOpen" @click="levelRulesOpen = false"></div>
+
+<!-- Level Permissions Modal -->
+<div class="modal fade" :class="{ 'show d-block': levelPermissionsOpen }" tabindex="-1"
+     x-show="levelPermissionsOpen" @keydown.escape="levelPermissionsOpen = false">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">
+                    <i class="fas fa-key me-2"></i>Permissions for <span class="text-info" x-text="editingLevel?.name"></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" @click="levelPermissionsOpen = false"></button>
+            </div>
+            <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <div class="row">
+                    <template x-for="perm in allPermissions" :key="perm.name">
+                        <div class="col-md-6 col-lg-4">
+                            <div class="form-check py-1">
+                                <input class="form-check-input" type="checkbox" :id="'perm-' + perm.name"
+                                       :checked="selectedPermissions.includes(perm.name)" @change="togglePermission(perm.name)">
+                                <label class="form-check-label small" :for="'perm-' + perm.name">
+                                    <code x-text="perm.name"></code>
+                                </label>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="levelPermissionsOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveLevelPermissions()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>Save
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="levelPermissionsOpen" @click="levelPermissionsOpen = false"></div>
