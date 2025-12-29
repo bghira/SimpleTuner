@@ -199,7 +199,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             arg_name="--checkpoints_total_limit",
             ui_label="Maximum Checkpoints to Keep",
             field_type=FieldType.NUMBER,
-            tab="basic",
+            tab="training",
             section="checkpointing",
             default_value=5,
             validation_rules=[
