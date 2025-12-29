@@ -18,15 +18,16 @@ from unittest.mock import MagicMock, patch
 class TestCloudAPIRequest(unittest.TestCase):
     """Tests for the cloud_api_request utility function."""
 
-    @patch("simpletuner.cli.cloud.api.requests.request")
-    def test_get_request_success(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_get_request_success(self, mock_urlopen):
         """Test successful GET request."""
         from simpletuner.cli.cloud.api import cloud_api_request
 
         mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"jobs": []}
-        mock_request.return_value = mock_response
+        mock_response.read.return_value = b'{"jobs": []}'
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
 
         with patch.dict(
             "os.environ",
@@ -34,19 +35,19 @@ class TestCloudAPIRequest(unittest.TestCase):
         ):
             result = cloud_api_request("GET", "/api/cloud/jobs")
 
-        self.assertEqual(result.status_code, 200)
-        self.assertEqual(result.json(), {"jobs": []})
-        mock_request.assert_called_once()
+        self.assertEqual(result, {"jobs": []})
+        mock_urlopen.assert_called_once()
 
-    @patch("simpletuner.cli.cloud.api.requests.request")
-    def test_post_request_with_data(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_post_request_with_data(self, mock_urlopen):
         """Test POST request with JSON data."""
         from simpletuner.cli.cloud.api import cloud_api_request
 
         mock_response = MagicMock()
-        mock_response.status_code = 201
-        mock_response.json.return_value = {"job_id": "test-123"}
-        mock_request.return_value = mock_response
+        mock_response.read.return_value = b'{"job_id": "test-123"}'
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
 
         with patch.dict(
             "os.environ",
@@ -54,18 +55,23 @@ class TestCloudAPIRequest(unittest.TestCase):
         ):
             result = cloud_api_request("POST", "/api/cloud/jobs", data={"config": "test"})
 
-        self.assertEqual(result.status_code, 201)
-        call_kwargs = mock_request.call_args[1]
-        self.assertEqual(call_kwargs["json"], {"config": "test"})
+        self.assertEqual(result, {"job_id": "test-123"})
+        # Verify data was included in the request
+        call_args = mock_urlopen.call_args
+        request_obj = call_args[0][0]
+        self.assertEqual(request_obj.method, "POST")
+        self.assertIn(b'"config"', request_obj.data)
 
-    @patch("simpletuner.cli.cloud.api.requests.request")
-    def test_ssl_configuration(self, mock_request):
+    @patch("urllib.request.urlopen")
+    def test_ssl_configuration(self, mock_urlopen):
         """Test SSL configuration from environment."""
         from simpletuner.cli.cloud.api import cloud_api_request
 
         mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_request.return_value = mock_response
+        mock_response.read.return_value = b'{"status": "ok"}'
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
 
         with patch.dict(
             "os.environ",
@@ -77,8 +83,9 @@ class TestCloudAPIRequest(unittest.TestCase):
         ):
             cloud_api_request("GET", "/api/cloud/status")
 
-        call_args = mock_request.call_args
-        self.assertTrue(call_args[1]["url"].startswith("https://"))
+        call_args = mock_urlopen.call_args
+        request_obj = call_args[0][0]
+        self.assertTrue(request_obj.full_url.startswith("https://"))
 
 
 class TestCloudJobsCommands(unittest.TestCase):
@@ -108,15 +115,27 @@ class TestCloudJobsCommands(unittest.TestCase):
         """Test listing jobs successfully."""
         from simpletuner.cli.cloud.jobs import cmd_cloud_list
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
             "jobs": [
-                {"id": "job-1", "status": "completed", "config_name": "test"},
-                {"id": "job-2", "status": "running", "config_name": "train"},
+                {
+                    "job_id": "job-1",
+                    "status": "completed",
+                    "config_name": "test",
+                    "provider": "replicate",
+                    "cost_usd": 5.0,
+                    "duration_seconds": 3600,
+                },
+                {
+                    "job_id": "job-2",
+                    "status": "running",
+                    "config_name": "train",
+                    "provider": "replicate",
+                    "cost_usd": 2.5,
+                    "duration_seconds": 1800,
+                },
             ]
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args()
         result = cmd_cloud_list(args)
@@ -129,10 +148,8 @@ class TestCloudJobsCommands(unittest.TestCase):
         """Test listing jobs with status filter."""
         from simpletuner.cli.cloud.jobs import cmd_cloud_list
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"jobs": []}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"jobs": []}
 
         args = self._make_args(status="completed")
         cmd_cloud_list(args)
@@ -145,10 +162,8 @@ class TestCloudJobsCommands(unittest.TestCase):
         """Test listing jobs in JSON format."""
         from simpletuner.cli.cloud.jobs import cmd_cloud_list
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"jobs": []}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"jobs": []}
 
         args = self._make_args(format="json")
         result = cmd_cloud_list(args)
@@ -160,10 +175,8 @@ class TestCloudJobsCommands(unittest.TestCase):
         """Test canceling a job successfully."""
         from simpletuner.cli.cloud.jobs import cmd_cloud_cancel
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "cancelled"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"success": True, "status": "cancelled"}
 
         args = self._make_args(job_id="job-123")
         result = cmd_cloud_cancel(args)
@@ -177,11 +190,9 @@ class TestCloudJobsCommands(unittest.TestCase):
         """Test canceling a non-existent job."""
         from simpletuner.cli.cloud.jobs import cmd_cloud_cancel
 
-        mock_response = MagicMock()
-        mock_response.ok = False
-        mock_response.status_code = 404
-        mock_response.json.return_value = {"detail": "Job not found"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        # When job is not found, it returns success=False
+        mock_api.return_value = {"success": False, "error": "Job not found"}
 
         args = self._make_args(job_id="nonexistent")
         result = cmd_cloud_cancel(args)
@@ -193,16 +204,21 @@ class TestCloudJobsCommands(unittest.TestCase):
         """Test getting job details."""
         from simpletuner.cli.cloud.jobs import cmd_cloud_get
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
-            "id": "job-123",
-            "status": "completed",
-            "config_name": "test",
-            "provider": "replicate",
-            "cost_usd": 5.50,
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
+            "job": {
+                "job_id": "job-123",
+                "status": "completed",
+                "config_name": "test",
+                "provider": "replicate",
+                "cost_usd": 5.50,
+                "job_type": "training",
+                "created_at": "2024-01-01T00:00:00Z",
+                "started_at": "2024-01-01T00:01:00Z",
+                "finished_at": "2024-01-01T01:00:00Z",
+                "duration_seconds": 3540,
+            }
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args(job_id="job-123")
         result = cmd_cloud_get(args)
@@ -214,14 +230,24 @@ class TestCloudJobsCommands(unittest.TestCase):
         """Test cloud status command."""
         from simpletuner.cli.cloud.jobs import cmd_cloud_status
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
-            "status": "healthy",
-            "provider": "replicate",
-            "configured": True,
-        }
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        # cmd_cloud_status makes two API calls: /api/cloud/health and /api/cloud/replicate/status
+        def mock_api_response(method, endpoint, **kwargs):
+            if "health" in endpoint:
+                return {
+                    "status": "healthy",
+                    "uptime_seconds": 3600,
+                    "components": [{"name": "database", "status": "healthy", "message": "OK", "latency_ms": 5}],
+                }
+            else:
+                return {
+                    "operational": True,
+                    "ongoing_incidents": [],
+                    "in_progress_maintenances": [],
+                    "scheduled_maintenances": [],
+                }
+
+        mock_api.side_effect = mock_api_response
 
         args = self._make_args()
         result = cmd_cloud_status(args)
@@ -250,14 +276,14 @@ class TestCloudConfigCommands(unittest.TestCase):
         """Test showing provider configuration."""
         from simpletuner.cli.cloud.config import cmd_cloud_config_show
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
-            "provider": "replicate",
-            "configured": True,
-            "cost_limit_enabled": False,
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
+            "config": {
+                "provider": "replicate",
+                "configured": True,
+                "cost_limit_enabled": False,
+            }
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args()
         result = cmd_cloud_config_show(args)
@@ -265,32 +291,27 @@ class TestCloudConfigCommands(unittest.TestCase):
         self.assertEqual(result, 0)
 
     @patch("simpletuner.cli.cloud.config.cloud_api_request")
-    @patch("simpletuner.cli.cloud.config.getpass")
+    @patch("getpass.getpass")
     def test_set_token_with_prompt(self, mock_getpass, mock_api):
         """Test setting token with password prompt."""
         from simpletuner.cli.cloud.config import cmd_cloud_config_set_token
 
-        mock_getpass.getpass.return_value = "r8_test_token"
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "saved"}
-        mock_api.return_value = mock_response
+        mock_getpass.return_value = "r8_test_token"
+        mock_api.return_value = {"success": True, "file_path": "/tmp/token"}
 
         args = self._make_args(token=None)
         result = cmd_cloud_config_set_token(args)
 
         self.assertEqual(result, 0)
-        mock_getpass.getpass.assert_called_once()
+        mock_getpass.assert_called_once()
 
     @patch("simpletuner.cli.cloud.config.cloud_api_request")
     def test_set_token_with_argument(self, mock_api):
         """Test setting token from command line argument."""
         from simpletuner.cli.cloud.config import cmd_cloud_config_set_token
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "saved"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"success": True, "file_path": "/tmp/token"}
 
         args = self._make_args(token="r8_direct_token")
         result = cmd_cloud_config_set_token(args)
@@ -305,10 +326,8 @@ class TestCloudConfigCommands(unittest.TestCase):
         """Test deleting API token."""
         from simpletuner.cli.cloud.config import cmd_cloud_config_delete_token
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "deleted"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"success": True}
 
         args = self._make_args()
         result = cmd_cloud_config_delete_token(args)
@@ -320,10 +339,8 @@ class TestCloudConfigCommands(unittest.TestCase):
         """Test setting a config key-value pair."""
         from simpletuner.cli.cloud.config import cmd_cloud_config_set
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "updated"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"config": {"hardware": "a100"}}
 
         args = self._make_args(key="hardware", value="a100")
         result = cmd_cloud_config_set(args)
@@ -357,14 +374,12 @@ class TestCloudQuotaCommands(unittest.TestCase):
         """Test listing quotas."""
         from simpletuner.cli.cloud.quota import cmd_cloud_quota_list
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
             "quotas": [
                 {"id": 1, "quota_type": "COST_MONTHLY", "limit_value": 100},
             ]
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args()
         result = cmd_cloud_quota_list(args)
@@ -376,10 +391,9 @@ class TestCloudQuotaCommands(unittest.TestCase):
         """Test creating a quota."""
         from simpletuner.cli.cloud.quota import cmd_cloud_quota_create
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"id": 1, "quota_type": "COST_MONTHLY"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        # The function checks result.get("quota")
+        mock_api.return_value = {"quota": {"id": 1, "quota_type": "COST_MONTHLY", "limit_value": 100}}
 
         args = self._make_args(type="COST_MONTHLY", limit=100, action="block")
         result = cmd_cloud_quota_create(args)
@@ -391,10 +405,15 @@ class TestCloudQuotaCommands(unittest.TestCase):
         """Test listing quota types."""
         from simpletuner.cli.cloud.quota import cmd_cloud_quota_types
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"types": ["COST_MONTHLY", "COST_DAILY", "CONCURRENT_JOBS"]}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        # The function expects types to be a list of dicts with name, description, unit
+        mock_api.return_value = {
+            "types": [
+                {"name": "COST_MONTHLY", "description": "Monthly cost limit", "unit": "USD"},
+                {"name": "COST_DAILY", "description": "Daily cost limit", "unit": "USD"},
+                {"name": "CONCURRENT_JOBS", "description": "Concurrent job limit", "unit": "jobs"},
+            ]
+        }
 
         args = self._make_args()
         result = cmd_cloud_quota_types(args)
@@ -423,14 +442,12 @@ class TestCloudApprovalCommands(unittest.TestCase):
         """Test listing approvals."""
         from simpletuner.cli.cloud.approval import cmd_cloud_approval_list
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
             "approvals": [
                 {"id": 1, "status": "pending", "job_id": "job-123"},
             ]
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args()
         result = cmd_cloud_approval_list(args)
@@ -442,10 +459,8 @@ class TestCloudApprovalCommands(unittest.TestCase):
         """Test listing pending approvals."""
         from simpletuner.cli.cloud.approval import cmd_cloud_approval_pending
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"approvals": [], "count": 0}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"approvals": [], "count": 0}
 
         args = self._make_args()
         result = cmd_cloud_approval_pending(args)
@@ -457,10 +472,9 @@ class TestCloudApprovalCommands(unittest.TestCase):
         """Test approving a request."""
         from simpletuner.cli.cloud.approval import cmd_cloud_approval_approve
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "approved"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        # The function checks result.get("success")
+        mock_api.return_value = {"success": True, "job_id": "job-123"}
 
         args = self._make_args(approval_id=1, reason="Approved for testing")
         result = cmd_cloud_approval_approve(args)
@@ -472,10 +486,9 @@ class TestCloudApprovalCommands(unittest.TestCase):
         """Test rejecting a request."""
         from simpletuner.cli.cloud.approval import cmd_cloud_approval_reject
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "rejected"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        # The function checks result.get("success")
+        mock_api.return_value = {"success": True}
 
         args = self._make_args(approval_id=1, reason="Cost too high")
         result = cmd_cloud_approval_reject(args)
@@ -503,14 +516,15 @@ class TestCloudCostLimitCommand(unittest.TestCase):
         """Test showing cost limit."""
         from simpletuner.cli.cloud.cost_limit import cmd_cloud_cost_limit
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
-            "cost_limit_enabled": True,
-            "cost_limit_amount": 50.0,
-            "cost_limit_period": "monthly",
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
+            "config": {
+                "cost_limit_enabled": True,
+                "cost_limit_amount": 50.0,
+                "cost_limit_period": "monthly",
+                "cost_limit_action": "warn",
+            }
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args(limit_action="show")
         result = cmd_cloud_cost_limit(args)
@@ -522,10 +536,8 @@ class TestCloudCostLimitCommand(unittest.TestCase):
         """Test setting cost limit."""
         from simpletuner.cli.cloud.cost_limit import cmd_cloud_cost_limit
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {"status": "updated"}
-        mock_api.return_value = mock_response
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {"config": {"cost_limit_enabled": True, "cost_limit_amount": 100.0}}
 
         args = self._make_args(limit_action="set", amount=100, period="monthly")
         result = cmd_cloud_cost_limit(args)
@@ -558,15 +570,13 @@ class TestCloudAuditCommand(unittest.TestCase):
         """Test listing audit entries."""
         from simpletuner.cli.cloud.audit import cmd_cloud_audit
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
             "entries": [
-                {"id": 1, "event_type": "login", "actor_id": "user-1"},
+                {"id": 1, "event_type": "login", "actor_id": "user-1", "timestamp": "2024-01-01T00:00:00Z"},
             ],
             "total": 1,
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args(audit_action="list")
         result = cmd_cloud_audit(args)
@@ -578,14 +588,15 @@ class TestCloudAuditCommand(unittest.TestCase):
         """Test getting audit statistics."""
         from simpletuner.cli.cloud.audit import cmd_cloud_audit
 
-        mock_response = MagicMock()
-        mock_response.ok = True
-        mock_response.json.return_value = {
+        # cloud_api_request now returns a dict directly
+        mock_api.return_value = {
             "total_entries": 100,
             "last_24h": 10,
             "security_events_24h": 2,
+            "first_entry": "2024-01-01T00:00:00Z",
+            "last_entry": "2024-01-15T00:00:00Z",
+            "by_event_type": {"login": 50, "logout": 30, "job_start": 20},
         }
-        mock_api.return_value = mock_response
 
         args = self._make_args(audit_action="stats")
         result = cmd_cloud_audit(args)

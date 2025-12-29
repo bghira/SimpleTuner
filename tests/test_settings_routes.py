@@ -229,11 +229,11 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
 
     def test_preview_local_dataset(self):
         """POST with local dataset should calculate upload requirements."""
-        # Create test files
+        # Create test files - use larger sizes so MB doesn't round to 0.00
         dataset_path = Path(self._data_dir) / "my_dataset"
         dataset_path.mkdir()
-        (dataset_path / "image1.png").write_bytes(b"x" * 1000)
-        (dataset_path / "image2.png").write_bytes(b"y" * 2000)
+        (dataset_path / "image1.png").write_bytes(b"x" * (1024 * 1024))  # 1 MB
+        (dataset_path / "image2.png").write_bytes(b"y" * (1024 * 1024))  # 1 MB
 
         with self._get_client() as client:
             response = client.post(

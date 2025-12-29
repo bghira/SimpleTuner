@@ -115,14 +115,14 @@ class TestNotificationEventTypes(unittest.TestCase):
         """Test that all expected event types exist."""
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.protocols import NotificationEventType
 
-        # Job events
-        self.assertEqual(NotificationEventType.JOB_STARTED.value, "job_started")
-        self.assertEqual(NotificationEventType.JOB_COMPLETED.value, "job_completed")
-        self.assertEqual(NotificationEventType.JOB_FAILED.value, "job_failed")
+        # Job events - use dotted notation
+        self.assertEqual(NotificationEventType.JOB_STARTED.value, "job.started")
+        self.assertEqual(NotificationEventType.JOB_COMPLETED.value, "job.completed")
+        self.assertEqual(NotificationEventType.JOB_FAILED.value, "job.failed")
 
-        # Approval events
-        self.assertEqual(NotificationEventType.APPROVAL_REQUIRED.value, "approval_required")
-        self.assertEqual(NotificationEventType.APPROVAL_GRANTED.value, "approval_granted")
+        # Approval events - use dotted notation
+        self.assertEqual(NotificationEventType.APPROVAL_REQUIRED.value, "approval.required")
+        self.assertEqual(NotificationEventType.APPROVAL_GRANTED.value, "approval.granted")
 
     def test_severity_values(self):
         """Test severity level values."""

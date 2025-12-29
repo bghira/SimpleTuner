@@ -36,9 +36,9 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
         return TestClient(app)
 
     def test_get_metrics_config(self):
-        """GET /api/cloud/metrics-config should return current config."""
+        """GET /api/cloud/metrics/config should return current config."""
         with self._get_client() as client:
-            response = client.get("/api/cloud/metrics-config")
+            response = client.get("/api/cloud/metrics/config")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -55,10 +55,10 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
             self.assertEqual(data["endpoint_url"], "/api/metrics/prometheus")
 
     def test_update_metrics_config_enable(self):
-        """PUT /api/cloud/metrics-config should enable prometheus."""
+        """PUT /api/cloud/metrics/config should enable prometheus."""
         with self._get_client() as client:
             response = client.put(
-                "/api/cloud/metrics-config",
+                "/api/cloud/metrics/config",
                 json={"prometheus_enabled": True},
             )
             self.assertEqual(response.status_code, 200)
@@ -66,11 +66,11 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
             self.assertTrue(data["prometheus_enabled"])
 
     def test_update_metrics_config_categories(self):
-        """PUT /api/cloud/metrics-config should update categories."""
+        """PUT /api/cloud/metrics/config should update categories."""
         with self._get_client() as client:
             # Update with valid categories
             response = client.put(
-                "/api/cloud/metrics-config",
+                "/api/cloud/metrics/config",
                 json={"prometheus_categories": ["jobs", "http"]},
             )
             self.assertEqual(response.status_code, 200)
@@ -83,7 +83,7 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
         with self._get_client() as client:
             # Include both valid and invalid categories
             response = client.put(
-                "/api/cloud/metrics-config",
+                "/api/cloud/metrics/config",
                 json={"prometheus_categories": ["jobs", "invalid_category", "http"]},
             )
             self.assertEqual(response.status_code, 200)
@@ -113,9 +113,9 @@ class TestMetricCategories(APITestCase, unittest.TestCase):
         return TestClient(app)
 
     def test_list_categories(self):
-        """GET /api/cloud/metrics-config/categories should list all categories."""
+        """GET /api/cloud/metrics/config/categories should list all categories."""
         with self._get_client() as client:
-            response = client.get("/api/cloud/metrics-config/categories")
+            response = client.get("/api/cloud/metrics/config/categories")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -135,7 +135,7 @@ class TestMetricCategories(APITestCase, unittest.TestCase):
     def test_expected_categories_present(self):
         """Should include expected metric categories."""
         with self._get_client() as client:
-            response = client.get("/api/cloud/metrics-config/categories")
+            response = client.get("/api/cloud/metrics/config/categories")
             data = response.json()
 
             category_ids = [cat["id"] for cat in data["categories"]]
@@ -164,9 +164,9 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
         return TestClient(app)
 
     def test_list_templates(self):
-        """GET /api/cloud/metrics-config/templates should list all templates."""
+        """GET /api/cloud/metrics/config/templates should list all templates."""
         with self._get_client() as client:
-            response = client.get("/api/cloud/metrics-config/templates")
+            response = client.get("/api/cloud/metrics/config/templates")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -186,7 +186,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
     def test_expected_templates_present(self):
         """Should include expected preset templates."""
         with self._get_client() as client:
-            response = client.get("/api/cloud/metrics-config/templates")
+            response = client.get("/api/cloud/metrics/config/templates")
             data = response.json()
 
             template_ids = [tmpl["id"] for tmpl in data["templates"]]
@@ -197,9 +197,9 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
                 self.assertIn(expected_tmpl, template_ids, f"Expected template '{expected_tmpl}' not found")
 
     def test_apply_template_minimal(self):
-        """POST /api/cloud/metrics-config/apply-template/minimal should apply minimal template."""
+        """POST /api/cloud/metrics/config/apply-template/minimal should apply minimal template."""
         with self._get_client() as client:
-            response = client.post("/api/cloud/metrics-config/apply-template/minimal")
+            response = client.post("/api/cloud/metrics/config/apply-template/minimal")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -211,7 +211,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
     def test_apply_template_standard(self):
         """POST should apply standard template with jobs, http, health."""
         with self._get_client() as client:
-            response = client.post("/api/cloud/metrics-config/apply-template/standard")
+            response = client.post("/api/cloud/metrics/config/apply-template/standard")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -224,11 +224,11 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
         """POST should apply full template with all categories."""
         with self._get_client() as client:
             # First get all available categories
-            cat_response = client.get("/api/cloud/metrics-config/categories")
+            cat_response = client.get("/api/cloud/metrics/config/categories")
             all_categories = [c["id"] for c in cat_response.json()["categories"]]
 
             # Apply full template
-            response = client.post("/api/cloud/metrics-config/apply-template/full")
+            response = client.post("/api/cloud/metrics/config/apply-template/full")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -239,7 +239,7 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
     def test_apply_template_not_found(self):
         """POST with invalid template ID should return 404."""
         with self._get_client() as client:
-            response = client.post("/api/cloud/metrics-config/apply-template/nonexistent")
+            response = client.post("/api/cloud/metrics/config/apply-template/nonexistent")
             self.assertEqual(response.status_code, 404)
 
 
@@ -261,10 +261,10 @@ class TestMetricsPreview(APITestCase, unittest.TestCase):
         return TestClient(app)
 
     def test_preview_export(self):
-        """POST /api/cloud/metrics-config/preview should return export preview."""
+        """POST /api/cloud/metrics/config/preview should return export preview."""
         with self._get_client() as client:
             response = client.post(
-                "/api/cloud/metrics-config/preview",
+                "/api/cloud/metrics/config/preview",
                 params={"categories": ["jobs"]},
             )
             self.assertEqual(response.status_code, 200)
@@ -283,12 +283,12 @@ class TestMetricsPreview(APITestCase, unittest.TestCase):
         with self._get_client() as client:
             # First set some categories
             client.put(
-                "/api/cloud/metrics-config",
+                "/api/cloud/metrics/config",
                 json={"prometheus_categories": ["jobs", "http"]},
             )
 
             # Preview without specifying categories
-            response = client.post("/api/cloud/metrics-config/preview")
+            response = client.post("/api/cloud/metrics/config/preview")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -315,9 +315,9 @@ class TestMetricsHints(APITestCase, unittest.TestCase):
         return TestClient(app)
 
     def test_dismiss_hint(self):
-        """POST /api/cloud/metrics-config/dismiss-hint should dismiss hint."""
+        """POST /api/cloud/metrics/config/dismiss-hint should dismiss hint."""
         with self._get_client() as client:
-            response = client.post("/api/cloud/metrics-config/dismiss-hint/hero")
+            response = client.post("/api/cloud/metrics/config/dismiss-hint/hero")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -325,13 +325,13 @@ class TestMetricsHints(APITestCase, unittest.TestCase):
             self.assertEqual(data["hint"], "hero")
 
     def test_show_hint(self):
-        """POST /api/cloud/metrics-config/show-hint should re-show hint."""
+        """POST /api/cloud/metrics/config/show-hint should re-show hint."""
         with self._get_client() as client:
             # First dismiss
-            client.post("/api/cloud/metrics-config/dismiss-hint/hero")
+            client.post("/api/cloud/metrics/config/dismiss-hint/hero")
 
             # Then show again
-            response = client.post("/api/cloud/metrics-config/show-hint/hero")
+            response = client.post("/api/cloud/metrics/config/show-hint/hero")
             self.assertEqual(response.status_code, 200)
             data = response.json()
 
@@ -342,8 +342,8 @@ class TestMetricsHints(APITestCase, unittest.TestCase):
         """Dismissing same hint twice should be idempotent."""
         with self._get_client() as client:
             # Dismiss twice
-            response1 = client.post("/api/cloud/metrics-config/dismiss-hint/test-hint")
-            response2 = client.post("/api/cloud/metrics-config/dismiss-hint/test-hint")
+            response1 = client.post("/api/cloud/metrics/config/dismiss-hint/test-hint")
+            response2 = client.post("/api/cloud/metrics/config/dismiss-hint/test-hint")
 
             self.assertEqual(response1.status_code, 200)
             self.assertEqual(response2.status_code, 200)

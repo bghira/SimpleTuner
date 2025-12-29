@@ -10,7 +10,7 @@ from simpletuner.helpers.configuration.cmd_args import parse_cmdline_args
 
 def _base_args():
     return [
-        "--model_family=pixart_sigma",
+        "--model_family=pixart",
         "--output_dir=/tmp/output",
         "--model_type=lora",
         "--optimizer=adamw_bf16",
