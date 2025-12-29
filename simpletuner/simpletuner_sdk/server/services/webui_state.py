@@ -174,6 +174,54 @@ class WebUIDefaults:
     git_include_untracked: bool = False
     sync_onboarding_defaults: bool = False
     onboarding_sync_opt_out: list[str] = field(default_factory=list)
+    cloud_tab_enabled: bool = True
+    cloud_webhook_url: Optional[str] = None
+    cloud_outputs_dir: Optional[str] = None
+    cloud_dataloader_hint_dismissed: bool = False
+    cloud_git_hint_dismissed: bool = False
+    # Data consent for cloud uploads: "ask" (default), "allow", or "deny"
+    cloud_data_consent: str = "ask"
+    # Polling preference: None (auto), True (force enable), False (force disable)
+    cloud_job_polling_enabled: Optional[bool] = None
+    # Administration section (user management) - can be disabled if not using multi-user auth
+    admin_tab_enabled: bool = True
+    # List of dismissed admin hints (overview, users, levels, rules, quotas, approvals, auth, orgs)
+    admin_dismissed_hints: list[str] = field(default_factory=list)
+    # Metrics tab settings
+    metrics_tab_enabled: bool = True
+    # Prometheus export: disabled by default until user enables
+    metrics_prometheus_enabled: bool = False
+    # Categories to export: jobs, http, rate_limits, approvals, audit, health, circuit_breakers, provider
+    metrics_prometheus_categories: list[str] = field(default_factory=lambda: ["jobs", "http"])
+    # Tensorboard (placeholder, always False for now)
+    metrics_tensorboard_enabled: bool = False
+    # Dismissed metrics hints (for hero CTA)
+    metrics_dismissed_hints: list[str] = field(default_factory=list)
+    # Credential security settings
+    # Threshold (in days) after which credentials are flagged as "stale"
+    credential_rotation_threshold_days: int = 90
+    # Enable early warning for credentials approaching the stale threshold
+    credential_early_warning_enabled: bool = False
+    # Early warning triggers at this % of threshold (e.g., 75 = warn at 67.5 days if threshold is 90)
+    credential_early_warning_percent: int = 75
+    # Track if credential security has been configured (for enterprise onboarding)
+    credential_security_configured: bool = False
+    credential_security_skipped: bool = False
+    # UI sound settings
+    sounds_enabled: bool = True
+    sounds_volume: int = 50  # 0-100
+    # Per-category sound toggles
+    sounds_success_enabled: bool = True
+    sounds_error_enabled: bool = True
+    sounds_warning_enabled: bool = True
+    sounds_info_enabled: bool = True
+    # Easter egg: retro hover sound (opt-in, default off)
+    sounds_retro_hover_enabled: bool = False
+    # Audit export configuration for SIEM integration
+    audit_export_format: str = "json"  # json or csv
+    audit_export_webhook_url: Optional[str] = None
+    audit_export_auth_token: Optional[str] = None
+    audit_export_security_only: bool = False
 
 
 @dataclass
@@ -367,6 +415,201 @@ class WebUIStateStore:
         defaults.git_remote = git_remote.strip() if isinstance(git_remote, str) and git_remote.strip() else None
         git_branch = payload.get("git_branch")
         defaults.git_branch = git_branch.strip() if isinstance(git_branch, str) and git_branch.strip() else None
+
+        # Normalise cloud hint dismissal booleans
+        defaults.cloud_dataloader_hint_dismissed = bool(payload.get("cloud_dataloader_hint_dismissed", False))
+        defaults.cloud_git_hint_dismissed = bool(payload.get("cloud_git_hint_dismissed", False))
+
+        # Normalise cloud data consent
+        consent_value = payload.get("cloud_data_consent")
+        if isinstance(consent_value, str) and consent_value in {"ask", "allow", "deny"}:
+            defaults.cloud_data_consent = consent_value
+        else:
+            defaults.cloud_data_consent = "ask"
+
+        # Normalise cloud job polling enabled
+        polling_value = payload.get("cloud_job_polling_enabled")
+        if polling_value is None:
+            defaults.cloud_job_polling_enabled = None
+        elif isinstance(polling_value, bool):
+            defaults.cloud_job_polling_enabled = polling_value
+        elif isinstance(polling_value, str):
+            defaults.cloud_job_polling_enabled = polling_value.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.cloud_job_polling_enabled = None
+
+        # Normalise admin tab enabled (default True, but can be disabled if no auth configured)
+        admin_tab_value = payload.get("admin_tab_enabled")
+        if admin_tab_value is None:
+            defaults.admin_tab_enabled = True
+        else:
+            defaults.admin_tab_enabled = bool(admin_tab_value)
+
+        # Load admin dismissed hints
+        admin_hints = payload.get("admin_dismissed_hints")
+        if isinstance(admin_hints, list):
+            defaults.admin_dismissed_hints = [h for h in admin_hints if isinstance(h, str)]
+        else:
+            defaults.admin_dismissed_hints = []
+
+        # Normalise metrics tab enabled
+        metrics_tab_value = payload.get("metrics_tab_enabled")
+        if metrics_tab_value is None:
+            defaults.metrics_tab_enabled = True
+        else:
+            defaults.metrics_tab_enabled = bool(metrics_tab_value)
+
+        # Normalise Prometheus export enabled
+        prometheus_enabled = payload.get("metrics_prometheus_enabled")
+        if prometheus_enabled is None:
+            defaults.metrics_prometheus_enabled = False
+        elif isinstance(prometheus_enabled, bool):
+            defaults.metrics_prometheus_enabled = prometheus_enabled
+        elif isinstance(prometheus_enabled, str):
+            defaults.metrics_prometheus_enabled = prometheus_enabled.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.metrics_prometheus_enabled = bool(prometheus_enabled)
+
+        # Normalise Prometheus categories
+        valid_categories = {"jobs", "http", "rate_limits", "approvals", "audit", "health", "circuit_breakers", "provider"}
+        prometheus_categories = payload.get("metrics_prometheus_categories")
+        if isinstance(prometheus_categories, list):
+            defaults.metrics_prometheus_categories = [
+                c for c in prometheus_categories if isinstance(c, str) and c in valid_categories
+            ]
+        else:
+            defaults.metrics_prometheus_categories = ["jobs", "http"]
+
+        # Tensorboard is always False for now (placeholder)
+        defaults.metrics_tensorboard_enabled = False
+
+        # Load metrics dismissed hints
+        metrics_hints = payload.get("metrics_dismissed_hints")
+        if isinstance(metrics_hints, list):
+            defaults.metrics_dismissed_hints = [h for h in metrics_hints if isinstance(h, str)]
+        else:
+            defaults.metrics_dismissed_hints = []
+
+        # Normalise credential rotation threshold (must be positive integer, 30-365 days)
+        rotation_threshold = payload.get("credential_rotation_threshold_days")
+        if rotation_threshold is not None:
+            try:
+                threshold_int = int(rotation_threshold)
+                defaults.credential_rotation_threshold_days = max(30, min(365, threshold_int))
+            except (TypeError, ValueError):
+                defaults.credential_rotation_threshold_days = 90
+        else:
+            defaults.credential_rotation_threshold_days = 90
+
+        # Normalise early warning enabled flag
+        early_warning_enabled = payload.get("credential_early_warning_enabled")
+        if early_warning_enabled is None:
+            defaults.credential_early_warning_enabled = False
+        elif isinstance(early_warning_enabled, bool):
+            defaults.credential_early_warning_enabled = early_warning_enabled
+        elif isinstance(early_warning_enabled, str):
+            defaults.credential_early_warning_enabled = early_warning_enabled.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.credential_early_warning_enabled = bool(early_warning_enabled)
+
+        # Normalise early warning percent (50-95% range)
+        early_warning_percent = payload.get("credential_early_warning_percent")
+        if early_warning_percent is not None:
+            try:
+                pct = int(early_warning_percent)
+                defaults.credential_early_warning_percent = max(50, min(95, pct))
+            except (TypeError, ValueError):
+                defaults.credential_early_warning_percent = 75
+        else:
+            defaults.credential_early_warning_percent = 75
+
+        # Normalise credential security onboarding flags
+        cred_configured = payload.get("credential_security_configured")
+        if isinstance(cred_configured, bool):
+            defaults.credential_security_configured = cred_configured
+        elif isinstance(cred_configured, str):
+            defaults.credential_security_configured = cred_configured.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.credential_security_configured = False
+
+        cred_skipped = payload.get("credential_security_skipped")
+        if isinstance(cred_skipped, bool):
+            defaults.credential_security_skipped = cred_skipped
+        elif isinstance(cred_skipped, str):
+            defaults.credential_security_skipped = cred_skipped.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.credential_security_skipped = False
+
+        # Normalise UI sound settings
+        sounds_enabled = payload.get("sounds_enabled")
+        if sounds_enabled is None:
+            defaults.sounds_enabled = True
+        elif isinstance(sounds_enabled, bool):
+            defaults.sounds_enabled = sounds_enabled
+        elif isinstance(sounds_enabled, str):
+            defaults.sounds_enabled = sounds_enabled.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.sounds_enabled = bool(sounds_enabled)
+
+        # Normalise volume (0-100)
+        sounds_volume = payload.get("sounds_volume")
+        if sounds_volume is not None:
+            try:
+                vol = int(sounds_volume)
+                defaults.sounds_volume = max(0, min(100, vol))
+            except (TypeError, ValueError):
+                defaults.sounds_volume = 50
+        else:
+            defaults.sounds_volume = 50
+
+        # Normalise per-category sound toggles
+        for category in ("success", "error", "warning", "info"):
+            key = f"sounds_{category}_enabled"
+            value = payload.get(key)
+            if value is None:
+                setattr(defaults, key, True)
+            elif isinstance(value, bool):
+                setattr(defaults, key, value)
+            elif isinstance(value, str):
+                setattr(defaults, key, value.lower() in {"true", "1", "yes", "on"})
+            else:
+                setattr(defaults, key, bool(value))
+
+        # Normalise retro hover sound (opt-in, default off)
+        retro_hover = payload.get("sounds_retro_hover_enabled")
+        if retro_hover is None:
+            defaults.sounds_retro_hover_enabled = False
+        elif isinstance(retro_hover, bool):
+            defaults.sounds_retro_hover_enabled = retro_hover
+        elif isinstance(retro_hover, str):
+            defaults.sounds_retro_hover_enabled = retro_hover.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.sounds_retro_hover_enabled = bool(retro_hover)
+
+        # Normalise audit export settings
+        export_format = payload.get("audit_export_format")
+        if isinstance(export_format, str) and export_format in {"json", "csv"}:
+            defaults.audit_export_format = export_format
+        else:
+            defaults.audit_export_format = "json"
+
+        webhook_url = payload.get("audit_export_webhook_url")
+        defaults.audit_export_webhook_url = (
+            webhook_url.strip() if isinstance(webhook_url, str) and webhook_url.strip() else None
+        )
+
+        auth_token = payload.get("audit_export_auth_token")
+        defaults.audit_export_auth_token = auth_token.strip() if isinstance(auth_token, str) and auth_token.strip() else None
+
+        security_only = payload.get("audit_export_security_only")
+        if security_only is None:
+            defaults.audit_export_security_only = False
+        elif isinstance(security_only, bool):
+            defaults.audit_export_security_only = security_only
+        elif isinstance(security_only, str):
+            defaults.audit_export_security_only = security_only.lower() in {"true", "1", "yes", "on"}
+        else:
+            defaults.audit_export_security_only = bool(security_only)
 
         defaults.active_config = self._validate_active_config(defaults.active_config, defaults.configs_dir)
         return defaults

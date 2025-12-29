@@ -118,6 +118,15 @@ class ExampleConfigsService:
                 return Path(_cli_get_examples_dir())
             except Exception:  # pragma: no cover - fallback when CLI fails
                 pass
+        # Examples are always inside the simpletuner package directory
+        import simpletuner
+
+        if simpletuner.__file__:
+            package_dir = Path(simpletuner.__file__).parent
+            examples_dir = package_dir / "examples"
+            if examples_dir.exists():
+                return examples_dir
+        # Legacy fallback via get_simpletuner_root()
         return get_simpletuner_root() / "examples"
 
     def list_examples(self) -> List[ExampleConfigInfo]:
@@ -127,6 +136,10 @@ class ExampleConfigsService:
 
         examples: List[ExampleConfigInfo] = []
         for item in sorted(root.iterdir(), key=lambda p: p.name.lower()):
+            # Skip items without a dot in the name (not deployable examples)
+            example_name = item.stem if item.is_file() else item.name
+            if "." not in example_name:
+                continue
             info = self._build_example_info(item)
             if info is not None:
                 examples.append(info)

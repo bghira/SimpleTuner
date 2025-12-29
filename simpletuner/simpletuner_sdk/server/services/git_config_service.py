@@ -13,6 +13,19 @@ from simpletuner.simpletuner_sdk.server.services.git_repo_service import GIT_REP
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
 
+@dataclass(frozen=True)
+class HeadInfo:
+    """Current HEAD commit information for pre-submit checks."""
+
+    repo_present: bool
+    commit: Optional[str] = None  # full SHA
+    abbrev: Optional[str] = None  # short SHA (7 chars)
+    branch: Optional[str] = None
+    is_dirty: bool = False
+    dirty_count: int = 0
+    dirty_paths: Optional[List[str]] = None
+
+
 class GitConfigError(Exception):
     """Domain error raised when config-aware git operations fail."""
 
@@ -196,6 +209,79 @@ class GitConfigService:
             include_untracked=prefs.include_untracked,
             push_on_snapshot=prefs.push_on_snapshot,
         )
+
+    def get_head_info(self, config_type: str = "model") -> HeadInfo:
+        """Get current HEAD commit info and dirty status for pre-submit checks."""
+        repo_status, config_dir = self._status(config_type)
+
+        if not repo_status.repo_present:
+            return HeadInfo(repo_present=False)
+
+        # Get HEAD commit hash using public API
+        store = self._get_store(config_type)
+        head_data = GIT_REPO_SERVICE.get_head_commit(store.config_dir)
+        commit = head_data.get("commit")
+        abbrev = head_data.get("abbrev")
+
+        dirty_paths = repo_status.dirty_paths or []
+
+        return HeadInfo(
+            repo_present=True,
+            commit=commit,
+            abbrev=abbrev,
+            branch=repo_status.branch,
+            is_dirty=len(dirty_paths) > 0,
+            dirty_count=len(dirty_paths),
+            dirty_paths=dirty_paths,
+        )
+
+    def snapshot_directory(
+        self,
+        message: str,
+        config_type: str = "model",
+        include_untracked: bool = True,
+    ) -> Dict[str, object]:
+        """Commit all changes in the configs directory.
+
+        Returns dict with 'commit' (full SHA) and 'abbrev' (short SHA) keys.
+        """
+        store = self._get_store(config_type)
+        config_dir = Path(store.config_dir).expanduser().resolve()
+
+        repo_status, _ = self._status(config_type)
+        if not repo_status.repo_present:
+            raise GitConfigError("Repository not initialized", status.HTTP_404_NOT_FOUND)
+
+        # Stage all changes in config directory
+        try:
+            has_staged = GIT_REPO_SERVICE.stage_all(config_dir, include_untracked=include_untracked)
+        except GitRepoError as exc:
+            raise GitConfigError(f"Failed to stage changes: {exc.message}", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Check if there's anything to commit
+        if not has_staged:
+            # Nothing staged - just return current HEAD
+            head_info = self.get_head_info(config_type)
+            return {
+                "message": "No changes to commit",
+                "commit": head_info.commit,
+                "abbrev": head_info.abbrev,
+                "was_dirty": False,
+            }
+
+        # Commit (ensure_identity and commit are handled by the public API)
+        try:
+            commit_result = GIT_REPO_SERVICE.commit(config_dir, message)
+        except GitRepoError as exc:
+            raise GitConfigError(f"Failed to commit: {exc.message}", status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return {
+            "message": "Committed changes",
+            "commit_message": message,
+            "commit": commit_result.get("commit"),
+            "abbrev": commit_result.get("abbrev"),
+            "was_dirty": True,
+        }
 
 
 GIT_CONFIG_SERVICE = GitConfigService()

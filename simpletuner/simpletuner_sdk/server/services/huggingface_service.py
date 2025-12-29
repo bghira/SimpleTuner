@@ -64,6 +64,11 @@ class HuggingfaceService:
         self._tasks: Dict[str, UploadTask] = {}
         self._publishing_service = PublishingService()
 
+    def shutdown(self) -> None:
+        """Shutdown the executor, allowing pending uploads to complete."""
+        if self._executor:
+            self._executor.shutdown(wait=False, cancel_futures=False)
+
     def _get_config_store(self) -> ConfigStore:
         """Return a ConfigStore using user defaults when available."""
         try:
