@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 import inspect
 import logging
 import os
@@ -15,87 +16,60 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
-is_optimi_available = False
 from simpletuner.helpers.training.optimizers.adamw_bfloat16 import AdamWBF16
 from simpletuner.helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
 from simpletuner.helpers.training.optimizers.muon import MuonClip
 from simpletuner.helpers.training.optimizers.soap import SOAP
 
-try:
-    from optimum.quanto import QTensor
-except:
-    pass
 
-try:
-    from torchao.optim import AdamFp8 as AOAdamFp8
-    from torchao.optim import AdamW4bit as AOAdamW4Bit
-    from torchao.optim import AdamW8bit as AOAdamW8Bit
-    from torchao.optim import AdamWFp8 as AOAdamWFp8
-    from torchao.optim import CPUOffloadOptimizer as AOCPUOffloadOptimizer
+def get_lazy_class(module_path, class_name, silence_logging=None):
+    class LazyClass:
+        def __new__(cls, *args, **kwargs):
+            if silence_logging:
+                logging.getLogger(silence_logging).setLevel(logging.WARNING)
+            try:
+                module = importlib.import_module(module_path)
+                real_cls = getattr(module, class_name)
+                return real_cls(*args, **kwargs)
+            except ImportError:
+                raise ImportError(f"Could not import {module_path}.{class_name}. Is the library installed?")
 
-    if torch.backends.mps.is_available():
-        import torch._dynamo
+    return LazyClass
 
-        torch._dynamo.config.suppress_errors = True
-except Exception as e:
-    print("You need torchao installed for its low-precision optimizers.")
-    raise e
 
-try:
-    import optimi
+is_torchao_available = importlib.util.find_spec("torchao") is not None
+if is_torchao_available:
+    AOAdamFp8 = get_lazy_class("torchao.optim", "AdamFp8")
+    AOAdamW4Bit = get_lazy_class("torchao.optim", "AdamW4bit")
+    AOAdamW8Bit = get_lazy_class("torchao.optim", "AdamW8bit")
+    AOAdamWFp8 = get_lazy_class("torchao.optim", "AdamWFp8")
+    AOCPUOffloadOptimizer = get_lazy_class("torchao.optim", "CPUOffloadOptimizer")
 
-    is_optimi_available = True
-except:
-    logger.error("Could not load optimi library. Please install `torch-optimi` for better memory efficiency.")
+is_optimi_available = importlib.util.find_spec("optimi") is not None
 
-is_bitsandbytes_available = False
-try:
-    import bitsandbytes
+is_bitsandbytes_available = importlib.util.find_spec("bitsandbytes") is not None
 
-    is_bitsandbytes_available = True
-except:
-    if torch.cuda.is_available():
-        # Avoid requiring Accelerate logging state during import
-        level = logging.WARNING if should_log() else logging.DEBUG
-        logging.getLogger(__name__).log(
-            level,
-            "Could not load bitsandbytes library. BnB-specific optimisers and other functionality will be unavailable.",
-        )
-
-# Some optimizers are not available in multibackend bitsandbytes as of January 2025.
-is_ademamix_available = False
-if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
-    if "AdEMAMix" in dir(bitsandbytes.optim):
-        is_ademamix_available = True
-
-is_prodigy_available = False
-try:
-    import prodigyplus
-
-    is_prodigy_available = True
-except:
-    if torch.cuda.is_available():
-        log_level = logging.WARNING if should_log() else logging.DEBUG
-        logger.log(
-            log_level,
-            "Could not load prodigyplus library. Prodigy will not be available.",
-        )
+is_prodigy_available = importlib.util.find_spec("prodigyplus") is not None
 
 is_sdnq_available = False
-try:
-    from sdnq.optim import CAME as SDNQCAME
-    from sdnq.optim import Adafactor as SDNQAdafactor
-    from sdnq.optim import AdamW as SDNQAdamW
-    from sdnq.optim import Lion as SDNQLion
-    from sdnq.optim import Muon as SDNQMuon
+sdnq_options_path = os.path.join(os.path.dirname(__file__), "sdnq_options.json")
 
-    is_sdnq_available = True
-except:
-    log_level = logging.DEBUG if should_log() else logging.DEBUG
-    logger.log(
-        log_level,
-        "Could not load sdnq library. SDNQ optimizers will not be available.",
-    )
+if os.path.exists(sdnq_options_path):
+    try:
+        import json
+
+        with open(sdnq_options_path, "r") as f:
+            json.load(f)
+        is_sdnq_available = True
+    except Exception as e:
+        logger.debug(f"Failed to load sdnq options: {e}")
+
+if is_sdnq_available:
+    SDNQCAME = get_lazy_class("sdnq.optim", "CAME", silence_logging="sdnq")
+    SDNQAdafactor = get_lazy_class("sdnq.optim", "Adafactor", silence_logging="sdnq")
+    SDNQAdamW = get_lazy_class("sdnq.optim", "AdamW", silence_logging="sdnq")
+    SDNQLion = get_lazy_class("sdnq.optim", "Lion", silence_logging="sdnq")
+    SDNQMuon = get_lazy_class("sdnq.optim", "Muon", silence_logging="sdnq")
 
 
 optimizer_choices = {
@@ -222,226 +196,257 @@ optimizer_choices = {
         },
         "class": AdamWBF16,
     },
-    "ao-adamw8bit": {
-        "gradient_precision": "bf16",
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-2,
-            "eps": 1e-6,
-        },
-        "class": AOAdamW8Bit,
-    },
-    "ao-adamw4bit": {
-        "gradient_precision": "bf16",
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-2,
-            "eps": 1e-6,
-        },
-        "class": AOAdamW4Bit,
-    },
-    "ao-adamfp8": {
-        "gradient_precision": "bf16",
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-2,
-            "eps": 1e-6,
-        },
-        "class": AOAdamFp8,
-    },
-    "ao-adamwfp8": {
-        "gradient_precision": "bf16",
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-2,
-            "eps": 1e-6,
-        },
-        "class": AOAdamWFp8,
-    },
-    "adamw_schedulefree": {
-        "precision": "any",
-        "override_lr_scheduler": True,
-        "is_schedulefree": True,
-        "can_warmup": True,
-        "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-2,
-            "eps": 1e-8,
-        },
-        "class": AdamWScheduleFreeKahan,
-    },
-    "adamw_schedulefree+aggressive": {
-        "precision": "any",
-        "override_lr_scheduler": True,
-        "is_schedulefree": True,
-        "can_warmup": True,
-        "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-3,
-            "eps": 1e-6,
-        },
-        "class": AdamWScheduleFreeKahan,
-    },
-    "adamw_schedulefree+no_kahan": {
-        "precision": "any",
-        "override_lr_scheduler": True,
-        "is_schedulefree": True,
-        "can_warmup": True,
-        "default_settings": {
-            "betas": (0.9, 0.999),
-            "weight_decay": 1e-3,
-            "eps": 1e-6,
-            "use_kahan": False,
-        },
-        "class": AdamWScheduleFreeKahan,
-    },
-    "optimi-stableadamw": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.99),
-            "weight_decay": 1e-2,
-            "eps": 1e-6,
-            "decouple_lr": False,
-            "max_lr": None,
-            "kahan_sum": True,
-            "foreach": True,
-        },
-        "class": optimi.StableAdamW,
-    },
-    "optimi-adamw": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.99),
-            "eps": 1e-6,
-            "weight_decay": 0.0,
-            "decouple_lr": False,
-            "kahan_sum": True,
-            "max_lr": None,
-        },
-        "class": optimi.AdamW,
-    },
-    "optimi-lion": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.99),
-            "weight_decay": 0.0,
-            "decouple_lr": False,
-            "max_lr": None,
-            "kahan_sum": True,
-            "foreach": True,
-        },
-        "class": optimi.Lion,
-    },
-    "optimi-radam": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.99),
-            "weight_decay": 0.0,
-            "eps": 1e-6,
-            "decouple_wd": True,
-            "decouple_lr": False,
-            "kahan_sum": True,
-            "foreach": True,
-        },
-        "class": optimi.RAdam,
-    },
-    "optimi-ranger": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.99),
-            "weight_decay": 0.0,
-            "eps": 1e-6,
-            "k": 6,
-            "alpha": 0.5,
-            "decouple_wd": True,
-            "decouple_lr": False,
-            "max_lr": None,
-            "kahan_sum": True,
-            "foreach": True,
-        },
-        "class": optimi.Ranger,
-    },
-    "optimi-adan": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.98, 0.92, 0.999),
-            "weight_decay": 2e-2,
-            "eps": 1e-6,
-            "decouple_lr": False,
-            "max_lr": None,
-            "adam_wd": False,
-            "kahan_sum": True,
-            "foreach": True,
-        },
-        "class": optimi.Adan,
-    },
-    "optimi-adam": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.9, 0.99),
-            "eps": 1e-6,
-            "weight_decay": 0.0,
-            "decouple_wd": False,
-            "decouple_lr": False,
-            "kahan_sum": True,
-            "max_lr": None,
-        },
-        "class": optimi.Adam,
-    },
-    "optimi-sgd": {
-        "precision": "any",
-        "default_settings": {
-            "momentum": 0,
-            "weight_decay": 0.0,
-            "dampening": False,
-            "decouple_wd": False,
-            "decouple_lr": False,
-            "max_lr": None,
-            "torch_init": False,
-            "kahan_sum": True,
-            "foreach": True,
-        },
-        "class": optimi.SGD,
-    },
-    "soap": {
-        "precision": "any",
-        "default_settings": {
-            "betas": (0.95, 0.95),
-            "shampoo_beta": -1,
-            "eps": 1e-8,
-            "weight_decay": 0.01,
-            "precondition_frequency": 10,
-            "max_precond_dim": 10000,
-            "merge_dims": False,
-            "precondition_1d": False,
-            "normalize_grads": False,
-            "data_format": "channels_first",
-            "correct_bias": True,
-        },
-        "class": SOAP,
-    },
-    "muon": {
-        "precision": "any",
-        "default_settings": {
-            "momentum": 0.95,
-            "weight_decay": 0.1,
-            "eps": 1e-7,
-            "rms_scale_factor": 0.2,
-            "use_smmf": False,
-            "vector_reshape": False,
-            "stochastic_rounding": True,
-            "use_cans": False,
-            "cans_a_bound": 1e-4,
-            "qk_clip_threshold": 100.0,
-            "qk_clip_alpha": 0.5,
-        },
-        "class": MuonClip,
-    },
 }
+
+if is_torchao_available:
+    optimizer_choices.update(
+        {
+            "ao-adamw8bit": {
+                "gradient_precision": "bf16",
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": AOAdamW8Bit,
+            },
+            "ao-adamw4bit": {
+                "gradient_precision": "bf16",
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": AOAdamW4Bit,
+            },
+            "ao-adamfp8": {
+                "gradient_precision": "bf16",
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": AOAdamFp8,
+            },
+            "ao-adamwfp8": {
+                "gradient_precision": "bf16",
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.999),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                },
+                "class": AOAdamWFp8,
+            },
+        }
+    )
+
+optimizer_choices.update(
+    {
+        "adamw_schedulefree": {
+            "precision": "any",
+            "override_lr_scheduler": True,
+            "is_schedulefree": True,
+            "can_warmup": True,
+            "default_settings": {
+                "betas": (0.9, 0.999),
+                "weight_decay": 1e-2,
+                "eps": 1e-8,
+            },
+            "class": AdamWScheduleFreeKahan,
+        },
+        "adamw_schedulefree+aggressive": {
+            "precision": "any",
+            "override_lr_scheduler": True,
+            "is_schedulefree": True,
+            "can_warmup": True,
+            "default_settings": {
+                "betas": (0.9, 0.999),
+                "weight_decay": 1e-3,
+                "eps": 1e-6,
+            },
+            "class": AdamWScheduleFreeKahan,
+        },
+        "adamw_schedulefree+no_kahan": {
+            "precision": "any",
+            "override_lr_scheduler": True,
+            "is_schedulefree": True,
+            "can_warmup": True,
+            "default_settings": {
+                "betas": (0.9, 0.999),
+                "weight_decay": 1e-3,
+                "eps": 1e-6,
+                "use_kahan": False,
+            },
+            "class": AdamWScheduleFreeKahan,
+        },
+    }
+)
+
+if is_optimi_available:
+    StableAdamW = get_lazy_class("optimi", "StableAdamW")
+    OptimiAdamW = get_lazy_class("optimi", "AdamW")
+    OptimiLion = get_lazy_class("optimi", "Lion")
+    OptimiRAdam = get_lazy_class("optimi", "RAdam")
+    OptimiRanger = get_lazy_class("optimi", "Ranger")
+    OptimiAdan = get_lazy_class("optimi", "Adan")
+    OptimiAdam = get_lazy_class("optimi", "Adam")
+    OptimiSGD = get_lazy_class("optimi", "SGD")
+
+    optimizer_choices.update(
+        {
+            "optimi-stableadamw": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 1e-2,
+                    "eps": 1e-6,
+                    "decouple_lr": False,
+                    "max_lr": None,
+                    "kahan_sum": True,
+                    "foreach": True,
+                },
+                "class": StableAdamW,
+            },
+            "optimi-adamw": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "eps": 1e-6,
+                    "weight_decay": 0.0,
+                    "decouple_lr": False,
+                    "kahan_sum": True,
+                    "max_lr": None,
+                },
+                "class": OptimiAdamW,
+            },
+            "optimi-lion": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "decouple_lr": False,
+                    "max_lr": None,
+                    "kahan_sum": True,
+                    "foreach": True,
+                },
+                "class": OptimiLion,
+            },
+            "optimi-radam": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "eps": 1e-6,
+                    "decouple_wd": True,
+                    "decouple_lr": False,
+                    "kahan_sum": True,
+                    "foreach": True,
+                },
+                "class": OptimiRAdam,
+            },
+            "optimi-ranger": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "weight_decay": 0.0,
+                    "eps": 1e-6,
+                    "k": 6,
+                    "alpha": 0.5,
+                    "decouple_wd": True,
+                    "decouple_lr": False,
+                    "max_lr": None,
+                    "kahan_sum": True,
+                    "foreach": True,
+                },
+                "class": OptimiRanger,
+            },
+            "optimi-adan": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.98, 0.92, 0.999),
+                    "weight_decay": 2e-2,
+                    "eps": 1e-6,
+                    "decouple_lr": False,
+                    "max_lr": None,
+                    "adam_wd": False,
+                    "kahan_sum": True,
+                    "foreach": True,
+                },
+                "class": OptimiAdan,
+            },
+            "optimi-adam": {
+                "precision": "any",
+                "default_settings": {
+                    "betas": (0.9, 0.99),
+                    "eps": 1e-6,
+                    "weight_decay": 0.0,
+                    "decouple_wd": False,
+                    "decouple_lr": False,
+                    "kahan_sum": True,
+                    "max_lr": None,
+                },
+                "class": OptimiAdam,
+            },
+            "optimi-sgd": {
+                "precision": "any",
+                "default_settings": {
+                    "momentum": 0,
+                    "weight_decay": 0.0,
+                    "dampening": False,
+                    "decouple_wd": False,
+                    "decouple_lr": False,
+                    "max_lr": None,
+                    "torch_init": False,
+                    "kahan_sum": True,
+                    "foreach": True,
+                },
+                "class": OptimiSGD,
+            },
+        }
+    )
+
+optimizer_choices.update(
+    {
+        "soap": {
+            "precision": "any",
+            "default_settings": {
+                "betas": (0.95, 0.95),
+                "shampoo_beta": -1,
+                "eps": 1e-8,
+                "weight_decay": 0.01,
+                "precondition_frequency": 10,
+                "max_precond_dim": 10000,
+                "merge_dims": False,
+                "precondition_1d": False,
+                "normalize_grads": False,
+                "data_format": "channels_first",
+                "correct_bias": True,
+            },
+            "class": SOAP,
+        },
+        "muon": {
+            "precision": "any",
+            "default_settings": {
+                "momentum": 0.95,
+                "weight_decay": 0.1,
+                "eps": 1e-7,
+                "rms_scale_factor": 0.2,
+                "use_smmf": False,
+                "vector_reshape": False,
+                "stochastic_rounding": True,
+                "use_cans": False,
+                "cans_a_bound": 1e-4,
+                "qk_clip_threshold": 100.0,
+                "qk_clip_alpha": 0.5,
+            },
+            "class": MuonClip,
+        },
+    }
+)
 
 FP8_OPTIMIZER_KEYS = frozenset({"ao-adamfp8", "ao-adamwfp8"})
 FSDP2_INCOMPATIBLE_PREFIXES = ("optimi-", "bnb-")
@@ -507,7 +512,20 @@ def available_optimizer_keys(fsdp_enabled: bool = False, fsdp_version: int | str
     return keys
 
 
-if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
+if is_bitsandbytes_available:
+    BNBAdagrad = get_lazy_class("bitsandbytes.optim", "Adagrad")
+    BNBAdagrad8bit = get_lazy_class("bitsandbytes.optim", "Adagrad8bit")
+    BNBAdam = get_lazy_class("bitsandbytes.optim", "Adam")
+    BNBAdam8bit = get_lazy_class("bitsandbytes.optim", "Adam8bit")
+    BNBAdamW = get_lazy_class("bitsandbytes.optim", "AdamW")
+    BNBAdamW8bit = get_lazy_class("bitsandbytes.optim", "AdamW8bit")
+    BNBPagedAdamW = get_lazy_class("bitsandbytes.optim", "PagedAdamW")
+    BNBPagedAdamW8bit = get_lazy_class("bitsandbytes.optim", "PagedAdamW8bit")
+    BNBLion = get_lazy_class("bitsandbytes.optim", "Lion")
+    BNBLion8bit = get_lazy_class("bitsandbytes.optim", "Lion8bit")
+    BNBPagedLion = get_lazy_class("bitsandbytes.optim", "PagedLion")
+    BNBPagedLion8bit = get_lazy_class("bitsandbytes.optim", "PagedLion8bit")
+
     optimizer_choices.update(
         {
             "bnb-adagrad": {
@@ -520,7 +538,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "min_8bit_size": 4096,
                     "percentile_clipping": 100,
                 },
-                "class": bitsandbytes.optim.Adagrad,
+                "class": BNBAdagrad,
             },
             "bnb-adagrad8bit": {
                 "precision": "any",
@@ -532,7 +550,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "min_8bit_size": 4096,
                     "percentile_clipping": 100,
                 },
-                "class": bitsandbytes.optim.Adagrad8bit,
+                "class": BNBAdagrad8bit,
             },
             "bnb-adam": {
                 "precision": "any",
@@ -544,7 +562,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "min_8bit_size": 4096,
                     "percentile_clipping": 100,
                 },
-                "class": bitsandbytes.optim.Adam,
+                "class": BNBAdam,
             },
             "bnb-adam8bit": {
                 "precision": "any",
@@ -556,7 +574,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "min_8bit_size": 4096,
                     "percentile_clipping": 100,
                 },
-                "class": bitsandbytes.optim.Adam8bit,
+                "class": BNBAdam8bit,
             },
             "bnb-adamw": {
                 "precision": "any",
@@ -565,7 +583,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 1e-2,
                     "eps": 1e-6,
                 },
-                "class": bitsandbytes.optim.AdamW,
+                "class": BNBAdamW,
             },
             "bnb-adamw8bit": {
                 "precision": "any",
@@ -574,7 +592,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 1e-2,
                     "eps": 1e-6,
                 },
-                "class": bitsandbytes.optim.AdamW8bit,
+                "class": BNBAdamW8bit,
             },
             "bnb-adamw-paged": {
                 "precision": "any",
@@ -583,7 +601,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 1e-2,
                     "eps": 1e-6,
                 },
-                "class": bitsandbytes.optim.PagedAdamW,
+                "class": BNBPagedAdamW,
             },
             "bnb-adamw8bit-paged": {
                 "precision": "any",
@@ -592,7 +610,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 1e-2,
                     "eps": 1e-6,
                 },
-                "class": bitsandbytes.optim.PagedAdamW8bit,
+                "class": BNBPagedAdamW8bit,
             },
             "bnb-lion": {
                 "precision": "any",
@@ -601,7 +619,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 0.0,
                     "min_8bit_size": 4096,
                 },
-                "class": bitsandbytes.optim.Lion,
+                "class": BNBLion,
             },
             "bnb-lion8bit": {
                 "precision": "any",
@@ -610,7 +628,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 0.0,
                     "min_8bit_size": 4096,
                 },
-                "class": bitsandbytes.optim.Lion8bit,
+                "class": BNBLion8bit,
             },
             "bnb-lion-paged": {
                 "precision": "any",
@@ -619,7 +637,7 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 0.0,
                     "min_8bit_size": 4096,
                 },
-                "class": bitsandbytes.optim.PagedLion,
+                "class": BNBPagedLion,
             },
             "bnb-lion8bit-paged": {
                 "precision": "any",
@@ -628,70 +646,82 @@ if is_bitsandbytes_available and hasattr(bitsandbytes, "optim"):
                     "weight_decay": 0.0,
                     "min_8bit_size": 4096,
                 },
-                "class": bitsandbytes.optim.PagedLion8bit,
+                "class": BNBPagedLion8bit,
             },
         }
     )
 
-if is_ademamix_available:
-    optimizer_choices.update(
-        {
-            "bnb-ademamix": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.999, 0.9999),
-                    "alpha": 5.0,
-                    "t_alpha": None,
-                    "t_beta3": None,
-                    "eps": 1e-08,
-                    "weight_decay": 0.01,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.AdEMAMix,
-            },
-            "bnb-ademamix8bit": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.999, 0.9999),
-                    "alpha": 5.0,
-                    "t_alpha": None,
-                    "t_beta3": None,
-                    "eps": 1e-08,
-                    "weight_decay": 0.01,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.AdEMAMix8bit,
-            },
-            "bnb-ademamix-paged": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.999, 0.9999),
-                    "alpha": 5.0,
-                    "t_alpha": None,
-                    "t_beta3": None,
-                    "eps": 1e-08,
-                    "weight_decay": 0.01,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.PagedAdEMAMix,
-            },
-            "bnb-ademamix8bit-paged": {
-                "precision": "any",
-                "default_settings": {
-                    "betas": (0.9, 0.999, 0.9999),
-                    "alpha": 5.0,
-                    "t_alpha": None,
-                    "t_beta3": None,
-                    "eps": 1e-08,
-                    "weight_decay": 0.01,
-                    "min_8bit_size": 4096,
-                },
-                "class": bitsandbytes.optim.PagedAdEMAMix8bit,
-            },
-        }
-    )
+    # Some optimizers are not available in multibackend bitsandbytes as of January 2025.
+    try:
+        import bitsandbytes.optim
+
+        if hasattr(bitsandbytes.optim, "AdEMAMix"):
+            BNBAdEMAMix = get_lazy_class("bitsandbytes.optim", "AdEMAMix")
+            BNBAdEMAMix8bit = get_lazy_class("bitsandbytes.optim", "AdEMAMix8bit")
+            BNBPagedAdEMAMix = get_lazy_class("bitsandbytes.optim", "PagedAdEMAMix")
+            BNBPagedAdEMAMix8bit = get_lazy_class("bitsandbytes.optim", "PagedAdEMAMix8bit")
+
+            optimizer_choices.update(
+                {
+                    "bnb-ademamix": {
+                        "precision": "any",
+                        "default_settings": {
+                            "betas": (0.9, 0.999, 0.9999),
+                            "alpha": 5.0,
+                            "t_alpha": None,
+                            "t_beta3": None,
+                            "eps": 1e-08,
+                            "weight_decay": 0.01,
+                            "min_8bit_size": 4096,
+                        },
+                        "class": BNBAdEMAMix,
+                    },
+                    "bnb-ademamix8bit": {
+                        "precision": "any",
+                        "default_settings": {
+                            "betas": (0.9, 0.999, 0.9999),
+                            "alpha": 5.0,
+                            "t_alpha": None,
+                            "t_beta3": None,
+                            "eps": 1e-08,
+                            "weight_decay": 0.01,
+                            "min_8bit_size": 4096,
+                        },
+                        "class": BNBAdEMAMix8bit,
+                    },
+                    "bnb-ademamix-paged": {
+                        "precision": "any",
+                        "default_settings": {
+                            "betas": (0.9, 0.999, 0.9999),
+                            "alpha": 5.0,
+                            "t_alpha": None,
+                            "t_beta3": None,
+                            "eps": 1e-08,
+                            "weight_decay": 0.01,
+                            "min_8bit_size": 4096,
+                        },
+                        "class": BNBPagedAdEMAMix,
+                    },
+                    "bnb-ademamix8bit-paged": {
+                        "precision": "any",
+                        "default_settings": {
+                            "betas": (0.9, 0.999, 0.9999),
+                            "alpha": 5.0,
+                            "t_alpha": None,
+                            "t_beta3": None,
+                            "eps": 1e-08,
+                            "weight_decay": 0.01,
+                            "min_8bit_size": 4096,
+                        },
+                        "class": BNBPagedAdEMAMix8bit,
+                    },
+                }
+            )
+    except:
+        pass
 
 if is_prodigy_available:
+    ProdigyPlusScheduleFree = get_lazy_class("prodigyplus.prodigy_plus_schedulefree", "ProdigyPlusScheduleFree")
     optimizer_choices.update(
         {
             "prodigy": {
@@ -723,7 +753,7 @@ if is_prodigy_available:
                     "use_adopt": False,
                     "stochastic_rounding": True,
                 },
-                "class": prodigyplus.prodigy_plus_schedulefree.ProdigyPlusScheduleFree,
+                "class": ProdigyPlusScheduleFree,
             }
         }
     )
