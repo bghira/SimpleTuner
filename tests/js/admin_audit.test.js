@@ -4,6 +4,15 @@
  * Tests audit log methods including chain verification.
  */
 
+// Mock UIHelpers
+window.UIHelpers = {
+    formatDateTime: (ts, opts) => {
+        if (!ts) return '';
+        const d = new Date(ts);
+        return d.toLocaleString();
+    },
+};
+
 // Load the audit module
 require('../../simpletuner/static/js/modules/admin/audit.js');
 
@@ -52,7 +61,7 @@ describe('adminAuditMethods', () => {
 
             await context.verifyAuditChain();
 
-            expect(fetch).toHaveBeenCalledWith('/api/cloud/audit/verify');
+            expect(fetch).toHaveBeenCalledWith('/api/audit/verify');
             // Verify no method override (GET is default)
             expect(fetch).toHaveBeenCalledTimes(1);
             const callArgs = fetch.mock.calls[0];

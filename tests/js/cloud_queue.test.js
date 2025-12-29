@@ -120,7 +120,7 @@ describe('cloudQueueMethods', () => {
 
             await context.refreshQueueStats();
 
-            expect(fetch).toHaveBeenCalledWith('/api/cloud/queue/stats');
+            expect(fetch).toHaveBeenCalledWith('/api/queue/stats');
             expect(context.queueStats.pending).toBe(5);
             expect(context.queueStats.running).toBe(2);
             expect(context.queueSettings.max_concurrent).toBe(10);
@@ -161,7 +161,7 @@ describe('cloudQueueMethods', () => {
 
             await context.loadQueuePendingJobs();
 
-            expect(fetch).toHaveBeenCalledWith('/api/cloud/queue?status=pending&limit=20');
+            expect(fetch).toHaveBeenCalledWith('/api/queue?status=pending&limit=20');
             expect(context.queuePendingJobs).toHaveLength(2);
         });
 
@@ -222,7 +222,7 @@ describe('cloudQueueMethods', () => {
 
             await context.loadQueueBlockedJobs();
 
-            expect(fetch).toHaveBeenCalledWith('/api/cloud/queue?status=blocked&limit=20');
+            expect(fetch).toHaveBeenCalledWith('/api/queue?status=blocked&limit=20');
             expect(context.queueBlockedJobs).toHaveLength(1);
         });
     });
@@ -244,7 +244,7 @@ describe('cloudQueueMethods', () => {
             await context.updateConcurrencyLimits();
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/queue/concurrency',
+                '/api/queue/concurrency',
                 expect.objectContaining({
                     method: 'POST',
                     body: JSON.stringify({
@@ -300,7 +300,7 @@ describe('cloudQueueMethods', () => {
             await context.processQueue();
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/queue/process',
+                '/api/queue/process',
                 expect.objectContaining({ method: 'POST' })
             );
             expect(window.showToast).toHaveBeenCalledWith('Dispatched 3 job(s)', 'success');
@@ -336,7 +336,7 @@ describe('cloudQueueMethods', () => {
             await context.cleanupQueue();
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/queue/cleanup?days=14',
+                '/api/queue/cleanup?days=14',
                 expect.objectContaining({ method: 'POST' })
             );
             expect(context.lastCleanupResult).toEqual({ deleted: 5 });
@@ -378,7 +378,7 @@ describe('cloudQueueMethods', () => {
             await context.cancelQueuedJob('job-123');
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/queue/job-123/cancel',
+                '/api/queue/job-123/cancel',
                 expect.objectContaining({ method: 'POST' })
             );
             expect(window.showToast).toHaveBeenCalledWith('Job cancelled', 'success');
@@ -407,7 +407,7 @@ describe('cloudQueueMethods', () => {
             await context.approveQueuedJob('job-123');
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/queue/job-123/approve',
+                '/api/queue/job-123/approve',
                 expect.objectContaining({ method: 'POST' })
             );
             expect(window.showToast).toHaveBeenCalledWith('Job approved', 'success');
@@ -428,7 +428,7 @@ describe('cloudQueueMethods', () => {
             await context.rejectQueuedJob('job-123', 'Cost too high');
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/queue/job-123/reject?reason=Cost%20too%20high',
+                '/api/queue/job-123/reject?reason=Cost%20too%20high',
                 expect.objectContaining({ method: 'POST' })
             );
             expect(window.showToast).toHaveBeenCalledWith('Job rejected', 'success');

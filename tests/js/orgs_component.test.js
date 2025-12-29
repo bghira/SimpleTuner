@@ -85,7 +85,7 @@ describe('orgsComponent', () => {
             await component.updateMemberRole(member, 'lead');
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/orgs/1/teams/10/members/102',
+                '/api/orgs/1/teams/10/members/102',
                 expect.objectContaining({
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
@@ -167,7 +167,7 @@ describe('orgsComponent', () => {
             await component.addMember();
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/orgs/1/teams/10/members',
+                '/api/orgs/1/teams/10/members',
                 expect.objectContaining({
                     method: 'POST',
                     body: JSON.stringify({ user_id: 105, role: 'lead' }),
@@ -199,7 +199,7 @@ describe('orgsComponent', () => {
             await component.removeMember(member);
 
             expect(fetch).toHaveBeenCalledWith(
-                '/api/cloud/orgs/1/teams/10/members/102',
+                '/api/orgs/1/teams/10/members/102',
                 { method: 'DELETE' }
             );
             expect(component.loadTeamMembers).toHaveBeenCalledWith(10);

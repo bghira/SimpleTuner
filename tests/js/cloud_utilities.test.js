@@ -4,6 +4,29 @@
  * Tests format helpers, job status helpers, and computed properties.
  */
 
+// Mock UIHelpers
+window.UIHelpers = {
+    formatDuration: (seconds) => {
+        if (!seconds) return '--';
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        if (hours > 0) {
+            return `${hours}h ${minutes}m`;
+        }
+        return `${minutes}m`;
+    },
+    formatWaitTime: (seconds) => {
+        if (seconds === null || seconds === undefined) return 'N/A';
+        if (seconds < 60) return '< 1 min';
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        if (hours > 0) {
+            return `~${hours}h ${minutes}m`;
+        }
+        return `~${minutes} min`;
+    },
+};
+
 // Load the utilities module
 require('../../simpletuner/static/js/modules/cloud/utilities.js');
 

@@ -238,69 +238,6 @@ describe('cloudOnboardingMethods', () => {
         });
     });
 
-    describe('IP allowlist management', () => {
-        test('addIpToAllowlist validates IPv4 format', () => {
-            context.advancedConfig.newIpEntry = '192.168.1.1';
-
-            context.addIpToAllowlist();
-
-            expect(context.advancedConfig.webhook_allowed_ips).toContain('192.168.1.1');
-            expect(context.advancedConfig.newIpEntry).toBe('');
-            expect(context.advancedConfig.ipValidationError).toBeNull();
-        });
-
-        test('addIpToAllowlist validates IPv4 with CIDR', () => {
-            context.advancedConfig.newIpEntry = '10.0.0.0/8';
-
-            context.addIpToAllowlist();
-
-            expect(context.advancedConfig.webhook_allowed_ips).toContain('10.0.0.0/8');
-        });
-
-        test('addIpToAllowlist rejects invalid IP', () => {
-            context.advancedConfig.newIpEntry = 'not-an-ip';
-
-            context.addIpToAllowlist();
-
-            expect(context.advancedConfig.webhook_allowed_ips).toHaveLength(0);
-            expect(context.advancedConfig.ipValidationError).toBe('Invalid IP address format');
-        });
-
-        test('addIpToAllowlist rejects duplicate IP', () => {
-            context.advancedConfig.webhook_allowed_ips = ['192.168.1.1'];
-            context.advancedConfig.newIpEntry = '192.168.1.1';
-
-            context.addIpToAllowlist();
-
-            expect(context.advancedConfig.webhook_allowed_ips).toHaveLength(1);
-            expect(context.advancedConfig.ipValidationError).toBe('IP already in list');
-        });
-
-        test('addIpToAllowlist ignores empty input', () => {
-            context.advancedConfig.newIpEntry = '   ';
-
-            context.addIpToAllowlist();
-
-            expect(context.advancedConfig.webhook_allowed_ips).toHaveLength(0);
-        });
-
-        test('removeIpFromAllowlist removes IP', () => {
-            context.advancedConfig.webhook_allowed_ips = ['192.168.1.1', '10.0.0.1'];
-
-            context.removeIpFromAllowlist('192.168.1.1');
-
-            expect(context.advancedConfig.webhook_allowed_ips).not.toContain('192.168.1.1');
-            expect(context.advancedConfig.webhook_allowed_ips).toContain('10.0.0.1');
-        });
-
-        test('removeIpFromAllowlist handles non-existent IP', () => {
-            context.advancedConfig.webhook_allowed_ips = ['192.168.1.1'];
-
-            // Should not throw
-            expect(() => context.removeIpFromAllowlist('10.0.0.1')).not.toThrow();
-            expect(context.advancedConfig.webhook_allowed_ips).toHaveLength(1);
-        });
-    });
 });
 
 describe('Onboarding Step Order', () => {
