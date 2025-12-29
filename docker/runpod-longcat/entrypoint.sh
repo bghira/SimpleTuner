@@ -119,6 +119,13 @@ echo "  [OK] Config Path: $CONFIG_PATH"
 # -----------------------------------------------------------------------------
 echo "[3/6] Generating configuration files..."
 
+# Create required directories
+mkdir -p "${CONFIG_DIR}"
+mkdir -p "${CACHE_DIR}/vae"
+mkdir -p "${CACHE_DIR}/text"
+mkdir -p "${OUTPUT_DIR}"
+mkdir -p /workspace/logs
+
 # Determine model_type
 if [ -n "$LORA_RANK" ]; then
     EFFECTIVE_MODEL_TYPE="lora"
