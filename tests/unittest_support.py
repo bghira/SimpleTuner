@@ -67,7 +67,80 @@ class APITestEnvironmentMixin:
         else:
             os.environ.pop("TQDM_DISABLE", None)
 
+        # Clean up cloud service singletons to prevent aiosqlite thread errors
+        self._cleanup_cloud_services()
+
         self._tmpdir.cleanup()
+
+    def _cleanup_cloud_services(self) -> None:
+        """Clean up cloud service singletons between tests.
+
+        This must clear ALL storage singletons to prevent test data from
+        leaking to production databases.
+        """
+        # Reset container (high-level service registry)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.container import container
+
+            container.reset()
+        except ImportError:
+            pass
+
+        # Reset AsyncJobStore singleton
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
+
+            AsyncJobStore._instance = None
+        except ImportError:
+            pass
+
+        # Reset BaseSQLiteStore instances (JobRepository, MetricsStore, etc.)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+            BaseSQLiteStore._instances.clear()
+        except ImportError:
+            pass
+
+        # Reset BaseAuthStore instances (UserCrudStore, SessionStore, etc.)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+
+            BaseAuthStore._instances.clear()
+        except ImportError:
+            pass
+
+        # Reset QueueStore singleton
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.queue import QueueStore
+
+            QueueStore._instance = None
+        except ImportError:
+            pass
+
+        # Reset UserStore singleton
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.auth.user_store import UserStore
+
+            UserStore._instance = None
+        except ImportError:
+            pass
+
+        # Reset module-level store singletons
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.storage import (
+                audit_store,
+                idempotency_store,
+                metrics_store,
+                reservation_store,
+            )
+
+            audit_store._audit_store = None
+            metrics_store._metrics_store = None
+            idempotency_store._idempotency_store = None
+            reservation_store._reservation_store = None
+        except (ImportError, AttributeError):
+            pass
 
     def create_test_client(self, mode: ServerMode) -> TestClient:
         app = create_app(mode=mode)

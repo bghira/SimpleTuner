@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import warnings
 
-from simpletuner.helpers import logging as webhook_logging  # noqa: F401
+# Skip heavy imports in CLI mode for fast startup
+if os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() not in ("1", "true", "yes"):
+    from simpletuner.helpers import logging as webhook_logging  # noqa: F401
 
 warnings.filterwarnings(
     "ignore",

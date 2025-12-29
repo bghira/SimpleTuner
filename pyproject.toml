@@ -111,7 +111,7 @@ all = [
 ]
 
 [project.scripts]
-simpletuner = "simpletuner.cli:main"
+simpletuner = "st_cli:main"
 simpletuner-train = "simpletuner.train:main"
 simpletuner-configure = "simpletuner.configure:main"
 simpletuner-inference = "simpletuner.inference:main"
@@ -127,6 +127,7 @@ Changelog = "https://github.com/bghira/SimpleTuner/releases"
 [tool.setuptools]
 include-package-data = true
 zip-safe = false
+py-modules = ["st_cli"]
 
 [tool.setuptools.dynamic]
 version = {attr = "simpletuner.__version__"}
