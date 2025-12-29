@@ -1,0 +1,388 @@
+/**
+ * Hero CTA - Shared Styles
+ *
+ * Consolidated hero call-to-action styles used across multiple tabs.
+ * Uses CSS custom properties for theme-specific colors.
+ */
+
+/* Base hero CTA container */
+.hero-cta {
+    position: relative;
+    border-radius: 1rem;
+    padding: 2.5rem 2rem;
+    margin-bottom: 1.5rem;
+    text-align: center;
+
+    /* Default theme (indigo) - override with inline style or data-theme */
+    --hero-gradient-start: rgba(99, 102, 241, 0.15);
+    --hero-gradient-end: rgba(79, 70, 229, 0.08);
+    --hero-border-color: rgba(99, 102, 241, 0.2);
+    --hero-icon-gradient-start: #6366f1;
+    --hero-icon-gradient-end: #4f46e5;
+    --hero-icon-shadow: rgba(99, 102, 241, 0.3);
+
+    background: linear-gradient(135deg, var(--hero-gradient-start) 0%, var(--hero-gradient-end) 100%);
+    border: 1px solid var(--hero-border-color);
+}
+
+/* Theme variants */
+.hero-cta[data-theme="amber"],
+.hero-cta--amber {
+    --hero-gradient-start: rgba(245, 158, 11, 0.15);
+    --hero-gradient-end: rgba(217, 119, 6, 0.08);
+    --hero-border-color: rgba(245, 158, 11, 0.2);
+    --hero-icon-gradient-start: #f59e0b;
+    --hero-icon-gradient-end: #d97706;
+    --hero-icon-shadow: rgba(245, 158, 11, 0.3);
+}
+
+.hero-cta[data-theme="green"],
+.hero-cta--green {
+    --hero-gradient-start: rgba(34, 211, 153, 0.15);
+    --hero-gradient-end: rgba(16, 185, 129, 0.08);
+    --hero-border-color: rgba(34, 211, 153, 0.2);
+    --hero-icon-gradient-start: #22d399;
+    --hero-icon-gradient-end: #10b981;
+    --hero-icon-shadow: rgba(34, 211, 153, 0.3);
+}
+
+.hero-cta[data-theme="indigo"],
+.hero-cta--indigo {
+    --hero-gradient-start: rgba(99, 102, 241, 0.15);
+    --hero-gradient-end: rgba(129, 140, 248, 0.1);
+    --hero-border-color: rgba(129, 140, 248, 0.3);
+    --hero-icon-gradient-start: #6366f1;
+    --hero-icon-gradient-end: #818cf8;
+    --hero-icon-shadow: rgba(99, 102, 241, 0.3);
+}
+
+.hero-cta[data-theme="purple"],
+.hero-cta--purple {
+    --hero-gradient-start: rgba(126, 34, 206, 0.15);
+    --hero-gradient-end: rgba(79, 70, 229, 0.1);
+    --hero-border-color: rgba(167, 139, 250, 0.25);
+    --hero-icon-gradient-start: #7e22ce;
+    --hero-icon-gradient-end: #4f46e5;
+    --hero-icon-shadow: rgba(167, 139, 250, 0.3);
+}
+
+/* Dismiss button */
+.hero-cta .hero-dismiss-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: transparent;
+    border: none;
+    color: #64748b;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.hero-cta .hero-dismiss-btn:hover {
+    color: #94a3b8;
+}
+
+/* Content wrapper */
+.hero-cta .hero-content {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+/* Icon */
+.hero-cta .hero-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 1.5rem;
+    background: linear-gradient(135deg, var(--hero-icon-gradient-start) 0%, var(--hero-icon-gradient-end) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    color: white;
+    box-shadow: 0 8px 32px var(--hero-icon-shadow);
+}
+
+/* Icon shape variants */
+.hero-cta .hero-icon--circle,
+.hero-cta[data-icon-shape="circle"] .hero-icon {
+    border-radius: 50%;
+}
+
+.hero-cta .hero-icon--rounded,
+.hero-cta[data-icon-shape="rounded"] .hero-icon {
+    border-radius: 1rem;
+}
+
+/* Title */
+.hero-cta .hero-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #f8fafc;
+    margin-bottom: 0.75rem;
+}
+
+/* Description */
+.hero-cta .hero-description {
+    font-size: 1rem;
+    color: #94a3b8;
+    max-width: 550px;
+    margin: 0 auto 1.5rem;
+    line-height: 1.6;
+}
+
+/* Features list */
+.hero-cta .hero-features {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.hero-cta .hero-feature {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: #e2e8f0;
+}
+
+.hero-cta .hero-feature i {
+    font-size: 1rem;
+}
+
+/* Action buttons */
+.hero-cta .hero-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+/* Tip/footer text */
+.hero-cta .hero-tip {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.85rem;
+    color: #64748b;
+}
+
+/* Template buttons section */
+.hero-cta .hero-templates {
+    margin-bottom: 1.5rem;
+}
+
+.hero-cta .template-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* Integration cards section */
+.hero-cta .hero-integrations {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+    max-width: 700px;
+    margin: 0 auto 1.5rem;
+}
+
+.hero-cta .integration-card {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    text-align: left;
+    transition: border-color 0.2s ease;
+}
+
+.hero-cta .integration-card:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.hero-cta .integration-card h6 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.hero-cta .integration-card p {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    margin: 0;
+}
+
+/* Setup steps section (for cloud onboarding) */
+.hero-cta .hero-steps {
+    text-align: left;
+    max-width: 520px;
+    margin: 0 auto 1.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.hero-cta .setup-step {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+}
+
+.hero-cta .setup-step + .setup-step {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hero-cta .step-number {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--hero-icon-gradient-start);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+}
+
+.hero-cta .step-content {
+    flex: 1;
+}
+
+.hero-cta .step-content h6 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+.hero-cta .step-content p {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    margin: 0;
+}
+
+/* Token input group (for cloud onboarding) */
+.hero-cta .token-input-group {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.hero-cta .token-input-group input {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    color: #f8fafc;
+    font-size: 0.85rem;
+}
+
+.hero-cta .token-input-group input::placeholder {
+    color: #64748b;
+}
+
+/* Footer links */
+.hero-cta .hero-footer {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.hero-cta .hero-footer a {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    transition: color 0.2s;
+}
+
+.hero-cta .hero-footer a:hover {
+    color: #f8fafc;
+}
+
+/* Responsive styles */
+@media (max-width: 767.98px) {
+    .hero-cta {
+        padding: 2rem 1.5rem;
+    }
+
+    .hero-cta .hero-icon {
+        width: 60px;
+        height: 60px;
+        font-size: 1.5rem;
+    }
+
+    .hero-cta .hero-title {
+        font-size: 1.5rem;
+    }
+
+    .hero-cta .hero-features {
+        flex-direction: column;
+        gap: 0.75rem;
+        align-items: center;
+    }
+
+    .hero-cta .hero-actions {
+        flex-direction: column;
+    }
+
+    .hero-cta .hero-integrations {
+        grid-template-columns: 1fr;
+    }
+
+    .hero-cta .hero-footer {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+}
+
+/* Hero detail cards - for expanded feature explanations */
+.hero-cta .hero-details {
+    text-align: left;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.hero-cta .hero-detail-card {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    padding: 1rem 1.25rem;
+    height: 100%;
+}
+
+.hero-cta .hero-detail-card h6 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    color: #f1f5f9;
+}
+
+.hero-cta .hero-detail-card p {
+    line-height: 1.5;
+}
+
+@media (max-width: 767.98px) {
+    .hero-cta .hero-details {
+        margin-top: 1.5rem;
+    }
+
+    .hero-cta .hero-detail-card {
+        padding: 0.875rem 1rem;
+    }
+
+    .hero-cta .hero-detail-card h6 {
+        font-size: 0.85rem;
+    }
+}

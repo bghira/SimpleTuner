@@ -1,0 +1,54 @@
+/**
+ * User Profile Modal Styles
+ * Extracted from user_profile_modal.html
+ */
+
+.user-avatar-large {
+    display: inline-block;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    padding: 3px;
+}
+
+.user-avatar-large img {
+    width: 96px;
+    height: 96px;
+    object-fit: cover;
+}
+
+.avatar-placeholder {
+    width: 96px;
+    height: 96px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    font-size: 2.5rem;
+    color: white;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.avatar-upload-btn {
+    bottom: 0;
+    right: -10px;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+}
+
+.avatar-upload-btn i {
+    font-size: 0.75rem;
+}
+
+.avatar-upload-progress .progress {
+    height: 4px;
+}
+
+#userProfileModal .form-control:disabled,
+#userProfileModal .form-control[readonly] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#userProfileModal .modal-content {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}

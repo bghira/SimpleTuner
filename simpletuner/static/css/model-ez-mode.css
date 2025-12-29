@@ -1,0 +1,235 @@
+/**
+ * Model EZ Mode Styling
+ * Extends hero-cta.css with EZ mode form-specific styles
+ */
+
+/* EZ Mode Form Container */
+.ez-mode-form {
+    padding: 0 0.5rem;
+}
+
+/* Section styling */
+.ez-mode-section {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.ez-mode-section:last-child {
+    margin-bottom: 0;
+}
+
+.ez-mode-section-title {
+    color: #e2e8f0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+}
+
+.ez-mode-section-title i {
+    color: #a78bfa;
+}
+
+/* Form labels in EZ mode */
+.ez-mode-form .form-label {
+    color: #cbd5e1;
+    font-size: 0.8rem;
+    font-weight: 500;
+    margin-bottom: 0.35rem;
+}
+
+/* Form controls styling */
+.ez-mode-form .form-control,
+.ez-mode-form .form-select {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    color: #f8fafc;
+    font-size: 0.875rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ez-mode-form .form-control:focus,
+.ez-mode-form .form-select:focus {
+    background: rgba(30, 41, 59, 0.95);
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.25);
+    color: #f8fafc;
+}
+
+.ez-mode-form .form-control:disabled,
+.ez-mode-form .form-select:disabled {
+    background: rgba(15, 23, 42, 0.5);
+    border-color: rgba(148, 163, 184, 0.15);
+    color: #64748b;
+    cursor: not-allowed;
+}
+
+.ez-mode-form .form-control::placeholder {
+    color: #64748b;
+}
+
+/* Number inputs */
+.ez-mode-form input[type="number"] {
+    -moz-appearance: textfield;
+}
+
+.ez-mode-form input[type="number"]::-webkit-outer-spin-button,
+.ez-mode-form input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Form text hints */
+.ez-mode-form .form-text {
+    color: #64748b;
+    font-size: 0.7rem;
+    margin-top: 0.25rem;
+}
+
+/* Checkboxes */
+.ez-mode-form .form-check {
+    padding-left: 1.75em;
+}
+
+.ez-mode-form .form-check-input {
+    background-color: rgba(30, 41, 59, 0.8);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    width: 1.1em;
+    height: 1.1em;
+    margin-top: 0.2em;
+}
+
+.ez-mode-form .form-check-input:checked {
+    background-color: #a78bfa;
+    border-color: #a78bfa;
+}
+
+.ez-mode-form .form-check-input:focus {
+    border-color: #a78bfa;
+    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.25);
+}
+
+.ez-mode-form .form-check-label {
+    color: #e2e8f0;
+    font-size: 0.85rem;
+}
+
+/* Select dropdown arrow color fix */
+.ez-mode-form .form-select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+}
+
+/* Buttons */
+.ez-mode-form .btn-outline-light {
+    color: #e2e8f0;
+    border-color: rgba(148, 163, 184, 0.35);
+    background: transparent;
+    transition: all 0.2s ease;
+}
+
+.ez-mode-form .btn-outline-light:hover {
+    background: rgba(148, 163, 184, 0.15);
+    border-color: rgba(148, 163, 184, 0.5);
+    color: #f8fafc;
+}
+
+/* Footer styling */
+.ez-mode-footer {
+    border-top: 1px solid rgba(148, 163, 184, 0.15);
+    padding-top: 1rem;
+    margin-top: 1rem;
+}
+
+.ez-mode-footer .text-muted {
+    color: #94a3b8 !important;
+}
+
+/* Hero CTA header adjustments for EZ mode */
+.model-ez-mode-hero .hero-cta-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.model-ez-mode-hero .hero-cta-content {
+    flex: 1;
+}
+
+.model-ez-mode-hero .btn-close {
+    margin-top: 0.25rem;
+}
+
+/* EZ Mode hero overrides for left-aligned layout */
+.model-ez-mode-hero .hero-cta {
+    text-align: left;
+}
+
+.model-ez-mode-hero .hero-content {
+    max-width: none;
+}
+
+.model-ez-mode-hero .hero-icon {
+    width: 60px;
+    height: 60px;
+    font-size: 1.5rem;
+    margin: 0;
+}
+
+.model-ez-mode-hero .hero-title {
+    font-size: 1.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.model-ez-mode-hero .hero-description {
+    font-size: 0.9rem;
+    margin-bottom: 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .ez-mode-section {
+        padding: 0.75rem 1rem;
+    }
+
+    .ez-mode-section-title {
+        font-size: 0.85rem;
+    }
+
+    .ez-mode-form .form-label {
+        font-size: 0.75rem;
+    }
+
+    .ez-mode-form .form-control,
+    .ez-mode-form .form-select {
+        font-size: 0.8rem;
+    }
+
+    .ez-mode-footer {
+        flex-direction: column;
+        gap: 0.75rem;
+        text-align: center;
+    }
+
+    .ez-mode-footer .btn {
+        width: 100%;
+    }
+
+    /* Checkboxes align left on mobile */
+    .ez-mode-form .form-check.mt-4 {
+        margin-top: 0.5rem !important;
+    }
+}
+
+/* Animation for conditional fields */
+.ez-mode-form [x-show] {
+    transition: opacity 0.15s ease-in-out;
+}
+
+/* Loading spinner color */
+.model-ez-mode-hero .spinner-border {
+    color: #a78bfa !important;
+}

@@ -1,0 +1,275 @@
+/**
+ * Organizations & Teams Tab Styles
+ * Extracted from orgs_tab.html
+ */
+
+/* Organizations header */
+.orgs-header {
+    margin-bottom: 1.5rem;
+}
+
+/* Stats Bar */
+.orgs-stats-bar {
+    display: flex;
+    gap: 2rem;
+    padding: 1rem 1.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.orgs-stats-bar .stat-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.orgs-stats-bar .stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #818cf8;
+}
+
+.orgs-stats-bar .stat-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+}
+
+/* Cards */
+.orgs-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    background: rgba(15, 23, 42, 0.5);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+}
+
+.orgs-card-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.orgs-card-header h6 {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.orgs-card-body {
+    padding: 1rem;
+}
+
+/* Empty state */
+.orgs-tab .empty-icon,
+#orgs-tab-content .empty-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    color: #64748b;
+}
+
+/* Organization List */
+.org-list {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.org-item {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    gap: 0.75rem;
+    transition: background-color 0.15s;
+}
+
+.org-item:last-child {
+    border-bottom: none;
+}
+
+.org-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.org-item.active {
+    background: rgba(129, 140, 248, 0.15);
+    border-left: 3px solid #818cf8;
+}
+
+.org-item.inactive {
+    opacity: 0.5;
+}
+
+.org-icon {
+    width: 36px;
+    height: 36px;
+    background: rgba(129, 140, 248, 0.15);
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #818cf8;
+}
+
+.org-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.org-name {
+    font-weight: 500;
+}
+
+/* Team List */
+.team-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.team-item {
+    display: flex;
+    align-items: center;
+    padding: 0.625rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    gap: 0.75rem;
+    transition: background-color 0.15s;
+}
+
+.team-item:last-child {
+    border-bottom: none;
+}
+
+.team-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.team-item.active {
+    background: rgba(129, 140, 248, 0.1);
+}
+
+.team-icon {
+    width: 32px;
+    height: 32px;
+    background: rgba(34, 197, 94, 0.15);
+    border-radius: 0.375rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #22c55e;
+    font-size: 0.85rem;
+}
+
+.team-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.team-name {
+    font-size: 0.9rem;
+}
+
+.team-actions {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.team-actions .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+/* Member List */
+.member-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.member-item {
+    display: flex;
+    align-items: center;
+    padding: 0.625rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    gap: 0.75rem;
+}
+
+.member-item:last-child {
+    border-bottom: none;
+}
+
+.member-avatar {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.member-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.member-name {
+    font-size: 0.9rem;
+}
+
+.member-role .badge {
+    font-size: 0.7rem;
+}
+
+.member-role .role-select {
+    width: auto;
+    min-width: 90px;
+    font-size: 0.75rem;
+    padding: 0.2rem 1.5rem 0.2rem 0.5rem;
+    background-color: rgba(30, 30, 30, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e2e8f0;
+}
+
+.member-role .role-select:focus {
+    border-color: #818cf8;
+    box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.25);
+}
+
+.member-role .role-select.role-admin {
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+}
+
+.member-role .role-select.role-lead {
+    border-color: rgba(59, 130, 246, 0.5);
+    color: #93c5fd;
+}
+
+.member-role .role-select.role-member {
+    border-color: rgba(156, 163, 175, 0.3);
+    color: #9ca3af;
+}
+
+.member-actions .btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+/* Responsive */
+@media (max-width: 991.98px) {
+    .orgs-stats-bar {
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+}
