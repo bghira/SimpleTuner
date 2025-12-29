@@ -1,0 +1,466 @@
+<!-- templates/orgs_tab.html - Organizations & Teams Management -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-orgs">
+<link rel="stylesheet" href="/static/css/orgs.css" id="css-orgs">
+
+<div class="tab-fragment"
+     id="orgs-tab-content"
+     data-tab-name="orgs"
+     x-data="orgsComponent()"
+     x-init="init()">
+
+    <!-- Page Header -->
+    <div class="orgs-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1"><i class="fas fa-building me-2"></i>Organizations & Teams</h4>
+                <p class="text-muted small mb-0">Manage organizational structure and team membership</p>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-sm btn-outline-secondary"
+                        x-show="!showHeroCTA"
+                        @click="restoreHeroCTA()"
+                        title="Show getting started guide">
+                    <i class="fas fa-question-circle me-1"></i>Help
+                </button>
+                <button class="btn btn-sm btn-outline-primary"
+                        @click="showOrgModal()"
+                        :disabled="loading">
+                    <i class="fas fa-plus me-1"></i>New Organization
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hero CTA for first-time users -->
+    {{ hero_cta(
+        theme='green',
+        icon_class='fa-sitemap',
+        icon_shape='rounded',
+        title='Structure Your Team',
+        description='Create organizations and teams to manage access controls, quotas, and cost limits across your training infrastructure. Perfect for multi-user deployments.',
+        features=[
+            {'icon': 'fa-users-cog', 'color': 'text-success', 'label': 'Team Quotas'},
+            {'icon': 'fa-dollar-sign', 'color': 'text-warning', 'label': 'Cost Allocation'},
+            {'icon': 'fa-user-shield', 'color': 'text-info', 'label': 'Access Control'},
+        ],
+        show_condition='showHeroCTA && organizations.length === 0',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Create First Organization', 'icon': 'fa-plus', 'action': 'showOrgModal()'},
+        cta_secondary={'label': 'Skip for Now', 'action': 'dismissHeroCTA()'},
+        tip_text='Organizations can have multiple teams, each with their own members and resource limits.'
+    ) }}
+
+    <!-- Stats Bar -->
+    <div class="orgs-stats-bar" x-show="organizations.length > 0">
+        <div class="stat-item">
+            <span class="stat-value" x-text="organizations.length"></span>
+            <span class="stat-label">Organizations</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="totalTeams"></span>
+            <span class="stat-label">Teams</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="totalMembers"></span>
+            <span class="stat-label">Members</span>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="row g-3">
+        <!-- Organizations List -->
+        <div class="col-lg-4">
+            <div class="orgs-card">
+                <div class="orgs-card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0"><i class="fas fa-building me-2"></i>Organizations</h6>
+                        <button class="btn btn-sm btn-outline-primary" @click="showOrgModal()">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="orgs-card-body p-0">
+                    <!-- Loading State -->
+                    <div class="text-center py-4" x-show="loading">
+                        <div class="spinner-border spinner-border-sm text-primary"></div>
+                        <p class="small text-muted mt-2 mb-0">Loading organizations...</p>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div class="text-center py-4" x-show="!loading && organizations.length === 0">
+                        <div class="empty-icon mb-3">
+                            <i class="fas fa-building"></i>
+                        </div>
+                        <p class="small text-muted mb-2">No organizations yet</p>
+                        <button class="btn btn-sm btn-primary" @click="showOrgModal()">
+                            <i class="fas fa-plus me-1"></i>Create First Organization
+                        </button>
+                    </div>
+
+                    <!-- Organization List -->
+                    <div class="org-list" x-show="!loading && organizations.length > 0">
+                        <template x-for="org in organizations" :key="org.id">
+                            <div class="org-item"
+                                 :class="{ 'active': selectedOrg?.id === org.id, 'inactive': !org.is_active }"
+                                 @click="selectOrg(org)">
+                                <div class="org-icon">
+                                    <i class="fas fa-building"></i>
+                                </div>
+                                <div class="org-info">
+                                    <div class="org-name" x-text="org.name"></div>
+                                    <div class="org-slug small text-muted" x-text="'@' + org.slug"></div>
+                                </div>
+                                <div class="org-badge">
+                                    <span class="badge bg-secondary" x-text="(org.team_count || 0) + ' teams'"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Organization Details & Teams -->
+        <div class="col-lg-8">
+            <!-- No Selection State -->
+            <div class="orgs-card" x-show="!selectedOrg">
+                <div class="orgs-card-body text-center py-5">
+                    <div class="empty-icon mb-3">
+                        <i class="fas fa-hand-pointer"></i>
+                    </div>
+                    <p class="text-muted mb-0">Select an organization to view details and teams</p>
+                </div>
+            </div>
+
+            <!-- Organization Details -->
+            <template x-if="selectedOrg">
+                <div>
+                    <!-- Org Header Card -->
+                    <div class="orgs-card mb-3">
+                        <div class="orgs-card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h5 class="mb-0" x-text="selectedOrg.name"></h5>
+                                    <small class="text-muted" x-text="'@' + selectedOrg.slug"></small>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-sm btn-outline-secondary" @click="editOrg(selectedOrg)">
+                                        <i class="fas fa-edit me-1"></i>Edit
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" @click="confirmDeleteOrg(selectedOrg)">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="orgs-card-body" x-show="selectedOrg.description">
+                            <p class="small text-muted mb-0" x-text="selectedOrg.description"></p>
+                        </div>
+                    </div>
+
+                    <!-- Teams Section -->
+                    <div class="orgs-card mb-3">
+                        <div class="orgs-card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0"><i class="fas fa-users me-2"></i>Teams</h6>
+                                <button class="btn btn-sm btn-outline-primary" @click="showTeamModal()">
+                                    <i class="fas fa-plus me-1"></i>New Team
+                                </button>
+                            </div>
+                        </div>
+                        <div class="orgs-card-body p-0">
+                            <!-- Loading Teams -->
+                            <div class="text-center py-3" x-show="teamsLoading">
+                                <div class="spinner-border spinner-border-sm text-primary"></div>
+                            </div>
+
+                            <!-- Empty Teams -->
+                            <div class="text-center py-3" x-show="!teamsLoading && teams.length === 0">
+                                <p class="small text-muted mb-0">No teams in this organization</p>
+                            </div>
+
+                            <!-- Team List -->
+                            <div class="team-list" x-show="!teamsLoading && teams.length > 0">
+                                <template x-for="team in teams" :key="team.id">
+                                    <div class="team-item"
+                                         :class="{ 'active': selectedTeam?.id === team.id }"
+                                         @click="selectTeam(team)">
+                                        <div class="team-icon">
+                                            <i class="fas fa-users"></i>
+                                        </div>
+                                        <div class="team-info">
+                                            <div class="team-name" x-text="team.name"></div>
+                                            <div class="team-slug small text-muted" x-text="'@' + team.slug"></div>
+                                        </div>
+                                        <div class="team-actions">
+                                            <button class="btn btn-sm btn-outline-secondary"
+                                                    @click.stop="editTeam(team)">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    @click.stop="confirmDeleteTeam(team)">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Team Members Section (shown when a team is selected) -->
+                    <div class="orgs-card" x-show="selectedTeam">
+                        <div class="orgs-card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-user-friends me-2"></i>
+                                    <span x-text="selectedTeam?.name + ' Members'"></span>
+                                </h6>
+                                <button class="btn btn-sm btn-outline-primary" @click="showAddMemberModal()">
+                                    <i class="fas fa-user-plus me-1"></i>Add Member
+                                </button>
+                            </div>
+                        </div>
+                        <div class="orgs-card-body p-0">
+                            <!-- Loading Members -->
+                            <div class="text-center py-3" x-show="membersLoading">
+                                <div class="spinner-border spinner-border-sm text-primary"></div>
+                            </div>
+
+                            <!-- Empty Members -->
+                            <div class="text-center py-3" x-show="!membersLoading && teamMembers.length === 0">
+                                <p class="small text-muted mb-0">No members in this team</p>
+                            </div>
+
+                            <!-- Member List -->
+                            <div class="member-list" x-show="!membersLoading && teamMembers.length > 0">
+                                <template x-for="member in teamMembers" :key="member.id">
+                                    <div class="member-item">
+                                        <div class="member-avatar">
+                                            <span x-text="(member.display_name || member.username).charAt(0).toUpperCase()"></span>
+                                        </div>
+                                        <div class="member-info">
+                                            <div class="member-name" x-text="member.display_name || member.username"></div>
+                                            <div class="member-email small text-muted" x-text="member.email"></div>
+                                        </div>
+                                        <div class="member-role">
+                                            <select class="form-select form-select-sm role-select"
+                                                    :class="{'role-admin': member.role === 'admin', 'role-lead': member.role === 'lead', 'role-member': member.role === 'member'}"
+                                                    @change="updateMemberRole(member, $event.target.value)">
+                                                <option value="member" :selected="member.role === 'member'">Member</option>
+                                                <option value="lead" :selected="member.role === 'lead'">Lead</option>
+                                                <option value="admin" :selected="member.role === 'admin'">Admin</option>
+                                            </select>
+                                        </div>
+                                        <div class="member-actions">
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    @click="removeMember(member)"
+                                                    title="Remove from team">
+                                                <i class="fas fa-user-minus"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Org Members Section -->
+                    <div class="orgs-card mt-3">
+                        <div class="orgs-card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0"><i class="fas fa-user-friends me-2"></i>Organization Members</h6>
+                                <button class="btn btn-sm btn-outline-primary" @click="showAddOrgMemberModal()">
+                                    <i class="fas fa-user-plus me-1"></i>Add Member
+                                </button>
+                            </div>
+                        </div>
+                        <div class="orgs-card-body p-0">
+                            <!-- Loading -->
+                            <div class="text-center py-3" x-show="orgMembersLoading">
+                                <div class="spinner-border spinner-border-sm text-primary"></div>
+                            </div>
+
+                            <!-- Empty -->
+                            <div class="text-center py-3" x-show="!orgMembersLoading && orgMembers.length === 0">
+                                <p class="small text-muted mb-0">No members in this organization</p>
+                            </div>
+
+                            <!-- Member List -->
+                            <div class="member-list" x-show="!orgMembersLoading && orgMembers.length > 0">
+                                <template x-for="member in orgMembers" :key="member.id">
+                                    <div class="member-item">
+                                        <div class="member-avatar">
+                                            <span x-text="(member.display_name || member.username).charAt(0).toUpperCase()"></span>
+                                        </div>
+                                        <div class="member-info">
+                                            <div class="member-name" x-text="member.display_name || member.username"></div>
+                                            <div class="member-email small text-muted" x-text="member.email"></div>
+                                        </div>
+                                        <div class="member-actions">
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    @click="removeOrgMember(member)"
+                                                    title="Remove from organization">
+                                                <i class="fas fa-user-minus"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Organization Modal -->
+    <div class="modal fade" id="orgModal" tabindex="-1" x-ref="orgModal">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas me-2" :class="editingOrg ? 'fa-edit' : 'fa-plus'"></i>
+                        <span x-text="editingOrg ? 'Edit Organization' : 'New Organization'"></span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Organization Name</label>
+                        <input type="text" class="form-control" x-model="orgForm.name"
+                               placeholder="e.g., Acme Corp">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Slug (URL-friendly identifier)</label>
+                        <div class="input-group">
+                            <span class="input-group-text">@</span>
+                            <input type="text" class="form-control" x-model="orgForm.slug"
+                                   placeholder="acme-corp"
+                                   :disabled="editingOrg"
+                                   pattern="[a-z0-9-]+">
+                        </div>
+                        <small class="form-text text-muted">Lowercase letters, numbers, and hyphens only</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description (optional)</label>
+                        <textarea class="form-control" x-model="orgForm.description" rows="2"
+                                  placeholder="Brief description of the organization"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @click="saveOrg()" :disabled="saving">
+                        <span x-show="saving"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        <span x-text="editingOrg ? 'Save Changes' : 'Create Organization'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Team Modal -->
+    <div class="modal fade" id="teamModal" tabindex="-1" x-ref="teamModal">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas me-2" :class="editingTeam ? 'fa-edit' : 'fa-plus'"></i>
+                        <span x-text="editingTeam ? 'Edit Team' : 'New Team'"></span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Team Name</label>
+                        <input type="text" class="form-control" x-model="teamForm.name"
+                               placeholder="e.g., Research Team">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Slug</label>
+                        <div class="input-group">
+                            <span class="input-group-text">@</span>
+                            <input type="text" class="form-control" x-model="teamForm.slug"
+                                   placeholder="research"
+                                   :disabled="editingTeam"
+                                   pattern="[a-z0-9-]+">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Description (optional)</label>
+                        <textarea class="form-control" x-model="teamForm.description" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @click="saveTeam()" :disabled="saving">
+                        <span x-show="saving"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        <span x-text="editingTeam ? 'Save Changes' : 'Create Team'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Member Modal -->
+    <div class="modal fade" id="addMemberModal" tabindex="-1" x-ref="addMemberModal">
+        <div class="modal-dialog">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-user-plus me-2"></i>Add Team Member</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Select User</label>
+                        <select class="form-select" x-model="memberForm.user_id">
+                            <option value="">Choose a user...</option>
+                            <template x-for="user in availableUsers" :key="user.id">
+                                <option :value="user.id" x-text="user.display_name + ' (' + user.email + ')'"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Role</label>
+                        <select class="form-select" x-model="memberForm.role">
+                            <option value="member">Member</option>
+                            <option value="lead">Lead</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @click="addMember()" :disabled="saving">
+                        <span x-show="saving"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        Add Member
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" x-ref="deleteModal">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-trash me-2"></i>Confirm Delete</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p x-text="deleteMessage"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" @click="confirmDelete()" :disabled="deleting">
+                        <span x-show="deleting"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

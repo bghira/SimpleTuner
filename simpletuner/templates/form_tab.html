@@ -1,7 +1,16 @@
 <!-- Generic Form Tab Template for HTMX -->
 <!-- Used by Basic, Model, Training, and Advanced tabs -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-form">
-<script>document.getElementById('css-form-sections-form').href = '/static/css/form-sections.css?t=' + Date.now();</script>
+{% if tab_name == 'publishing' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-publishing">
+{% elif tab_name == 'hardware' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-hardware">
+{% elif tab_name == 'model' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-model">
+<link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode">
+{% endif %}
 
 {% if prompt_libraries is defined %}
 <script>
@@ -9,10 +18,636 @@ window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
 </script>
 {% endif %}
 
+{% if tab_name == 'publishing' %}
+<script>
+// Publishing tab hero CTA state
+if (!window.publishingHeroCTA) {
+    window.publishingHeroCTA = function() {
+        return {
+            ...window.HintMixin.createMultiHint({
+                useApi: false,
+                storageKey: 'st_publishing_hints',
+                hintKeys: ['hero']
+            }),
+            showHeroCTA() { return this.hints.hero; },
+            dismissHeroCTA() { this.dismissHint('hero'); },
+            restoreHeroCTA() { this.showHint('hero'); },
+            init() { this.loadHints(); }
+        };
+    };
+}
+</script>
+{% elif tab_name == 'hardware' %}
+<script>
+// Hardware tab hero CTA state
+if (!window.hardwareHeroCTA) {
+    window.hardwareHeroCTA = function() {
+        return {
+            ...window.HintMixin.createMultiHint({
+                useApi: false,
+                storageKey: 'st_hardware_hints',
+                hintKeys: ['hero']
+            }),
+            showHeroCTA() { return this.hints.hero; },
+            dismissHeroCTA() { this.dismissHint('hero'); },
+            restoreHeroCTA() { this.showHint('hero'); },
+            init() { this.loadHints(); }
+        };
+    };
+}
+</script>
+{% elif tab_name == 'model' %}
+<script>
+// Model EZ Mode Component - inline for HTMX swaps
+(function() {
+    'use strict';
+
+    function modelEzModeComponent() {
+        return {
+            loading: true,
+            error: null,
+            modelFamilies: [],
+            modelFlavours: [],
+            model_family: '',
+            model_flavour: '',
+            model_type: 'lora',
+            lora_rank: 16,
+            vae_enable_tiling: false,
+            vae_enable_slicing: false,
+            vae_batch_size: 4,
+            gradient_checkpointing: true,
+            ramtorch: false,
+            musubi_blocks_to_swap: 0,
+            use_ema: false,
+            base_model_precision: 'no_change',
+            text_encoder_1_precision: 'no_change',
+
+            hints: { ez_mode: true },
+            _cleanupFns: [],
+
+            showEzMode() {
+                // Use reactive property for Alpine to track changes
+                return this.hints.ez_mode;
+            },
+
+            dismissEzMode() {
+                this.hints.ez_mode = false;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_model_hints') || '{}');
+                    stored.ez_mode = false;
+                    localStorage.setItem('st_model_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            restoreEzMode() {
+                this.hints.ez_mode = true;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_model_hints') || '{}');
+                    stored.ez_mode = true;
+                    localStorage.setItem('st_model_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            async init() {
+                // Load persisted state
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_model_hints') || '{}');
+                    this.hints.ez_mode = stored.ez_mode !== false;
+                } catch (e) { }
+
+                await this.loadModelFamilies();
+
+                // Wait for trainer store to be ready before syncing
+                await this.waitForTrainerStore();
+                this.syncFromForm();
+                this.setupFormWatchers();
+                this.loading = false;
+            },
+
+            async waitForTrainerStore() {
+                // Wait up to 2 seconds for trainer store to have config
+                for (let i = 0; i < 20; i++) {
+                    const store = window.Alpine?.store?.('trainer');
+                    if (store?.activeEnvironmentConfig && Object.keys(store.activeEnvironmentConfig).length > 0) {
+                        return;
+                    }
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            },
+
+            destroy() {
+                this._cleanupFns.forEach(fn => fn());
+                this._cleanupFns = [];
+            },
+
+            async loadModelFamilies() {
+                try {
+                    const response = await fetch('/api/models/wizard');
+                    if (!response.ok) throw new Error('Failed to load model families');
+                    const data = await response.json();
+                    this.modelFamilies = (data.models || []).map(m => ({
+                        value: m.family,
+                        label: m.name
+                    }));
+                } catch (err) {
+                    console.error('[EZ MODE] Failed to load model families:', err);
+                    this.error = 'Failed to load model families';
+                }
+            },
+
+            async loadModelFlavours(family) {
+                if (!family) { this.modelFlavours = []; return; }
+                try {
+                    const response = await fetch(`/api/models/${encodeURIComponent(family)}/flavours`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.modelFlavours = data.flavours || [];
+                    } else { this.modelFlavours = []; }
+                } catch (err) {
+                    console.error('[EZ MODE] Failed to load flavours:', err);
+                    this.modelFlavours = [];
+                }
+            },
+
+            syncFromForm() {
+                const fields = [
+                    'model_family', 'model_flavour', 'model_type', 'lora_rank',
+                    'vae_enable_tiling', 'vae_enable_slicing', 'vae_batch_size',
+                    'gradient_checkpointing', 'ramtorch', 'musubi_blocks_to_swap', 'use_ema',
+                    'base_model_precision', 'text_encoder_1_precision'
+                ];
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    for (const fieldName of fields) {
+                        const prefixedKey = `--${fieldName}`;
+                        const value = config[prefixedKey] ?? config[fieldName];
+                        if (value !== undefined && value !== null) {
+                            if (typeof value === 'boolean') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'number') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'string') {
+                                if (value === 'true' || value === 'false') {
+                                    this[fieldName] = value === 'true';
+                                } else {
+                                    this[fieldName] = value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            this[fieldName] = el.checked;
+                        } else if (el.type === 'number' || el.type === 'range') {
+                            this[fieldName] = parseFloat(el.value) || 0;
+                        } else {
+                            this[fieldName] = el.value || '';
+                        }
+                    }
+                }
+
+                if (this.model_family) this.loadModelFlavours(this.model_family);
+            },
+
+            setupFormWatchers() {
+                const fields = [
+                    'model_family', 'model_flavour', 'model_type', 'lora_rank',
+                    'vae_enable_tiling', 'vae_enable_slicing', 'vae_batch_size',
+                    'gradient_checkpointing', 'ramtorch', 'musubi_blocks_to_swap', 'use_ema',
+                    'base_model_precision', 'text_encoder_1_precision'
+                ];
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        const handler = () => {
+                            if (el.type === 'checkbox') {
+                                this[fieldName] = el.checked;
+                            } else if (el.type === 'number' || el.type === 'range') {
+                                this[fieldName] = parseFloat(el.value) || 0;
+                            } else {
+                                this[fieldName] = el.value || '';
+                            }
+                            if (fieldName === 'model_family') this.loadModelFlavours(el.value);
+                        };
+                        el.addEventListener('change', handler);
+                        el.addEventListener('input', handler);
+                        this._cleanupFns.push(() => {
+                            el.removeEventListener('change', handler);
+                            el.removeEventListener('input', handler);
+                        });
+                    }
+                }
+            },
+
+            updateFormField(fieldName, value) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value; }
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore) {
+                    const canonicalKey = `--${fieldName}`;
+                    if (typeof trainerStore.updateConfigValue === 'function') {
+                        trainerStore.updateConfigValue(canonicalKey, value);
+                    } else if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[canonicalKey] = value;
+                    }
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    }
+                }
+            },
+
+            onModelFamilyChange(value) {
+                this.model_family = value;
+                this.model_flavour = '';
+                this.updateFormField('model_family', value);
+                this.loadModelFlavours(value);
+            },
+            onModelFlavourChange(value) { this.model_flavour = value; this.updateFormField('model_flavour', value); },
+            onModelTypeChange(value) { this.model_type = value; this.updateFormField('model_type', value); },
+            onLoraRankChange(value) { const v = parseInt(value) || 16; this.lora_rank = v; this.updateFormField('lora_rank', v); },
+            onVaeTilingChange(c) { this.vae_enable_tiling = c; this.updateFormField('vae_enable_tiling', c); },
+            onVaeSlicingChange(c) { this.vae_enable_slicing = c; this.updateFormField('vae_enable_slicing', c); },
+            onVaeBatchSizeChange(v) { const n = parseInt(v) || 4; this.vae_batch_size = n; this.updateFormField('vae_batch_size', n); },
+            onGradientCheckpointingChange(c) { this.gradient_checkpointing = c; this.updateFormField('gradient_checkpointing', c); },
+            onRamtorchChange(c) {
+                this.ramtorch = c; this.updateFormField('ramtorch', c);
+                if (c && this.musubi_blocks_to_swap > 0) {
+                    this.musubi_blocks_to_swap = 0; this.updateFormField('musubi_blocks_to_swap', 0);
+                }
+            },
+            onMusubiBlocksChange(v) {
+                const n = parseInt(v) || 0; this.musubi_blocks_to_swap = n; this.updateFormField('musubi_blocks_to_swap', n);
+                if (n > 0 && this.ramtorch) { this.ramtorch = false; this.updateFormField('ramtorch', false); }
+            },
+            onUseEmaChange(c) { this.use_ema = c; this.updateFormField('use_ema', c); },
+            onBaseModelPrecisionChange(v) { this.base_model_precision = v; this.updateFormField('base_model_precision', v); },
+            onTextEncoderPrecisionChange(v) { this.text_encoder_1_precision = v; this.updateFormField('text_encoder_1_precision', v); },
+
+            openMemoryPresets() { window.openMemoryPresetsModal?.(); },
+
+            get isLoraMode() { return this.model_type === 'lora'; },
+            get hasModelFamily() { return Boolean(this.model_family); }
+        };
+    }
+
+    // Register with Alpine
+    if (window.Alpine) {
+        window.Alpine.data('modelEzModeComponent', modelEzModeComponent);
+    } else {
+        document.addEventListener('alpine:init', () => {
+            window.Alpine.data('modelEzModeComponent', modelEzModeComponent);
+        });
+    }
+})();
+</script>
+{% endif %}
+
 <div class="tab-fragment"
      id="{{ tab_name }}-tab-content"
      data-tab-name="{{ tab_name }}"
-     data-danger-mode="{{ 'true' if danger_mode_enabled | default(false) else 'false' }}">
+     data-danger-mode="{{ 'true' if danger_mode_enabled | default(false) else 'false' }}"
+     {% if tab_name == 'publishing' %}x-data="publishingHeroCTA()" x-init="init()"{% elif tab_name == 'hardware' %}x-data="hardwareHeroCTA()" x-init="init()"{% elif tab_name == 'model' %}x-data="modelEzModeComponent()" x-init="init()"{% endif %}>
+
+    {% if tab_name == 'publishing' %}
+    <!-- Hero CTA - Introduction to publishing -->
+    {% call hero_cta(
+        theme='green',
+        icon_class='fa-cloud-upload-alt',
+        icon_shape='rounded',
+        title='Publishing to HuggingFace Hub',
+        description='Configure automatic uploads of your trained models and checkpoints to the HuggingFace Hub. This allows you to share your work, version your models, and make them accessible to others.',
+        features=[
+            {'icon': 'fa-key', 'color': 'text-warning', 'label': 'Authentication'},
+            {'icon': 'fa-code-branch', 'color': 'text-info', 'label': 'Repository Config'},
+            {'icon': 'fa-upload', 'color': 'text-success', 'label': 'Auto-Upload'},
+        ],
+        show_condition='showHeroCTA()',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Dismiss', 'icon': 'fa-check', 'action': 'dismissHeroCTA()'},
+        tip_text='You can upload checkpoints manually from the <strong>Checkpoints</strong> tab, or enable automatic uploads here.'
+    ) %}
+    <div class="hero-details mt-4">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-key text-warning me-2"></i>Authentication</h6>
+                    <p class="small text-muted mb-0">
+                        Connect your HuggingFace account using an access token. Tokens are stored securely
+                        in your local HuggingFace cache (~/.cache/huggingface/token).
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-code-branch text-info me-2"></i>Repository Settings</h6>
+                    <p class="small text-muted mb-0">
+                        Configure your Hub repository ID, visibility (public/private), and whether to
+                        push checkpoints automatically during training.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-upload text-success me-2"></i>Automatic Uploads</h6>
+                    <p class="small text-muted mb-0">
+                        Enable "Push to Hub" to automatically upload checkpoints as they're saved.
+                        Great for long training runs where you want continuous backups.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endcall %}
+
+    <div x-show="!showHeroCTA()" x-cloak>
+    {% elif tab_name == 'hardware' %}
+    <!-- Hero CTA - Introduction to hardware settings -->
+    {% call hero_cta(
+        theme='purple',
+        icon_class='fa-microchip',
+        icon_shape='rounded',
+        title='Hardware & Distributed Training',
+        description='Configure multi-GPU training, distributed computing, and system resource settings. Most users can leave these at their defaults — SimpleTuner auto-detects your hardware.',
+        features=[
+            {'icon': 'fa-project-diagram', 'color': 'text-info', 'label': 'Multi-GPU'},
+            {'icon': 'fa-server', 'color': 'text-warning', 'label': 'Multi-Node'},
+            {'icon': 'fa-cogs', 'color': 'text-success', 'label': 'Worker Threads'},
+        ],
+        show_condition='showHeroCTA()',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Dismiss', 'icon': 'fa-check', 'action': 'dismissHeroCTA()'},
+        tip_text='For single-GPU training, you typically don\'t need to change anything here. These settings become important for multi-GPU or multi-machine setups.'
+    ) %}
+    <div class="hero-details mt-4">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-project-diagram text-info me-2"></i>Multi-GPU (FSDP/DeepSpeed)</h6>
+                    <p class="small text-muted mb-0">
+                        Enable Fully Sharded Data Parallel (FSDP) or DeepSpeed to split your model across
+                        multiple GPUs, reducing memory per device and enabling larger batch sizes.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-server text-warning me-2"></i>Multi-Node Training</h6>
+                    <p class="small text-muted mb-0">
+                        Scale beyond a single machine. <strong>Note:</strong> Multi-node via WebUI is experimental —
+                        for production use, follow
+                        <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DISTRIBUTED.md" target="_blank" rel="noopener">DISTRIBUTED.md <i class="fas fa-external-link-alt fa-xs"></i></a>
+                        and use the command-line approach.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-cogs text-success me-2"></i>Worker & Thread Settings</h6>
+                    <p class="small text-muted mb-0">
+                        Tune the number of data loading workers and PyTorch threads to optimize
+                        CPU utilization during preprocessing and training.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endcall %}
+
+    <div x-show="!showHeroCTA()" x-cloak>
+    {% elif tab_name == 'model' %}
+    <!-- Model EZ Mode Hero -->
+    <div x-show="showEzMode()" x-cloak class="model-ez-mode-hero mb-4"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="hero-cta hero-cta--purple" data-theme="purple" data-icon-shape="rounded">
+            <button type="button" class="hero-dismiss-btn" @click="dismissEzMode()" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="hero-content text-start">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <div class="hero-icon hero-icon--rounded flex-shrink-0">
+                        <i class="fas fa-cube"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <h2 class="hero-title mb-2">Model Configuration — EZ Mode</h2>
+                        <p class="hero-description mb-0">
+                            Configure the essential model settings quickly. For advanced options, dismiss this panel to access the full form.
+                        </p>
+                    </div>
+                </div>
+
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center py-4">
+                <div class="spinner-border text-light spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- EZ Mode Form -->
+            <div x-show="!loading" class="ez-mode-form mt-4">
+                <!-- Row 1: Model Selection -->
+                <div class="ez-mode-section">
+                    <h6 class="ez-mode-section-title"><i class="fas fa-sitemap me-2"></i>Model Selection</h6>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Model Family</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="model_family"
+                                    @change="onModelFamilyChange($event.target.value)">
+                                <option value="">Select a family...</option>
+                                <template x-for="fam in modelFamilies" :key="fam.value">
+                                    <option :value="fam.value" x-text="fam.label" :selected="fam.value === model_family"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Model Variant</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="model_flavour"
+                                    @change="onModelFlavourChange($event.target.value)"
+                                    :disabled="modelFlavours.length === 0">
+                                <option value="">Select a variant...</option>
+                                <template x-for="flav in modelFlavours" :key="flav">
+                                    <option :value="flav" x-text="flav" :selected="flav === model_flavour"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Training Type</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="model_type"
+                                    @change="onModelTypeChange($event.target.value)">
+                                <option value="lora">LoRA (Recommended)</option>
+                                <option value="full">Full Model</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 2: LoRA Config (conditional) + VAE Options -->
+                <div class="ez-mode-section">
+                    <h6 class="ez-mode-section-title"><i class="fas fa-sliders-h me-2"></i>Training Options</h6>
+                    <div class="row g-3">
+                        <!-- LoRA Rank (only for LoRA) -->
+                        <div class="col-md-3" x-show="isLoraMode" x-cloak>
+                            <label class="form-label">LoRA Rank</label>
+                            <input type="number" class="form-control form-control-sm"
+                                   x-model.number="lora_rank"
+                                   @change="onLoraRankChange($event.target.value)"
+                                   min="1" max="256" step="1">
+                            <div class="form-text">4-32 for style, 64-128 for concepts</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">VAE Batch Size</label>
+                            <input type="number" class="form-control form-control-sm"
+                                   x-model.number="vae_batch_size"
+                                   @change="onVaeBatchSizeChange($event.target.value)"
+                                   min="1" max="32">
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-check mt-4">
+                                <input type="checkbox" class="form-check-input" id="ez_vae_tiling"
+                                       x-model="vae_enable_tiling"
+                                       @change="onVaeTilingChange($event.target.checked)">
+                                <label class="form-check-label" for="ez_vae_tiling">VAE Tiling</label>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-check mt-4">
+                                <input type="checkbox" class="form-check-input" id="ez_vae_slicing"
+                                       x-model="vae_enable_slicing"
+                                       @change="onVaeSlicingChange($event.target.checked)">
+                                <label class="form-check-label" for="ez_vae_slicing">VAE Slicing</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 3: Memory Optimization -->
+                <div class="ez-mode-section">
+                    <h6 class="ez-mode-section-title"><i class="fas fa-memory me-2"></i>Memory Optimization</h6>
+                    <div class="row g-3 align-items-center">
+                        <div class="col-md-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="ez_grad_ckpt"
+                                       x-model="gradient_checkpointing"
+                                       @change="onGradientCheckpointingChange($event.target.checked)">
+                                <label class="form-check-label" for="ez_grad_ckpt">Gradient Checkpointing</label>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="ez_ramtorch"
+                                       x-model="ramtorch"
+                                       @change="onRamtorchChange($event.target.checked)">
+                                <label class="form-check-label" for="ez_ramtorch">RamTorch</label>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label mb-1">Block Swap</label>
+                            <input type="number" class="form-control form-control-sm"
+                                   x-model.number="musubi_blocks_to_swap"
+                                   @change="onMusubiBlocksChange($event.target.value)"
+                                   min="0" max="100">
+                        </div>
+                        <div class="col-md-3">
+                            <button type="button" class="btn btn-sm btn-outline-light w-100"
+                                    @click="openMemoryPresets()">
+                                <i class="fas fa-magic me-1"></i>Memory Presets
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Row 4: Quantization (LoRA only) + EMA -->
+                <div class="ez-mode-section" x-show="isLoraMode" x-cloak>
+                    <h6 class="ez-mode-section-title"><i class="fas fa-compress-arrows-alt me-2"></i>Quantization</h6>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Base Model Precision</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="base_model_precision"
+                                    @change="onBaseModelPrecisionChange($event.target.value)">
+                                <option value="no_change">No Change</option>
+                                <option value="int8-quanto">INT8 (Quanto)</option>
+                                <option value="int4-quanto">INT4 (Quanto)</option>
+                                <option value="int8-torchao">INT8 (TorchAO)</option>
+                                <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
+                                <option value="int8-sdnq">INT8 (SDNQ)</option>
+                                <option value="uint8-sdnq">UINT8 (SDNQ)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Text Encoder Precision</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="text_encoder_1_precision"
+                                    @change="onTextEncoderPrecisionChange($event.target.value)">
+                                <option value="no_change">No Change</option>
+                                <option value="int8-quanto">INT8 (Quanto)</option>
+                                <option value="int4-quanto">INT4 (Quanto)</option>
+                                <option value="int8-torchao">INT8 (TorchAO)</option>
+                                <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
+                                <option value="int8-sdnq">INT8 (SDNQ)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check mt-4">
+                                <input type="checkbox" class="form-check-input" id="ez_use_ema"
+                                       x-model="use_ema"
+                                       @change="onUseEmaChange($event.target.checked)">
+                                <label class="form-check-label" for="ez_use_ema">Use EMA</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Full Model: EMA toggle -->
+                <div class="ez-mode-section" x-show="!isLoraMode" x-cloak>
+                    <h6 class="ez-mode-section-title"><i class="fas fa-chart-line me-2"></i>Training Enhancements</h6>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="form-check">
+                                <input type="checkbox" class="form-check-input" id="ez_use_ema_full"
+                                       x-model="use_ema"
+                                       @change="onUseEmaChange($event.target.checked)">
+                                <label class="form-check-label" for="ez_use_ema_full">Use EMA (Exponential Moving Average)</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+                <!-- Footer -->
+                <div class="ez-mode-footer mt-4 d-flex justify-content-between align-items-center">
+                    <div class="text-muted small">
+                        <i class="fas fa-info-circle me-1"></i>
+                        For advanced options like LoRA targets, FSDP, and more, dismiss EZ Mode.
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                        <i class="fas fa-cog me-1"></i>Show Full Form
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!showEzMode()" x-cloak>
+    {% endif %}
 
     <!-- Tab Header -->
     <div class="card">
@@ -27,6 +662,27 @@ window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
                 {% endif %}
             </div>
             <div class="btn-group btn-group-sm" role="group">
+                {% if tab_name in ('publishing', 'hardware') %}
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        x-show="!showHeroCTA()"
+                        x-cloak
+                        @click="restoreHeroCTA()"
+                        title="Show introduction"
+                        aria-label="Show introduction">
+                    <i class="fas fa-question-circle"></i><span class="btn-text"> Help</span>
+                </button>
+                {% elif tab_name == 'model' %}
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        x-show="!showEzMode()"
+                        x-cloak
+                        @click="restoreEzMode()"
+                        title="Show EZ Mode"
+                        aria-label="Show EZ Mode">
+                    <i class="fas fa-magic"></i><span class="btn-text"> EZ Mode</span>
+                </button>
+                {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="collapse-all-{{ tab_name }}" title="Collapse all sections" aria-label="Collapse all sections">
                     <i class="fas fa-compress-alt"></i><span class="btn-text"> Collapse All</span>
                 </button>
@@ -230,6 +886,12 @@ window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
             </div>
         </div>
     </div>
+
+    {% if tab_name in ('publishing', 'hardware', 'model') %}
+    </div>
+    <!-- End hero content wrapper -->
+    {% endif %}
+
 </div>
 
 <script>

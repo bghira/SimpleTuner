@@ -1,0 +1,118 @@
+<!-- User Profile Modal - CSS in /static/css/user-profile.css -->
+<link rel="stylesheet" href="/static/css/user-profile.css" id="css-user-profile">
+<div class="modal fade" id="userProfileModal" tabindex="-1" aria-labelledby="userProfileModalLabel" aria-hidden="true"
+     x-data="userProfileComponent()" x-init="init()">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title" id="userProfileModalLabel">
+                    <i class="fas fa-user-circle me-2"></i>Your Profile
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Loading State -->
+                <div x-show="loading" class="text-center py-4">
+                    <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+                    <p class="mt-2 text-muted">Loading profile...</p>
+                </div>
+
+                <!-- Profile Content -->
+                <div x-show="!loading" x-cloak>
+                    <!-- Avatar Section -->
+                    <div class="text-center mb-4">
+                        <div class="position-relative d-inline-block">
+                            <!-- Avatar Display -->
+                            <div class="user-avatar-large mb-2">
+                                <template x-if="profile.avatar_url">
+                                    <img :src="profile.avatar_url" alt="Avatar" class="rounded-circle">
+                                </template>
+                                <template x-if="!profile.avatar_url">
+                                    <div class="avatar-placeholder rounded-circle d-flex align-items-center justify-content-center">
+                                        <span x-text="getInitials()"></span>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Upload Button -->
+                            <label class="btn btn-sm btn-outline-primary position-absolute avatar-upload-btn"
+                                   title="Upload avatar">
+                                <i class="fas fa-camera"></i>
+                                <input type="file" class="d-none" accept="image/png,image/jpeg,image/gif,image/webp"
+                                       @change="uploadAvatar($event)">
+                            </label>
+                        </div>
+
+                        <!-- Remove Avatar Button -->
+                        <div x-show="profile.avatar_url" class="mt-2">
+                            <button class="btn btn-sm btn-outline-danger" @click="removeAvatar()" :disabled="saving">
+                                <i class="fas fa-trash me-1"></i>Remove Avatar
+                            </button>
+                        </div>
+
+                        <!-- Upload Progress -->
+                        <div x-show="uploading" class="mt-2 avatar-upload-progress">
+                            <div class="progress">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated w-100"></div>
+                            </div>
+                            <small class="text-muted">Uploading...</small>
+                        </div>
+                    </div>
+
+                    <!-- Profile Form -->
+                    <form @submit.prevent="saveProfile()">
+                        <!-- Email (read-only) -->
+                        <div class="mb-3">
+                            <label class="form-label text-muted small">Email</label>
+                            <input type="email" class="form-control form-control-sm bg-dark" :value="profile.email" readonly disabled>
+                        </div>
+
+                        <!-- Username (read-only) -->
+                        <div class="mb-3">
+                            <label class="form-label text-muted small">Username</label>
+                            <input type="text" class="form-control form-control-sm bg-dark" :value="profile.username" readonly disabled>
+                        </div>
+
+                        <!-- Display Name (editable) -->
+                        <div class="mb-3">
+                            <label class="form-label text-muted small">Display Name</label>
+                            <input type="text" class="form-control form-control-sm" x-model="form.display_name"
+                                   placeholder="Enter display name" maxlength="100">
+                            <small class="text-muted">This name will be shown in the UI</small>
+                        </div>
+
+                        <!-- Auth Provider Badge -->
+                        <div class="mb-3">
+                            <label class="form-label text-muted small">Authentication</label>
+                            <div>
+                                <span class="badge" :class="{
+                                    'bg-primary': profile.auth_provider === 'local',
+                                    'bg-info': profile.auth_provider === 'oidc',
+                                    'bg-warning text-dark': profile.auth_provider === 'ldap'
+                                }" x-text="profile.auth_provider?.toUpperCase()"></span>
+                                <span x-show="profile.is_admin" class="badge bg-danger ms-1">Admin</span>
+                            </div>
+                        </div>
+
+                        <!-- Member Since -->
+                        <div class="mb-3">
+                            <label class="form-label text-muted small">Member Since</label>
+                            <div class="text-light" x-text="formatDate(profile.created_at)"></div>
+                        </div>
+
+                        <!-- Error Message -->
+                        <div x-show="error" class="alert alert-danger py-2" x-text="error"></div>
+
+                        <!-- Save Button -->
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary" :disabled="saving || !hasChanges()">
+                                <i class="fas" :class="saving ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+                                <span class="ms-1" x-text="saving ? 'Saving...' : 'Save Changes'"></span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,454 @@
+<!-- templates/notifications_tab.html - Notification Channels Configuration -->
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-notifications">
+<link rel="stylesheet" href="/static/css/notifications.css" id="css-notifications">
+
+<div class="tab-fragment"
+     id="notifications-tab-content"
+     data-tab-name="notifications"
+     x-data="notificationsComponent()"
+     x-init="init()">
+
+    <!-- Page Header -->
+    <div class="notifications-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1"><i class="fas fa-bell me-2"></i>Notifications</h4>
+                <p class="text-muted small mb-0">Configure email, webhook, and Slack alerts for job events</p>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-sm btn-outline-primary"
+                        @click="showChannelModal()"
+                        :disabled="loading">
+                    <i class="fas fa-plus me-1"></i>Add Channel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hero CTA for first-time users -->
+    {% from 'partials/hero_cta.html' import hero_cta %}
+    {{ hero_cta(
+        theme='indigo',
+        icon_class='fa-bell',
+        icon_shape='rounded',
+        title='Stay Informed About Your Training Jobs',
+        description='Get notified when jobs complete, fail, need approval, or approach spending limits. Configure email, Slack, or custom webhooks.',
+        features=[
+            {'icon': 'fa-envelope', 'color': 'text-primary', 'label': 'Email Alerts'},
+            {'icon': 'fa-slack fab', 'color': 'text-info', 'label': 'Slack Integration'},
+            {'icon': 'fa-plug', 'color': 'text-success', 'label': 'Custom Webhooks'},
+        ],
+        show_condition='showHeroCTA && channels.length === 0',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Configure Email', 'icon': 'fa-envelope', 'action': "showChannelModal('email')"},
+        cta_secondary={'label': 'Skip for Now', 'action': 'skipNotifications()'}
+    ) }}
+
+    <!-- Main Content (shown when hero is dismissed or channels exist) -->
+    <template x-if="!showHeroCTA || channels.length > 0">
+        <div class="notifications-main-content">
+
+            <!-- Stats Bar -->
+            <div class="notifications-stats-bar" x-show="channels.length > 0">
+                <div class="stat-item">
+                    <span class="stat-value" x-text="channels.length"></span>
+                    <span class="stat-label">Channels</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" x-text="channels.filter(c => c.is_enabled).length"></span>
+                    <span class="stat-label">Active</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" x-text="preferences.length"></span>
+                    <span class="stat-label">Preferences</span>
+                </div>
+                <div class="stat-item" x-show="deliveryStats.sent_today > 0">
+                    <span class="stat-value" x-text="deliveryStats.sent_today"></span>
+                    <span class="stat-label">Sent Today</span>
+                </div>
+            </div>
+
+            <!-- Channel List -->
+            <div class="row g-3">
+                <div class="col-lg-7">
+                    <div class="notifications-card">
+                        <div class="notifications-card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0"><i class="fas fa-broadcast-tower me-2"></i>Notification Channels</h6>
+                                <button class="btn btn-sm btn-outline-primary"
+                                        @click="showChannelModal()"
+                                        :disabled="loading">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="notifications-card-body p-0">
+                            <!-- Loading State -->
+                            <div class="text-center py-4" x-show="loading">
+                                <div class="spinner-border spinner-border-sm text-primary"></div>
+                                <p class="small text-muted mt-2 mb-0">Loading channels...</p>
+                            </div>
+
+                            <!-- Empty State -->
+                            <div class="text-center py-4" x-show="!loading && channels.length === 0">
+                                <div class="empty-icon mb-3">
+                                    <i class="fas fa-bell-slash"></i>
+                                </div>
+                                <p class="small text-muted mb-2">No notification channels configured</p>
+                                <button class="btn btn-sm btn-primary" @click="showChannelModal()">
+                                    <i class="fas fa-plus me-1"></i>Add First Channel
+                                </button>
+                            </div>
+
+                            <!-- Channel List -->
+                            <div class="channel-list" x-show="!loading && channels.length > 0">
+                                <template x-for="channel in channels" :key="channel.id">
+                                    <div class="channel-item" :class="{ 'disabled': !channel.is_enabled }">
+                                        <div class="channel-icon">
+                                            <i :class="getChannelIcon(channel.channel_type)"></i>
+                                        </div>
+                                        <div class="channel-info">
+                                            <div class="channel-name" x-text="channel.name"></div>
+                                            <div class="channel-type">
+                                                <span class="badge bg-secondary" x-text="channel.channel_type"></span>
+                                                <span class="text-muted small ms-2" x-text="getChannelDetail(channel)"></span>
+                                            </div>
+                                        </div>
+                                        <div class="channel-actions">
+                                            <button class="btn btn-sm btn-outline-info"
+                                                    @click="testChannel(channel.id)"
+                                                    :disabled="testingChannelId === channel.id"
+                                                    title="Test connection">
+                                                <i class="fas" :class="testingChannelId === channel.id ? 'fa-spinner fa-spin' : 'fa-vial'"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-secondary"
+                                                    @click="editChannel(channel)"
+                                                    title="Edit">
+                                                <i class="fas fa-edit"></i>
+                                            </button>
+                                            <button class="btn btn-sm"
+                                                    :class="channel.is_enabled ? 'btn-outline-warning' : 'btn-outline-success'"
+                                                    @click="toggleChannel(channel)"
+                                                    :title="channel.is_enabled ? 'Disable' : 'Enable'">
+                                                <i class="fas" :class="channel.is_enabled ? 'fa-pause' : 'fa-play'"></i>
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-danger"
+                                                    @click="confirmDeleteChannel(channel)"
+                                                    title="Delete">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Delivery History -->
+                    <div class="notifications-card mt-3" x-show="channels.length > 0">
+                        <div class="notifications-card-header">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0"><i class="fas fa-history me-2"></i>Recent Deliveries</h6>
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        @click="loadHistory()"
+                                        :disabled="historyLoading">
+                                    <i class="fas" :class="historyLoading ? 'fa-spinner fa-spin' : 'fa-sync'"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="notifications-card-body p-0">
+                            <div class="delivery-history" x-show="!historyLoading">
+                                <template x-if="history.length === 0">
+                                    <div class="text-center py-3">
+                                        <p class="small text-muted mb-0">No delivery history yet</p>
+                                    </div>
+                                </template>
+                                <template x-for="entry in history" :key="entry.id">
+                                    <div class="history-item" :class="'status-' + entry.delivery_status">
+                                        <div class="history-status">
+                                            <i class="fas" :class="getStatusIcon(entry.delivery_status)"></i>
+                                        </div>
+                                        <div class="history-info">
+                                            <div class="history-event" x-text="formatEventType(entry.event_type)"></div>
+                                            <div class="history-recipient small text-muted" x-text="entry.recipient"></div>
+                                        </div>
+                                        <div class="history-time small text-muted" x-text="formatTime(entry.sent_at)"></div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preferences Panel -->
+                <div class="col-lg-5">
+                    <div class="notifications-card">
+                        <div class="notifications-card-header">
+                            <h6 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Event Preferences</h6>
+                        </div>
+                        <div class="notifications-card-body">
+                            <template x-if="channels.length === 0">
+                                <div class="text-center py-3">
+                                    <p class="small text-muted mb-0">Add a channel first to configure event preferences</p>
+                                </div>
+                            </template>
+
+                            <template x-if="channels.length > 0">
+                                <div class="event-preferences">
+                                    <template x-for="(events, category) in groupedEventTypes" :key="category">
+                                        <div class="event-category">
+                                            <div class="category-header" @click="toggleCategory(category)">
+                                                <i class="fas fa-chevron-right me-2 category-chevron" :class="{ 'rotated': expandedCategories.includes(category) }"></i>
+                                                <span x-text="category"></span>
+                                                <span class="badge bg-secondary ms-2" x-text="events.length"></span>
+                                            </div>
+                                            <div class="category-events" x-show="expandedCategories.includes(category)" x-collapse>
+                                                <template x-for="event in events" :key="event.id">
+                                                    <div class="event-item">
+                                                        <div class="event-name" x-text="event.name"></div>
+                                                        <select class="form-select form-select-sm event-channel-select"
+                                                                @change="updatePreference(event.id, $event.target.value)"
+                                                                :value="getPreferenceChannel(event.id)">
+                                                            <option value="">Not configured</option>
+                                                            <template x-for="ch in channels.filter(c => c.is_enabled)" :key="ch.id">
+                                                                <option :value="ch.id" x-text="ch.name"></option>
+                                                            </template>
+                                                        </select>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Email Presets -->
+                    <div class="notifications-card mt-3">
+                        <div class="notifications-card-header">
+                            <h6 class="mb-0"><i class="fas fa-magic me-2"></i>Quick Setup</h6>
+                        </div>
+                        <div class="notifications-card-body">
+                            <p class="small text-muted mb-3">Use a preset for popular email providers:</p>
+                            <div class="preset-list">
+                                <template x-for="preset in presets" :key="preset.id">
+                                    <button class="btn btn-sm btn-outline-secondary preset-btn"
+                                            @click="applyPreset(preset.id)">
+                                        <i class="fas fa-envelope me-1"></i>
+                                        <span x-text="preset.name"></span>
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </template>
+
+    <!-- Channel Modal -->
+    <div class="modal fade" id="channelModal" tabindex="-1" x-ref="channelModal">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas me-2" :class="editingChannel ? 'fa-edit' : 'fa-plus'"></i>
+                        <span x-text="editingChannel ? 'Edit Channel' : 'Add Notification Channel'"></span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Channel Type Selection (only for new channels) -->
+                    <div class="mb-3" x-show="!editingChannel">
+                        <label class="form-label">Channel Type</label>
+                        <div class="channel-type-options">
+                            <button class="channel-type-btn" :class="{ 'active': channelForm.channel_type === 'email' }"
+                                    @click="channelForm.channel_type = 'email'">
+                                <i class="fas fa-envelope"></i>
+                                <span>Email (SMTP)</span>
+                            </button>
+                            <button class="channel-type-btn" :class="{ 'active': channelForm.channel_type === 'webhook' }"
+                                    @click="channelForm.channel_type = 'webhook'">
+                                <i class="fas fa-plug"></i>
+                                <span>Webhook</span>
+                            </button>
+                            <button class="channel-type-btn" :class="{ 'active': channelForm.channel_type === 'slack' }"
+                                    @click="channelForm.channel_type = 'slack'">
+                                <i class="fab fa-slack"></i>
+                                <span>Slack</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Channel Name -->
+                    <div class="mb-3">
+                        <label class="form-label">Channel Name</label>
+                        <input type="text" class="form-control" x-model="channelForm.name"
+                               placeholder="e.g., Team Alerts, Admin Notifications">
+                    </div>
+
+                    <!-- Email Settings -->
+                    <template x-if="channelForm.channel_type === 'email'">
+                        <div class="channel-settings email-settings">
+                            <div class="row g-3">
+                                <div class="col-md-8">
+                                    <label class="form-label">SMTP Host</label>
+                                    <input type="text" class="form-control" x-model="channelForm.smtp_host"
+                                           placeholder="smtp.gmail.com">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Port</label>
+                                    <input type="number" class="form-control" x-model.number="channelForm.smtp_port">
+                                </div>
+                            </div>
+                            <div class="row g-3 mt-2">
+                                <div class="col-md-6">
+                                    <label class="form-label">Username</label>
+                                    <input type="text" class="form-control" x-model="channelForm.smtp_username"
+                                           placeholder="user@example.com">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Password / App Password</label>
+                                    <input type="password" class="form-control" x-model="channelForm.smtp_password"
+                                           :placeholder="editingChannel ? '(unchanged)' : 'App-specific password'">
+                                </div>
+                            </div>
+                            <div class="row g-3 mt-2">
+                                <div class="col-md-6">
+                                    <label class="form-label">From Address</label>
+                                    <input type="email" class="form-control" x-model="channelForm.smtp_from_address"
+                                           placeholder="noreply@example.com">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">From Name</label>
+                                    <input type="text" class="form-control" x-model="channelForm.smtp_from_name"
+                                           placeholder="SimpleTuner Cloud">
+                                </div>
+                            </div>
+                            <div class="form-check mt-3">
+                                <input type="checkbox" class="form-check-input" id="smtpTls" x-model="channelForm.smtp_use_tls">
+                                <label class="form-check-label" for="smtpTls">Use TLS encryption</label>
+                            </div>
+
+                            <!-- IMAP Settings (for email response handling) -->
+                            <div class="mt-4 pt-3 border-top border-secondary">
+                                <div class="form-check mb-3">
+                                    <input type="checkbox" class="form-check-input" id="imapEnabled" x-model="channelForm.imap_enabled">
+                                    <label class="form-check-label" for="imapEnabled">
+                                        <i class="fas fa-inbox me-1"></i>Enable IMAP response handling
+                                    </label>
+                                    <small class="form-text text-muted d-block">
+                                        Monitor inbox for email replies (e.g., "STOP" to unsubscribe)
+                                    </small>
+                                </div>
+                                <div x-show="channelForm.imap_enabled" x-collapse>
+                                    <div class="row g-3">
+                                        <div class="col-md-8">
+                                            <label class="form-label">IMAP Host</label>
+                                            <input type="text" class="form-control" x-model="channelForm.imap_host"
+                                                   placeholder="imap.gmail.com">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Port</label>
+                                            <input type="number" class="form-control" x-model.number="channelForm.imap_port">
+                                        </div>
+                                    </div>
+                                    <div class="row g-3 mt-2">
+                                        <div class="col-md-6">
+                                            <label class="form-label">Username</label>
+                                            <input type="text" class="form-control" x-model="channelForm.imap_username"
+                                                   placeholder="user@example.com">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">Password</label>
+                                            <input type="password" class="form-control" x-model="channelForm.imap_password"
+                                                   :placeholder="editingChannel ? '(unchanged)' : 'App-specific password'">
+                                        </div>
+                                    </div>
+                                    <div class="form-check mt-3">
+                                        <input type="checkbox" class="form-check-input" id="imapSsl" x-model="channelForm.imap_use_ssl">
+                                        <label class="form-check-label" for="imapSsl">Use SSL/TLS</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Webhook Settings -->
+                    <template x-if="channelForm.channel_type === 'webhook'">
+                        <div class="channel-settings webhook-settings">
+                            <div class="mb-3">
+                                <label class="form-label">Webhook URL</label>
+                                <input type="url" class="form-control" x-model="channelForm.webhook_url"
+                                       placeholder="https://your-server.com/webhook">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Secret (optional)</label>
+                                <input type="password" class="form-control" x-model="channelForm.webhook_secret"
+                                       :placeholder="editingChannel ? '(unchanged)' : 'Used to sign payloads'">
+                                <small class="form-text text-muted">If set, payloads will include an HMAC signature header</small>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Slack Settings -->
+                    <template x-if="channelForm.channel_type === 'slack'">
+                        <div class="channel-settings slack-settings">
+                            <div class="mb-3">
+                                <label class="form-label">Slack Webhook URL</label>
+                                <input type="url" class="form-control" x-model="channelForm.webhook_url"
+                                       placeholder="https://hooks.slack.com/services/...">
+                                <small class="form-text text-muted">
+                                    <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noopener">
+                                        Create an incoming webhook in Slack <i class="fas fa-external-link-alt ms-1"></i>
+                                    </a>
+                                </small>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Enable Toggle -->
+                    <div class="form-check mt-4">
+                        <input type="checkbox" class="form-check-input" id="channelEnabled" x-model="channelForm.is_enabled">
+                        <label class="form-check-label" for="channelEnabled">Enable this channel</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary"
+                            @click="saveChannel()"
+                            :disabled="saving">
+                        <span x-show="saving"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        <span x-text="editingChannel ? 'Save Changes' : 'Create Channel'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal fade" id="deleteChannelModal" tabindex="-1" x-ref="deleteModal">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content bg-dark text-light">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-trash me-2"></i>Delete Channel</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete <strong x-text="deletingChannel?.name"></strong>?</p>
+                    <p class="small text-warning mb-0">This will also remove all associated preferences.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" @click="deleteChannel()" :disabled="deleting">
+                        <span x-show="deleting"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,24 +1,69 @@
 <!-- templates/checkpoints_tab.html - Training Checkpoints Management -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-checkpoints">
-<script>document.getElementById('css-form-sections-checkpoints').href = '/static/css/form-sections.css?t=' + Date.now();</script>
 <link rel="stylesheet" href="/static/css/checkpoints.css" id="css-checkpoints">
-<script>document.getElementById('css-checkpoints').href = '/static/css/checkpoints.css?t=' + Date.now();</script>
-<script src="/static/js/vendor/js-yaml.min.js"></script>
-<script src="/static/js/vendor/markdown-it.min.js"></script>
-<script src="/static/js/vendor/purify.min.js"></script>
-<script src="/static/js/services/markdown-service.js"></script>
-<script src="/static/js/modules/checkpoints.js"></script>
-<script>
-if (!window.checkpointsManager) {
-    console.error('Checkpoints module not loaded. Please check /static/js/modules/checkpoints.js');
-}
-</script>
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-checkpoints">
 
 <div class="tab-fragment"
      id="checkpoints-tab-content"
      data-tab-name="checkpoints"
      x-data="checkpointsManager()"
      x-init="init()">
+
+    <!-- Hero CTA - Introduction to checkpoints -->
+    {% call hero_cta(
+        theme='amber',
+        icon_class='fa-save',
+        icon_shape='rounded',
+        title='Training Checkpoints',
+        description='This page displays checkpoints saved during training runs. Checkpoints are snapshots of your model at specific training steps, allowing you to resume training or use intermediate versions.',
+        features=[
+            {'icon': 'fa-history', 'color': 'text-warning', 'label': 'Version History'},
+            {'icon': 'fa-cloud-upload-alt', 'color': 'text-info', 'label': 'HuggingFace Upload'},
+            {'icon': 'fa-broom', 'color': 'text-success', 'label': 'Retention Cleanup'},
+        ],
+        show_condition='showHeroCTA()',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Dismiss', 'icon': 'fa-check', 'action': 'dismissHeroCTA()'},
+        tip_text='Configure checkpoint frequency and retention limits in the <strong>Checkpointing</strong> section on the <strong>Training</strong> tab.'
+    ) %}
+    <div class="hero-details mt-4">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-clock text-warning me-2"></i>When Checkpoints Appear</h6>
+                    <p class="small text-muted mb-0">
+                        Checkpoints are saved at intervals you configure (e.g., every 500 steps). They appear here
+                        once training has run long enough to trigger a save.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-sliders-h text-info me-2"></i>Configuring Saves</h6>
+                    <p class="small text-muted mb-0">
+                        Set <em>Checkpointing Steps</em> and <em>Checkpoints to Keep</em> on the Training tab
+                        to control how often saves occur and how many are retained.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-cloud text-success me-2"></i>Publishing</h6>
+                    <p class="small text-muted mb-0">
+                        Upload checkpoints directly to HuggingFace Hub. Configure your credentials on the
+                        Publishing tab to enable one-click uploads.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endcall %}
+
+    <!-- Main Content (hidden when hero CTA is shown) -->
+    <template x-if="!showHeroCTA()">
+    <div>
 
     <!-- Checkpoint List Section -->
     <div class="card mb-4">
@@ -29,6 +74,11 @@ if (!window.checkpointsManager) {
                     <p class="text-muted mb-0">Browse and manage saved model checkpoints from training runs.</p>
                 </div>
                 <div class="d-flex gap-2 align-items-center">
+                    <button class="btn btn-sm btn-outline-secondary"
+                            @click="restoreHeroCTA()"
+                            title="Show introduction">
+                        <i class="fas fa-question-circle me-1"></i>Help
+                    </button>
                     <button type="button"
                             class="btn btn-sm"
                             :class="canUpload() ? 'btn-outline-success' : 'btn-outline-secondary'"
@@ -429,6 +479,74 @@ if (!window.checkpointsManager) {
         </div>
     </div>
 
+    <!-- Cloud Outputs Section -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-1"><i class="fas fa-cloud-download-alt me-2"></i>Cloud Outputs</h5>
+                    <p class="text-muted mb-0">Files received from cloud training jobs.</p>
+                </div>
+                <button type="button"
+                        class="btn btn-sm btn-outline-primary"
+                        @click="loadCloudOutputs()"
+                        :disabled="loading.cloudOutputs">
+                    <i class="fas fa-sync-alt me-1" :class="{ 'fa-spin': loading.cloudOutputs }"></i>
+                    Refresh
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <!-- Loading State -->
+            <template x-if="loading.cloudOutputs">
+                <div class="text-center py-4">
+                    <i class="fas fa-spinner fa-spin fa-lg text-muted"></i>
+                    <p class="text-muted mt-2 mb-0">Loading cloud outputs...</p>
+                </div>
+            </template>
+
+            <!-- Empty State -->
+            <template x-if="!loading.cloudOutputs && cloudOutputs.length === 0">
+                <div class="text-center py-4">
+                    <div class="mb-3">
+                        <i class="fas fa-cloud fa-3x text-muted" style="opacity: 0.3;"></i>
+                    </div>
+                    <h6 class="text-muted">No Cloud Outputs</h6>
+                    <p class="text-muted small mb-0">
+                        Files from completed cloud training jobs will appear here.
+                    </p>
+                </div>
+            </template>
+
+            <!-- Outputs List -->
+            <template x-if="!loading.cloudOutputs && cloudOutputs.length > 0">
+                <div class="cloud-outputs-list">
+                    <template x-for="bucket in cloudOutputs" :key="bucket.Name">
+                        <div class="cloud-output-item">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="d-flex align-items-center gap-2">
+                                    <i class="fas fa-folder text-warning"></i>
+                                    <div>
+                                        <div class="fw-medium" x-text="bucket.Name"></div>
+                                        <div class="small text-muted">
+                                            <span x-text="bucket.FileCount"></span> files,
+                                            <span x-text="formatSize(bucket.Size)"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        @click="browseCloudOutput(bucket.Name)">
+                                    <i class="fas fa-folder-open me-1"></i>Browse
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+
     <!-- Upload All Modal -->
     <div class="modal fade"
          id="uploadAllModal"
@@ -571,4 +689,9 @@ if (!window.checkpointsManager) {
             </div>
         </div>
     </div>
+
+    </div>
+    </template>
+    <!-- End main content template -->
+
 </div>
