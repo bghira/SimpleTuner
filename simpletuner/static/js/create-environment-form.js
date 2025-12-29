@@ -325,6 +325,33 @@
                 }
             },
 
+            getDatasetChoice() {
+                if (this.keepExampleDataloader && this.exampleHasDataloader) return 'example';
+                if (this.createNewDataloader) return 'new';
+                return 'existing';
+            },
+
+            setDatasetChoice(val) {
+                if (val === 'example' && this.exampleHasDataloader) {
+                    this.keepExampleDataloader = true;
+                    this.createNewDataloader = true;
+                    this.applyExampleDataloaderSelection();
+                } else if (val === 'new') {
+                    this.keepExampleDataloader = false;
+                    this.createNewDataloader = true;
+                    if (!this.newEnvironmentPathTouched) {
+                        this.newEnvironment.dataloader_path = this.computeDefaultDataloaderPath();
+                    }
+                } else if (val === 'existing') {
+                    this.keepExampleDataloader = false;
+                    this.createNewDataloader = false;
+                    if (this.dataloaderConfigs.length > 0 && !this.selectedDataloaderPath) {
+                        this.selectedDataloaderPath = this.dataloaderConfigs[0]?.path || '';
+                        this.newEnvironment.dataloader_path = this.selectedDataloaderPath;
+                    }
+                }
+            },
+
             resolveEndpoint(path, options = {}) {
                 const helper = global.ApiClient;
                 if (helper && typeof helper.resolve === "function") {
