@@ -545,12 +545,12 @@ class TestWebhookSignatureVerification(unittest.TestCase):
         self.assertTrue(result)
 
 
+@unittest.skip("RateLimiter module removed - rate limiting now via RateLimitMiddleware")
 class TestRateLimiter(unittest.TestCase):
     """Test cases for rate limiter.
 
-    Note: The RateLimiter class in rate_limiting.py is deprecated.
+    Note: The RateLimiter class in rate_limiting.py was removed.
     Rate limiting is now handled by RateLimitMiddleware in security_middleware.py.
-    These tests are kept to verify the deprecated module still works.
     """
 
     def test_allows_under_limit(self) -> None:

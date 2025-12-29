@@ -95,6 +95,7 @@ class TestWebhookSignatureVerification(unittest.TestCase):
         self.assertTrue(result)
 
 
+@unittest.skip("RateLimiter removed - rate limiting now via RateLimitMiddleware")
 class TestRateLimiter(unittest.TestCase):
     """Test cases for rate limiter."""
 
