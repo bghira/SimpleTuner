@@ -36,6 +36,111 @@ The API lives at `http://localhost:8001`. Leave the server running while you iss
 >
 > This validates your configuration at startup and launches training immediately after the server is ready—useful for unattended or scripted deployments. The `--env` option works identically to `simpletuner train --env`.
 
+### Configuration & Deployment
+
+For production usage, you can configure the bind address and port:
+
+| Option | Environment Variable | Default | Description |
+|--------|---------------------|---------|-------------|
+| `--host` | `SIMPLETUNER_HOST` | `0.0.0.0` | Address to bind the server to (use `127.0.0.1` behind reverse proxy) |
+| `--port` | `SIMPLETUNER_PORT` | `8001` | Port to bind the server to |
+
+<details>
+<summary><b>Production Deployment Options (TLS, Reverse Proxy, Systemd, Docker)</b></summary>
+
+For production deployments, it is recommended to use a reverse proxy for TLS termination.
+
+#### Nginx Configuration
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name training.example.com;
+
+    # TLS configuration (example using Let's Encrypt paths)
+    ssl_certificate /etc/letsencrypt/live/training.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/training.example.com/privkey.pem;
+
+    # WebSocket support for SSE streaming (Critical for real-time logs)
+    location /api/training/stream {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        # SSE-specific settings
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+    }
+
+    # Main application
+    location / {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # Large file uploads for datasets
+        client_max_body_size 10G;
+        proxy_request_buffering off;
+    }
+}
+```
+
+#### Caddy Configuration
+
+```caddyfile
+training.example.com {
+    reverse_proxy 127.0.0.1:8001 {
+        # SSE streaming support
+        flush_interval -1
+    }
+    # Large file uploads
+    request_body {
+        max_size 10GB
+    }
+}
+```
+
+#### systemd Service
+
+```ini
+[Unit]
+Description=SimpleTuner Training Server
+After=network.target
+
+[Service]
+Type=simple
+User=trainer
+WorkingDirectory=/home/trainer/simpletuner-workspace
+Environment="SIMPLETUNER_HOST=127.0.0.1"
+Environment="SIMPLETUNER_PORT=8001"
+ExecStart=/home/trainer/simpletuner-workspace/.venv/bin/simpletuner server
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+#### Docker Compose with Traefik
+
+```yaml
+version: '3.8'
+services:
+  simpletuner:
+    image: ghcr.io/bghira/simpletuner:latest
+    command: simpletuner server --host 0.0.0.0 --port 8001
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.simpletuner.rule=Host(`training.example.com`)"
+      - "traefik.http.services.simpletuner.loadbalancer.server.port=8001"
+```
+</details>
+
 ## Discover the API
 
 FastAPI serves interactive docs and the OpenAPI schema:
@@ -141,6 +246,20 @@ curl -s -X POST http://localhost:8001/api/training/start \
 ```
 
 The payload must be JSON serialised as a string; the server posts job lifecycle updates to the `callback_url`. See the `--webhook_config` description in `documentation/OPTIONS.md` or the sample `config/webhooks.json` template for supported fields.
+
+<details>
+<summary><b>Webhook Configuration for Reverse Proxies</b></summary>
+
+When using a reverse proxy with HTTPS, your webhook URL must be the public endpoint:
+
+1.  **Public Server:** Use `https://training.example.com/webhook/callback`
+2.  **Tunneling:** Use ngrok or cloudflared for local dev.
+
+**Troubleshooting Real-time Logs (SSE):**
+If `GET /api/training/events` works but the stream hangs:
+*   **Nginx:** Ensure `proxy_buffering off;` and `proxy_read_timeout` is high (e.g., 86400s).
+*   **CloudFlare:** Terminates long-lived connections; use CloudFlare Tunnel or bypass the proxy for the stream endpoint.
+</details>
 
 ### Trigger manual validation
 
@@ -258,6 +377,8 @@ If the dataset is not yet on the machine where SimpleTuner runs, you can push it
      -F files[]=@image001.txt
    ```
 
+> **Troubleshooting Uploads:** If large uploads fail with a "Entity Too Large" error when using a reverse proxy, ensure you have increased the body size limit (e.g., `client_max_body_size 10G;` in Nginx or `request_body { max_size 10GB }` in Caddy).
+
 After the upload finishes, point your `multidatabackend.json` entry at the new folder (for example, `"/data/datasets/pixart-upload"`).
 
 ## Example: PixArt Sigma 900M full fine-tune
@@ -267,13 +388,15 @@ After the upload finishes, point your `multidatabackend.json` entry at the new f
 ```bash
 curl -s -X POST http://localhost:8001/api/configs/environments \
   -H 'Content-Type: application/json' \
-  -d '{
+  -d
+```json
+{
         "name": "pixart-api-demo",
         "model_family": "pixart_sigma",
         "model_flavour": "900M-1024-v0.6",
         "model_type": "full",
         "description": "PixArt 900M API-driven training"
-      }'
+      }
 ```
 
 This creates `config/pixart-api-demo/` and a starter `multidatabackend.json`.
@@ -414,14 +537,16 @@ Kontext shares most of its pipeline with Flux Dev but needs paired edit/referenc
 ```bash
 curl -s -X POST http://localhost:8001/api/configs/environments \
   -H 'Content-Type: application/json' \
-  -d '{
+  -d
+```json
+{
         "name": "kontext-api-demo",
         "model_family": "flux",
         "model_flavour": "kontext",
         "model_type": "lora",
         "lora_type": "lycoris",
         "description": "Flux Kontext LoRA via API"
-      }'
+      }
 ```
 
 ### 2. Describe the paired dataloader
@@ -549,5 +674,6 @@ Kontext tips:
 - Combine these REST calls with `jq`/`yq` or a Python client for automation
 - Hook WebSockets at `/api/training/events/stream` for real-time dashboards
 - Reuse the exported configs (`GET /api/configs/<env>/export`) to version-control working setups
+- **Run training on cloud GPUs** via Replicate—see the [Cloud Training Tutorial](../experimental/cloud/TUTORIAL.md)
 
 With these patterns you can fully script SimpleTuner training without touching the WebUI, while still relying on the battle-tested CLI setup process.
