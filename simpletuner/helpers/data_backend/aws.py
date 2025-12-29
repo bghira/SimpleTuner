@@ -343,63 +343,6 @@ class S3DataBackend(BaseDataBackend):
         """
         pass
 
-
-def test_s3_connection(
-    bucket_name: str,
-    prefix: Optional[str] = None,
-    region_name: Optional[str] = None,
-    endpoint_url: Optional[str] = None,
-    aws_access_key_id: Optional[str] = None,
-    aws_secret_access_key: Optional[str] = None,
-    max_keys: int = 5,
-) -> Dict[str, Any]:
-    """Run a minimal connectivity check against an S3 bucket."""
-
-    if not bucket_name:
-        raise ValueError("aws_bucket_name is required")
-
-    extra_args = {"region_name": region_name or "us-east-1"}
-    if endpoint_url:
-        extra_args = {"endpoint_url": endpoint_url}
-
-    s3_config = Config(max_pool_connections=32)
-
-    try:
-        client = boto3.client(
-            "s3",
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            config=s3_config,
-            **extra_args,
-        )
-    except Exception as exc:  # pragma: no cover - boto3 raises varied subclasses
-        raise ValueError(f"Failed to create S3 client: {exc}") from exc
-
-    try:
-        client.head_bucket(Bucket=bucket_name)
-    except Exception as exc:
-        raise ValueError(f"Unable to access bucket '{bucket_name}': {exc}") from exc
-
-    prefix = prefix or ""
-    try:
-        response = client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, MaxKeys=max(1, max_keys))
-    except Exception as exc:
-        raise ValueError(f"Failed to list objects in bucket '{bucket_name}': {exc}") from exc
-
-    contents = response.get("Contents", []) or []
-    sample_keys = [entry.get("Key") for entry in contents if entry.get("Key")]
-
-    return {
-        "bucket": bucket_name,
-        "prefix": prefix,
-        "sample_keys": sample_keys,
-        "truncated": bool(response.get("IsTruncated")),
-        "max_keys": max_keys,
-        "key_count": len(sample_keys),
-        "region": client.meta.region_name,
-        "endpoint": getattr(client.meta, "endpoint_url", None),
-    }
-
     def _detect_file_format(self, fileobj):
         fileobj.seek(0)
         magic_number = fileobj.read(4)
@@ -501,3 +444,60 @@ def test_s3_connection(
         existing_keys = set(obj["Key"] for obj in objects.get("Contents", []))
 
         return [key in existing_keys for key in s3_keys]
+
+
+def test_s3_connection(
+    bucket_name: str,
+    prefix: Optional[str] = None,
+    region_name: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
+    aws_access_key_id: Optional[str] = None,
+    aws_secret_access_key: Optional[str] = None,
+    max_keys: int = 5,
+) -> Dict[str, Any]:
+    """Run a minimal connectivity check against an S3 bucket."""
+
+    if not bucket_name:
+        raise ValueError("aws_bucket_name is required")
+
+    extra_args = {"region_name": region_name or "us-east-1"}
+    if endpoint_url:
+        extra_args = {"endpoint_url": endpoint_url}
+
+    s3_config = Config(max_pool_connections=32)
+
+    try:
+        client = boto3.client(
+            "s3",
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            config=s3_config,
+            **extra_args,
+        )
+    except Exception as exc:  # pragma: no cover - boto3 raises varied subclasses
+        raise ValueError(f"Failed to create S3 client: {exc}") from exc
+
+    try:
+        client.head_bucket(Bucket=bucket_name)
+    except Exception as exc:
+        raise ValueError(f"Unable to access bucket '{bucket_name}': {exc}") from exc
+
+    prefix = prefix or ""
+    try:
+        response = client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, MaxKeys=max(1, max_keys))
+    except Exception as exc:
+        raise ValueError(f"Failed to list objects in bucket '{bucket_name}': {exc}") from exc
+
+    contents = response.get("Contents", []) or []
+    sample_keys = [entry.get("Key") for entry in contents if entry.get("Key")]
+
+    return {
+        "bucket": bucket_name,
+        "prefix": prefix,
+        "sample_keys": sample_keys,
+        "truncated": bool(response.get("IsTruncated")),
+        "max_keys": max_keys,
+        "key_count": len(sample_keys),
+        "region": client.meta.region_name,
+        "endpoint": getattr(client.meta, "endpoint_url", None),
+    }
