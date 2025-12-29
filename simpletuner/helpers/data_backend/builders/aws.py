@@ -53,10 +53,10 @@ class AwsBackendBuilder(BaseBackendBuilder):
         required_values = {
             "aws_bucket_name": getattr(config, "aws_bucket_name", None),
             "aws_region_name": getattr(config, "aws_region_name", None),
-            "aws_endpoint_url": getattr(config, "aws_endpoint_url", None),
             "aws_access_key_id": getattr(config, "aws_access_key_id", None),
             "aws_secret_access_key": getattr(config, "aws_secret_access_key", None),
         }
+        # Note: aws_endpoint_url is optional - only needed for S3-compatible services (MinIO, Wasabi, etc.)
 
         missing_keys = [key for key, value in required_values.items() if value in (None, "")]
 

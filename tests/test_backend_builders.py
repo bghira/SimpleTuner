@@ -289,6 +289,59 @@ class TestAwsBackendBuilder(unittest.TestCase):
 
         self.assertIn("Missing required AWS configuration", str(context.exception))
 
+    def test_validate_aws_config_without_endpoint_url(self):
+        """Test AWS config validation passes without aws_endpoint_url (it's optional)"""
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_aws",
+                "type": "aws",
+                "aws_bucket_name": "test-bucket",
+                "aws_region_name": "us-east-1",
+                "aws_access_key_id": "test_key",
+                "aws_secret_access_key": "test_secret",
+                # aws_endpoint_url is intentionally omitted - it's optional
+            },
+            self.args,
+        )
+
+        # Should not raise any exceptions - endpoint_url is optional for standard AWS S3
+        self.builder._validate_aws_config(config)
+
+    @patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend")
+    def test_build_without_endpoint_url(self, mock_s3_backend_class):
+        """Test building AWS backend without endpoint_url (standard AWS S3)"""
+        mock_backend = Mock()
+        mock_s3_backend_class.return_value = mock_backend
+
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_aws",
+                "type": "aws",
+                "cache_dir": "/tmp/cache",
+                "aws_bucket_name": "test-bucket",
+                "aws_region_name": "us-east-1",
+                "aws_access_key_id": "test_key",
+                "aws_secret_access_key": "test_secret",
+                # No aws_endpoint_url - using standard AWS S3
+            },
+            self.args,
+        )
+
+        result = self.builder.build(config)
+
+        # verify S3DataBackend called with endpoint_url as None
+        mock_s3_backend_class.assert_called_once()
+        call_kwargs = mock_s3_backend_class.call_args[1]
+
+        self.assertEqual(call_kwargs["id"], "test_aws")
+        self.assertEqual(call_kwargs["bucket_name"], "test-bucket")
+        self.assertEqual(call_kwargs["region_name"], "us-east-1")
+        self.assertIsNone(call_kwargs["endpoint_url"])  # Should be None for standard AWS
+        self.assertEqual(call_kwargs["aws_access_key_id"], "test_key")
+        self.assertEqual(call_kwargs["aws_secret_access_key"], "test_secret")
+
+        self.assertEqual(result, mock_backend)
+
 
 class TestCsvBackendBuilder(unittest.TestCase):
     """Test CsvBackendBuilder class"""
