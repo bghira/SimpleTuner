@@ -1,0 +1,148 @@
+<!-- partials/cloud_job_details.html - Selected job details panel -->
+<template x-if="selectedJob">
+    <div class="cloud-card">
+        <div class="cloud-card-header d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Details</h6>
+            <button type="button" class="btn-close btn-close-white" style="font-size: 0.65rem; padding: 0.5rem;" @click="selectedJob = null"></button>
+        </div>
+        <div class="cloud-card-body py-2">
+            <!-- Compact 2-column layout -->
+            <div class="row g-2 mb-2">
+                <div class="col-6">
+                    <div class="small text-muted" style="font-size: 0.65rem;">Job ID</div>
+                    <code class="small text-truncate d-block" style="font-size: 0.7rem; max-width: 100%;" x-text="selectedJob.job_id.substring(0, 12) + '...'"></code>
+                </div>
+                <div class="col-6">
+                    <div class="small text-muted" style="font-size: 0.65rem;">Status</div>
+                    <span class="badge" style="font-size: 0.65rem;" :class="'bg-' + statusColor(selectedJob.status)" x-text="selectedJob.status"></span>
+                </div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-6">
+                    <div class="small text-muted" style="font-size: 0.65rem;">Config</div>
+                    <span class="small text-truncate d-block" style="max-width: 100%;" x-text="selectedJob.config_name || '--'"></span>
+                </div>
+                <div class="col-6">
+                    <div class="small text-muted" style="font-size: 0.65rem;">Type</div>
+                    <span class="small" x-text="selectedJob.job_type === 'cloud' ? 'Cloud' : 'Local'"></span>
+                </div>
+            </div>
+            <!-- Queue Status - shown for pending/queued jobs -->
+            <template x-if="['pending', 'queued'].includes(selectedJob.status) && selectedJob.queue_position">
+                <div class="mb-2 p-2 rounded" style="background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.3);">
+                    <div class="small text-muted mb-1" style="font-size: 0.65rem;">
+                        <i class="fas fa-clock me-1"></i>Queue Status
+                    </div>
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <span class="badge bg-warning text-dark" style="font-size: 0.7rem;">
+                                <i class="fas fa-hashtag me-1"></i><span x-text="selectedJob.queue_position"></span>
+                            </span>
+                            <span class="small text-muted ms-1">in queue</span>
+                        </div>
+                        <template x-if="selectedJob.estimated_wait_seconds !== null && selectedJob.estimated_wait_seconds !== undefined">
+                            <div class="text-end">
+                                <span class="small text-muted" style="font-size: 0.65rem;">Est. wait:</span>
+                                <span class="small fw-medium" x-text="formatWaitTime(selectedJob.estimated_wait_seconds)"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+            <template x-if="selectedJob.cost_usd !== null">
+                <div class="mb-2">
+                    <div class="small text-muted" style="font-size: 0.65rem;">Cost</div>
+                    <span class="small fw-medium" x-text="formatCost(selectedJob.cost_usd)"></span>
+                </div>
+            </template>
+
+            <!-- Output Location - PROMINENT for completed jobs -->
+            <template x-if="selectedJob.status === 'completed' || selectedJob.output_url">
+                <div class="mb-2 p-2 rounded" :class="selectedJob.status === 'completed' ? 'bg-success bg-opacity-10 border border-success border-opacity-25' : ''">
+                    <div class="small text-muted mb-1" style="font-size: 0.65rem;">
+                        <i class="fas fa-download me-1"></i>Output Location
+                    </div>
+                    <template x-if="selectedJob.output_url">
+                        <div>
+                            <!-- HuggingFace link -->
+                            <template x-if="selectedJob.output_url.includes('huggingface.co')">
+                                <a :href="selectedJob.output_url" target="_blank" class="small text-info text-break" style="font-size: 0.75rem;">
+                                    <i class="fas fa-external-link-alt me-1"></i><span x-text="selectedJob.output_url.replace('https://huggingface.co/', '')"></span>
+                                </a>
+                            </template>
+                            <!-- S3 link -->
+                            <template x-if="selectedJob.output_url.startsWith('s3://')">
+                                <code class="small text-break d-block" style="font-size: 0.7rem;" x-text="selectedJob.output_url"></code>
+                            </template>
+                            <!-- Local path -->
+                            <template x-if="selectedJob.output_url.startsWith('/') || selectedJob.output_url.startsWith('~')">
+                                <div>
+                                    <code class="small text-break d-block" style="font-size: 0.7rem;" x-text="selectedJob.output_url"></code>
+                                    <span class="small text-muted" style="font-size: 0.6rem;"><i class="fas fa-folder me-1"></i>Local directory</span>
+                                </div>
+                            </template>
+                            <!-- Generic URL -->
+                            <template x-if="!selectedJob.output_url.includes('huggingface.co') && !selectedJob.output_url.startsWith('s3://') && !selectedJob.output_url.startsWith('/') && !selectedJob.output_url.startsWith('~')">
+                                <a :href="selectedJob.output_url" target="_blank" class="small text-info text-break" style="font-size: 0.75rem;">
+                                    <i class="fas fa-external-link-alt me-1"></i><span x-text="selectedJob.output_url"></span>
+                                </a>
+                            </template>
+                        </div>
+                    </template>
+                    <template x-if="!selectedJob.output_url && selectedJob.status === 'completed'">
+                        <span class="small text-muted" style="font-size: 0.7rem;">Check logs for output location</span>
+                    </template>
+                </div>
+            </template>
+
+            <!-- Tracker Run Name -->
+            <template x-if="selectedJob.metadata && selectedJob.metadata.tracker_run_name">
+                <div class="mb-2">
+                    <div class="small text-muted" style="font-size: 0.65rem;">Tracker Run</div>
+                    <span class="small" x-text="selectedJob.metadata.tracker_run_name"></span>
+                </div>
+            </template>
+            <!-- Snapshot Info -->
+            <template x-if="selectedJob.metadata && selectedJob.metadata.snapshot && selectedJob.metadata.snapshot.commit">
+                <div class="mb-2 p-2 rounded" style="background: rgba(129, 140, 248, 0.1); border: 1px solid rgba(129, 140, 248, 0.2);">
+                    <div class="small text-muted mb-1" style="font-size: 0.65rem;">
+                        <i class="fas fa-code-branch me-1"></i>Environment Snapshot
+                    </div>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <template x-if="selectedJob.metadata.snapshot.name">
+                            <span class="badge bg-info" style="font-size: 0.65rem;" x-text="selectedJob.metadata.snapshot.name"></span>
+                        </template>
+                        <code class="small user-select-all" style="font-size: 0.7rem; cursor: pointer;" x-text="selectedJob.metadata.snapshot.abbrev" title="Click to copy full commit hash" @click="navigator.clipboard.writeText(selectedJob.metadata.snapshot.commit).then(() => window.showToast && window.showToast('Commit hash copied', 'success'))"></code>
+                        <template x-if="selectedJob.metadata.snapshot.branch">
+                            <span class="text-muted small" style="font-size: 0.65rem;" x-text="'on ' + selectedJob.metadata.snapshot.branch"></span>
+                        </template>
+                    </div>
+                    <template x-if="selectedJob.metadata.snapshot.was_dirty">
+                        <div class="small text-muted mt-1" style="font-size: 0.6rem;">
+                            <i class="fas fa-check text-success me-1"></i>Committed on submit
+                        </div>
+                    </template>
+                </div>
+            </template>
+            <template x-if="selectedJob.error_message">
+                <div class="mb-2">
+                    <div class="alert alert-danger py-1 px-2 small mb-0" style="font-size: 0.7rem;" x-text="selectedJob.error_message"></div>
+                </div>
+            </template>
+            <div class="d-flex gap-2 mt-2">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary flex-grow-1"
+                        @click="viewLogs(selectedJob.job_id)">
+                    <i class="fas fa-file-alt me-1"></i>Logs
+                </button>
+                <template x-if="['pending', 'uploading', 'queued', 'running'].includes(selectedJob.status)">
+                    <button type="button"
+                            class="btn btn-sm btn-outline-danger"
+                            @click="cancelJob(selectedJob.job_id)">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </template>
+            </div>
+        </div>
+    </div>
+</template>

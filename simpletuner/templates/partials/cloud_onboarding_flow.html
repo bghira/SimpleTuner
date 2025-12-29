@@ -1,0 +1,315 @@
+<!-- partials/cloud_onboarding_flow.html - Progressive disclosure for new users -->
+
+<!-- Only show when provider is configured but user hasn't completed onboarding -->
+<template x-if="isActiveProviderConfigured() && !onboardingComplete">
+    <div class="cloud-onboarding-flow">
+
+        <!-- Step 1: What happens to your data -->
+        <template x-if="!onboarding.data_understood">
+            <div class="onboarding-card" data-step="data">
+                <div class="onboarding-header">
+                    <div class="onboarding-step-indicator">
+                        <span class="step-badge">1 of 3</span>
+                        <span class="step-label">Understanding Cloud Training</span>
+                    </div>
+                </div>
+
+                <div class="onboarding-content">
+                    <div class="onboarding-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+
+                    <h3>What Happens to Your Data</h3>
+
+                    <p class="onboarding-lead">
+                        When you submit a cloud job, SimpleTuner packages and uploads your training data.
+                    </p>
+
+                    <div class="data-flow-diagram">
+                        <div class="flow-step">
+                            <div class="flow-icon"><i class="fas fa-folder"></i></div>
+                            <div class="flow-label">Your local images</div>
+                            <div class="flow-detail">Datasets with <code>type: "local"</code></div>
+                        </div>
+                        <div class="flow-arrow"><i class="fas fa-arrow-right"></i></div>
+                        <div class="flow-step">
+                            <div class="flow-icon"><i class="fas fa-file-archive"></i></div>
+                            <div class="flow-label">Zipped &amp; uploaded</div>
+                            <div class="flow-detail">~5 min per GB</div>
+                        </div>
+                        <div class="flow-arrow"><i class="fas fa-arrow-right"></i></div>
+                        <div class="flow-step">
+                            <div class="flow-icon"><i class="fas fa-server"></i></div>
+                            <div class="flow-label">Replicate's servers</div>
+                            <div class="flow-detail">Deleted after training</div>
+                        </div>
+                    </div>
+
+                    <div class="onboarding-details">
+                        <div class="detail-item">
+                            <i class="fas fa-shield-alt text-success"></i>
+                            <span>Your API token never leaves your machine</span>
+                        </div>
+                        <div class="detail-item">
+                            <i class="fas fa-eye text-info"></i>
+                            <span>You'll review exactly what's uploaded before each job</span>
+                        </div>
+                        <div class="detail-item">
+                            <i class="fas fa-ban text-warning"></i>
+                            <span>Sensitive files (.env, .git, keys) are automatically excluded</span>
+                        </div>
+                    </div>
+
+                    <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/experimental/cloud/TUTORIAL.md#data-privacy--what-gets-uploaded"
+                       target="_blank"
+                       class="onboarding-doc-link">
+                        <i class="fas fa-book me-1"></i>Full data privacy details
+                    </a>
+                </div>
+
+                <div class="onboarding-actions">
+                    <button type="button"
+                            class="btn btn-primary"
+                            @click="completeOnboardingStep('data')">
+                        <i class="fas fa-check me-2"></i>I Understand
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Step 2: How you get your model back -->
+        <template x-if="onboarding.data_understood && !onboarding.results_understood">
+            <div class="onboarding-card" data-step="results">
+                <div class="onboarding-header">
+                    <div class="onboarding-step-indicator">
+                        <span class="step-badge">2 of 3</span>
+                        <span class="step-label">Understanding Cloud Training</span>
+                    </div>
+                </div>
+
+                <div class="onboarding-content">
+                    <div class="onboarding-icon">
+                        <i class="fas fa-download"></i>
+                    </div>
+
+                    <h3>How You Get Your Model Back</h3>
+
+                    <p class="onboarding-lead">
+                        After training completes, your model needs somewhere to go. Choose one:
+                    </p>
+
+                    <div class="delivery-options">
+                        <!-- Option 1: HuggingFace -->
+                        <div class="delivery-option recommended">
+                            <div class="option-header">
+                                <i class="fab fa-hubspot"></i>
+                                <span class="option-title">HuggingFace Hub</span>
+                                <span class="badge bg-success">Recommended</span>
+                            </div>
+                            <p class="option-desc">
+                                Push directly to your HuggingFace account. Requires <code>HF_TOKEN</code> env var.
+                            </p>
+                            <div class="option-status">
+                                <template x-if="publishingStatus.push_to_hub">
+                                    <span class="text-success small"><i class="fas fa-check-circle me-1"></i>Configured</span>
+                                </template>
+                                <template x-if="!publishingStatus.push_to_hub">
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-primary"
+                                            @click="document.querySelector('[data-tab=publishing]')?.click()">
+                                        Configure in Publishing tab
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Option 2: Local download -->
+                        <div class="delivery-option">
+                            <div class="option-header">
+                                <i class="fas fa-laptop"></i>
+                                <span class="option-title">Download to This Machine</span>
+                            </div>
+                            <p class="option-desc">
+                                Replicate uploads the model back here. Requires exposing your server via ngrok or cloudflare tunnel.
+                            </p>
+                            <div class="option-status">
+                                <template x-if="webhookUrl && webhookUrl.trim().length > 0">
+                                    <span class="text-success small"><i class="fas fa-check-circle me-1"></i>Webhook configured</span>
+                                </template>
+                                <template x-if="!webhookUrl || webhookUrl.trim().length === 0">
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-secondary"
+                                            @click="showSettingsPanel = true">
+                                        Set Webhook URL
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Option 3: S3 -->
+                        <div class="delivery-option">
+                            <div class="option-header">
+                                <i class="fab fa-aws"></i>
+                                <span class="option-title">S3 / Cloud Storage</span>
+                            </div>
+                            <p class="option-desc">
+                                Upload to any S3-compatible endpoint (AWS, MinIO, Backblaze, etc.)
+                            </p>
+                            <div class="option-status">
+                                <template x-if="publishingStatus.s3_configured">
+                                    <span class="text-success small">
+                                        <i class="fas fa-check-circle me-1"></i>Configured
+                                        <button type="button"
+                                                class="btn btn-link btn-sm text-muted ms-2 p-0"
+                                                @click="showS3ConfigModal()"
+                                                title="Edit configuration">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                    </span>
+                                </template>
+                                <template x-if="!publishingStatus.s3_configured">
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-secondary"
+                                            @click="showS3ConfigModal()">
+                                        <i class="fas fa-cog me-1"></i>Configure S3
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+
+                    <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/experimental/cloud/TUTORIAL.md#receiving-trained-models"
+                       target="_blank"
+                       class="onboarding-doc-link">
+                        <i class="fas fa-book me-1"></i>Full delivery options guide
+                    </a>
+                </div>
+
+                <div class="onboarding-actions">
+                    <button type="button"
+                            class="btn btn-outline-secondary me-2"
+                            @click="onboarding.data_understood = false">
+                        <i class="fas fa-arrow-left me-1"></i>Back
+                    </button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            @click="completeOnboardingStep('results')">
+                        <i class="fas fa-check me-2"></i>I'll Set This Up
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Step 3: What this costs -->
+        <template x-if="onboarding.data_understood && onboarding.results_understood && !onboarding.cost_understood">
+            <div class="onboarding-card" data-step="cost">
+                <div class="onboarding-header">
+                    <div class="onboarding-step-indicator">
+                        <span class="step-badge">3 of 3</span>
+                        <span class="step-label">Understanding Cloud Training</span>
+                    </div>
+                </div>
+
+                <div class="onboarding-content">
+                    <div class="onboarding-icon">
+                        <i class="fas fa-dollar-sign"></i>
+                    </div>
+
+                    <h3>What This Will Cost</h3>
+
+                    <p class="onboarding-lead">
+                        Replicate bills per second of GPU time. You pay for exactly what you use.
+                    </p>
+
+                    <div class="cost-breakdown">
+                        <div class="cost-row">
+                            <span class="cost-label">Hardware</span>
+                            <span class="cost-value">L40S (48GB VRAM)</span>
+                        </div>
+                        <div class="cost-row">
+                            <span class="cost-label">Rate</span>
+                            <span class="cost-value">~$3.50/hour</span>
+                        </div>
+                        <div class="cost-row">
+                            <span class="cost-label">Typical LoRA (2000 steps)</span>
+                            <span class="cost-value">~$5-15</span>
+                        </div>
+                        <div class="cost-row">
+                            <span class="cost-label">Full fine-tune</span>
+                            <span class="cost-value">$50-200+</span>
+                        </div>
+                    </div>
+
+                    <div class="cost-notes">
+                        <div class="note-item">
+                            <i class="fas fa-clock text-info"></i>
+                            <span>Billing starts when training begins, stops when it ends (or fails)</span>
+                        </div>
+                        <div class="note-item">
+                            <i class="fas fa-shield-alt text-success"></i>
+                            <span>Set a spending limit to prevent runaway costs</span>
+                        </div>
+                        <div class="note-item">
+                            <i class="fas fa-calculator text-warning"></i>
+                            <span>You'll see a cost estimate before every job submission</span>
+                        </div>
+                    </div>
+
+                    <!-- Inline cost limit setup -->
+                    <div class="cost-limit-quick-setup">
+                        <label class="form-check">
+                            <input type="checkbox"
+                                   class="form-check-input"
+                                   x-model="quickCostLimitEnabled">
+                            <span class="form-check-label">Enable spending limit</span>
+                        </label>
+                        <div class="cost-limit-inputs" x-show="quickCostLimitEnabled" x-cloak>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">$</span>
+                                <input type="number"
+                                       class="form-control"
+                                       x-model.number="quickCostLimitAmount"
+                                       placeholder="50"
+                                       min="1"
+                                       step="1">
+                                <select class="form-select" x-model="quickCostLimitPeriod">
+                                    <option value="daily">per day</option>
+                                    <option value="weekly">per week</option>
+                                    <option value="monthly">per month</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/experimental/cloud/TUTORIAL.md#cost-management"
+                       target="_blank"
+                       class="onboarding-doc-link">
+                        <i class="fas fa-book me-1"></i>Full cost management guide
+                    </a>
+                </div>
+
+                <div class="onboarding-actions">
+                    <button type="button"
+                            class="btn btn-outline-secondary me-2"
+                            @click="onboarding.results_understood = false">
+                        <i class="fas fa-arrow-left me-1"></i>Back
+                    </button>
+                    <button type="button"
+                            class="btn btn-success"
+                            @click="completeOnboarding()">
+                        <i class="fas fa-rocket me-2"></i>Start Training
+                    </button>
+                </div>
+            </div>
+        </template>
+
+        <!-- Skip option (always visible) -->
+        <div class="onboarding-skip">
+            <button type="button"
+                    class="btn btn-link btn-sm text-muted"
+                    @click="skipOnboarding()">
+                Skip introduction (I know what I'm doing)
+            </button>
+        </div>
+    </div>
+</template>

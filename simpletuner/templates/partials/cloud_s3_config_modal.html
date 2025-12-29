@@ -1,0 +1,154 @@
+<!-- partials/cloud_s3_config_modal.html - S3/Cloud Storage Configuration Modal -->
+<div class="modal fade" id="s3ConfigModal" tabindex="-1" x-ref="s3ConfigModal">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-light">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-cloud-upload-alt me-2"></i>Configure S3 / Cloud Storage
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Provider Preset Selection -->
+                <div class="mb-3">
+                    <label class="form-label">Storage Provider</label>
+                    <div class="s3-provider-presets d-flex flex-wrap gap-2 mb-3">
+                        <button class="btn btn-sm preset-btn"
+                                :class="s3Config.preset === 'aws' ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="applyS3Preset('aws')">
+                            <i class="fab fa-aws me-1"></i>AWS S3
+                        </button>
+                        <button class="btn btn-sm preset-btn"
+                                :class="s3Config.preset === 'backblaze' ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="applyS3Preset('backblaze')">
+                            Backblaze B2
+                        </button>
+                        <button class="btn btn-sm preset-btn"
+                                :class="s3Config.preset === 'minio' ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="applyS3Preset('minio')">
+                            MinIO
+                        </button>
+                        <button class="btn btn-sm preset-btn"
+                                :class="s3Config.preset === 'custom' ? 'btn-primary' : 'btn-outline-secondary'"
+                                @click="applyS3Preset('custom')">
+                            <i class="fas fa-cog me-1"></i>Custom
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Endpoint URL (for non-AWS providers) -->
+                <div class="mb-3" x-show="s3Config.preset !== 'aws'">
+                    <label class="form-label">Endpoint URL</label>
+                    <input type="url" class="form-control" x-model="s3Config.endpoint_url"
+                           placeholder="https://s3.your-region.backblazeb2.com">
+                    <small class="form-text text-muted" x-show="s3Config.preset === 'backblaze'">
+                        Format: https://s3.{region}.backblazeb2.com
+                    </small>
+                </div>
+
+                <!-- Region (for AWS) -->
+                <div class="mb-3" x-show="s3Config.preset === 'aws'">
+                    <label class="form-label">AWS Region</label>
+                    <select class="form-select" x-model="s3Config.region">
+                        <option value="">Select region...</option>
+                        <option value="us-east-1">US East (N. Virginia)</option>
+                        <option value="us-east-2">US East (Ohio)</option>
+                        <option value="us-west-1">US West (N. California)</option>
+                        <option value="us-west-2">US West (Oregon)</option>
+                        <option value="eu-west-1">EU (Ireland)</option>
+                        <option value="eu-west-2">EU (London)</option>
+                        <option value="eu-central-1">EU (Frankfurt)</option>
+                        <option value="ap-northeast-1">Asia Pacific (Tokyo)</option>
+                        <option value="ap-southeast-1">Asia Pacific (Singapore)</option>
+                    </select>
+                </div>
+
+                <!-- Bucket Name -->
+                <div class="mb-3">
+                    <label class="form-label">Bucket Name</label>
+                    <input type="text" class="form-control" x-model="s3Config.bucket"
+                           placeholder="my-simpletuner-outputs">
+                </div>
+
+                <!-- Access Key -->
+                <div class="mb-3">
+                    <label class="form-label">Access Key ID</label>
+                    <input type="text" class="form-control" x-model="s3Config.access_key_id"
+                           placeholder="AKIA...">
+                </div>
+
+                <!-- Secret Key -->
+                <div class="mb-3">
+                    <label class="form-label">Secret Access Key</label>
+                    <input type="password" class="form-control" x-model="s3Config.secret_access_key"
+                           :placeholder="s3Config.configured ? '(unchanged)' : 'Your secret key'">
+                </div>
+
+                <!-- Path Prefix (optional) -->
+                <div class="mb-3">
+                    <label class="form-label">Path Prefix <span class="text-muted">(optional)</span></label>
+                    <input type="text" class="form-control" x-model="s3Config.path_prefix"
+                           placeholder="outputs/">
+                    <small class="form-text text-muted">Files will be stored under s3://bucket/prefix/job-id/</small>
+                </div>
+
+                <!-- Advanced Options -->
+                <div class="mb-3">
+                    <button class="btn btn-sm btn-link text-muted px-0" type="button"
+                            @click="s3Config.showAdvanced = !s3Config.showAdvanced">
+                        <i class="fas fa-chevron-right me-1" :class="{ 'fa-rotate-90': s3Config.showAdvanced }"></i>
+                        Advanced Options
+                    </button>
+                    <div class="mt-2" x-show="s3Config.showAdvanced" x-collapse>
+                        <div class="form-check mb-2">
+                            <input type="checkbox" class="form-check-input" id="s3UsePathStyle"
+                                   x-model="s3Config.use_path_style">
+                            <label class="form-check-label" for="s3UsePathStyle">
+                                Use path-style URLs (for MinIO and some providers)
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input type="checkbox" class="form-check-input" id="s3PublicRead"
+                                   x-model="s3Config.public_read">
+                            <label class="form-check-label" for="s3PublicRead">
+                                Make uploaded files publicly readable
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Test Connection Result -->
+                <div class="alert py-2" x-show="s3Config.testResult" x-transition
+                     :class="s3Config.testResult?.success ? 'alert-success' : 'alert-danger'">
+                    <div class="d-flex align-items-center">
+                        <i class="fas me-2"
+                           :class="s3Config.testResult?.success ? 'fa-check-circle' : 'fa-exclamation-triangle'"></i>
+                        <span x-text="s3Config.testResult?.message"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-info"
+                        @click="testS3Connection()"
+                        :disabled="s3Config.testing">
+                    <span x-show="s3Config.testing"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                    <i class="fas fa-vial me-1" x-show="!s3Config.testing"></i>
+                    Test Connection
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary"
+                        @click="saveS3Config()"
+                        :disabled="s3Config.saving">
+                    <span x-show="s3Config.saving"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                    Save Configuration
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.s3-provider-presets .preset-btn {
+    font-size: 0.8rem;
+}
+</style>
