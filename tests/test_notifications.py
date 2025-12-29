@@ -72,40 +72,56 @@ class TestNotificationModels(unittest.TestCase):
 
         config = ChannelConfig(
             webhook_url="https://hooks.example.com/notify",
-            webhook_secret="secret123",
+            webhook_secret_key="secret_key_ref",
         )
 
         self.assertEqual(config.webhook_url, "https://hooks.example.com/notify")
-        self.assertEqual(config.webhook_secret, "secret123")
+        self.assertEqual(config.webhook_secret_key, "secret_key_ref")
 
     def test_delivery_result_success(self):
         """Test successful delivery result."""
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.models import DeliveryResult
+        from simpletuner.simpletuner_sdk.server.services.cloud.notification.protocols import (
+            ChannelType,
+            DeliveryStatus,
+            NotificationEventType,
+        )
 
         result = DeliveryResult(
             success=True,
             channel_id=1,
+            channel_type=ChannelType.EMAIL,
             recipient="user@example.com",
+            event_type=NotificationEventType.JOB_COMPLETED,
+            delivery_status=DeliveryStatus.DELIVERED,
             latency_ms=150.0,
         )
 
         self.assertTrue(result.success)
-        self.assertIsNone(result.error)
+        self.assertIsNone(result.error_message)
         self.assertEqual(result.latency_ms, 150.0)
 
     def test_delivery_result_failure(self):
         """Test failed delivery result."""
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.models import DeliveryResult
+        from simpletuner.simpletuner_sdk.server.services.cloud.notification.protocols import (
+            ChannelType,
+            DeliveryStatus,
+            NotificationEventType,
+        )
 
         result = DeliveryResult(
             success=False,
             channel_id=1,
+            channel_type=ChannelType.EMAIL,
             recipient="user@example.com",
-            error="Connection timeout",
+            event_type=NotificationEventType.JOB_FAILED,
+            delivery_status=DeliveryStatus.FAILED,
+            error_message="Connection timeout",
         )
 
         self.assertFalse(result.success)
-        self.assertEqual(result.error, "Connection timeout")
+        self.assertEqual(result.error_message, "Connection timeout")
 
 
 class TestNotificationEventTypes(unittest.TestCase):
@@ -149,8 +165,9 @@ class TestEmailChannelValidation(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.channels.email_channel import EmailChannel
+        from simpletuner.simpletuner_sdk.server.services.cloud.notification.models import ChannelConfig
 
-        self.channel = EmailChannel()
+        self.channel = EmailChannel(ChannelConfig())
 
     def test_validate_valid_config(self):
         """Test validation of valid SMTP config."""
@@ -421,13 +438,13 @@ class TestResponseAction(unittest.TestCase):
         action = ResponseAction(
             action="approve",
             approval_request_id=123,
-            reason="Looks good",
-            responder_email="admin@example.com",
+            sender_email="admin@example.com",
+            raw_body="APPROVE - Looks good",
         )
 
         self.assertEqual(action.action, "approve")
         self.assertEqual(action.approval_request_id, 123)
-        self.assertEqual(action.reason, "Looks good")
+        self.assertEqual(action.sender_email, "admin@example.com")
 
 
 class TestDeliveryHistoryAPI(unittest.TestCase):

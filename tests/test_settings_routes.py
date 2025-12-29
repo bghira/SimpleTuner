@@ -236,6 +236,9 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
         (dataset_path / "image2.png").write_bytes(b"y" * (1024 * 1024))  # 1 MB
 
         with self._get_client() as client:
+            # Ensure consent is set to "ask" (not "deny")
+            client.put("/api/cloud/data-consent/setting", json={"consent": "ask"})
+
             response = client.post(
                 "/api/cloud/data-consent/preview",
                 json=[
