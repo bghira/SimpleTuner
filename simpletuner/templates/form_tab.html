@@ -77,10 +77,16 @@ if (!window.hardwareHeroCTA) {
             vae_batch_size: 4,
             gradient_checkpointing: true,
             ramtorch: false,
+            ramtorch_preset: 'off',
             musubi_blocks_to_swap: 0,
             use_ema: false,
             base_model_precision: 'no_change',
             text_encoder_1_precision: 'no_change',
+
+            // Memory presets data
+            maxSwappableBlocks: null,
+            memoryPresetsLoading: false,
+            ramtorchPresets: [],
 
             hints: { ez_mode: true },
             _cleanupFns: [],
@@ -117,27 +123,65 @@ if (!window.hardwareHeroCTA) {
 
                 await this.loadModelFamilies();
 
-                // Wait for trainer store to be ready before syncing
-                await this.waitForTrainerStore();
+                // Initial sync attempt
                 this.syncFromForm();
                 this.setupFormWatchers();
+                this.watchEnvironmentChanges();
+                this.watchTrainerStore();
                 this.loading = false;
             },
 
-            async waitForTrainerStore() {
-                // Wait up to 2 seconds for trainer store to have config
-                for (let i = 0; i < 20; i++) {
+            watchTrainerStore() {
+                // Poll for trainer store config since it may load after us
+                let attempts = 0;
+                const maxAttempts = 50; // 5 seconds total
+                const checkStore = () => {
                     const store = window.Alpine?.store?.('trainer');
-                    if (store?.activeEnvironmentConfig && Object.keys(store.activeEnvironmentConfig).length > 0) {
+                    const config = store?.activeEnvironmentConfig;
+
+                    if (config && Object.keys(config).length > 0) {
+                        // Config is ready, sync and stop polling
+                        this.syncFromForm();
                         return;
                     }
-                    await new Promise(r => setTimeout(r, 100));
-                }
+
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStore, 100);
+                    }
+                };
+
+                // Start polling after a brief delay
+                setTimeout(checkStore, 100);
             },
 
             destroy() {
                 this._cleanupFns.forEach(fn => fn());
                 this._cleanupFns = [];
+            },
+
+            // Re-sync when environment changes
+            watchEnvironmentChanges() {
+                // Listen for environment load/switch events
+                const handler = () => {
+                    setTimeout(() => this.syncFromForm(), 100);
+                };
+                document.addEventListener('environment-loaded', handler);
+                document.addEventListener('environment-switched', handler);
+
+                // Also watch for HTMX config loads
+                const htmxHandler = (evt) => {
+                    if (evt.detail?.target?.id === 'model-tab-content') {
+                        setTimeout(() => this.syncFromForm(), 100);
+                    }
+                };
+                document.body.addEventListener('htmx:afterSettle', htmxHandler);
+
+                this._cleanupFns.push(() => {
+                    document.removeEventListener('environment-loaded', handler);
+                    document.removeEventListener('environment-switched', handler);
+                    document.body.removeEventListener('htmx:afterSettle', htmxHandler);
+                });
             },
 
             async loadModelFamilies() {
@@ -166,6 +210,83 @@ if (!window.hardwareHeroCTA) {
                 } catch (err) {
                     console.error('[EZ MODE] Failed to load flavours:', err);
                     this.modelFlavours = [];
+                }
+            },
+
+            async loadMemoryPresets(family) {
+                if (!family) {
+                    this.maxSwappableBlocks = null;
+                    this.ramtorchPresets = [];
+                    return;
+                }
+                this.memoryPresetsLoading = true;
+                try {
+                    const response = await fetch(`/api/models/${encodeURIComponent(family)}/acceleration-presets`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.maxSwappableBlocks = data.max_swappable_blocks;
+                        // Extract RamTorch presets
+                        this.ramtorchPresets = (data.presets || []).filter(p => p.backend === 'RAMTORCH');
+                    } else {
+                        this.maxSwappableBlocks = null;
+                        this.ramtorchPresets = [];
+                    }
+                } catch (err) {
+                    console.error('[EZ MODE] Failed to load memory presets:', err);
+                    this.maxSwappableBlocks = null;
+                    this.ramtorchPresets = [];
+                } finally {
+                    this.memoryPresetsLoading = false;
+                }
+            },
+
+            get supportsBlockSwap() {
+                return this.maxSwappableBlocks !== null && this.maxSwappableBlocks > 0;
+            },
+
+            getBlockSwapPercentage(blocks) {
+                if (!this.maxSwappableBlocks || this.maxSwappableBlocks <= 0) return 0;
+                return Math.round((blocks / this.maxSwappableBlocks) * 100);
+            },
+
+            getBlocksForPercentage(percent) {
+                if (!this.maxSwappableBlocks || this.maxSwappableBlocks <= 0) return 0;
+                return Math.round((percent / 100) * this.maxSwappableBlocks);
+            },
+
+            onBlockSwapSlider(sliderValue) {
+                const percent = parseInt(sliderValue) || 0;
+                const blocks = this.getBlocksForPercentage(percent);
+                this.musubi_blocks_to_swap = blocks;
+                this.updateFormField('musubi_blocks_to_swap', blocks);
+                if (blocks > 0 && this.ramtorch) {
+                    this.ramtorch = false;
+                    this.ramtorch_preset = 'off';
+                    this.updateFormField('ramtorch', false);
+                }
+            },
+
+            onRamtorchPresetChange(preset) {
+                this.ramtorch_preset = preset;
+                if (preset === 'off') {
+                    this.ramtorch = false;
+                    this.updateFormField('ramtorch', false);
+                    this.updateFormField('ramtorch_target_modules', '');
+                } else {
+                    // Find the preset config
+                    const presetData = this.ramtorchPresets.find(p => p.level === preset);
+                    if (presetData?.config) {
+                        this.ramtorch = true;
+                        this.updateFormField('ramtorch', true);
+                        if (presetData.config.ramtorch_target_modules) {
+                            this.updateFormField('ramtorch_target_modules', presetData.config.ramtorch_target_modules);
+                        }
+                    }
+                    // Clear block swap when using RamTorch
+                    if (this.musubi_blocks_to_swap > 0) {
+                        this.musubi_blocks_to_swap = 0;
+                        this.updateFormField('musubi_blocks_to_swap', 0);
+                    }
                 }
             },
 
@@ -212,7 +333,10 @@ if (!window.hardwareHeroCTA) {
                     }
                 }
 
-                if (this.model_family) this.loadModelFlavours(this.model_family);
+                if (this.model_family) {
+                    this.loadModelFlavours(this.model_family);
+                    this.loadMemoryPresets(this.model_family);
+                }
             },
 
             setupFormWatchers() {
@@ -274,29 +398,62 @@ if (!window.hardwareHeroCTA) {
                 this.model_flavour = '';
                 this.updateFormField('model_family', value);
                 this.loadModelFlavours(value);
+                this.loadMemoryPresets(value);
             },
             onModelFlavourChange(value) { this.model_flavour = value; this.updateFormField('model_flavour', value); },
             onModelTypeChange(value) { this.model_type = value; this.updateFormField('model_type', value); },
+            // LoRA rank uses powers of 2: [2, 4, 8, 16, 32, 64, 128, 256]
+            loraRankValues: [2, 4, 8, 16, 32, 64, 128, 256],
+
+            loraRankToSlider(rank) {
+                const idx = this.loraRankValues.indexOf(rank);
+                return idx >= 0 ? idx : 3; // Default to 16 (index 3)
+            },
+
+            onLoraRankSlider(sliderValue) {
+                const rank = this.loraRankValues[parseInt(sliderValue)] || 16;
+                this.lora_rank = rank;
+                this.updateFormField('lora_rank', rank);
+            },
+
             onLoraRankChange(value) { const v = parseInt(value) || 16; this.lora_rank = v; this.updateFormField('lora_rank', v); },
             onVaeTilingChange(c) { this.vae_enable_tiling = c; this.updateFormField('vae_enable_tiling', c); },
             onVaeSlicingChange(c) { this.vae_enable_slicing = c; this.updateFormField('vae_enable_slicing', c); },
             onVaeBatchSizeChange(v) { const n = parseInt(v) || 4; this.vae_batch_size = n; this.updateFormField('vae_batch_size', n); },
             onGradientCheckpointingChange(c) { this.gradient_checkpointing = c; this.updateFormField('gradient_checkpointing', c); },
-            onRamtorchChange(c) {
-                this.ramtorch = c; this.updateFormField('ramtorch', c);
-                if (c && this.musubi_blocks_to_swap > 0) {
-                    this.musubi_blocks_to_swap = 0; this.updateFormField('musubi_blocks_to_swap', 0);
-                }
-            },
-            onMusubiBlocksChange(v) {
-                const n = parseInt(v) || 0; this.musubi_blocks_to_swap = n; this.updateFormField('musubi_blocks_to_swap', n);
-                if (n > 0 && this.ramtorch) { this.ramtorch = false; this.updateFormField('ramtorch', false); }
-            },
             onUseEmaChange(c) { this.use_ema = c; this.updateFormField('use_ema', c); },
             onBaseModelPrecisionChange(v) { this.base_model_precision = v; this.updateFormField('base_model_precision', v); },
             onTextEncoderPrecisionChange(v) { this.text_encoder_1_precision = v; this.updateFormField('text_encoder_1_precision', v); },
 
             openMemoryPresets() { window.openMemoryPresetsModal?.(); },
+
+            resetToDefaults() {
+                // Default values for EZ mode fields
+                const defaults = {
+                    model_type: 'lora',
+                    lora_rank: 16,
+                    vae_enable_tiling: false,
+                    vae_enable_slicing: false,
+                    vae_batch_size: 4,
+                    gradient_checkpointing: true,
+                    ramtorch: false,
+                    musubi_blocks_to_swap: 0,
+                    use_ema: false,
+                    base_model_precision: 'no_change',
+                    text_encoder_1_precision: 'no_change'
+                };
+
+                // Apply defaults (keep model_family and model_flavour as they are)
+                for (const [key, value] of Object.entries(defaults)) {
+                    this[key] = value;
+                    this.updateFormField(key, value);
+                }
+                // Reset local-only state
+                this.ramtorch_preset = 'off';
+                this.updateFormField('ramtorch_target_modules', '');
+
+                window.showToast?.('Settings reset to defaults', 'success');
+            },
 
             get isLoraMode() { return this.model_type === 'lora'; },
             get hasModelFamily() { return Boolean(this.model_family); }
@@ -429,7 +586,7 @@ if (!window.hardwareHeroCTA) {
     <div x-show="!showHeroCTA()" x-cloak>
     {% elif tab_name == 'model' %}
     <!-- Model EZ Mode Hero -->
-    <div x-show="showEzMode()" x-cloak class="model-ez-mode-hero mb-4"
+    <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
          x-transition:leave="transition ease-in duration-200"
          x-transition:leave-start="opacity-100"
          x-transition:leave-end="opacity-0">
@@ -460,193 +617,333 @@ if (!window.hardwareHeroCTA) {
 
             <!-- EZ Mode Form -->
             <div x-show="!loading" class="ez-mode-form mt-4">
-                <!-- Row 1: Model Selection -->
-                <div class="ez-mode-section">
-                    <h6 class="ez-mode-section-title"><i class="fas fa-sitemap me-2"></i>Model Selection</h6>
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <label class="form-label">Model Family</label>
-                            <select class="form-select form-select-sm"
-                                    x-model="model_family"
-                                    @change="onModelFamilyChange($event.target.value)">
-                                <option value="">Select a family...</option>
-                                <template x-for="fam in modelFamilies" :key="fam.value">
-                                    <option :value="fam.value" x-text="fam.label" :selected="fam.value === model_family"></option>
-                                </template>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Model Variant</label>
-                            <select class="form-select form-select-sm"
-                                    x-model="model_flavour"
-                                    @change="onModelFlavourChange($event.target.value)"
-                                    :disabled="modelFlavours.length === 0">
-                                <option value="">Select a variant...</option>
-                                <template x-for="flav in modelFlavours" :key="flav">
-                                    <option :value="flav" x-text="flav" :selected="flav === model_flavour"></option>
-                                </template>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Training Type</label>
-                            <select class="form-select form-select-sm"
-                                    x-model="model_type"
-                                    @change="onModelTypeChange($event.target.value)">
-                                <option value="lora">LoRA (Recommended)</option>
-                                <option value="full">Full Model</option>
-                            </select>
+
+                <!-- Step 1: Choose Your Model -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">1</span>
+                        <span class="ez-step-title">Choose Your Model</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Model Family</label>
+                                <select class="form-select"
+                                        x-model="model_family"
+                                        @change="onModelFamilyChange($event.target.value)">
+                                    <option value="">Select a model family...</option>
+                                    <template x-for="fam in modelFamilies" :key="fam.value">
+                                        <option :value="fam.value" x-text="fam.label" :selected="fam.value === model_family"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Variant</label>
+                                <select class="form-select"
+                                        x-model="model_flavour"
+                                        @change="onModelFlavourChange($event.target.value)"
+                                        :disabled="modelFlavours.length === 0">
+                                    <option value="">Select a variant...</option>
+                                    <template x-for="flav in modelFlavours" :key="flav">
+                                        <option :value="flav" x-text="flav" :selected="flav === model_flavour"></option>
+                                    </template>
+                                </select>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Row 2: LoRA Config (conditional) + VAE Options -->
-                <div class="ez-mode-section">
-                    <h6 class="ez-mode-section-title"><i class="fas fa-sliders-h me-2"></i>Training Options</h6>
-                    <div class="row g-3">
+                <!-- Step 2: Training Approach -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">2</span>
+                        <span class="ez-step-title">Training Approach</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <!-- Compact choice cards -->
+                        <div class="ez-compact-choice-grid">
+                            <label class="ez-compact-choice" :class="{ 'selected': model_type === 'lora' }">
+                                <input type="radio" name="ez_model_type" value="lora"
+                                       x-model="model_type" @change="onModelTypeChange('lora')" class="d-none">
+                                <i class="fas fa-feather ez-compact-icon"></i>
+                                <span class="ez-compact-label">LoRA</span>
+                                <span class="ez-compact-badge">Recommended</span>
+                            </label>
+                            <label class="ez-compact-choice" :class="{ 'selected': model_type === 'full' }">
+                                <input type="radio" name="ez_model_type" value="full"
+                                       x-model="model_type" @change="onModelTypeChange('full')" class="d-none">
+                                <i class="fas fa-cube ez-compact-icon"></i>
+                                <span class="ez-compact-label">Full Model</span>
+                                <span class="ez-compact-badge warning">Advanced</span>
+                            </label>
+                        </div>
+                        <div class="ez-choice-explanation" x-show="model_type === 'lora'" x-cloak>
+                            <i class="fas fa-info-circle text-info me-1"></i>
+                            Train a small adapter that modifies the base model. Uses far less memory and is ideal for most use cases.
+                        </div>
+                        <div class="ez-choice-explanation" x-show="model_type === 'full'" x-cloak>
+                            <i class="fas fa-exclamation-triangle text-warning me-1"></i>
+                            Train all model weights. Requires significant VRAM and aggressive memory optimization. Very costly on cloud.
+                        </div>
+
                         <!-- LoRA Rank (only for LoRA) -->
-                        <div class="col-md-3" x-show="isLoraMode" x-cloak>
-                            <label class="form-label">LoRA Rank</label>
-                            <input type="number" class="form-control form-control-sm"
-                                   x-model.number="lora_rank"
-                                   @change="onLoraRankChange($event.target.value)"
-                                   min="1" max="256" step="1">
-                            <div class="form-text">4-32 for style, 64-128 for concepts</div>
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label">VAE Batch Size</label>
-                            <input type="number" class="form-control form-control-sm"
-                                   x-model.number="vae_batch_size"
-                                   @change="onVaeBatchSizeChange($event.target.value)"
-                                   min="1" max="32">
-                        </div>
-                        <div class="col-md-3">
-                            <div class="form-check mt-4">
-                                <input type="checkbox" class="form-check-input" id="ez_vae_tiling"
-                                       x-model="vae_enable_tiling"
-                                       @change="onVaeTilingChange($event.target.checked)">
-                                <label class="form-check-label" for="ez_vae_tiling">VAE Tiling</label>
+                        <div class="ez-lora-rank-section mt-3" x-show="isLoraMode" x-cloak>
+                            <div class="ez-inline-option">
+                                <div class="ez-inline-label">
+                                    <strong>LoRA Rank</strong>
+                                </div>
+                                <div class="ez-rank-slider">
+                                    <input type="range" class="form-range"
+                                           :value="loraRankToSlider(lora_rank)"
+                                           @input="onLoraRankSlider($event.target.value)"
+                                           min="0" max="7" step="1">
+                                    <span class="ez-rank-value" x-text="lora_rank"></span>
+                                </div>
                             </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="form-check mt-4">
-                                <input type="checkbox" class="form-check-input" id="ez_vae_slicing"
-                                       x-model="vae_enable_slicing"
-                                       @change="onVaeSlicingChange($event.target.checked)">
-                                <label class="form-check-label" for="ez_vae_slicing">VAE Slicing</label>
+                            <div class="ez-rank-explanation">
+                                <p><strong>Lower ranks (4-32)</strong> are best for style transfer and simple concepts. Train faster with less data.</p>
+                                <p><strong>Higher ranks (64-128)</strong> can learn more complex concepts but require more training steps, more data, and higher batch sizes to converge properly.</p>
+                                <p class="mb-0 text-muted"><i class="fas fa-lightbulb me-1"></i>If changing rank without adjusting other settings: lower the learning rate for higher ranks, raise it for lower ranks.</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Row 3: Memory Optimization -->
-                <div class="ez-mode-section">
-                    <h6 class="ez-mode-section-title"><i class="fas fa-memory me-2"></i>Memory Optimization</h6>
-                    <div class="row g-3 align-items-center">
-                        <div class="col-md-3">
-                            <div class="form-check">
-                                <input type="checkbox" class="form-check-input" id="ez_grad_ckpt"
-                                       x-model="gradient_checkpointing"
-                                       @change="onGradientCheckpointingChange($event.target.checked)">
-                                <label class="form-check-label" for="ez_grad_ckpt">Gradient Checkpointing</label>
+                <!-- Step 3: Memory Optimization -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">3</span>
+                        <span class="ez-step-title">Memory Optimization</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <!-- Prominent Use Presets CTA -->
+                        <div class="ez-presets-cta" @click="openMemoryPresets()">
+                            <div class="ez-presets-cta-icon">
+                                <i class="fas fa-magic"></i>
                             </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="form-check">
-                                <input type="checkbox" class="form-check-input" id="ez_ramtorch"
-                                       x-model="ramtorch"
-                                       @change="onRamtorchChange($event.target.checked)">
-                                <label class="form-check-label" for="ez_ramtorch">RamTorch</label>
+                            <div class="ez-presets-cta-content">
+                                <div class="ez-presets-cta-title">Use Memory Presets</div>
+                                <div class="ez-presets-cta-desc">
+                                    Not sure where to start? Presets automatically configure optimal settings based on your model and available hardware.
+                                </div>
                             </div>
+                            <i class="fas fa-chevron-right ez-presets-cta-arrow"></i>
                         </div>
-                        <div class="col-md-3">
-                            <label class="form-label mb-1">Block Swap</label>
-                            <input type="number" class="form-control form-control-sm"
-                                   x-model.number="musubi_blocks_to_swap"
-                                   @change="onMusubiBlocksChange($event.target.value)"
-                                   min="0" max="100">
+
+                        <div class="ez-section-divider">
+                            <span>Or configure manually</span>
                         </div>
-                        <div class="col-md-3">
-                            <button type="button" class="btn btn-sm btn-outline-light w-100"
-                                    @click="openMemoryPresets()">
-                                <i class="fas fa-magic me-1"></i>Memory Presets
-                            </button>
+
+                        <div class="ez-option-list">
+                            <!-- Gradient Checkpointing -->
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_grad_ckpt"
+                                           x-model="gradient_checkpointing"
+                                           @change="onGradientCheckpointingChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_grad_ckpt">
+                                    <div class="ez-option-name">Gradient Checkpointing</div>
+                                    <div class="ez-option-desc">Recomputes activations during backward pass. Saves VRAM at the cost of ~20% slower training. <strong>Recommended for most setups.</strong></div>
+                                </label>
+                            </div>
+
+                            <!-- RamTorch with presets -->
+                            <div class="ez-option-row ez-option-expandable">
+                                <div class="ez-option-info flex-grow-1">
+                                    <div class="ez-option-name">RamTorch</div>
+                                    <div class="ez-option-desc"><strong>Streams</strong> model weights from system RAM during forward/backward pass. Fast but requires substantial system memory (64GB+ recommended).</div>
+                                </div>
+                                <div class="ez-option-select">
+                                    <select class="form-select form-select-sm" style="width: 130px;"
+                                            x-model="ramtorch_preset"
+                                            @change="onRamtorchPresetChange($event.target.value)"
+                                            :disabled="!hasModelFamily">
+                                        <option value="off">Off</option>
+                                        <template x-for="preset in ramtorchPresets" :key="preset.level">
+                                            <option :value="preset.level" x-text="preset.name"></option>
+                                        </template>
+                                        <template x-if="ramtorchPresets.length === 0 && hasModelFamily && !memoryPresetsLoading">
+                                            <option value="basic" disabled>No presets available</option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="ez-ramtorch-hint" x-show="ramtorch_preset !== 'off'" x-cloak>
+                                <template x-if="ramtorchPresets.find(p => p.level === ramtorch_preset)">
+                                    <div>
+                                        <i class="fas fa-info-circle text-info me-1"></i>
+                                        <span x-text="ramtorchPresets.find(p => p.level === ramtorch_preset)?.description"></span>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Block Swap with slider -->
+                            <div class="ez-option-row ez-option-expandable" x-show="supportsBlockSwap" x-cloak>
+                                <div class="ez-option-info flex-grow-1">
+                                    <div class="ez-option-name">Block Swap</div>
+                                    <div class="ez-option-desc"><strong>Moves</strong> transformer blocks to CPU memory. Uses less system RAM than RamTorch but adds latency per block.</div>
+                                </div>
+                            </div>
+                            <div class="ez-block-swap-slider" x-show="supportsBlockSwap" x-cloak>
+                                <div class="ez-block-swap-header">
+                                    <span class="ez-block-swap-label">Offload Amount</span>
+                                    <span class="ez-block-swap-value">
+                                        <span x-text="musubi_blocks_to_swap"></span>/<span x-text="maxSwappableBlocks"></span> blocks
+                                        (<span x-text="getBlockSwapPercentage(musubi_blocks_to_swap)"></span>%)
+                                    </span>
+                                </div>
+                                <input type="range" class="form-range ez-block-swap-range"
+                                       :value="getBlockSwapPercentage(musubi_blocks_to_swap)"
+                                       @input="onBlockSwapSlider($event.target.value)"
+                                       min="0" max="100" step="5">
+                                <div class="ez-block-swap-presets">
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) === 0 }"
+                                            @click="onBlockSwapSlider(0)">None</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) >= 18 && getBlockSwapPercentage(musubi_blocks_to_swap) <= 22 }"
+                                            @click="onBlockSwapSlider(20)">20%</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) >= 48 && getBlockSwapPercentage(musubi_blocks_to_swap) <= 52 }"
+                                            @click="onBlockSwapSlider(50)">50%</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) >= 78 && getBlockSwapPercentage(musubi_blocks_to_swap) <= 82 }"
+                                            @click="onBlockSwapSlider(80)">80%</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) === 100 }"
+                                            @click="onBlockSwapSlider(100)">100%</button>
+                                </div>
+                                <div class="ez-block-swap-hint">
+                                    <i class="fas fa-lightbulb text-warning me-1"></i>
+                                    <strong>20%</strong> for light offload, <strong>50%</strong> for balanced, <strong>80-100%</strong> for maximum VRAM savings (slowest).
+                                </div>
+                            </div>
+                            <div class="ez-option-row ez-option-subtle" x-show="!supportsBlockSwap && hasModelFamily && !memoryPresetsLoading" x-cloak>
+                                <div class="ez-option-info">
+                                    <div class="ez-option-name text-muted">Block Swap</div>
+                                    <div class="ez-option-desc text-muted">Not available for this model architecture.</div>
+                                </div>
+                            </div>
+
+                            <!-- VAE Options -->
+                            <div class="ez-vae-section">
+                                <div class="ez-option-name mb-2">VAE Options</div>
+                                <div class="ez-vae-grid">
+                                    <div class="ez-vae-item">
+                                        <div class="d-flex gap-3 mb-1">
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" id="ez_vae_tiling"
+                                                       x-model="vae_enable_tiling"
+                                                       @change="onVaeTilingChange($event.target.checked)">
+                                                <label class="form-check-label" for="ez_vae_tiling">Tiling</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" id="ez_vae_slicing"
+                                                       x-model="vae_enable_slicing"
+                                                       @change="onVaeSlicingChange($event.target.checked)">
+                                                <label class="form-check-label" for="ez_vae_slicing">Slicing</label>
+                                            </div>
+                                        </div>
+                                        <div class="ez-option-desc">Only enable if you get OOM errors during pre-caching. Mostly needed for high resolutions or video models.</div>
+                                    </div>
+                                    <div class="ez-vae-item">
+                                        <div class="d-flex align-items-center gap-2 mb-1">
+                                            <label class="form-check-label" for="ez_vae_batch">Batch Size</label>
+                                            <input type="number" class="form-control form-control-sm" id="ez_vae_batch"
+                                                   x-model.number="vae_batch_size"
+                                                   @change="onVaeBatchSizeChange($event.target.value)"
+                                                   min="1" max="32" style="width: 60px;">
+                                        </div>
+                                        <div class="ez-option-desc">How many images to process at once during VAE caching. Higher = faster but uses more VRAM. Reducing this has no impact on quality. For most datasets, 1 is fine.</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Row 4: Quantization (LoRA only) + EMA -->
-                <div class="ez-mode-section" x-show="isLoraMode" x-cloak>
-                    <h6 class="ez-mode-section-title"><i class="fas fa-compress-arrows-alt me-2"></i>Quantization</h6>
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <label class="form-label">Base Model Precision</label>
-                            <select class="form-select form-select-sm"
-                                    x-model="base_model_precision"
-                                    @change="onBaseModelPrecisionChange($event.target.value)">
-                                <option value="no_change">No Change</option>
-                                <option value="int8-quanto">INT8 (Quanto)</option>
-                                <option value="int4-quanto">INT4 (Quanto)</option>
-                                <option value="int8-torchao">INT8 (TorchAO)</option>
-                                <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
-                                <option value="int8-sdnq">INT8 (SDNQ)</option>
-                                <option value="uint8-sdnq">UINT8 (SDNQ)</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label">Text Encoder Precision</label>
-                            <select class="form-select form-select-sm"
-                                    x-model="text_encoder_1_precision"
-                                    @change="onTextEncoderPrecisionChange($event.target.value)">
-                                <option value="no_change">No Change</option>
-                                <option value="int8-quanto">INT8 (Quanto)</option>
-                                <option value="int4-quanto">INT4 (Quanto)</option>
-                                <option value="int8-torchao">INT8 (TorchAO)</option>
-                                <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
-                                <option value="int8-sdnq">INT8 (SDNQ)</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="form-check mt-4">
-                                <input type="checkbox" class="form-check-input" id="ez_use_ema"
-                                       x-model="use_ema"
-                                       @change="onUseEmaChange($event.target.checked)">
-                                <label class="form-check-label" for="ez_use_ema">Use EMA</label>
+                <!-- Step 4: Quantization (LoRA only) -->
+                <div class="ez-step" x-show="isLoraMode" x-cloak>
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">4</span>
+                        <span class="ez-step-title">Quantization</span>
+                        <span class="ez-step-subtitle">Reduce precision to save VRAM</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="row g-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Base Model</label>
+                                <select class="form-select"
+                                        x-model="base_model_precision"
+                                        @change="onBaseModelPrecisionChange($event.target.value)">
+                                    <option value="no_change">No Change</option>
+                                    <option value="int8-quanto">INT8 (Quanto)</option>
+                                    <option value="int4-quanto">INT4 (Quanto)</option>
+                                    <option value="int8-torchao">INT8 (TorchAO)</option>
+                                    <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
+                                    <option value="int8-sdnq">INT8 (SDNQ)</option>
+                                    <option value="uint8-sdnq">UINT8 (SDNQ)</option>
+                                </select>
+                                <div class="ez-field-hint">Quantizing the base model has moderate quality impact but saves significant VRAM.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Text Encoder</label>
+                                <select class="form-select" :class="{ 'border-warning': text_encoder_1_precision !== 'no_change' }"
+                                        x-model="text_encoder_1_precision"
+                                        @change="onTextEncoderPrecisionChange($event.target.value)">
+                                    <option value="no_change">No Change</option>
+                                    <option value="int8-quanto">INT8 (Quanto)</option>
+                                    <option value="int4-quanto">INT4 (Quanto)</option>
+                                    <option value="int8-torchao">INT8 (TorchAO)</option>
+                                    <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
+                                    <option value="int8-sdnq">INT8 (SDNQ)</option>
+                                </select>
+                                <div class="ez-field-hint" x-show="text_encoder_1_precision === 'no_change'">
+                                    <i class="fas fa-shield-alt text-success me-1"></i>Text encoder quantization has the <strong>highest quality impact</strong>. Only needed for very large encoders (Mistral, Llama).
+                                </div>
+                                <div class="ez-field-hint text-warning" x-show="text_encoder_1_precision !== 'no_change'">
+                                    <i class="fas fa-exclamation-triangle me-1"></i>Warning: Text encoder quantization significantly affects output quality. Only recommended for very large encoders.
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Full Model: EMA toggle -->
-                <div class="ez-mode-section" x-show="!isLoraMode" x-cloak>
-                    <h6 class="ez-mode-section-title"><i class="fas fa-chart-line me-2"></i>Training Enhancements</h6>
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <div class="form-check">
-                                <input type="checkbox" class="form-check-input" id="ez_use_ema_full"
-                                       x-model="use_ema"
-                                       @change="onUseEmaChange($event.target.checked)">
-                                <label class="form-check-label" for="ez_use_ema_full">Use EMA (Exponential Moving Average)</label>
+                <!-- Step 5: Extras -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number" x-text="isLoraMode ? '5' : '4'"></span>
+                        <span class="ez-step-title">Training Enhancements</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="ez-option-list">
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_use_ema"
+                                           x-model="use_ema"
+                                           @change="onUseEmaChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_use_ema">
+                                    <div class="ez-option-name">EMA (Exponential Moving Average)</div>
+                                    <div class="ez-option-desc">Maintains a smoothed copy of weights for more stable training and often better final results. Uses additional memory.</div>
+                                </label>
                             </div>
                         </div>
                     </div>
                 </div>
+
             </div>
 
-                <!-- Footer -->
-                <div class="ez-mode-footer mt-4 d-flex justify-content-between align-items-center">
-                    <div class="text-muted small">
-                        <i class="fas fa-info-circle me-1"></i>
-                        For advanced options like LoRA targets, FSDP, and more, dismiss EZ Mode.
-                    </div>
-                    <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
-                        <i class="fas fa-cog me-1"></i>Show Full Form
-                    </button>
-                </div>
+            <!-- Footer -->
+            <div class="ez-mode-footer">
+                <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetToDefaults()">
+                    <i class="fas fa-undo me-1"></i>Reset to Defaults
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                    <i class="fas fa-sliders-h me-1"></i>Switch to Full Form
+                </button>
+            </div>
             </div>
         </div>
     </div>
 
-    <div x-show="!showEzMode()" x-cloak>
+    <div x-show="!hints.ez_mode" x-cloak>
     {% endif %}
 
     <!-- Tab Header -->
@@ -675,7 +972,7 @@ if (!window.hardwareHeroCTA) {
                 {% elif tab_name == 'model' %}
                 <button type="button"
                         class="btn btn-outline-secondary"
-                        x-show="!showEzMode()"
+                        x-show="!hints.ez_mode"
                         x-cloak
                         @click="restoreEzMode()"
                         title="Show EZ Mode"

@@ -1,48 +1,618 @@
 /**
  * Model EZ Mode Styling
- * Extends hero-cta.css with EZ mode form-specific styles
+ * A clean, step-based wizard interface for model configuration
  */
 
-/* EZ Mode Form Container */
+/* ========================================
+   EZ Mode Form Container
+   ======================================== */
 .ez-mode-form {
-    padding: 0 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
 }
 
-/* Section styling */
-.ez-mode-section {
+/* ========================================
+   Step Cards
+   ======================================== */
+.ez-step {
     background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(148, 163, 184, 0.12);
     border-radius: 12px;
-    padding: 1rem 1.25rem;
-    margin-bottom: 1rem;
-    border: 1px solid rgba(148, 163, 184, 0.1);
+    overflow: hidden;
 }
 
-.ez-mode-section:last-child {
-    margin-bottom: 0;
-}
-
-.ez-mode-section-title {
-    color: #e2e8f0;
-    font-size: 0.9rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
+.ez-step-header {
     display: flex;
     align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1.25rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
 }
 
-.ez-mode-section-title i {
+.ez-step-number {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    background: linear-gradient(135deg, #7e22ce 0%, #4f46e5 100%);
+    color: white;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.ez-step-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #f1f5f9;
+}
+
+.ez-step-subtitle {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    margin-left: 0.5rem;
+}
+
+.ez-step-content {
+    padding: 1.25rem;
+}
+
+/* ========================================
+   Choice Cards (LoRA vs Full)
+   ======================================== */
+.ez-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+}
+
+.ez-choice-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 1.25rem;
+    background: rgba(30, 41, 59, 0.5);
+    border: 2px solid rgba(148, 163, 184, 0.15);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ez-choice-card:hover {
+    background: rgba(30, 41, 59, 0.7);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+.ez-choice-card.selected {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: #6366f1;
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.3);
+}
+
+.ez-choice-icon {
+    font-size: 1.5rem;
+    color: #a78bfa;
+    margin-bottom: 0.75rem;
+}
+
+.ez-choice-card.selected .ez-choice-icon {
+    color: #818cf8;
+}
+
+.ez-choice-label {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin-bottom: 0.25rem;
+}
+
+.ez-choice-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border-radius: 4px;
+    margin-bottom: 0.75rem;
+    width: fit-content;
+}
+
+.ez-choice-badge.warning {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+}
+
+.ez-choice-desc {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    line-height: 1.5;
+}
+
+/* ========================================
+   Compact Choice Cards (LoRA vs Full)
+   ======================================== */
+.ez-compact-choice-grid {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.ez-compact-choice {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: rgba(30, 41, 59, 0.5);
+    border: 2px solid rgba(148, 163, 184, 0.15);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex: 1;
+    min-width: 140px;
+    max-width: 200px;
+}
+
+.ez-compact-choice:hover {
+    background: rgba(30, 41, 59, 0.7);
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+.ez-compact-choice.selected {
+    background: rgba(99, 102, 241, 0.1);
+    border-color: #6366f1;
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.3);
+}
+
+.ez-compact-icon {
+    font-size: 1rem;
     color: #a78bfa;
 }
 
-/* Form labels in EZ mode */
+.ez-compact-choice.selected .ez-compact-icon {
+    color: #818cf8;
+}
+
+.ez-compact-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #f1f5f9;
+}
+
+.ez-compact-badge {
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 0.1rem 0.35rem;
+    background: rgba(34, 197, 94, 0.2);
+    color: #4ade80;
+    border-radius: 3px;
+    margin-left: auto;
+}
+
+.ez-compact-badge.warning {
+    background: rgba(245, 158, 11, 0.2);
+    color: #fbbf24;
+}
+
+.ez-choice-explanation {
+    margin-top: 0.75rem;
+    padding: 0.6rem 0.875rem;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    background: rgba(30, 41, 59, 0.3);
+    border-radius: 6px;
+    line-height: 1.45;
+}
+
+/* ========================================
+   Presets CTA
+   ======================================== */
+.ez-presets-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.08) 100%);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-bottom: 1rem;
+    max-width: 50%;
+}
+
+.ez-presets-cta:hover {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.18) 0%, rgba(139, 92, 246, 0.12) 100%);
+    border-color: rgba(99, 102, 241, 0.4);
+}
+
+.ez-presets-cta-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    border-radius: 8px;
+    color: white;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+}
+
+.ez-presets-cta-content {
+    flex: 1;
+}
+
+.ez-presets-cta-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin-bottom: 0.15rem;
+}
+
+.ez-presets-cta-desc {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    line-height: 1.4;
+}
+
+.ez-presets-cta-arrow {
+    color: #6366f1;
+    font-size: 0.9rem;
+}
+
+/* ========================================
+   Section Divider
+   ======================================== */
+.ez-section-divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 1rem 0;
+    color: #64748b;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.ez-section-divider::before,
+.ez-section-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: rgba(148, 163, 184, 0.15);
+}
+
+/* ========================================
+   Block Swap Slider
+   ======================================== */
+.ez-block-swap-slider {
+    background: rgba(30, 41, 59, 0.3);
+    border-radius: 8px;
+    padding: 0.875rem 1rem;
+    margin-top: -0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.ez-block-swap-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.ez-block-swap-label {
+    font-size: 0.8rem;
+    color: #94a3b8;
+}
+
+.ez-block-swap-value {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #a5b4fc;
+    background: rgba(99, 102, 241, 0.15);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+}
+
+.ez-block-swap-range {
+    margin-bottom: 0.75rem;
+}
+
+.ez-block-swap-presets {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+}
+
+.ez-block-preset-btn {
+    flex: 1;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: #94a3b8;
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.ez-block-preset-btn:hover {
+    background: rgba(99, 102, 241, 0.15);
+    border-color: rgba(99, 102, 241, 0.3);
+    color: #c4b5fd;
+}
+
+.ez-block-preset-btn.active {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: #6366f1;
+    color: #a5b4fc;
+}
+
+.ez-block-swap-hint {
+    font-size: 0.72rem;
+    color: #64748b;
+    line-height: 1.4;
+}
+
+/* ========================================
+   RamTorch Hint
+   ======================================== */
+.ez-ramtorch-hint {
+    padding: 0.5rem 0.875rem;
+    margin-top: -0.25rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.78rem;
+    color: #94a3b8;
+    background: rgba(30, 41, 59, 0.2);
+    border-left: 2px solid rgba(99, 102, 241, 0.4);
+    border-radius: 0 6px 6px 0;
+}
+
+/* ========================================
+   Option Expandable
+   ======================================== */
+.ez-option-row.ez-option-expandable {
+    margin-bottom: 0;
+    border-radius: 8px 8px 0 0;
+}
+
+.ez-option-row.ez-option-expandable + .ez-block-swap-slider,
+.ez-option-row.ez-option-expandable + .ez-ramtorch-hint {
+    border-radius: 0 0 8px 8px;
+}
+
+.ez-option-select {
+    flex-shrink: 0;
+}
+
+/* ========================================
+   Inline Options (like LoRA Rank)
+   ======================================== */
+.ez-inline-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.875rem 1rem;
+    background: rgba(30, 41, 59, 0.4);
+    border-radius: 8px;
+    gap: 1rem;
+}
+
+.ez-inline-label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.ez-inline-label strong {
+    color: #e2e8f0;
+    font-size: 0.875rem;
+}
+
+.ez-inline-hint {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.ez-inline-input {
+    width: 80px !important;
+    text-align: center;
+}
+
+/* LoRA Rank Slider */
+.ez-rank-slider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 160px;
+}
+
+.ez-rank-slider .form-range {
+    flex: 1;
+    height: 6px;
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.ez-rank-slider .form-range::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+    background: linear-gradient(135deg, #7e22ce 0%, #6366f1 100%);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+.ez-rank-slider .form-range::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+}
+
+.ez-rank-slider .form-range::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: linear-gradient(135deg, #7e22ce 0%, #6366f1 100%);
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.ez-rank-value {
+    min-width: 36px;
+    padding: 0.25rem 0.5rem;
+    background: rgba(99, 102, 241, 0.2);
+    color: #a5b4fc;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: center;
+    border-radius: 6px;
+}
+
+/* LoRA Rank Section */
+.ez-lora-rank-section {
+    background: rgba(30, 41, 59, 0.4);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.ez-lora-rank-section .ez-inline-option {
+    background: transparent;
+    padding: 0;
+    margin-bottom: 0.75rem;
+}
+
+.ez-rank-explanation {
+    border-top: 1px solid rgba(148, 163, 184, 0.1);
+    padding-top: 0.75rem;
+}
+
+.ez-rank-explanation p {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    line-height: 1.5;
+    margin-bottom: 0.5rem;
+}
+
+.ez-rank-explanation p strong {
+    color: #cbd5e1;
+}
+
+.ez-rank-explanation .text-muted {
+    font-size: 0.72rem;
+    color: #64748b !important;
+}
+
+.ez-rank-explanation .fa-lightbulb {
+    color: #fbbf24;
+}
+
+/* ========================================
+   Option List (Memory, VAE, etc.)
+   ======================================== */
+.ez-option-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.ez-option-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 0.875rem 1rem;
+    background: rgba(30, 41, 59, 0.3);
+    border-radius: 8px;
+    transition: background 0.15s ease;
+}
+
+.ez-option-row:hover {
+    background: rgba(30, 41, 59, 0.5);
+}
+
+.ez-option-row.ez-option-subtle {
+    background: rgba(30, 41, 59, 0.15);
+    border: 1px dashed rgba(148, 163, 184, 0.15);
+}
+
+.ez-option-toggle,
+.ez-option-input {
+    flex-shrink: 0;
+    padding-top: 0.1rem;
+}
+
+.ez-option-toggles {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* VAE Options Section */
+.ez-vae-section {
+    padding: 0.875rem 1rem;
+    background: rgba(30, 41, 59, 0.15);
+    border: 1px dashed rgba(148, 163, 184, 0.15);
+    border-radius: 8px;
+}
+
+.ez-vae-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+.ez-vae-item {
+    padding: 0.5rem 0;
+}
+
+@media (max-width: 768px) {
+    .ez-vae-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.ez-option-info {
+    flex: 1;
+    cursor: pointer;
+}
+
+.ez-option-name {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #e2e8f0;
+    margin-bottom: 0.25rem;
+}
+
+.ez-option-desc {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    line-height: 1.45;
+}
+
+.ez-option-desc strong {
+    color: #cbd5e1;
+}
+
+/* ========================================
+   Form Controls
+   ======================================== */
 .ez-mode-form .form-label {
     color: #cbd5e1;
     font-size: 0.8rem;
     font-weight: 500;
-    margin-bottom: 0.35rem;
+    margin-bottom: 0.4rem;
 }
 
-/* Form controls styling */
 .ez-mode-form .form-control,
 .ez-mode-form .form-select {
     background: rgba(30, 41, 59, 0.8);
@@ -56,7 +626,7 @@
 .ez-mode-form .form-select:focus {
     background: rgba(30, 41, 59, 0.95);
     border-color: #a78bfa;
-    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.25);
+    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.2);
     color: #f8fafc;
 }
 
@@ -68,104 +638,103 @@
     cursor: not-allowed;
 }
 
-.ez-mode-form .form-control::placeholder {
-    color: #64748b;
+.ez-mode-form .form-select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
 }
 
-/* Number inputs */
-.ez-mode-form input[type="number"] {
-    -moz-appearance: textfield;
-}
-
-.ez-mode-form input[type="number"]::-webkit-outer-spin-button,
-.ez-mode-form input[type="number"]::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-}
-
-/* Form text hints */
-.ez-mode-form .form-text {
-    color: #64748b;
-    font-size: 0.7rem;
-    margin-top: 0.25rem;
+.ez-mode-form .form-control-sm {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.6rem;
 }
 
 /* Checkboxes */
-.ez-mode-form .form-check {
-    padding-left: 1.75em;
-}
-
 .ez-mode-form .form-check-input {
     background-color: rgba(30, 41, 59, 0.8);
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    width: 1.1em;
-    height: 1.1em;
-    margin-top: 0.2em;
+    border: 1.5px solid rgba(148, 163, 184, 0.4);
+    width: 1.15em;
+    height: 1.15em;
+    cursor: pointer;
 }
 
 .ez-mode-form .form-check-input:checked {
-    background-color: #a78bfa;
-    border-color: #a78bfa;
+    background-color: #7c3aed;
+    border-color: #7c3aed;
 }
 
 .ez-mode-form .form-check-input:focus {
     border-color: #a78bfa;
-    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.25);
+    box-shadow: 0 0 0 0.2rem rgba(167, 139, 250, 0.2);
 }
 
 .ez-mode-form .form-check-label {
     color: #e2e8f0;
     font-size: 0.85rem;
+    cursor: pointer;
 }
 
-/* Select dropdown arrow color fix */
-.ez-mode-form .form-select {
-    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+/* Field hints */
+.ez-field-hint {
+    font-size: 0.75rem;
+    color: #94a3b8;
+    margin-top: 0.5rem;
+    line-height: 1.4;
 }
 
-/* Buttons */
-.ez-mode-form .btn-outline-light {
+.ez-field-hint.text-warning {
+    color: #fbbf24 !important;
+}
+
+.ez-field-hint strong {
+    color: #cbd5e1;
+}
+
+.ez-field-hint .text-success {
+    color: #4ade80 !important;
+}
+
+/* Warning border for dangerous options */
+.ez-mode-form .form-select.border-warning {
+    border-color: #f59e0b !important;
+}
+
+/* ========================================
+   Footer
+   ======================================== */
+.ez-mode-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding-top: 1rem;
+    margin-top: 0.5rem;
+    border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.ez-mode-footer .btn-outline-secondary {
+    color: #94a3b8;
+    border-color: rgba(148, 163, 184, 0.3);
+}
+
+.ez-mode-footer .btn-outline-secondary:hover {
+    background: rgba(148, 163, 184, 0.1);
+    color: #cbd5e1;
+}
+
+.ez-mode-footer .btn-outline-light {
     color: #e2e8f0;
     border-color: rgba(148, 163, 184, 0.35);
-    background: transparent;
-    transition: all 0.2s ease;
 }
 
-.ez-mode-form .btn-outline-light:hover {
+.ez-mode-footer .btn-outline-light:hover {
     background: rgba(148, 163, 184, 0.15);
-    border-color: rgba(148, 163, 184, 0.5);
     color: #f8fafc;
 }
 
-/* Footer styling */
-.ez-mode-footer {
-    border-top: 1px solid rgba(148, 163, 184, 0.15);
-    padding-top: 1rem;
-    margin-top: 1rem;
-}
-
-.ez-mode-footer .text-muted {
-    color: #94a3b8 !important;
-}
-
-/* Hero CTA header adjustments for EZ mode */
-.model-ez-mode-hero .hero-cta-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 1rem;
-}
-
-.model-ez-mode-hero .hero-cta-content {
-    flex: 1;
-}
-
-.model-ez-mode-hero .btn-close {
-    margin-top: 0.25rem;
-}
-
-/* EZ Mode hero overrides for left-aligned layout */
+/* ========================================
+   Hero Header Adjustments
+   ======================================== */
 .model-ez-mode-hero .hero-cta {
     text-align: left;
+    padding: 1.75rem 2rem 1.5rem;
 }
 
 .model-ez-mode-hero .hero-content {
@@ -173,63 +742,132 @@
 }
 
 .model-ez-mode-hero .hero-icon {
-    width: 60px;
-    height: 60px;
-    font-size: 1.5rem;
+    width: 52px;
+    height: 52px;
+    font-size: 1.35rem;
     margin: 0;
 }
 
 .model-ez-mode-hero .hero-title {
-    font-size: 1.25rem;
-    margin-bottom: 0.5rem;
+    font-size: 1.15rem;
+    margin-bottom: 0.35rem;
 }
 
 .model-ez-mode-hero .hero-description {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     margin-bottom: 0;
+    color: #94a3b8;
 }
 
-/* Responsive adjustments */
+/* ========================================
+   Responsive
+   ======================================== */
 @media (max-width: 768px) {
-    .ez-mode-section {
-        padding: 0.75rem 1rem;
+    .ez-choice-grid {
+        grid-template-columns: 1fr;
     }
 
-    .ez-mode-section-title {
-        font-size: 0.85rem;
+    .ez-compact-choice-grid {
+        flex-direction: column;
     }
 
-    .ez-mode-form .form-label {
-        font-size: 0.75rem;
+    .ez-compact-choice {
+        max-width: none;
     }
 
-    .ez-mode-form .form-control,
-    .ez-mode-form .form-select {
-        font-size: 0.8rem;
+    .ez-presets-cta {
+        max-width: 100%;
+        width: 100%;
+    }
+
+    .ez-step-header {
+        flex-wrap: wrap;
+    }
+
+    .ez-step-header .btn {
+        width: 100%;
+        margin-top: 0.5rem;
+    }
+
+    .ez-inline-option {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ez-inline-input {
+        width: 100% !important;
+    }
+
+    .ez-option-row {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .ez-option-row.ez-option-expandable {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .ez-option-select {
+        width: 100%;
+    }
+
+    .ez-option-select .form-select {
+        width: 100% !important;
+    }
+
+    .ez-block-swap-presets {
+        flex-wrap: wrap;
+    }
+
+    .ez-block-preset-btn {
+        flex: 0 0 calc(33.33% - 0.3rem);
+    }
+
+    .ez-option-row.ez-option-subtle {
+        flex-direction: column;
+    }
+
+    .ez-option-toggles {
+        flex-wrap: wrap;
+        gap: 0.5rem;
     }
 
     .ez-mode-footer {
         flex-direction: column;
-        gap: 0.75rem;
-        text-align: center;
     }
 
     .ez-mode-footer .btn {
         width: 100%;
     }
+}
 
-    /* Checkboxes align left on mobile */
-    .ez-mode-form .form-check.mt-4 {
-        margin-top: 0.5rem !important;
+/* ========================================
+   Animations
+   ======================================== */
+.ez-step {
+    animation: fadeInUp 0.3s ease forwards;
+    opacity: 0;
+}
+
+.ez-step:nth-child(1) { animation-delay: 0.05s; }
+.ez-step:nth-child(2) { animation-delay: 0.1s; }
+.ez-step:nth-child(3) { animation-delay: 0.15s; }
+.ez-step:nth-child(4) { animation-delay: 0.2s; }
+.ez-step:nth-child(5) { animation-delay: 0.25s; }
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
     }
 }
 
-/* Animation for conditional fields */
-.ez-mode-form [x-show] {
-    transition: opacity 0.15s ease-in-out;
-}
-
-/* Loading spinner color */
+/* Loading spinner */
 .model-ez-mode-hero .spinner-border {
     color: #a78bfa !important;
 }
