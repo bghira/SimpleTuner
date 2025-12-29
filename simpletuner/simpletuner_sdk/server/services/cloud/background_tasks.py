@@ -41,15 +41,24 @@ class BackgroundTaskManager:
         self._stop_event = asyncio.Event()
         self._running = False
         self._scheduler: Optional["QueueScheduler"] = None
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def start(self) -> None:
         """Start all configured background tasks."""
+        current_loop = asyncio.get_running_loop()
+
+        # Check if we're in a different event loop than before (common in tests)
+        if self._running and self._event_loop and self._event_loop is not current_loop:
+            logger.warning("Event loop changed while running, resetting state")
+            self._reset_state()
+
         if self._running:
             logger.warning("Background task manager already running")
             return
 
         self._running = True
-        self._stop_event.clear()
+        self._event_loop = current_loop
+        self._stop_event = asyncio.Event()  # Create new Event on current loop
 
         # Start job polling if configured
         await self._start_polling_if_configured()
@@ -190,37 +199,53 @@ class BackgroundTaskManager:
             return
 
         logger.info("Stopping background tasks...")
+
+        # Check for event loop mismatch (common in test scenarios)
+        current_loop = asyncio.get_running_loop()
+        if self._event_loop and self._event_loop is not current_loop:
+            logger.warning("Event loop mismatch during stop, resetting state")
+            self._reset_state()
+            return
+
         self._stop_event.set()
 
-        if self._job_polling_task:
-            self._job_polling_task.cancel()
-            try:
-                await self._job_polling_task
-            except asyncio.CancelledError:
-                pass
-            self._job_polling_task = None
+        await self._cancel_task(self._job_polling_task)
+        self._job_polling_task = None
 
-        if self._approval_task:
-            self._approval_task.cancel()
-            try:
-                await self._approval_task
-            except asyncio.CancelledError:
-                pass
-            self._approval_task = None
+        await self._cancel_task(self._approval_task)
+        self._approval_task = None
 
-        if self._cleanup_task:
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
-            self._cleanup_task = None
+        await self._cancel_task(self._cleanup_task)
+        self._cleanup_task = None
 
         # Stop queue processing
-        await self._stop_queue_processing()
+        try:
+            await self._stop_queue_processing()
+        except RuntimeError:
+            pass  # Event loop mismatch
 
         self._running = False
+        self._event_loop = None
         logger.info("Background tasks stopped")
+
+    async def _cancel_task(self, task: Optional[asyncio.Task]) -> None:
+        """Cancel a task gracefully, handling event loop mismatches."""
+        if not task:
+            return
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, RuntimeError):
+            pass
+
+    def _reset_state(self) -> None:
+        """Reset all task state (used on event loop mismatch)."""
+        self._job_polling_task = None
+        self._approval_task = None
+        self._cleanup_task = None
+        self._running = False
+        self._stop_event = asyncio.Event()
+        self._event_loop = None
 
     async def _job_polling_loop(self, interval_seconds: int) -> None:
         """Background loop for polling job statuses."""
