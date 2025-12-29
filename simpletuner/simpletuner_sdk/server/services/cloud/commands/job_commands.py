@@ -185,7 +185,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
             period_days = {"daily": 1, "weekly": 7, "monthly": 30, "yearly": 365}.get(period, 30)
 
             summary = await ctx.job_store.get_metrics_summary(days=period_days)
-            current_spend = summary.get("total_cost_30d", 0.0)
+            current_spend = summary.get("total_cost_usd", 0.0)
 
             is_exceeded = current_spend >= limit_amount
             percent_used = (current_spend / limit_amount) * 100 if limit_amount > 0 else 0

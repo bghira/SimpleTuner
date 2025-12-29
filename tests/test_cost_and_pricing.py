@@ -189,7 +189,12 @@ class TestCostLimitCheck(unittest.IsolatedAsyncioTestCase):
         await self.store.add_job(job)
 
         cmd = SubmitJobCommand(
-            config={"model_type": "test"},
+            config={
+                "model_type": "test",
+                "cost_limit_enabled": True,
+                "cost_limit_action": "block",
+                "cost_limit_amount": 10.0,
+            },
             dataloader_config=[{"id": "test"}],
             provider="replicate",
             config_name="test-config",
