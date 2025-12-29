@@ -217,8 +217,10 @@ class TestWebhookChannelValidation(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.channels.webhook_channel import WebhookChannel
+        from simpletuner.simpletuner_sdk.server.services.cloud.notification.models import ChannelConfig
 
-        self.channel = WebhookChannel()
+        # Channel requires a config in constructor
+        self.channel = WebhookChannel(ChannelConfig())
 
     def test_validate_valid_https_url(self):
         """Test validation of valid HTTPS webhook URL."""
@@ -294,8 +296,10 @@ class TestSlackChannelValidation(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.channels.slack_channel import SlackChannel
+        from simpletuner.simpletuner_sdk.server.services.cloud.notification.models import ChannelConfig
 
-        self.channel = SlackChannel()
+        # Channel requires a config in constructor
+        self.channel = SlackChannel(ChannelConfig())
 
     def test_validate_valid_slack_webhook(self):
         """Test validation of valid Slack webhook URL."""
