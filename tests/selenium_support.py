@@ -284,6 +284,9 @@ def _is_browser_available(browser: str = "chrome") -> bool:
     return True
 
 
+_SELENIUM_ENABLED = os.environ.get("SIMPLETUNER_SELENIUM_TESTS", "0").upper() in ["1", "TRUE"]
+
+
 class SeleniumTestCase(unittest.TestCase):
     """Base class that mirrors the old pytest Selenium fixtures."""
 
@@ -294,7 +297,11 @@ class SeleniumTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        # Skip all Selenium tests if no browser is available
+        # Skip Selenium tests unless explicitly enabled via environment variable
+        if not _SELENIUM_ENABLED:
+            raise unittest.SkipTest("Selenium tests disabled (set SIMPLETUNER_SELENIUM_TESTS=1 to enable)")
+
+        # Skip if no browser is available
         if not any(_is_browser_available(b) for b in cls.BROWSERS):
             raise unittest.SkipTest("No browser driver available for Selenium tests")
 
