@@ -3,24 +3,64 @@
 This module provides comprehensive security features including:
 - CORS configuration
 - Security headers
-- Rate limiting
-- Request validation
+- Rate limiting with per-endpoint configuration
+- Audit logging for security events
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import re
+import threading
 import time
-from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Pattern, Tuple
 
-from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.types import ASGIApp
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RateLimitRule:
+    """Rate limit configuration for a route pattern."""
+
+    pattern: Pattern[str]
+    calls: int
+    period: int  # seconds
+    methods: Optional[List[str]] = None  # None = all methods
+
+    def matches(self, path: str, method: str) -> bool:
+        """Check if this rule matches the request."""
+        if not self.pattern.match(path):
+            return False
+        if self.methods and method.upper() not in self.methods:
+            return False
+        return True
+
+
+# Default rate limit rules - more restrictive for sensitive endpoints
+DEFAULT_RATE_LIMIT_RULES: List[Tuple[str, int, int, Optional[List[str]]]] = [
+    # Authentication - strict limits
+    (r"^/api/cloud/auth/login$", 5, 60, ["POST"]),  # 5 login attempts/min
+    (r"^/api/cloud/auth/register$", 3, 60, ["POST"]),  # 3 registrations/min
+    (r"^/api/cloud/auth/api-keys$", 10, 60, ["POST"]),  # 10 key creations/min
+    # Job submission - moderate limits
+    (r"^/api/cloud/jobs$", 20, 60, ["POST"]),  # 20 job submissions/min
+    (r"^/api/cloud/jobs/.+/cancel$", 30, 60, ["POST"]),  # 30 cancellations/min
+    # Webhooks - higher limits (already has its own limiter)
+    (r"^/api/cloud/webhooks/", 100, 60, None),
+    # S3 uploads - moderate limits
+    (r"^/api/cloud/storage/", 50, 60, None),
+    # Quotas - moderate limits
+    (r"^/api/cloud/quotas/", 30, 60, None),
+]
 
 
 def setup_cors_middleware(app: FastAPI) -> None:
@@ -68,10 +108,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Content Security Policy
         csp_directives = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com",  # Allow HTMX and Alpine.js
-            "style-src 'self' 'unsafe-inline'",  # Allow inline styles for now
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net",  # Allow HTMX, Alpine.js, Bootstrap
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",  # Allow inline styles, Bootstrap CSS, Font Awesome
             "img-src 'self' data: blob:",
-            "font-src 'self'",
+            "font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",  # Allow Bootstrap and Font Awesome fonts
             "connect-src 'self'",
             "frame-ancestors 'none'",
             "base-uri 'self'",
@@ -86,41 +126,212 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Simple rate limiting middleware."""
+    """Rate limiting middleware with per-endpoint configuration and audit logging.
 
-    def __init__(self, app: ASGIApp, calls: int = 100, period: int = 60, exclude_paths: Optional[List[str]] = None):
+    Features:
+    - Per-endpoint rate limits via pattern matching
+    - Default fallback rate limit for unmatched routes
+    - Audit logging for rate limit events
+    - Proper proxy IP handling (X-Forwarded-For)
+    - Thread-safe request tracking
+    - Automatic cleanup of stale entries
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        calls: int = 100,
+        period: int = 60,
+        exclude_paths: Optional[List[str]] = None,
+        rules: Optional[List[Tuple[str, int, int, Optional[List[str]]]]] = None,
+        enable_audit: bool = True,
+    ):
         super().__init__(app)
-        self.calls = calls
-        self.period = period
-        self.exclude_paths = exclude_paths or ["/health", "/api/events/stream"]
-        self.clients: Dict[str, List[float]] = defaultdict(list)
+        self.default_calls = calls
+        self.default_period = period
+        self.exclude_paths = exclude_paths or [
+            "/health",
+            "/api/events/stream",
+            "/static/",
+            "/api/cloud/hints",  # UI state, not security-sensitive
+            "/api/cloud/users/me",  # Current user check
+            "/api/cloud/providers",  # Provider list
+        ]
+        self.enable_audit = enable_audit
+        self._lock = threading.Lock()
+
+        # Per-key tracking: key -> list of (timestamp, rule_key)
+        self._requests: Dict[str, List[Tuple[float, str]]] = {}
+        self._last_cleanup = time.time()
+        self._cleanup_interval = 60  # Clean up every minute
+
+        # Compile rate limit rules
+        self._rules: List[RateLimitRule] = []
+        rule_defs = rules if rules is not None else DEFAULT_RATE_LIMIT_RULES
+        for pattern, rule_calls, rule_period, methods in rule_defs:
+            self._rules.append(
+                RateLimitRule(
+                    pattern=re.compile(pattern),
+                    calls=rule_calls,
+                    period=rule_period,
+                    methods=methods,
+                )
+            )
+
+    def _get_client_ip(self, request: Request) -> str:
+        """Extract client IP, handling proxy headers."""
+        # Check X-Forwarded-For header (standard proxy header)
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            # Take the first IP (original client)
+            return forwarded.split(",")[0].strip()
+
+        # Check X-Real-IP header (nginx)
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
+
+        # Fall back to direct connection
+        return request.client.host if request.client else "unknown"
+
+    def _find_matching_rule(self, path: str, method: str) -> Optional[RateLimitRule]:
+        """Find the first matching rate limit rule."""
+        for rule in self._rules:
+            if rule.matches(path, method):
+                return rule
+        return None
+
+    def _get_rate_limit_key(self, client_ip: str, rule: Optional[RateLimitRule]) -> str:
+        """Generate a unique key for rate limit tracking."""
+        if rule:
+            # Per-rule tracking
+            return f"{client_ip}:{rule.pattern.pattern}"
+        return f"{client_ip}:default"
+
+    def _cleanup_stale_entries(self, now: float) -> None:
+        """Remove stale entries periodically."""
+        if now - self._last_cleanup < self._cleanup_interval:
+            return
+
+        self._last_cleanup = now
+        max_period = max(self.default_period, max((r.period for r in self._rules), default=60))
+        cutoff = now - max_period * 2
+
+        keys_to_remove = []
+        for key, timestamps in self._requests.items():
+            self._requests[key] = [(ts, rk) for ts, rk in timestamps if ts > cutoff]
+            if not self._requests[key]:
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            del self._requests[key]
+
+    def _check_rate_limit(
+        self,
+        client_ip: str,
+        path: str,
+        method: str,
+    ) -> Tuple[bool, int, int, int]:
+        """Check if request is allowed and return limit info.
+
+        Returns:
+            (allowed, limit, remaining, reset_time)
+        """
+        now = time.time()
+        rule = self._find_matching_rule(path, method)
+        rate_key = self._get_rate_limit_key(client_ip, rule)
+
+        limit = rule.calls if rule else self.default_calls
+        period = rule.period if rule else self.default_period
+        cutoff = now - period
+
+        with self._lock:
+            self._cleanup_stale_entries(now)
+
+            if rate_key not in self._requests:
+                self._requests[rate_key] = []
+
+            # Filter to current window
+            self._requests[rate_key] = [(ts, rk) for ts, rk in self._requests[rate_key] if ts > cutoff]
+
+            current_count = len(self._requests[rate_key])
+
+            if current_count >= limit:
+                return False, limit, 0, int(now + period)
+
+            # Record this request
+            self._requests[rate_key].append((now, rate_key))
+            remaining = limit - current_count - 1
+
+            return True, limit, remaining, int(now + period)
+
+    async def _log_rate_limit_event(
+        self,
+        request: Request,
+        client_ip: str,
+        path: str,
+    ) -> None:
+        """Log rate limit event to audit log."""
+        if not self.enable_audit:
+            return
+
+        try:
+            from ..services.cloud.audit import AuditEventType, audit_log
+
+            await audit_log(
+                event_type=AuditEventType.RATE_LIMITED,
+                action=f"Rate limit exceeded for {path}",
+                actor_ip=client_ip,
+                target_type="endpoint",
+                target_id=path,
+                details={
+                    "method": request.method,
+                    "user_agent": request.headers.get("User-Agent", ""),
+                },
+            )
+        except Exception as exc:
+            logger.debug("Failed to log rate limit event: %s", exc)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        path = request.url.path
+
         # Skip rate limiting for excluded paths
-        if any(request.url.path.startswith(path) for path in self.exclude_paths):
+        if any(path.startswith(excl) for excl in self.exclude_paths):
             return await call_next(request)
 
-        # Get client identifier (IP address)
-        client_ip = request.client.host
+        client_ip = self._get_client_ip(request)
 
-        # Clean old entries
-        now = time.time()
-        self.clients[client_ip] = [timestamp for timestamp in self.clients[client_ip] if timestamp > now - self.period]
+        # Skip rate limiting for localhost in development
+        if client_ip in ("127.0.0.1", "::1", "localhost"):
+            return await call_next(request)
+        allowed, limit, remaining, reset_time = self._check_rate_limit(client_ip, path, request.method)
 
-        # Check rate limit
-        if len(self.clients[client_ip]) >= self.calls:
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+        if not allowed:
+            # Log the rate limit event
+            asyncio.create_task(self._log_rate_limit_event(request, client_ip, path))
 
-        # Record this request
-        self.clients[client_ip].append(now)
+            logger.warning("Rate limit exceeded: ip=%s path=%s method=%s", client_ip, path, request.method)
+
+            # Return proper JSON response (middleware can't raise HTTPException)
+            retry_after = max(1, reset_time - int(time.time()))
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Rate limit exceeded. Please try again later."},
+                headers={
+                    "X-RateLimit-Limit": str(limit),
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(reset_time),
+                    "Retry-After": str(retry_after),
+                },
+            )
 
         # Process request
         response = await call_next(request)
 
-        # Add rate limit headers
-        response.headers["X-RateLimit-Limit"] = str(self.calls)
-        response.headers["X-RateLimit-Remaining"] = str(self.calls - len(self.clients[client_ip]))
-        response.headers["X-RateLimit-Reset"] = str(int(now + self.period))
+        # Add rate limit headers to successful responses
+        response.headers["X-RateLimit-Limit"] = str(limit)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        response.headers["X-RateLimit-Reset"] = str(reset_time)
 
         return response
 

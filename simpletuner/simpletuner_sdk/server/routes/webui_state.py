@@ -42,37 +42,51 @@ class OnboardingStepDefinition:
 _CORE_STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
     OnboardingStepDefinition(
         id="default_configs_dir",
-        title="Default configurations directory",
-        prompt="Where do you want to store your training configurations?",
+        title="Configurations Directory",
+        prompt=(
+            "Choose where to store your training configurations. "
+            "If you already have SimpleTuner configs from the command line, point this to that directory "
+            "and they'll be automatically discovered."
+        ),
         input_type="directory",
-        version=2,
+        version=3,
         required=True,
         applies_to_default="configs_dir",
     ),
     OnboardingStepDefinition(
         id="default_output_dir",
-        title="Default output directory",
-        prompt="Where do you want to store outputs?",
+        title="Output Directory",
+        prompt=(
+            "Choose where to store training outputs: checkpoints, LoRAs, validation images, caches, "
+            "optimizer states, and model cards. Ensure you have sufficient disk space for your use case."
+        ),
         input_type="directory",
-        version=1,
+        version=2,
         required=True,
         applies_to_default="output_dir",
     ),
     OnboardingStepDefinition(
         id="default_datasets_dir",
-        title="Default datasets directory",
-        prompt="Where do you want to store your datasets? (Leave blank to allow datasets anywhere)",
+        title="Datasets Directory",
+        prompt=(
+            "Choose where to store your training datasets. Uploaded datasets will land here, "
+            "and the dataset browser will be restricted to this path for security. "
+            "Leave blank to allow selecting datasets from anywhere."
+        ),
         input_type="directory",
-        version=2,
+        version=3,
         required=True,
         applies_to_default="datasets_dir",
     ),
     OnboardingStepDefinition(
         id="accelerate_defaults",
-        title="Accelerate GPU Defaults",
-        prompt="Review the detected hardware and choose how many processes Accelerate should launch by default.",
+        title="GPU Configuration",
+        prompt=(
+            "Configure how SimpleTuner launches training across your GPUs. "
+            "Review the detected hardware and choose your preferred launch strategy."
+        ),
         input_type="accelerate_auto",
-        version=1,
+        version=2,
         required=True,
         applies_to_default="accelerate_overrides",
     ),
@@ -81,13 +95,13 @@ _CORE_STEP_DEFINITIONS: List[OnboardingStepDefinition] = [
 _OPTIONAL_STEPS: Dict[str, OnboardingStepDefinition] = {
     "create_initial_environment": OnboardingStepDefinition(
         id="create_initial_environment",
-        title="Create your training environment",
+        title="Create Your First Environment",
         prompt=(
-            "The Default environment is a safety net. Create the environment you'll use for training "
-            "so SimpleTuner can keep your changes separate."
+            "An environment holds all the settings for a training run: model, dataset references, "
+            "hyperparameters, and more. Create your first environment now—you can add more later."
         ),
         input_type="environment",
-        version=1,
+        version=2,
         required=True,
     )
 }
@@ -379,6 +393,8 @@ class DefaultsUpdate(BaseModel):
     allow_dataset_paths_outside_dir: Optional[bool] = None
     show_documentation_links: Optional[bool] = None
     accelerate_overrides: Optional[Dict[str, object]] = None
+    cloud_tab_enabled: Optional[bool] = None
+    cloud_webhook_url: Optional[str] = None
     git_mirror_enabled: Optional[bool] = None
     git_remote: Optional[str] = None
     git_branch: Optional[str] = None
@@ -388,6 +404,20 @@ class DefaultsUpdate(BaseModel):
     git_include_untracked: Optional[bool] = None
     sync_onboarding_defaults: Optional[bool] = None
     onboarding_sync_opt_out: Optional[List[str]] = None
+    # Credential security settings
+    credential_rotation_threshold_days: Optional[int] = None
+    credential_early_warning_enabled: Optional[bool] = None
+    credential_early_warning_percent: Optional[int] = None
+    credential_security_configured: Optional[bool] = None
+    credential_security_skipped: Optional[bool] = None
+    # UI sound settings
+    sounds_enabled: Optional[bool] = None
+    sounds_volume: Optional[int] = None
+    sounds_success_enabled: Optional[bool] = None
+    sounds_error_enabled: Optional[bool] = None
+    sounds_warning_enabled: Optional[bool] = None
+    sounds_info_enabled: Optional[bool] = None
+    sounds_retro_hover_enabled: Optional[bool] = None
 
 
 @router.post("/defaults/update")
@@ -432,6 +462,11 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
             defaults.show_documentation_links = bool(payload.show_documentation_links)
         if payload.accelerate_overrides is not None:
             defaults.accelerate_overrides = _normalise_accelerate_overrides(payload.accelerate_overrides)
+        if payload.cloud_tab_enabled is not None:
+            defaults.cloud_tab_enabled = bool(payload.cloud_tab_enabled)
+        if payload.cloud_webhook_url is not None:
+            normalized = payload.cloud_webhook_url.strip() if isinstance(payload.cloud_webhook_url, str) else ""
+            defaults.cloud_webhook_url = normalized or None
         if payload.git_mirror_enabled is not None:
             defaults.git_mirror_enabled = bool(payload.git_mirror_enabled)
         if payload.git_auto_commit is not None:
@@ -463,6 +498,46 @@ async def update_defaults(payload: DefaultsUpdate) -> Dict[str, object]:
                     if candidate and candidate not in cleaned:
                         cleaned.append(candidate)
                 defaults.onboarding_sync_opt_out = cleaned
+
+        # Credential security settings
+        if payload.credential_rotation_threshold_days is not None:
+            try:
+                threshold = int(payload.credential_rotation_threshold_days)
+                defaults.credential_rotation_threshold_days = max(30, min(365, threshold))
+            except (TypeError, ValueError):
+                pass  # Keep existing value on invalid input
+        if payload.credential_early_warning_enabled is not None:
+            defaults.credential_early_warning_enabled = bool(payload.credential_early_warning_enabled)
+        if payload.credential_early_warning_percent is not None:
+            try:
+                pct = int(payload.credential_early_warning_percent)
+                defaults.credential_early_warning_percent = max(50, min(95, pct))
+            except (TypeError, ValueError):
+                pass  # Keep existing value on invalid input
+        if payload.credential_security_configured is not None:
+            defaults.credential_security_configured = bool(payload.credential_security_configured)
+        if payload.credential_security_skipped is not None:
+            defaults.credential_security_skipped = bool(payload.credential_security_skipped)
+
+        # UI sound settings
+        if payload.sounds_enabled is not None:
+            defaults.sounds_enabled = bool(payload.sounds_enabled)
+        if payload.sounds_volume is not None:
+            try:
+                vol = int(payload.sounds_volume)
+                defaults.sounds_volume = max(0, min(100, vol))
+            except (TypeError, ValueError):
+                pass
+        if payload.sounds_success_enabled is not None:
+            defaults.sounds_success_enabled = bool(payload.sounds_success_enabled)
+        if payload.sounds_error_enabled is not None:
+            defaults.sounds_error_enabled = bool(payload.sounds_error_enabled)
+        if payload.sounds_warning_enabled is not None:
+            defaults.sounds_warning_enabled = bool(payload.sounds_warning_enabled)
+        if payload.sounds_info_enabled is not None:
+            defaults.sounds_info_enabled = bool(payload.sounds_info_enabled)
+        if payload.sounds_retro_hover_enabled is not None:
+            defaults.sounds_retro_hover_enabled = bool(payload.sounds_retro_hover_enabled)
 
         # Save updated defaults
         store.save_defaults(defaults)
