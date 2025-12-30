@@ -68,7 +68,6 @@
 /* Hover effect in PiP mode */
 .streaming-validation-lightbox:not(.expanded) .streaming-validation-content:hover {
     box-shadow: 0 12px 48px rgba(0, 0, 0, 0.4);
-    transform: translateY(-2px);
 }
 
 /* Expanded state - full viewport takeover (centered) */

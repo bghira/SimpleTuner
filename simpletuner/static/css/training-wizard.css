@@ -15,6 +15,10 @@
     background: rgba(0, 0, 0, 0.75);
     z-index: 9999;
     cursor: pointer;
+    /* Prevent scroll bleed to background on mobile */
+    overflow: hidden;
+    touch-action: none;
+    overscroll-behavior: contain;
 }
 
 /* Wizard Launch Button */
@@ -69,6 +73,10 @@
     flex: 1;
     overflow-y: auto;
     padding: 0 2rem 1.5rem;
+    /* Allow scrolling inside modal, contain scroll */
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 .training-wizard-modal .modal-footer {
@@ -239,7 +247,6 @@
 .wizard-option-card:hover {
     background: rgba(30, 41, 59, 0.8);
     border-color: rgba(148, 163, 184, 0.4);
-    transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }
 
@@ -407,39 +414,204 @@
 @media (max-width: 768px) {
     .training-wizard-modal {
         max-width: 95vw;
-        max-height: 95vh;
+        max-height: calc(100vh - 2rem) !important;
+        top: 1rem !important;
+        transform: translateX(-50%) !important;
+    }
+
+    .training-wizard-modal .modal-header {
+        padding: 0.75rem 1rem;
+    }
+
+    .training-wizard-modal .modal-body {
+        padding: 0 1rem 1rem;
+    }
+
+    .training-wizard-modal .modal-footer {
+        padding: 0.75rem 1rem;
+        flex-wrap: wrap;
+        gap: 0.5rem;
     }
 
     .wizard-progress {
         overflow-x: scroll;
-        padding: 1rem;
+        padding: 0.75rem 1rem;
     }
 
     .wizard-step {
-        min-width: 60px;
+        min-width: 50px;
+    }
+
+    .step-number {
+        width: 28px;
+        height: 28px;
+        font-size: 0.75rem;
     }
 
     .step-label {
-        font-size: 0.65rem;
+        font-size: 0.6rem;
     }
 
+    /* Compact wizard option cards for mobile */
     .wizard-options {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+
+    .wizard-option-card {
+        padding: 0.75rem;
+        border-radius: 8px;
+    }
+
+    .wizard-option-card h6 {
+        font-size: 0.8rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .wizard-option-card p.small,
+    .wizard-option-card .text-muted.small {
+        font-size: 0.65rem !important;
+        line-height: 1.3;
+        margin-bottom: 0;
+    }
+
+    .wizard-option-card.selected::before {
+        width: 18px;
+        height: 18px;
+        font-size: 0.7rem;
+        top: 0.5rem;
+        right: 0.5rem;
     }
 
     .wizard-step-content {
-        min-height: 300px;
-        padding: 1.5rem;
+        min-height: 250px;
+        padding: 1rem 0;
+    }
+
+    .wizard-question {
+        font-size: 1rem;
+    }
+
+    .wizard-question-small {
+        font-size: 0.9rem;
+    }
+
+    /* Compact preset option cards */
+    .wizard-options.preset-options .wizard-option-card {
+        padding: 0.75rem;
+    }
+
+    .wizard-options.preset-options .wizard-option-card ul {
+        font-size: 0.7rem;
+        padding-left: 1rem;
+    }
+
+    .review-summary {
+        padding: 1rem;
     }
 
     .review-item {
         flex-direction: column;
         align-items: flex-start;
-        gap: 0.5rem;
+        gap: 0.25rem;
+        padding: 0.5rem 0;
     }
 
     .review-item label {
         flex: none;
+        font-size: 0.75rem;
+    }
+
+    .review-item span {
+        font-size: 0.85rem;
+    }
+
+    /* Compact button groups */
+    .wizard-step-content .btn-group {
+        flex-wrap: wrap;
+    }
+
+    .wizard-step-content .btn-group .btn {
+        padding: 0.35rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    /* Full-width button groups (quantization, strategy selectors) */
+    .wizard-step-content .btn-group.w-100 {
+        flex-wrap: wrap;
+    }
+
+    .wizard-step-content .btn-group.w-100 .btn,
+    .wizard-step-content .btn-group.w-100 label.btn {
+        flex: 1 1 auto;
+        min-width: 60px;
+        padding: 0.3rem 0.4rem;
+        font-size: 0.7rem;
+    }
+
+    /* Memory strategy rows in wizard */
+    .wizard-step-content .memory-strategy-row {
+        padding: 0.75rem !important;
+    }
+
+    .wizard-step-content .memory-strategy-row .d-flex {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 0.5rem;
+    }
+
+    .wizard-step-content .memory-strategy-row .btn-group {
+        width: 100%;
+    }
+
+    .wizard-step-content .strategy-label {
+        font-size: 0.85rem;
+    }
+
+    /* Form elements */
+    .wizard-input-group {
+        padding: 1rem;
+    }
+
+    .wizard-step-content .form-label {
+        font-size: 0.85rem;
+    }
+
+    .wizard-step-content .form-text {
+        font-size: 0.7rem;
+    }
+
+    .wizard-step-content .form-control,
+    .wizard-step-content .form-select {
+        font-size: 0.85rem;
+        padding: 0.4rem 0.6rem;
+    }
+}
+
+/* Very small screens */
+@media (max-width: 480px) {
+    .wizard-options {
+        grid-template-columns: 1fr;
+    }
+
+    .wizard-option-card {
+        padding: 0.6rem;
+    }
+
+    .wizard-progress {
+        padding: 0.5rem;
+    }
+
+    .step-number {
+        width: 24px;
+        height: 24px;
+        font-size: 0.65rem;
+        margin-bottom: 0.25rem;
+    }
+
+    .step-label {
+        display: none;
     }
 }
 

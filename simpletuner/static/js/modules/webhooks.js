@@ -9,27 +9,53 @@ document.addEventListener('alpine:init', () => {
         init() {
             return {
                 webhooks: [],
-                showAddForm: false,
+                libraryWebhooks: [],
+                loadingLibrary: false,
+                modalOpen: false,
                 editingIndex: null,
-                newWebhook: {
+                isDirty: false,
+                editWebhook: {
                     webhook_type: 'discord',
                     webhook_url: '',
+                    callback_url: '',
                     message_prefix: '',
                     log_level: 'info'
                 },
 
-                // Initialize from hidden field if present
-                initialize() {
-                    const hiddenField = document.querySelector('[name="--discord_webhooks"]');
-                    if (hiddenField && hiddenField.value) {
+                // Initialize from server-rendered data attribute and load library
+                async initialize() {
+                    // Read initial webhooks from data attribute (set by server)
+                    const container = this.$el;
+                    const initialData = container.getAttribute('data-initial-webhooks');
+                    if (initialData) {
                         try {
-                            const parsed = JSON.parse(hiddenField.value);
+                            const parsed = JSON.parse(initialData);
                             if (Array.isArray(parsed)) {
                                 this.webhooks = parsed;
+                            } else if (parsed && typeof parsed === 'object') {
+                                this.webhooks = [parsed];
                             }
+                            // Update hidden field with loaded data
+                            this.updateHiddenField();
                         } catch (e) {
-                            console.warn('Could not parse existing discord webhook config:', e);
+                            console.warn('Could not parse initial webhook config:', e);
                         }
+                    }
+                    await this.refreshLibrary();
+                },
+
+                async refreshLibrary() {
+                    this.loadingLibrary = true;
+                    try {
+                        const response = await fetch('/api/configs?config_type=webhook');
+                        if (response.ok) {
+                            const data = await response.json();
+                            this.libraryWebhooks = data.configs || [];
+                        }
+                    } catch (error) {
+                        console.error('Failed to load webhook library:', error);
+                    } finally {
+                        this.loadingLibrary = false;
                     }
                 },
 
@@ -37,64 +63,148 @@ document.addEventListener('alpine:init', () => {
                     return {
                         webhook_type: 'discord',
                         webhook_url: '',
+                        callback_url: '',
                         message_prefix: '',
                         log_level: 'info'
                     };
                 },
 
-                addWebhook() {
-                    if (this.validateWebhook(this.newWebhook)) {
-                        // Create a clean webhook object with only the fields needed for this type
-                        const cleanWebhook = {
-                            webhook_type: this.newWebhook.webhook_type,
-                            log_level: this.newWebhook.log_level
-                        };
+                openModal(index = null) {
+                    if (index !== null && index !== undefined) {
+                        this.editingIndex = index;
+                        this.editWebhook = { ...this.getEmptyWebhook(), ...this.webhooks[index] };
+                    } else {
+                        this.editingIndex = null;
+                        this.editWebhook = this.getEmptyWebhook();
+                    }
+                    this.modalOpen = true;
+                    this.$nextTick(() => {
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                    });
+                },
 
-                        if (this.newWebhook.webhook_type === 'discord') {
-                            cleanWebhook.webhook_url = this.newWebhook.webhook_url;
-                            if (this.newWebhook.message_prefix) {
-                                cleanWebhook.message_prefix = this.newWebhook.message_prefix;
+                closeModal() {
+                    this.modalOpen = false;
+                    this.editingIndex = null;
+                    this.editWebhook = this.getEmptyWebhook();
+                },
+
+                saveWebhook() {
+                    if (!this.validateWebhook(this.editWebhook)) {
+                        return;
+                    }
+
+                    const cleanWebhook = {
+                        webhook_type: this.editWebhook.webhook_type,
+                        log_level: this.editWebhook.log_level
+                    };
+
+                    if (this.editWebhook.webhook_type === 'discord') {
+                        cleanWebhook.webhook_url = this.editWebhook.webhook_url;
+                        if (this.editWebhook.message_prefix) {
+                            cleanWebhook.message_prefix = this.editWebhook.message_prefix;
+                        }
+                    } else {
+                        cleanWebhook.callback_url = this.editWebhook.callback_url;
+                    }
+
+                    if (this.editingIndex !== null) {
+                        this.webhooks[this.editingIndex] = cleanWebhook;
+                    } else {
+                        this.webhooks.push(cleanWebhook);
+                    }
+
+                    this.updateHiddenField();
+                    this.isDirty = true;
+                    this.closeModal();
+
+                    if (window.showToast) {
+                        window.showToast('Inline webhook added', 'success');
+                    }
+                },
+
+                removeWebhook(index) {
+                    this.webhooks.splice(index, 1);
+                    this.updateHiddenField();
+                    this.isDirty = true;
+                    if (window.showToast) {
+                        window.showToast('Webhook removed', 'success');
+                    }
+                },
+
+                isWebhookActive(name) {
+                    return this.webhooks.some(w => w.name === name);
+                },
+
+                async toggleWebhook(config) {
+                    const existingIndex = this.webhooks.findIndex(w => w.name === config.name);
+
+                    if (existingIndex >= 0) {
+                        // Remove
+                        this.webhooks.splice(existingIndex, 1);
+                        if (window.showToast) {
+                            window.showToast(`Removed "${config.name}"`, 'success');
+                        }
+                    } else {
+                        // Add - fetch full config from API
+                        try {
+                            const response = await fetch(`/api/configs/webhooks/${encodeURIComponent(config.name)}`);
+                            if (response.ok) {
+                                const data = await response.json();
+                                const webhookConfig = {
+                                    name: config.name,
+                                    ...data.config
+                                };
+                                this.webhooks.push(webhookConfig);
+                                if (window.showToast) {
+                                    window.showToast(`Added "${config.name}"`, 'success');
+                                }
+                            } else {
+                                throw new Error('Failed to load webhook config');
+                            }
+                        } catch (error) {
+                            console.error('Failed to add webhook:', error);
+                            if (window.showToast) {
+                                window.showToast('Failed to add webhook', 'error');
+                            }
+                            return;
+                        }
+                    }
+
+                    this.updateHiddenField();
+                    this.isDirty = true;
+                },
+
+                async testLibraryWebhook(name) {
+                    if (window.showToast) {
+                        window.showToast(`Testing "${name}"...`, 'info');
+                    }
+
+                    try {
+                        const response = await fetch(`/api/configs/webhooks/${encodeURIComponent(name)}/test`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        const result = await response.json();
+
+                        if (result.success) {
+                            if (window.showToast) {
+                                window.showToast(result.message || 'Test successful', 'success');
                             }
                         } else {
-                            // raw type
-                            cleanWebhook.callback_url = this.newWebhook.callback_url;
+                            if (window.showToast) {
+                                window.showToast(result.error || 'Test failed', 'error');
+                            }
                         }
-
-                        if (this.editingIndex !== null) {
-                            // Update existing webhook
-                            this.webhooks[this.editingIndex] = cleanWebhook;
-                            this.editingIndex = null;
-                        } else {
-                            // Add new webhook
-                            this.webhooks.push(cleanWebhook);
+                    } catch (error) {
+                        console.error('Webhook test failed:', error);
+                        if (window.showToast) {
+                            window.showToast('Test failed: ' + error.message, 'error');
                         }
-                        this.newWebhook = this.getEmptyWebhook();
-                        this.showAddForm = false;
-                        this.updateHiddenField();
                     }
-                },
-
-                editWebhook(index) {
-                    this.editingIndex = index;
-                    this.newWebhook = { ...this.webhooks[index] };
-                    this.showAddForm = true;
-                },
-
-                deleteWebhook(index) {
-                    if (confirm('Remove this webhook?')) {
-                        this.webhooks.splice(index, 1);
-                        this.updateHiddenField();
-                    }
-                },
-
-                cancelEdit() {
-                    this.showAddForm = false;
-                    this.editingIndex = null;
-                    this.newWebhook = this.getEmptyWebhook();
                 },
 
                 validateWebhook(webhook) {
-                    // Get the appropriate URL field based on webhook type
                     const url = webhook.webhook_type === 'discord' ? webhook.webhook_url : webhook.callback_url;
 
                     if (!url || url.trim() === '') {
@@ -104,7 +214,6 @@ document.addEventListener('alpine:init', () => {
                         return false;
                     }
 
-                    // Basic URL validation
                     try {
                         new URL(url);
                     } catch (e) {
@@ -114,13 +223,9 @@ document.addEventListener('alpine:init', () => {
                         return false;
                     }
 
-                    // Discord-specific validation
-                    if (webhook.webhook_type === 'discord') {
-                        if (!url.includes('discord.com/api/webhooks/')) {
-                            if (window.showToast) {
-                                window.showToast('Discord webhook URL must contain discord.com/api/webhooks/', 'error');
-                            }
-                            return false;
+                    if (webhook.webhook_type === 'discord' && !url.includes('discord.com/api/webhooks/')) {
+                        if (window.showToast) {
+                            window.showToast('Discord URL should contain discord.com/api/webhooks/', 'warning');
                         }
                     }
 
@@ -128,28 +233,12 @@ document.addEventListener('alpine:init', () => {
                 },
 
                 updateHiddenField() {
-                    const hiddenField = document.querySelector('[name="--discord_webhooks"]');
+                    const hiddenField = document.querySelector('[name="--webhook_config"]');
                     if (hiddenField) {
-                        // Store user-configured webhooks (localhost callback is added by trainer.js)
                         hiddenField.value = JSON.stringify(this.webhooks);
                         hiddenField.dispatchEvent(new Event('input', { bubbles: true }));
                         hiddenField.dispatchEvent(new Event('change', { bubbles: true }));
                     }
-                },
-
-                getLogLevelBadgeClass(level) {
-                    const classes = {
-                        'debug': 'bg-purple-100 text-purple-800',
-                        'info': 'bg-blue-100 text-blue-800',
-                        'warning': 'bg-yellow-100 text-yellow-800',
-                        'error': 'bg-red-100 text-red-800',
-                        'critical': 'bg-red-600 text-white'
-                    };
-                    return classes[level] || classes['info'];
-                },
-
-                getWebhookTypeBadge(type) {
-                    return type === 'discord' ? 'Discord' : type === 'raw' ? 'Custom' : type;
                 }
             };
         }
@@ -159,7 +248,6 @@ document.addEventListener('alpine:init', () => {
 // Re-initialize after HTMX swaps
 document.body.addEventListener('htmx:afterSwap', function(evt) {
     if (evt.detail.target.id && evt.detail.target.id.includes('publishing-tab-content')) {
-        // Trigger Alpine re-initialization if needed
         const webhookSection = document.querySelector('[x-data*="webhookManager"]');
         if (webhookSection && webhookSection.__x) {
             webhookSection.__x.$data.initialize();

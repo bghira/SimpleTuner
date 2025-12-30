@@ -884,6 +884,12 @@ CREPA is a regularization technique for fine-tuning video diffusion models that 
 - **Default**: `dinov2_vitg14`
 - **Choices**: `dinov2_vitg14`, `dinov2_vitb14`, `dinov2_vits14`
 
+### `--crepa_encoder_frames_batch_size`
+
+- **What**: How many frames the external feature encoder processes in parallel. Zero or negative for all frames of the whole batch simultaneously. If the number is not a divisor, the remainder will still be handled as a smaller batch.
+- **Why**: Since DINO-like encoders are image models, they can process frames in sliced batches for lower VRAM usage at cost of speed.
+- **Default**: `-1`
+
 ### `--crepa_use_backbone_features`
 
 - **What**: Skip the external encoder and align a student block to a teacher block inside the diffusion model.
@@ -915,6 +921,7 @@ crepa_cumulative_neighbors = false
 crepa_normalize_by_frames = true
 crepa_spatial_align = true
 crepa_model = "dinov2_vitg14"
+crepa_encoder_frames_batch_size = -1
 crepa_use_backbone_features = false
 # crepa_teacher_block_index = 16
 crepa_encoder_image_size = 518

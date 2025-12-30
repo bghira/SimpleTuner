@@ -498,6 +498,11 @@ class ConfigStore:
                                     elif "lora_type" in config_data:
                                         metadata["lora_type"] = config_data["lora_type"]
 
+                                    if "--webhook_config" in config_data:
+                                        metadata["webhook_config"] = config_data["--webhook_config"]
+                                    elif "webhook_config" in config_data:
+                                        metadata["webhook_config"] = config_data["webhook_config"]
+
                             if backend_path:
                                 metadata.setdefault("dataloader_path", backend_path)
                                 metadata.setdefault("data_backend_config", backend_path)
@@ -574,6 +579,11 @@ class ConfigStore:
                                     metadata["lora_type"] = config_data["--lora_type"]
                                 elif "lora_type" in config_data:
                                     metadata["lora_type"] = config_data["lora_type"]
+
+                                if "--webhook_config" in config_data:
+                                    metadata["webhook_config"] = config_data["--webhook_config"]
+                                elif "webhook_config" in config_data:
+                                    metadata["webhook_config"] = config_data["webhook_config"]
 
                         if backend_path:
                             metadata.setdefault("dataloader_path", backend_path)
@@ -662,36 +672,11 @@ class ConfigStore:
                             )
                             _register_dataloader(config_file, display_name=display_name)
         elif self.config_type == "webhook":
-            # For webhook configs, look for files with "webhook_type" key
-            # Check subdirectories for any JSON files
-            if self.config_dir.exists():
-                for subdir in self.config_dir.iterdir():
-                    if subdir.is_dir():
-                        for config_file in subdir.glob("*.json"):
-                            try:
-                                with config_file.open("r", encoding="utf-8") as f:
-                                    data = json.load(f)
-
-                                # Only include if it has webhook_type key
-                                if isinstance(data, dict) and "webhook_type" in data:
-                                    metadata = {
-                                        "name": f"{subdir.name}/{config_file.name}",
-                                        "created_at": datetime.fromtimestamp(
-                                            config_file.stat().st_ctime, tz=timezone.utc
-                                        ).isoformat(),
-                                        "modified_at": datetime.fromtimestamp(
-                                            config_file.stat().st_mtime, tz=timezone.utc
-                                        ).isoformat(),
-                                        "webhook_type": data.get("webhook_type"),
-                                        "callback_url": data.get("callback_url"),
-                                    }
-                                    configs.append(metadata)
-                            except Exception:
-                                # Skip invalid files
-                                continue
-
-                # Also check root-level JSON files
-                for config_file in self.config_dir.glob("*.json"):
+            # For webhook configs, look in the dedicated webhooks directory
+            webhooks_dir = self.config_dir / "webhooks"
+            if webhooks_dir.exists() and webhooks_dir.is_dir():
+                # Check JSON files in webhooks directory
+                for config_file in webhooks_dir.glob("*.json"):
                     try:
                         with config_file.open("r", encoding="utf-8") as f:
                             data = json.load(f)
@@ -708,11 +693,42 @@ class ConfigStore:
                                 ).isoformat(),
                                 "webhook_type": data.get("webhook_type"),
                                 "callback_url": data.get("callback_url"),
+                                "webhook_url": data.get("webhook_url"),
+                                "message_prefix": data.get("message_prefix"),
+                                "log_level": data.get("log_level", "info"),
                             }
                             configs.append(metadata)
                     except Exception:
                         # Skip invalid files
                         continue
+
+                # Also check subdirectories within webhooks (for organized configs)
+                for subdir in webhooks_dir.iterdir():
+                    if subdir.is_dir():
+                        config_file = subdir / "webhook_config.json"
+                        if config_file.exists():
+                            try:
+                                with config_file.open("r", encoding="utf-8") as f:
+                                    data = json.load(f)
+
+                                if isinstance(data, dict) and "webhook_type" in data:
+                                    metadata = {
+                                        "name": subdir.name,
+                                        "created_at": datetime.fromtimestamp(
+                                            config_file.stat().st_ctime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "modified_at": datetime.fromtimestamp(
+                                            config_file.stat().st_mtime, tz=timezone.utc
+                                        ).isoformat(),
+                                        "webhook_type": data.get("webhook_type"),
+                                        "callback_url": data.get("callback_url"),
+                                        "webhook_url": data.get("webhook_url"),
+                                        "message_prefix": data.get("message_prefix"),
+                                        "log_level": data.get("log_level", "info"),
+                                    }
+                                    configs.append(metadata)
+                            except Exception:
+                                continue
         elif self.config_type == "lycoris":
             # For lycoris configs, look for files with "algo" key
             # Check subdirectories for lycoris_config.json

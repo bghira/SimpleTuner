@@ -29,6 +29,7 @@ class CrepaRegularizer:
         raw_encoder = getattr(config, "crepa_model", None) or getattr(config, "crepa_encoder", None)
         self.encoder_name = self._resolve_encoder_name(raw_encoder)
         self.encoder_image_size = int(getattr(config, "crepa_encoder_image_size", 518) or 518)
+        self.encoder_frames_batch_size = int(getattr(config, "crepa_encoder_frames_batch_size", -1) or -1)
         self.normalize_by_frames = bool(getattr(config, "crepa_normalize_by_frames", True))
         # If false, fall back to global pooling when spatial token counts do not match.
         self.spatial_align = bool(getattr(config, "crepa_spatial_align", True))
@@ -324,7 +325,8 @@ class CrepaRegularizer:
         std = torch.tensor([0.229, 0.224, 0.225], device=self.device, dtype=enc_dtype).view(1, 3, 1, 1)
         frames = (frames - mean) / std
 
-        tokens = self._forward_encoder(frames)  # (BT, N_tokens, D)
+        frames_batches = list(torch.split(frames, self.encoder_frames_batch_size, dim=0)) if self.encoder_frames_batch_size > 0 else [frames]
+        tokens = torch.cat([self._forward_encoder(frames_batch) for frames_batch in frames_batches], dim=0)  # (BT, N_tokens, D)
         tokens = tokens.view(b, t, tokens.shape[1], -1)
         return tokens
 

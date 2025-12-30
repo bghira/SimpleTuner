@@ -107,4 +107,9 @@ test-screenshots/
 test-folder/
 node_modules
 package-lock.json
-**/config
+# Exclude the root config directory entirely (contains user credentials)
+/config/
+/config/**
+
+# Catch any multidatabackend files anywhere
+**/multidatabackend*

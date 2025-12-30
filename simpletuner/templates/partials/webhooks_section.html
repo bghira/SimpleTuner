@@ -1,63 +1,96 @@
 <!-- Discord Webhooks Section for Publishing Tab -->
-<div x-data="webhookManager.init()" x-init="initialize()" class="webhook-manager">
+{# Use raw_config since webhook_config field is registered under "basic" tab, not "publishing" #}
+{% set initial_webhooks = raw_config.get("webhook_config") or raw_config.get("--webhook_config") or [] %}
+<div x-data="webhookManager.init()" x-init="initialize()" class="webhook-manager"
+     data-initial-webhooks='{{ initial_webhooks | tojson | safe }}'>
     <!-- Hidden field for storing webhook config -->
-    <input type="hidden" name="--discord_webhooks" :value="JSON.stringify(webhooks)">
+    <input type="hidden" name="--webhook_config" :value="JSON.stringify(webhooks)">
 
-    <!-- Webhook List -->
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <label class="form-label mb-0">
+            <i class="fas fa-plug me-1"></i>Training Webhooks
+        </label>
+        <button type="button"
+                class="btn btn-sm btn-outline-secondary"
+                @click="openModal()"
+                title="Create an inline webhook for this session only">
+            <i class="fas fa-plus me-1"></i>Inline
+        </button>
+    </div>
+
+    <!-- Active webhooks for this session -->
+    <div x-show="webhooks.length > 0" class="mb-3">
+        <div class="small text-muted mb-2">Active for this training:</div>
+        <div class="d-flex flex-wrap gap-2">
+            <template x-for="(webhook, index) in webhooks" :key="index">
+                <div class="badge bg-success d-flex align-items-center gap-2 py-2 px-3">
+                    <i class="fas fa-plug"></i>
+                    <span x-text="webhook.name || (webhook.webhook_type === 'discord' ? 'Discord' : 'Custom')"></span>
+                    <button type="button"
+                            class="btn-close btn-close-white ms-1"
+                            style="font-size: 0.6rem;"
+                            @click="removeWebhook(index)"
+                            title="Remove from session"></button>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Available webhook configs from library -->
     <div class="mb-3">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <label class="form-label mb-0">
-                <i class="fas fa-bell me-1"></i>Configured Webhooks
-            </label>
-            <button type="button"
-                    class="btn btn-sm btn-primary"
-                    @click="showAddForm = true; editingIndex = null"
-                    x-show="!showAddForm">
-                <i class="fas fa-plus me-1"></i>Add Webhook
+        <div class="small text-muted mb-2">
+            Available webhook configs:
+            <button type="button" class="btn btn-link btn-sm p-0 ms-1" @click="refreshLibrary()" title="Refresh">
+                <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingLibrary }"></i>
             </button>
         </div>
 
-        <!-- Empty state -->
-        <div x-show="webhooks.length === 0 && !showAddForm" x-cloak class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>
-            No webhooks configured. Click "Add Webhook" to receive training notifications.
+        <!-- Loading state -->
+        <div x-show="loadingLibrary" class="text-center py-3">
+            <div class="spinner-border spinner-border-sm text-primary"></div>
         </div>
 
-        <!-- Webhook cards -->
-        <div class="webhook-list">
-            <template x-for="(webhook, index) in webhooks" :key="index">
-                <div class="card mb-2">
-                    <div class="card-body p-3">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div class="flex-grow-1">
-                                <div class="d-flex align-items-center gap-2 mb-1">
-                                    <span class="badge"
-                                          :class="webhook.webhook_type === 'discord' ? 'bg-indigo' : 'bg-secondary'"
-                                          x-text="getWebhookTypeBadge(webhook.webhook_type)"></span>
-                                    <span class="badge"
-                                          :class="getLogLevelBadgeClass(webhook.log_level)"
-                                          x-text="webhook.log_level.toUpperCase()"></span>
-                                    <span x-show="webhook.message_prefix"
-                                          class="text-muted small"
-                                          x-text="'Prefix: ' + webhook.message_prefix"></span>
+        <!-- Empty state -->
+        <div x-show="!loadingLibrary && libraryWebhooks.length === 0" class="alert alert-info small mb-0">
+            <i class="fas fa-info-circle me-2"></i>
+            No webhook configs found. Create one on the <strong>Environments</strong> page or use the "Inline" button above.
+        </div>
+
+        <!-- Library webhook cards -->
+        <div x-show="!loadingLibrary && libraryWebhooks.length > 0" class="row row-cols-1 row-cols-md-2 g-2">
+            <template x-for="config in libraryWebhooks" :key="config.name">
+                <div class="col">
+                    <div class="card h-100" :class="{ 'border-success': isWebhookActive(config.name) }">
+                        <div class="card-body p-2">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1 min-width-0">
+                                    <div class="d-flex align-items-center gap-2 mb-1">
+                                        <strong class="text-truncate" x-text="config.name"></strong>
+                                        <span class="badge"
+                                              :class="config.webhook_type === 'discord' ? 'bg-indigo' : 'bg-secondary'"
+                                              style="font-size: 0.65rem;"
+                                              x-text="config.webhook_type === 'discord' ? 'Discord' : 'Custom'"></span>
+                                    </div>
+                                    <div x-show="config.log_level" class="small text-muted">
+                                        Level: <span x-text="config.log_level"></span>
+                                    </div>
                                 </div>
-                                <div class="small font-monospace text-truncate"
-                                     :title="webhook.webhook_url || webhook.callback_url"
-                                     x-text="webhook.webhook_url || webhook.callback_url"></div>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button type="button"
-                                        class="btn btn-sm btn-outline-primary"
-                                        @click="editWebhook(index)"
-                                        title="Edit">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                                <button type="button"
-                                        class="btn btn-sm btn-outline-danger"
-                                        @click="deleteWebhook(index)"
-                                        title="Delete">
-                                    <i class="fas fa-trash"></i>
-                                </button>
+                                <div class="btn-group btn-group-sm ms-2">
+                                    <button type="button"
+                                            class="btn"
+                                            :class="isWebhookActive(config.name) ? 'btn-success' : 'btn-outline-success'"
+                                            @click="toggleWebhook(config)"
+                                            :title="isWebhookActive(config.name) ? 'Remove from session' : 'Add to session'">
+                                        <i class="fas" :class="isWebhookActive(config.name) ? 'fa-check' : 'fa-plus'"></i>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-primary"
+                                            @click="testLibraryWebhook(config.name)"
+                                            title="Test webhook">
+                                        <i class="fas fa-plug"></i>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -66,105 +99,95 @@
         </div>
     </div>
 
-    <!-- Add/Edit Form -->
-    <div x-show="showAddForm" x-cloak class="card border-primary mb-3">
-        <div class="card-header bg-primary text-white">
-            <i class="fas fa-plus-circle me-2"></i>
-            <span x-text="editingIndex !== null ? 'Edit Webhook' : 'Add Webhook'"></span>
-        </div>
-        <div class="card-body">
-            <!-- Webhook Type -->
-            <div class="mb-3">
-                <label class="form-label">Webhook Type <span class="text-danger">*</span></label>
-                <select x-model="newWebhook.webhook_type" class="form-select">
-                    <option value="discord">Discord</option>
-                    <option value="raw">Custom (Raw JSON)</option>
-                </select>
-                <div class="form-text">
-                    <template x-if="newWebhook.webhook_type === 'discord'">
-                        <span>Discord webhooks receive formatted messages with images</span>
-                    </template>
-                    <template x-if="newWebhook.webhook_type === 'raw'">
-                        <span>Custom webhooks receive raw JSON payloads</span>
-                    </template>
-                </div>
-            </div>
-
-            <!-- Webhook URL (Discord) or Callback URL (Raw) -->
-            <div class="mb-3">
-                <label class="form-label">
-                    <span x-text="newWebhook.webhook_type === 'discord' ? 'Discord Webhook URL' : 'Callback URL'"></span>
-                    <span class="text-danger">*</span>
-                </label>
-                <!-- Discord webhook URL -->
-                <input x-show="newWebhook.webhook_type === 'discord'"
-                       type="password"
-                       x-model="newWebhook.webhook_url"
-                       class="form-control font-monospace"
-                       placeholder="https://discord.com/api/webhooks/...">
-                <!-- Raw callback URL -->
-                <input x-show="newWebhook.webhook_type === 'raw'"
-                       type="password"
-                       x-model="newWebhook.callback_url"
-                       class="form-control font-monospace"
-                       placeholder="https://example.com/callback">
-                <div class="form-text">
-                    <template x-if="newWebhook.webhook_type === 'discord'">
-                        <span>
-                            <i class="fas fa-lock me-1"></i>
-                            Get from Discord: Server Settings → Integrations → Webhooks
-                        </span>
-                    </template>
-                    <template x-if="newWebhook.webhook_type === 'raw'">
-                        <span>URL that accepts POST requests with JSON data (structured events)</span>
-                    </template>
-                </div>
-            </div>
-
-            <!-- Message Prefix (Discord only) -->
-            <div class="mb-3" x-show="newWebhook.webhook_type === 'discord'">
-                <label class="form-label">Message Prefix (Optional)</label>
-                <input type="text"
-                       x-model="newWebhook.message_prefix"
-                       class="form-control"
-                       placeholder="My Training">
-                <div class="form-text">Prefix for all Discord messages</div>
-            </div>
-
-            <!-- Log Level -->
-            <div class="mb-3">
-                <label class="form-label">Minimum Log Level <span class="text-danger">*</span></label>
-                <select x-model="newWebhook.log_level" class="form-select">
-                    <option value="debug">Debug (All messages)</option>
-                    <option value="info">Info (Normal progress)</option>
-                    <option value="warning">Warning (Issues only)</option>
-                    <option value="error">Error (Errors only)</option>
-                    <option value="critical">Critical (Critical errors only)</option>
-                </select>
-                <div class="form-text">Only send messages at this level or higher</div>
-            </div>
-
-            <!-- Actions -->
-            <div class="d-flex gap-2">
-                <button type="button"
-                        class="btn btn-primary"
-                        @click="addWebhook()">
-                    <i class="fas fa-save me-1"></i>
-                    <span x-text="editingIndex !== null ? 'Update' : 'Add'"></span>
-                </button>
-                <button type="button"
-                        class="btn btn-secondary"
-                        @click="cancelEdit()">
-                    <i class="fas fa-times me-1"></i>Cancel
-                </button>
-            </div>
-        </div>
+    <!-- Unsaved changes warning -->
+    <div x-show="isDirty" x-cloak class="alert alert-warning mb-0 small">
+        <i class="fas fa-exclamation-triangle me-2"></i>
+        Changes are not applied until you click <strong>Save</strong> in the header.
     </div>
 
-    <!-- Info Box -->
-    <div class="alert alert-info mb-0">
-        <i class="fas fa-info-circle me-2"></i>
-        <strong>Note:</strong> The WebUI callback is automatically configured and doesn't need to be added here.
+    <!-- Inline Webhook Editor Modal -->
+    <div class="modal fade"
+         :class="{ 'show d-block': modalOpen }"
+         x-show="modalOpen"
+         x-cloak
+         tabindex="-1"
+         @click.self="closeModal()"
+         style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-plug me-2"></i>
+                        <span x-text="editingIndex !== null ? 'Edit Inline Webhook' : 'New Inline Webhook'"></span>
+                    </h5>
+                    <button type="button" class="btn-close" @click="closeModal()"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info small mb-3">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Inline webhooks are only for this training session. To create reusable webhooks, use the <strong>Environments</strong> page.
+                    </div>
+
+                    <!-- Webhook Type -->
+                    <div class="mb-3">
+                        <label class="form-label">Webhook Type <span class="text-danger">*</span></label>
+                        <select x-model="editWebhook.webhook_type" class="form-select">
+                            <option value="discord">Discord</option>
+                            <option value="raw">Custom (Raw JSON)</option>
+                        </select>
+                    </div>
+
+                    <!-- Webhook URL (Discord) -->
+                    <div class="mb-3" x-show="editWebhook.webhook_type === 'discord'">
+                        <label class="form-label">Discord Webhook URL <span class="text-danger">*</span></label>
+                        <input type="password"
+                               x-model="editWebhook.webhook_url"
+                               class="form-control font-monospace"
+                               placeholder="https://discord.com/api/webhooks/...">
+                        <div class="form-text">
+                            <i class="fas fa-lock me-1"></i>
+                            Server Settings &rarr; Integrations &rarr; Webhooks
+                        </div>
+                    </div>
+
+                    <!-- Callback URL (Raw) -->
+                    <div class="mb-3" x-show="editWebhook.webhook_type === 'raw'">
+                        <label class="form-label">Callback URL <span class="text-danger">*</span></label>
+                        <input type="password"
+                               x-model="editWebhook.callback_url"
+                               class="form-control font-monospace"
+                               placeholder="https://example.com/callback">
+                    </div>
+
+                    <!-- Message Prefix (Discord only) -->
+                    <div class="mb-3" x-show="editWebhook.webhook_type === 'discord'">
+                        <label class="form-label">Message Prefix</label>
+                        <input type="text"
+                               x-model="editWebhook.message_prefix"
+                               class="form-control"
+                               placeholder="My Training">
+                    </div>
+
+                    <!-- Log Level -->
+                    <div class="mb-3">
+                        <label class="form-label">Minimum Log Level</label>
+                        <select x-model="editWebhook.log_level" class="form-select">
+                            <option value="debug">Debug (All)</option>
+                            <option value="info">Info</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                            <option value="critical">Critical</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @click="closeModal()">Cancel</button>
+                    <button type="button" class="btn btn-primary" @click="saveWebhook()">
+                        <i class="fas fa-plus me-1"></i>Add
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -172,12 +195,9 @@
 .webhook-manager .bg-indigo {
     background-color: #6366f1 !important;
 }
-
-.webhook-manager .webhook-list {
-    max-height: 400px;
-    overflow-y: auto;
+.webhook-manager .min-width-0 {
+    min-width: 0;
 }
-
 .webhook-manager [x-cloak] {
     display: none !important;
 }

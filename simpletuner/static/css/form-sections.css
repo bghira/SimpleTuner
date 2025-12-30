@@ -924,3 +924,148 @@
         box-shadow: 0 0 0 10px rgba(167, 139, 250, 0.2), 0 0 25px rgba(167, 139, 250, 0.5);
     }
 }
+
+/* ============================================
+   Mobile Form Styling - Compact Layout
+   ============================================ */
+@media (max-width: 768px) {
+    /* Hide main title in card header, keep expand/collapse buttons */
+    .tab-fragment > .card > .card-header > div:first-child {
+        display: none !important;
+    }
+
+    /* Overlay buttons on first form section */
+    .tab-fragment > .card {
+        position: relative;
+    }
+
+    .tab-fragment > .card > .card-header {
+        position: absolute !important;
+        top: 0.5rem;
+        right: 0.5rem;
+        z-index: 10;
+        padding: 0 !important;
+        background: transparent !important;
+        border: none !important;
+    }
+
+    /* Reduce space between top of card and first section */
+    .tab-fragment > .card:first-child {
+        margin-top: 0.5rem !important;
+    }
+
+    /* More compact config cards - flush content on mobile */
+    .tab-fragment .config-card,
+    .tab-fragment .card {
+        padding: 0 !important;
+        margin-bottom: 0 !important;
+        border: none !important;
+        border-radius: 0 !important;
+    }
+
+    .tab-fragment .card-body {
+        padding: 0 !important;
+        margin-bottom: 0 !important;
+        border: none !important;
+        border-bottom: 1px solid var(--border-soft, rgba(255, 255, 255, 0.1)) !important;
+        border-radius: 0 !important;
+    }
+
+    /* Compact form sections - stacked with bottom border only */
+    .form-section {
+        padding: 0.75rem 0.5rem !important;
+        margin-bottom: 0 !important;
+        border: none !important;
+        border-bottom: 1px solid var(--border-soft, rgba(255, 255, 255, 0.1)) !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+    }
+
+    /* Remove nested card borders - flatten hierarchy */
+    .form-section .card,
+    .form-section .config-card,
+    .card .card {
+        border: none !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+    }
+
+    /* Compact section titles */
+    .section-title {
+        font-size: 0.9rem !important;
+        margin-bottom: 0.5rem !important;
+        padding-bottom: 0.35rem !important;
+    }
+
+    /* Smaller subsection toggle buttons */
+    .advanced-toggle,
+    .subsection-toggle,
+    [data-bs-toggle="collapse"] {
+        padding: 0.2rem 0.4rem !important;
+        font-size: 0.75rem !important;
+    }
+
+    /* Hide dividers and advanced section indicators when collapsed */
+    .collapse:not(.show) + .subsection-divider,
+    .collapse:not(.show) ~ .subsection-divider,
+    .advanced-section .collapse:not(.show) ~ hr {
+        display: none !important;
+    }
+
+    /* Reduce form group spacing */
+    .form-group,
+    .mb-3 {
+        margin-bottom: 0.5rem !important;
+    }
+
+    /* Compact form labels */
+    .form-label {
+        font-size: 0.8rem !important;
+        margin-bottom: 0.25rem !important;
+    }
+
+    /* Compact form controls */
+    .form-control,
+    .form-select {
+        padding: 0.35rem 0.5rem !important;
+        font-size: 0.85rem !important;
+    }
+
+    /* Compact help text */
+    .form-text {
+        font-size: 0.7rem !important;
+        margin-top: 0.2rem !important;
+        line-height: 1.25 !important;
+    }
+
+    /* Reduce row gutters */
+    .row {
+        --bs-gutter-x: 0.5rem !important;
+        --bs-gutter-y: 0.35rem !important;
+    }
+
+    /* Compact advanced section styling */
+    .form-section.advanced-section {
+        margin-left: 0.25rem !important;
+        padding-left: 0.5rem !important;
+        border-left-width: 2px !important;
+    }
+
+    /* Subsection titles - more compact */
+    .subsection-title {
+        font-size: 0.75rem !important;
+        margin-top: 0.75rem !important;
+        margin-bottom: 0.5rem !important;
+        padding-bottom: 0.2rem !important;
+    }
+
+    .subsection-title:first-child {
+        margin-top: 0 !important;
+    }
+
+    /* Subsection dividers - thinner */
+    .subsection-divider {
+        margin: 0.5rem 0 !important;
+    }
+}

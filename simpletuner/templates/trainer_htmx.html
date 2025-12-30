@@ -89,6 +89,48 @@ document.addEventListener('alpine:init', () => {
             });
         }
     });
+
+    // Shared webhook configs store
+    Alpine.store('webhookConfigs', {
+        configs: [],
+        loaded: false,
+        loading: false,
+
+        async load(force = false) {
+            if (this.loading) return;
+            if (this.loaded && !force) return;
+
+            this.loading = true;
+            try {
+                const response = await fetch('/api/configs/?config_type=webhook');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.configs = (data.configs || []).map(item => ({
+                        name: item.name,
+                        webhook_type: item.webhook_type || 'discord',
+                        log_level: item.log_level || 'info',
+                        path: `webhooks/${item.name}.json`
+                    }));
+                    this.loaded = true;
+                }
+            } catch (error) {
+                console.error('Failed to load webhook configs:', error);
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        getByName(name) {
+            return this.configs.find(c => c.name === name);
+        },
+
+        getChoices() {
+            return this.configs.map(c => ({
+                value: c.path,
+                label: `${c.name} (${c.webhook_type})`
+            }));
+        }
+    });
 });
 
 const sanitizeConfigName = (name) => {
@@ -117,6 +159,14 @@ function trainerComponent() {
     return {
         versionInfo: null,
         _versionLoading: false,
+        // Mobile sidebar state
+        sidebarOpen: false,
+        toggleSidebar() {
+            this.sidebarOpen = !this.sidebarOpen;
+        },
+        closeSidebar() {
+            this.sidebarOpen = false;
+        },
         handleTrainingStatus(e) {
             const detail = e.detail || {};
             const status = (detail.status || '').toLowerCase();
@@ -424,6 +474,7 @@ function trainerComponent() {
         _skipNextClean: false,
         originalFormData: {},
         formValueStore: {},
+        changedFieldNames: new Set(),
 
          // Config save dialog state
          showConfigSaveDialog: false,
@@ -484,6 +535,7 @@ function trainerComponent() {
                 this.originalFormData = {};
                 this.formDirty = false;
                 this._skipNextClean = false;
+                this.changedFieldNames.clear();
                 delete this._preservingFormState;
 
                 // Broadcast environment change event for other components
@@ -2635,7 +2687,7 @@ function trainerComponent() {
          // Validation errors
          datasetValidationErrors: {},
          eventDockMinHeight: 160,
-         eventDockMaxRatio: 0.75,
+         eventDockMaxRatio: 0.9,
          eventDockCollapsedHeight: 56,
          eventDockHeight: (() => {
              const stored = parseInt(localStorage.getItem('eventDockHeight'), 10);
@@ -2675,20 +2727,34 @@ function trainerComponent() {
          startEventDockResize(event) {
              if (this.eventDockCollapsed) return;
              event.preventDefault();
+             event.stopPropagation();
              this.eventDockIsResizing = true;
              const startY = event.clientY;
              const startHeight = this.eventDockHeight;
+             const target = event.target.closest('.event-dock-resize-handle');
+
+             // Capture pointer for reliable touch/mouse tracking
+             if (target && target.setPointerCapture) {
+                 target.setPointerCapture(event.pointerId);
+             }
+
              const onMove = (moveEvt) => {
+                 moveEvt.preventDefault();
                  const delta = startY - moveEvt.clientY;
                  this.setEventDockHeight(startHeight + delta);
              };
-             const onUp = () => {
+             const onUp = (upEvt) => {
                  this.eventDockIsResizing = false;
+                 if (target && target.releasePointerCapture) {
+                     try { target.releasePointerCapture(upEvt.pointerId); } catch(e) {}
+                 }
                  window.removeEventListener('pointermove', onMove);
                  window.removeEventListener('pointerup', onUp);
+                 window.removeEventListener('pointercancel', onUp);
              };
              window.addEventListener('pointermove', onMove);
              window.addEventListener('pointerup', onUp);
+             window.addEventListener('pointercancel', onUp);
          },
         get eventDockStyle() {
             return this.eventDockCollapsed
@@ -2819,6 +2885,7 @@ function trainerComponent() {
             items.push({
                 key: 'load',
                 label: 'Load 5m',
+                shortLabel: 'L',
                 value: load,
                 formatted: load !== null ? load.toFixed(2) : '—',
                 tooltip: '5 minute system load average',
@@ -2827,6 +2894,7 @@ function trainerComponent() {
             items.push({
                 key: 'memory',
                 label: 'Mem',
+                shortLabel: 'M',
                 value: memory,
                 formatted: memory !== null ? `${Math.round(memory)}%` : '—',
                 tooltip: 'System memory usage',
@@ -2862,6 +2930,7 @@ function trainerComponent() {
                 items.push({
                     key: `gpu-${gpu.index ?? index}`,
                     label: displayLabel,
+                    shortLabel: `G${gpu.index ?? index}`,
                     value: util,
                     memory: mem,
                     formatted: formattedDisplay,
@@ -2887,6 +2956,7 @@ function trainerComponent() {
                 items.push({
                     key: 'deepspeed-offload',
                     label: deviceLabel === 'OFFLOAD' ? 'Offload' : deviceLabel,
+                    shortLabel: 'O',
                     value: offloadInfo.size_bytes,
                     formatted: this.formatBytes(offloadInfo.size_bytes),
                     tooltip,
@@ -3658,6 +3728,14 @@ function trainerComponent() {
                     console.error('Failed to refresh dataloader configs after onboarding:', error);
                 }
             }
+            const webhookStore = Alpine.store('webhookConfigs');
+            if (webhookStore) {
+                try {
+                    await webhookStore.load(true);
+                } catch (error) {
+                    console.error('Failed to refresh webhook configs after onboarding:', error);
+                }
+            }
             if (environment && typeof this.switchEnvironment === 'function') {
                 try {
                     await this.switchEnvironment(environment.name);
@@ -3917,10 +3995,17 @@ function trainerComponent() {
         markFormClean() {
             this.formDirty = false;
             this._skipNextClean = false;
+            // Clear changed field tracking and remove visual indicators
+            this.changedFieldNames.clear();
+            const formElement = document.getElementById('trainer-form');
+            if (formElement) {
+                formElement.querySelectorAll('.field-valid').forEach(el => {
+                    el.classList.remove('field-valid');
+                });
+            }
             // Capture current values for cross-tab persistence
             this.captureFormValues();
             // Store current form data as original
-            const formElement = document.getElementById('trainer-form');
             if (formElement) {
                 const formData = new FormData(formElement);
                 this.originalFormData = {};
@@ -4117,12 +4202,24 @@ function trainerComponent() {
                         }
                     });
                 }
+
+                // Re-apply field-valid highlight if this field was changed
+                if (this.changedFieldNames.has(name)) {
+                    nodes.forEach((node) => {
+                        if (node.classList.contains('form-control') || node.classList.contains('form-select')) {
+                            node.classList.add('field-valid');
+                        }
+                    });
+                }
             });
         },
 
         handleFieldInput(event) {
             if (event && event.target && event.target.name) {
                 this.updateStoredValue(event.target);
+                // Track this field as changed for visual highlighting
+                const canonicalName = this.canonicalizeKey(event.target.name) || event.target.name;
+                this.changedFieldNames.add(canonicalName);
             }
             this.checkFormDirty();
         },
@@ -5009,9 +5106,8 @@ function trainerComponent() {
                             if ($data._preservingFormState) {
                                 console.log('Applying stored form values after tab switch');
                                 $data.applyStoredValues();
-                                // Mark clean after tab switch - we just loaded fresh content from server
-                                // Don't call checkFormDirty() because originalFormData is from a different tab
-                                $data.markFormClean();
+                                // Do NOT call markFormClean() here - if the user had unsaved changes
+                                // before the tab switch, formDirty should remain true so they can save
                             } else if (!$data._skipNextClean) {
                                 $data.markFormClean();
                             }
@@ -5265,19 +5361,43 @@ function trainerComponent() {
         </div>
     </div>
 
-    <!-- Mobile sidebar toggle -->
-    <button class="sidebar-toggle" @click="$refs.sidebar.classList.toggle('active')">
-        <i class="fas fa-bars"></i>
-    </button>
+    <!-- Mobile sidebar backdrop - click to close -->
+    <div class="sidebar-backdrop"
+         x-show="sidebarOpen"
+         x-transition:enter="transition-opacity ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition-opacity ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @click="closeSidebar()">
+    </div>
 
     <!-- Sidebar -->
-    <aside class="sidebar" x-ref="sidebar">
+    <aside class="sidebar" :class="{ 'active': sidebarOpen }" x-ref="sidebar">
         <div class="sidebar-header">
             <h1>🐈 SimpleTuner</h1>
             <p class="sidebar-version" x-show="sidebarVersionText()" x-text="sidebarVersionText()"></p>
         </div>
 
-        <nav class="sidebar-nav">
+        <nav class="sidebar-nav"
+             x-init="$nextTick(() => {
+                 const el = $el;
+                 let startY = 0;
+                 el.addEventListener('touchstart', (e) => {
+                     startY = e.touches[0].clientY;
+                 }, { passive: true });
+                 el.addEventListener('touchmove', (e) => {
+                     const currentY = e.touches[0].clientY;
+                     const scrollingUp = currentY > startY;
+                     const scrollingDown = currentY < startY;
+                     const atTop = el.scrollTop <= 0;
+                     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+                     if ((atTop && scrollingUp) || (atBottom && scrollingDown)) {
+                         e.preventDefault();
+                     }
+                 }, { passive: false });
+             })">
             <div class="nav-section">
                 <div class="nav-section-title">Configuration</div>
 
@@ -5379,7 +5499,7 @@ function trainerComponent() {
                                 trainer._preservingFormState = true;
                             }
                         "
-                        @click="switchTab('{{ tab.name }}')">
+                        @click="switchTab('{{ tab.name }}'); closeSidebar()">
                     <i class="{{ tab.icon }}"></i> {{ tab.title }}
                 </button>
                 {% endfor %}
@@ -5391,6 +5511,13 @@ function trainerComponent() {
     <main class="main-content" :style="eventDockPaddingStyle">
         <!-- Top Bar -->
         <div class="topbar">
+
+            <!-- Topbar left: toggle + config selector -->
+            <div class="topbar-left">
+                <!-- Mobile sidebar toggle button -->
+                <button class="sidebar-toggle" @click="toggleSidebar()" aria-label="Toggle navigation menu">
+                    <i class="fas" :class="sidebarOpen ? 'fa-times' : 'fa-bars'"></i>
+                </button>
 
             <!-- Configuration Selector -->
             <script>
@@ -5733,15 +5860,17 @@ function trainerComponent() {
                     </div>
                 </div>
                 <button type="button"
-                        class="btn btn-sm btn-outline-secondary ms-2"
+                        class="btn btn-sm btn-outline-secondary ms-2 btn-view-json"
                         title="View and edit the composed training JSON"
+                        aria-label="View JSON configuration"
                         :disabled="!$store.trainer.activeEnvironment"
                         @click.stop="$store.trainer.openConfigJsonModal()">
                     <i class="fas fa-code"></i>
-                    View JSON
+                    <span class="btn-text">View JSON</span>
                 </button>
 
             </div>
+            </div><!-- end topbar-left -->
 
             <div class="topbar-right">
                 <div class="header-actions">
@@ -5752,7 +5881,8 @@ function trainerComponent() {
                             x-show="activeTab === 'datasets'"
                             x-transition
                             @click="$store.trainer.saveDatasets && $store.trainer.saveDatasets({ showToast: true, skipConfirmation: true })"
-                            title="Save dataset configuration">
+                            title="Save dataset configuration"
+                            aria-label="Save dataset configuration">
                         <i class="fas fa-database"></i>
                         <span class="btn-text">Save Dataset</span>
                         <span x-show="$store.trainer.hasUnsavedChanges" class="badge bg-danger ms-1" style="font-size: 0.65rem;">
@@ -5764,7 +5894,8 @@ function trainerComponent() {
                             class="trainer-action-btn btn btn-outline-secondary"
                             :class="formDirty ? 'is-active' : ''"
                             :disabled="!formDirty"
-                            @click="saveConfig()">
+                            @click="saveConfig()"
+                            aria-label="Save configuration">
                         <i class="fas fa-save"></i>
                         <span class="btn-text">Save</span>
                     </button>
@@ -6035,6 +6166,7 @@ function trainerComponent() {
                               'bg-secondary': !['connected', 'disconnected', 'reconnecting'].includes(connectionStatus)
                           }"
                           :title="connectionMessage || ''"
+                          :aria-label="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"
                           x-text="connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'disconnected' ? 'Disconnected' : connectionStatus === 'reconnecting' ? 'Reconnecting' : connectionStatus"></span>
                 </div>
                 <div class="event-dock-sysstat">
@@ -6042,7 +6174,8 @@ function trainerComponent() {
                         <div class="sysstat-items">
                             <template x-for="item in systemStatusItems" :key="item.key">
                                 <span class="sysstat-item" :title="item.tooltip || ''">
-                                    <span class="label" x-text="item.label"></span>
+                                    <span class="label label-full" x-text="item.label"></span>
+                                    <span class="label label-short" x-text="item.shortLabel || item.label.charAt(0)"></span>
                                     <span class="value" x-text="item.formatted"></span>
                                 </span>
                             </template>
@@ -6057,22 +6190,26 @@ function trainerComponent() {
                     <button type="button" class="btn btn-sm btn-outline-light"
                             x-show="showTrainingProgress"
                             title="Trigger checkpoint save after next gradient sync"
+                            aria-label="Trigger checkpoint save"
                             @click="window.triggerManualCheckpoint()">
                         <i class="fas fa-save"></i> Trigger Checkpoint
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-light"
                             x-show="showTrainingProgress"
                             title="Trigger validation run after next gradient sync"
+                            aria-label="Trigger validation run"
                             @click="window.triggerManualValidation()">
                         <i class="fas fa-check-circle"></i> Trigger Validation
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-light"
                             title="Clear events"
+                            aria-label="Clear events"
                             @click="if (window.EventRenderer) { document.getElementById('eventList').innerHTML = ''; }">
                         <i class="fas fa-trash"></i>
                     </button>
                     <button type="button" class="btn btn-sm btn-outline-light"
                             title="Toggle events panel"
+                            aria-label="Toggle events panel"
                             @click="toggleEventDock()">
                         <i :class="eventDockCollapsed ? 'fas fa-chevron-up' : 'fas fa-chevron-down'"></i>
                     </button>
@@ -6103,7 +6240,8 @@ function trainerComponent() {
                         <button type="button"
                                 id="copyEventLogsBtn"
                                 class="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
-                                title="Copy filtered events to clipboard">
+                                title="Copy filtered events to clipboard"
+                                aria-label="Copy events to clipboard">
                             <i class="fas fa-copy"></i>
                             <span class="copy-button-label">Copy</span>
                         </button>
@@ -6114,7 +6252,24 @@ function trainerComponent() {
                     </div>
                 </div>
                 <div id="eventList"
-                     class="event-list">
+                     class="event-list"
+                     x-init="$nextTick(() => {
+                         const el = $el;
+                         let startY = 0;
+                         el.addEventListener('touchstart', (e) => {
+                             startY = e.touches[0].clientY;
+                         }, { passive: true });
+                         el.addEventListener('touchmove', (e) => {
+                             const currentY = e.touches[0].clientY;
+                             const scrollingUp = currentY > startY;
+                             const scrollingDown = currentY < startY;
+                             const atTop = el.scrollTop <= 0;
+                             const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+                             if ((atTop && scrollingUp) || (atBottom && scrollingDown)) {
+                                 e.preventDefault();
+                             }
+                         }, { passive: false });
+                     })">
                     <div class="text-muted">Loading events...</div>
                 </div>
             </div>

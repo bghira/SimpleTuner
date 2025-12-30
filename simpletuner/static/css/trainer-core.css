@@ -40,7 +40,6 @@
 .tab-fragment .checkpoint-card:hover,
 .tab-fragment .dataset-card:hover,
 .tab-fragment .config-card:hover {
-    transform: translateY(-2px);
     box-shadow: var(--shadow-panel-hover) !important;
 }
 
@@ -210,6 +209,11 @@
     opacity: 0.7;
 }
 
+/* Short labels hidden by default, shown on mobile */
+.event-dock-sysstat .sysstat-item .label-short {
+    display: none;
+}
+
 .event-dock-sysstat .sysstat-item .value {
     font-weight: 600;
     color: var(--text-primary);
@@ -244,6 +248,9 @@
     cursor: ns-resize;
     background: var(--card-bg);
     border-bottom: 1px solid var(--border-subtle);
+    touch-action: none; /* Prevent browser from intercepting touch for scroll */
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .event-dock-resize-handle span {
@@ -260,6 +267,7 @@
     min-height: 0;
     overflow: hidden;
     backdrop-filter: blur(6px);
+    overscroll-behavior: contain;
 }
 
 .event-filter-controls {
@@ -335,6 +343,8 @@
     height: 100%;
     padding: var(--spacing-lg);
     background: var(--event-list-bg);
+    overscroll-behavior: contain; /* Prevent scroll chaining to parent */
+    -webkit-overflow-scrolling: touch;
 }
 
 .event-dock .event-list[data-filter-empty="true"]::before {
@@ -350,17 +360,194 @@
 @media (max-width: 1024px) {
     .event-dock-shell {
         left: 0;
-        padding: 0 1.25rem;
+        padding: 0 1rem;
+    }
+}
+
+/* Lower event dock z-index on mobile so modals can appear above */
+@media (max-width: 768px) {
+    .event-dock-shell {
+        z-index: 900;
     }
 }
 
 @media (max-width: 768px) {
-    .event-dock-title span {
-        font-size: 0.9rem;
+    .event-dock-shell {
+        padding: 0 0.5rem;
+    }
+
+    /* Allow event dock to resize up to 90% of viewport */
+    .event-dock {
+        max-height: 90vh !important;
+    }
+
+    .event-dock-toolbar {
+        padding: var(--spacing-xs) var(--spacing-sm);
+        flex-wrap: nowrap;
+        gap: var(--spacing-xs);
+        min-height: 44px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .event-dock-title {
+        flex-shrink: 0;
+    }
+
+    /* Hide terminal icon and "Training Events" text on mobile, keep badge */
+    .event-dock-title i,
+    .event-dock-title span:not(.badge) {
+        display: none;
+    }
+
+    .event-dock-title .badge {
+        font-size: 0.7rem;
+        padding: 0.2rem 0.4rem;
+    }
+
+    /* Compact system stats on mobile */
+    .event-dock-sysstat {
+        font-size: 0.7rem;
+        padding: 0 var(--spacing-xs);
+        flex: 1;
+        min-width: 0;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .event-dock-sysstat .sysstat-items {
+        gap: var(--spacing-sm);
+        flex-wrap: nowrap;
+    }
+
+    /* Show short labels, hide full labels on mobile */
+    .event-dock-sysstat .sysstat-item .label-full {
+        display: none;
+    }
+
+    .event-dock-sysstat .sysstat-item .label-short {
+        display: inline;
+    }
+
+    /* Connection badge - icon only on mobile */
+    .event-dock-title .badge {
+        font-size: 0 !important;
+        padding: 0.2rem 0.35rem !important;
+        min-width: 20px;
+        text-align: center;
+    }
+
+    .event-dock-title .badge::before {
+        font-size: 0.6rem;
+    }
+
+    .event-dock-title .badge.bg-success::before {
+        content: "●";
+    }
+
+    .event-dock-title .badge.bg-danger::before {
+        content: "○";
+    }
+
+    .event-dock-title .badge.bg-warning::before {
+        content: "◐";
+    }
+
+    .event-dock-title .badge.bg-secondary::before {
+        content: "?";
+    }
+
+    .event-dock-actions {
+        flex-shrink: 0;
+        gap: 2px;
     }
 
     .event-dock-actions .btn {
-        padding: 0.35rem 0.6rem;
+        padding: 0.25rem 0.4rem;
+        font-size: 0.75rem;
+    }
+
+    /* Icon-only buttons on mobile */
+    .event-dock-actions .btn span,
+    .event-dock-actions .btn:not([title=""]):after {
+        display: none;
+    }
+
+    /* Hide button text, keep icons */
+    .event-dock-actions .btn {
+        min-width: 32px;
+    }
+
+    /* Larger touch-friendly resize handle */
+    .event-dock-resize-handle {
+        padding: 0.75rem 0;
+        min-height: 44px; /* Minimum touch target size */
+    }
+
+    .event-dock-resize-handle span {
+        width: 64px;
+        height: 6px;
+    }
+
+    /* Smaller Copy button */
+    #copyEventLogsBtn {
+        font-size: 0.65rem !important;
+        padding: 0.2rem 0.4rem !important;
+    }
+
+    #copyEventLogsBtn .copy-button-label {
+        display: none;
+    }
+
+    /* Compact event filter controls */
+    .event-filter-controls {
+        padding: 0.25rem 0.4rem;
+        gap: 0.3rem;
+        font-size: 0.6rem;
+    }
+
+    .event-filter-controls .form-select {
+        font-size: 0.6rem;
+        min-width: 4.5rem;
+        padding: 0.1rem 1.2rem 0.1rem 0.3rem;
+    }
+
+    .event-filter-label {
+        font-size: 0.55rem !important;
+    }
+
+    /* Smaller event log entries for mobile */
+    .event-item {
+        padding: 0.3rem 0.5rem !important;
+        margin: 0.15rem 0 !important;
+        font-size: 0.6rem !important;
+        line-height: 1.25 !important;
+        border-left-width: 2px !important;
+    }
+
+    .event-item code,
+    .event-item pre {
+        font-size: 0.55rem !important;
+    }
+
+    #eventList {
+        padding: 0.15rem 0.35rem !important;
+    }
+}
+
+/* Very small screens - further simplification */
+@media (max-width: 480px) {
+    .event-dock {
+        max-height: 90vh !important;
+    }
+
+    .event-dock-toolbar {
+        padding: var(--spacing-xs);
+    }
+
+    /* Hide trigger buttons on very small screens when training */
+    .event-dock-actions .btn[title*="Trigger"] {
+        display: none;
     }
 }
 
