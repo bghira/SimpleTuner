@@ -339,14 +339,21 @@ class AsyncJobStore:
 
         Prefer get_instance() in async contexts.
         """
+        # Check if there's a running loop
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
+            has_running_loop = True
+        except RuntimeError:
+            has_running_loop = False
+
+        if has_running_loop:
+            # In async context - return existing instance or raise
             if cls._instance is not None:
                 return cls._instance
             raise RuntimeError(
                 "Cannot get_instance_sync from async context without existing instance. "
                 "Use 'await AsyncJobStore.get_instance()' instead."
             )
-        except RuntimeError:
+        else:
             # No running loop - safe to use asyncio.run
             return asyncio.run(cls.get_instance(config_dir))

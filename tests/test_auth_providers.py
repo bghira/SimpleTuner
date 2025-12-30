@@ -18,6 +18,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Check if ldap3 is available
+try:
+    import ldap3
+
+    _LDAP3_AVAILABLE = True
+except ImportError:
+    _LDAP3_AVAILABLE = False
+
 # Suppress expected error logs during tests
 logging.getLogger("simpletuner.simpletuner_sdk.server.services.cloud.auth.providers.oidc").setLevel(logging.CRITICAL)
 logging.getLogger("simpletuner.simpletuner_sdk.server.services.cloud.auth.providers.ldap").setLevel(logging.CRITICAL)
@@ -1182,6 +1190,7 @@ class TestOIDCProviderJWT(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(result)
 
 
+@unittest.skipUnless(_LDAP3_AVAILABLE, "ldap3 package not installed")
 class TestLDAPProviderSearch(unittest.IsolatedAsyncioTestCase):
     """Tests for LDAP search functionality."""
 

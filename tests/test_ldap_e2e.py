@@ -11,6 +11,14 @@ import os
 import sys
 import unittest
 
+# Check if ldap3 is available
+try:
+    import ldap3
+
+    _LDAP3_AVAILABLE = True
+except ImportError:
+    _LDAP3_AVAILABLE = False
+
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -18,6 +26,7 @@ from simpletuner.simpletuner_sdk.server.services.cloud.auth.providers.base impor
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.providers.ldap import LDAPProvider
 
 
+@unittest.skipUnless(_LDAP3_AVAILABLE, "ldap3 package not installed")
 class TestLDAPE2E(unittest.TestCase):
     """End-to-end tests for LDAP authentication against local OpenLDAP."""
 
@@ -148,6 +157,7 @@ class TestLDAPE2E(unittest.TestCase):
         self.assertEqual(error, "Username and password required")
 
 
+@unittest.skipUnless(_LDAP3_AVAILABLE, "ldap3 package not installed")
 class TestAuthProviderManager(unittest.TestCase):
     """Test the AuthProviderManager with LDAP configuration."""
 
