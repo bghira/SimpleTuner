@@ -33,8 +33,13 @@ class TestS3StorageRoutes(APITestCase, unittest.TestCase):
             return_value=Path(self._upload_dir),
         )
         self._upload_dir_patcher.start()
+        # Mock UserStore.has_any_users to return False (single-user mode, no auth required)
+        self._user_store_patcher = patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore")
+        mock_user_store_cls = self._user_store_patcher.start()
+        mock_user_store_cls.return_value.has_any_users = AsyncMock(return_value=False)
 
     def tearDown(self):
+        self._user_store_patcher.stop()
         self._upload_dir_patcher.stop()
         # Clean up temp directory
         import shutil

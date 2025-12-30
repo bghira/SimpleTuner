@@ -23,21 +23,42 @@ class TestFirstAdminRaceCondition(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Set up test fixtures."""
-        AsyncJobStore._instance = None
-        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
-
-        BaseSQLiteStore._instances.clear()
-
         self.temp_dir = tempfile.mkdtemp()
         self.config_dir = Path(self.temp_dir)
+        self.db_path = Path(self.temp_dir) / "test_users.db"
+
+        AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
+
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
+        BaseSQLiteStore._instances.clear()
+
+        # Patch the _get_store function in auth routes to use our temp db
+        self._store_patcher = patch(
+            "simpletuner.simpletuner_sdk.server.routes.cloud.auth._get_store",
+            lambda: UserStore(self.db_path),
+        )
+        self._store_patcher.start()
+
+        # Initialize UserStore with temp path to set up the singleton
+        UserStore(self.db_path)
 
     async def asyncTearDown(self) -> None:
         """Clean up test fixtures."""
         import shutil
 
+        self._store_patcher.stop()
+
         AsyncJobStore._instance = None
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth import UserStore
+        from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
         from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
 
+        UserStore.reset_instance()
+        BaseAuthStore._instances.clear()
         BaseSQLiteStore._instances.clear()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 

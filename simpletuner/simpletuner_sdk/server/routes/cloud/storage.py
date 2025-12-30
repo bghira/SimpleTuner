@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ...services.cloud.auth import User, UserStore, get_optional_user
-from ._shared import get_client_ip, get_local_upload_dir
+from ._shared import get_client_ip, get_job_store, get_local_upload_dir
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +28,6 @@ async def put_object(bucket: str, key: str, request: Request) -> Dict[str, Any]:
 
     Requires authentication via per-job upload token.
     """
-    from ._shared import get_job_store
-
     store = get_job_store()
     client_ip = get_client_ip(request)
 

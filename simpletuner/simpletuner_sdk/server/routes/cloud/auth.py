@@ -169,9 +169,9 @@ async def create_first_admin(
             user_agent = request.headers.get("User-Agent", "")[:500]
             session_id = await store.create_session(
                 user_id=user.id,
+                duration_hours=24 * 30,  # 30 days for first admin
                 ip_address=client_ip,
                 user_agent=user_agent,
-                expires_hours=24 * 30,  # 30 days for first admin
             )
 
             # Set session cookie
@@ -239,9 +239,9 @@ async def login(
 
     session_id = await store.create_session(
         user_id=user.id,
+        duration_hours=expires_hours,
         ip_address=client_ip,
         user_agent=user_agent,
-        expires_hours=expires_hours,
     )
 
     # Set session cookie

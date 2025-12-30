@@ -234,9 +234,13 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(s3_get_object("../escape", "file.txt"))
-        self.assertEqual(ctx.exception.status_code, 400)
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(s3_get_object("../escape", "file.txt", mock_request, user=None))
+            self.assertEqual(ctx.exception.status_code, 400)
 
     def test_get_with_dotdot_in_key_blocked(self):
         """Test GET with .. in key is blocked."""
@@ -246,9 +250,13 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(s3_get_object("bucket", "../../etc/passwd"))
-        self.assertEqual(ctx.exception.status_code, 400)
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(s3_get_object("bucket", "../../etc/passwd", mock_request, user=None))
+            self.assertEqual(ctx.exception.status_code, 400)
 
     def test_list_objects_with_path_traversal_blocked(self):
         """Test list objects with path traversal is blocked."""
@@ -258,9 +266,13 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_objects as s3_list_objects
 
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(s3_list_objects("../escape"))
-        self.assertEqual(ctx.exception.status_code, 400)
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(s3_list_objects("../escape", mock_request, user=None))
+            self.assertEqual(ctx.exception.status_code, 400)
 
 
 class TestS3GetObject(unittest.TestCase):
@@ -293,7 +305,11 @@ class TestS3GetObject(unittest.TestCase):
         bucket_dir.mkdir()
         (bucket_dir / "myfile.txt").write_bytes(b"hello world")
 
-        result = asyncio.run(s3_get_object("mybucket", "myfile.txt"))
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            result = asyncio.run(s3_get_object("mybucket", "myfile.txt", mock_request, user=None))
 
         self.assertEqual(result, b"hello world")
 
@@ -305,9 +321,13 @@ class TestS3GetObject(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(s3_get_object("nobucket", "nofile.txt"))
-        self.assertEqual(ctx.exception.status_code, 404)
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(s3_get_object("nobucket", "nofile.txt", mock_request, user=None))
+            self.assertEqual(ctx.exception.status_code, 404)
 
     def test_get_nested_object_path(self):
         """Test GET object in nested path."""
@@ -320,7 +340,11 @@ class TestS3GetObject(unittest.TestCase):
         nested_dir.mkdir(parents=True)
         (nested_dir / "deep.txt").write_bytes(b"deep content")
 
-        result = asyncio.run(s3_get_object("bucket", "subdir/nested/deep.txt"))
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            result = asyncio.run(s3_get_object("bucket", "subdir/nested/deep.txt", mock_request, user=None))
 
         self.assertEqual(result, b"deep content")
 
@@ -350,7 +374,11 @@ class TestS3ListBuckets(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_buckets as s3_list_buckets
 
-        result = asyncio.run(s3_list_buckets())
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            result = asyncio.run(s3_list_buckets(mock_request, user=None))
 
         self.assertEqual(result["Buckets"], [])
         self.assertEqual(result["total_size"], 0)
@@ -371,7 +399,11 @@ class TestS3ListBuckets(unittest.TestCase):
         bucket2.mkdir()
         (bucket2 / "big.bin").write_bytes(b"x" * 100)  # 100 bytes
 
-        result = asyncio.run(s3_list_buckets())
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            result = asyncio.run(s3_list_buckets(mock_request, user=None))
 
         self.assertEqual(len(result["Buckets"]), 2)
         self.assertEqual(result["total_size"], 108)
@@ -407,7 +439,11 @@ class TestS3ListObjects(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_objects as s3_list_objects
 
-        result = asyncio.run(s3_list_objects("nonexistent"))
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            result = asyncio.run(s3_list_objects("nonexistent", mock_request, user=None))
 
         self.assertEqual(result["Contents"], [])
         self.assertEqual(result["Name"], "nonexistent")
@@ -426,7 +462,11 @@ class TestS3ListObjects(unittest.TestCase):
         subdir.mkdir()
         (subdir / "file2.txt").write_bytes(b"content2content2")
 
-        result = asyncio.run(s3_list_objects("mybucket"))
+        mock_request = MockRequest()
+
+        with patch("simpletuner.simpletuner_sdk.server.routes.cloud.storage.UserStore") as mock_user_store:
+            mock_user_store.return_value.has_any_users = AsyncMock(return_value=False)
+            result = asyncio.run(s3_list_objects("mybucket", mock_request, user=None))
 
         self.assertEqual(len(result["Contents"]), 2)
 
