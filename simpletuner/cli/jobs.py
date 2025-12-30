@@ -296,19 +296,26 @@ def _jobs_list(args) -> int:
         return 0
 
     # Default table output
-    print(f"{'Job ID':<14} {'Status':<15} {'Config':<30} {'Duration':<10}")
-    print("-" * 75)
+    print(f"{'Job ID':<14} {'Status':<15} {'Config':<20} {'Run Name':<25} {'Duration':<10}")
+    print("-" * 90)
 
     for job in jobs:
         job_id = job.get("job_id", "")[:12]
         status = job.get("status", "unknown")
-        config_name = (job.get("config_name") or "unnamed")[:29]
+        config_name = (job.get("config_name") or "unnamed")[:19]
+        run_name = _get_run_name(job)[:24]
         duration = _format_duration(job.get("duration_seconds"))
 
-        print(f"{job_id:<14} {_format_job_status(status):<15} {config_name:<30} {duration:<10}")
+        print(f"{job_id:<14} {_format_job_status(status):<15} {config_name:<20} {run_name:<25} {duration:<10}")
 
     print(f"\nTotal: {len(jobs)} jobs")
     return 0
+
+
+def _get_run_name(job: dict) -> str:
+    """Extract run_name from job metadata."""
+    metadata = job.get("metadata", {})
+    return metadata.get("run_name", "-") if metadata else "-"
 
 
 def _print_custom_fields(jobs: list, fields: list) -> None:
@@ -317,7 +324,8 @@ def _print_custom_fields(jobs: list, fields: list) -> None:
     field_config = {
         "job_id": (14, lambda v: (v or "")[:12]),
         "status": (15, lambda v: _format_job_status(v or "unknown")),
-        "config_name": (30, lambda v: (v or "unnamed")[:29]),
+        "config_name": (20, lambda v: (v or "unnamed")[:19]),
+        "run_name": (25, lambda v: (v or "-")[:24]),
         "duration_seconds": (10, lambda v: _format_duration(v)),
         "duration": (10, lambda v: _format_duration(v)),
         "created_at": (20, lambda v: (v or "-")[:19]),
@@ -342,10 +350,13 @@ def _print_custom_fields(jobs: list, fields: list) -> None:
         row_parts = []
         for field in fields:
             width, formatter = field_config.get(field, (20, lambda v: str(v) if v is not None else "-"))
-            value = job.get(field)
-            # Handle duration alias
-            if field == "duration" and value is None:
+            # Handle special fields
+            if field == "run_name":
+                value = _get_run_name(job)
+            elif field == "duration" and job.get(field) is None:
                 value = job.get("duration_seconds")
+            else:
+                value = job.get(field)
             formatted = formatter(value)
             row_parts.append(f"{formatted:<{width}}")
         print(" ".join(row_parts))
