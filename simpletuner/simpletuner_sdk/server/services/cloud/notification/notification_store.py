@@ -882,8 +882,22 @@ class NotificationStore:
             "success_rate": ((row["delivered"] or 0) / row["total"] * 100 if row["total"] else 0),
         }
 
+    def close(self) -> None:
+        """Close the database connection for the current thread."""
+        if hasattr(self._local, "connection"):
+            try:
+                self._local.connection.close()
+            except Exception:
+                pass
+            del self._local.connection
+
     @classmethod
     def reset_instance(cls) -> None:
-        """Reset the singleton instance (for testing)."""
+        """Reset the singleton instance (for testing).
+
+        Properly closes the connection before resetting to avoid ResourceWarning.
+        """
         with cls._lock:
+            if cls._instance is not None:
+                cls._instance.close()
             cls._instance = None

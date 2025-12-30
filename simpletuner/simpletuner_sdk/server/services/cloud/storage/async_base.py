@@ -41,7 +41,8 @@ class AsyncSQLiteStore:
     """
 
     _instances: Dict[type, "AsyncSQLiteStore"] = {}
-    _init_lock = asyncio.Lock()
+    _init_lock: Optional[asyncio.Lock] = None
+    _init_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def __init__(self, db_path: Optional[Path] = None):
         """Initialize the store.
@@ -65,6 +66,16 @@ class AsyncSQLiteStore:
         This is the preferred way to get a store instance as it ensures
         async initialization is complete.
         """
+        # Fast path - instance already exists
+        if cls in cls._instances:
+            return cls._instances[cls]
+
+        # Recreate lock if bound to a different event loop
+        current_loop = asyncio.get_running_loop()
+        if cls._init_lock is None or cls._init_lock_loop is not current_loop:
+            cls._init_lock = asyncio.Lock()
+            cls._init_lock_loop = current_loop
+
         async with cls._init_lock:
             if cls not in cls._instances:
                 instance = cls(db_path)
@@ -188,6 +199,12 @@ class AsyncSQLiteStore:
     @classmethod
     async def reset_instance(cls) -> None:
         """Reset the singleton instance (for testing)."""
+        # Ensure lock is valid for current event loop
+        current_loop = asyncio.get_running_loop()
+        if cls._init_lock is None or cls._init_lock_loop is not current_loop:
+            cls._init_lock = asyncio.Lock()
+            cls._init_lock_loop = current_loop
+
         async with cls._init_lock:
             if cls in cls._instances:
                 instance = cls._instances[cls]
@@ -201,6 +218,12 @@ class AsyncSQLiteStore:
         Should be called during application shutdown to release
         all database connections and allow clean exit.
         """
+        # Ensure lock is valid for current event loop
+        current_loop = asyncio.get_running_loop()
+        if cls._init_lock is None or cls._init_lock_loop is not current_loop:
+            cls._init_lock = asyncio.Lock()
+            cls._init_lock_loop = current_loop
+
         async with cls._init_lock:
             for store_cls, instance in list(cls._instances.items()):
                 try:

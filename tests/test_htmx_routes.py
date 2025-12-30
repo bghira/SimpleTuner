@@ -25,10 +25,8 @@ class TestHTMXRouterMount(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):

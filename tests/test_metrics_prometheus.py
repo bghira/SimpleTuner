@@ -24,7 +24,7 @@ class TestMetricDataclasses(unittest.TestCase):
 
         self.assertEqual(mv.value, 42.0)
         self.assertEqual(mv.labels, {})
-        self.assertIsNone(mv.timestamp)
+        self.assertIsNone(mv.timestamp_ms)
 
     def test_metric_value_with_labels(self):
         """Test MetricValue with labels."""
@@ -43,9 +43,9 @@ class TestMetricDataclasses(unittest.TestCase):
         """Test MetricValue with timestamp."""
         from simpletuner.simpletuner_sdk.server.services.cloud.prometheus_metrics import MetricValue
 
-        mv = MetricValue(value=1.0, timestamp=1704067200000)
+        mv = MetricValue(value=1.0, timestamp_ms=1704067200000)
 
-        self.assertEqual(mv.timestamp, 1704067200000)
+        self.assertEqual(mv.timestamp_ms, 1704067200000)
 
     def test_metric_creation(self):
         """Test Metric dataclass creation."""
@@ -280,7 +280,7 @@ class TestCloudMetricsCollector(unittest.TestCase):
         collector = CloudMetricsCollector()
 
         # Record some data
-        collector.record_request("/api/test", 200, 100.0)
+        collector.record_request("/api/test", "GET", 200, 100.0)
 
         # Reset
         collector.reset()
@@ -296,11 +296,11 @@ class TestCloudMetricsCollector(unittest.TestCase):
         collector = CloudMetricsCollector()
         collector.reset()
 
-        collector.record_request("/api/cloud/jobs", 200, 50.0)
-        collector.record_request("/api/cloud/jobs", 200, 75.0)
+        collector.record_request("/api/cloud/jobs", "GET", 200, 50.0)
+        collector.record_request("/api/cloud/jobs", "GET", 200, 75.0)
 
         # Verify request count
-        endpoint_key = ("/api/cloud/jobs", 200)
+        endpoint_key = "GET_/api/cloud/jobs"
         self.assertEqual(collector._request_counts.get(endpoint_key, 0), 2)
 
     def test_record_error_request(self):
@@ -310,10 +310,10 @@ class TestCloudMetricsCollector(unittest.TestCase):
         collector = CloudMetricsCollector()
         collector.reset()
 
-        collector.record_request("/api/cloud/jobs", 500, 100.0)
+        collector.record_request("/api/cloud/jobs", "GET", 500, 100.0)
 
         # Verify error count (4xx and 5xx are errors)
-        error_key = ("/api/cloud/jobs", 500)
+        error_key = "GET_/api/cloud/jobs_500"
         self.assertEqual(collector._error_counts.get(error_key, 0), 1)
 
     def test_record_rate_limit_violation(self):
@@ -340,19 +340,18 @@ class TestMetricsCollection(unittest.TestCase):
         collector = CloudMetricsCollector()
         collector.reset()
 
-        # Mock the job store
-        with patch("simpletuner.simpletuner_sdk.server.services.cloud.prometheus_metrics.AsyncJobStore") as MockStore:
-            mock_store = MagicMock()
-            mock_store.get_metrics_summary = AsyncMock(
-                return_value={
-                    "total_jobs": 10,
-                    "status_breakdown": {"completed": 8, "failed": 2},
-                    "total_cost_usd": 150.0,
-                    "avg_duration_seconds": 3600.0,
-                }
-            )
-            MockStore.return_value = mock_store
+        # Mock the job store via get_job_store
+        mock_store = MagicMock()
+        mock_store.get_metrics_summary = AsyncMock(
+            return_value={
+                "total_jobs": 10,
+                "status_breakdown": {"completed": 8, "failed": 2},
+                "total_cost_usd": 150.0,
+                "avg_duration_seconds": 3600.0,
+            }
+        )
 
+        with patch("simpletuner.simpletuner_sdk.server.services.cloud.container.get_job_store", return_value=mock_store):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -414,7 +413,7 @@ class TestMetricsExport(unittest.TestCase):
         collector.reset()
 
         # Record some data to ensure output
-        collector.record_request("/api/test", 200, 50.0)
+        collector.record_request("/api/test", "GET", 200, 50.0)
 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

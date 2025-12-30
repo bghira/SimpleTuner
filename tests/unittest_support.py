@@ -55,29 +55,61 @@ class APITestEnvironmentMixin:
         self._api_state_guard.__enter__()
 
     def _teardown_api_environment(self) -> None:
-        self._api_state_guard.__exit__(None, None, None)
-        if self._previous_dataset_plan is not None:
-            os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = self._previous_dataset_plan
-        else:
-            os.environ.pop("SIMPLETUNER_DATASET_PLAN_PATH", None)
+        try:
+            self._api_state_guard.__exit__(None, None, None)
+            if self._previous_dataset_plan is not None:
+                os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = self._previous_dataset_plan
+            else:
+                os.environ.pop("SIMPLETUNER_DATASET_PLAN_PATH", None)
 
-        # Restore TQDM setting
-        if self._previous_tqdm_disable is not None:
-            os.environ["TQDM_DISABLE"] = self._previous_tqdm_disable
-        else:
-            os.environ.pop("TQDM_DISABLE", None)
+            # Restore TQDM setting
+            if self._previous_tqdm_disable is not None:
+                os.environ["TQDM_DISABLE"] = self._previous_tqdm_disable
+            else:
+                os.environ.pop("TQDM_DISABLE", None)
 
-        # Clean up cloud service singletons to prevent aiosqlite thread errors
-        self._cleanup_cloud_services()
-
-        self._tmpdir.cleanup()
+            # Clean up cloud service singletons to prevent aiosqlite thread errors
+            self._cleanup_cloud_services()
+        finally:
+            # Always clean up temp directory to avoid ResourceWarning
+            if hasattr(self, "_tmpdir") and self._tmpdir is not None:
+                self._tmpdir.cleanup()
 
     def _cleanup_cloud_services(self) -> None:
         """Clean up cloud service singletons between tests.
 
         This must clear ALL storage singletons to prevent test data from
-        leaking to production databases.
+        leaking to production databases. Properly closes connections to
+        avoid ResourceWarning about unclosed aiosqlite connections.
         """
+        import asyncio
+
+        async def _async_cleanup():
+            # Close AsyncSQLiteStore instances (aiosqlite connections)
+            try:
+                from simpletuner.simpletuner_sdk.server.services.cloud.storage.async_base import AsyncSQLiteStore
+
+                await AsyncSQLiteStore.close_all_instances()
+            except (ImportError, Exception):
+                pass
+
+            # Close AsyncJobStore
+            try:
+                from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
+
+                if AsyncJobStore._instance is not None:
+                    await AsyncJobStore._instance.close()
+                AsyncJobStore._instance = None
+            except (ImportError, Exception):
+                pass
+
+        # Run async cleanup
+        try:
+            asyncio.run(_async_cleanup())
+        except RuntimeError:
+            # Event loop already running - can't use asyncio.run
+            pass
+
         # Reset container (high-level service registry)
         try:
             from simpletuner.simpletuner_sdk.server.services.cloud.container import container
@@ -86,26 +118,31 @@ class APITestEnvironmentMixin:
         except ImportError:
             pass
 
-        # Reset AsyncJobStore singleton
-        try:
-            from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
-
-            AsyncJobStore._instance = None
-        except ImportError:
-            pass
-
-        # Reset BaseSQLiteStore instances (JobRepository, MetricsStore, etc.)
+        # Reset BaseSQLiteStore instances (synchronous sqlite3)
         try:
             from simpletuner.simpletuner_sdk.server.services.cloud.storage.base import BaseSQLiteStore
 
+            # Close connections before clearing
+            for instance in BaseSQLiteStore._instances.values():
+                try:
+                    if hasattr(instance, "close"):
+                        instance.close()
+                except Exception:
+                    pass
             BaseSQLiteStore._instances.clear()
         except ImportError:
             pass
 
-        # Reset BaseAuthStore instances (UserCrudStore, SessionStore, etc.)
+        # Reset BaseAuthStore instances
         try:
             from simpletuner.simpletuner_sdk.server.services.cloud.auth.stores.base import BaseAuthStore
 
+            for instance in BaseAuthStore._instances.values():
+                try:
+                    if hasattr(instance, "close"):
+                        instance.close()
+                except Exception:
+                    pass
             BaseAuthStore._instances.clear()
         except ImportError:
             pass

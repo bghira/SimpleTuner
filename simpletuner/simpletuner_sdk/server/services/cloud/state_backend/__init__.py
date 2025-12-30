@@ -52,7 +52,8 @@ __all__ = [
 
 # Global singleton
 _state_backend: Optional[StateBackendProtocol] = None
-_init_lock = asyncio.Lock()
+_init_lock: Optional[asyncio.Lock] = None
+_init_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def create_state_backend(
@@ -145,10 +146,16 @@ async def get_state_backend() -> StateBackendProtocol:
         async def test(backend: StateBackendProtocol = Depends(get_backend)):
             return await backend.ping()
     """
-    global _state_backend
+    global _state_backend, _init_lock, _init_lock_loop
 
     if _state_backend is not None:
         return _state_backend
+
+    # Recreate lock if bound to a different event loop
+    current_loop = asyncio.get_running_loop()
+    if _init_lock is None or _init_lock_loop is not current_loop:
+        _init_lock = asyncio.Lock()
+        _init_lock_loop = current_loop
 
     async with _init_lock:
         # Double-check after acquiring lock

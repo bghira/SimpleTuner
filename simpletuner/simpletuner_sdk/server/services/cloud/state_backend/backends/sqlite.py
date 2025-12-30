@@ -35,7 +35,8 @@ class SQLiteStateBackend:
     """
 
     _instance: Optional["SQLiteStateBackend"] = None
-    _init_lock: asyncio.Lock = asyncio.Lock()
+    _init_lock: Optional[asyncio.Lock] = None
+    _init_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def __init__(self, config: Optional[StateBackendConfig] = None):
         """Initialize SQLite backend.
@@ -59,6 +60,16 @@ class SQLiteStateBackend:
         Returns:
             SQLiteStateBackend instance.
         """
+        # Fast path - instance already exists
+        if cls._instance is not None:
+            return cls._instance
+
+        # Recreate lock if bound to a different event loop
+        current_loop = asyncio.get_running_loop()
+        if cls._init_lock is None or cls._init_lock_loop is not current_loop:
+            cls._init_lock = asyncio.Lock()
+            cls._init_lock_loop = current_loop
+
         async with cls._init_lock:
             if cls._instance is None:
                 cls._instance = cls(config)
@@ -66,9 +77,21 @@ class SQLiteStateBackend:
             return cls._instance
 
     @classmethod
-    def reset_instance(cls) -> None:
-        """Reset singleton (for testing)."""
-        cls._instance = None
+    async def reset_instance(cls) -> None:
+        """Reset singleton (for testing).
+
+        Properly closes the connection before resetting to avoid ResourceWarning.
+        """
+        # Ensure lock is valid for current event loop
+        current_loop = asyncio.get_running_loop()
+        if cls._init_lock is None or cls._init_lock_loop is not current_loop:
+            cls._init_lock = asyncio.Lock()
+            cls._init_lock_loop = current_loop
+
+        async with cls._init_lock:
+            if cls._instance is not None:
+                await cls._instance.close()
+            cls._instance = None
 
     async def _ensure_initialized(self) -> None:
         """Ensure database is initialized."""

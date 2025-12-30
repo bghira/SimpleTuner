@@ -190,15 +190,22 @@ def _create_notification_service():
 
 # State backend singleton management
 _state_backend: Optional["StateBackendProtocol"] = None
-_state_backend_lock = asyncio.Lock()
+_state_backend_lock: Optional[asyncio.Lock] = None
+_state_backend_lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 async def _get_or_create_state_backend() -> "StateBackendProtocol":
     """Get or create the state backend singleton."""
-    global _state_backend
+    global _state_backend, _state_backend_lock, _state_backend_lock_loop
 
     if _state_backend is not None:
         return _state_backend
+
+    # Recreate lock if bound to a different event loop
+    current_loop = asyncio.get_running_loop()
+    if _state_backend_lock is None or _state_backend_lock_loop is not current_loop:
+        _state_backend_lock = asyncio.Lock()
+        _state_backend_lock_loop = current_loop
 
     async with _state_backend_lock:
         if _state_backend is not None:
@@ -212,8 +219,10 @@ async def _get_or_create_state_backend() -> "StateBackendProtocol":
 
 def _reset_state_backend() -> None:
     """Reset the state backend singleton."""
-    global _state_backend
+    global _state_backend, _state_backend_lock, _state_backend_lock_loop
     _state_backend = None
+    _state_backend_lock = None
+    _state_backend_lock_loop = None
 
 
 # Register default factories

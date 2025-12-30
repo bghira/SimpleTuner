@@ -26,7 +26,6 @@ class TestS3StorageRoutes(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
         self._upload_dir = tempfile.mkdtemp()
         # Patch the local upload dir to use temp directory
         self._upload_dir_patcher = patch(

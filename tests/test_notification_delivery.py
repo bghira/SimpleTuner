@@ -107,7 +107,7 @@ class TestWebhookChannelDelivery(unittest.TestCase):
 
             mock_get_client.return_value = mock_client
 
-            result = asyncio.get_event_loop().run_until_complete(channel.send(event, "https://example.com/webhook", {}))
+            result = asyncio.run(channel.send(event, "https://example.com/webhook", {}))
 
         # Verify success
         self.assertTrue(result.success)
@@ -153,7 +153,7 @@ class TestWebhookChannelDelivery(unittest.TestCase):
 
             mock_get_client.return_value = mock_client
 
-            result = asyncio.get_event_loop().run_until_complete(channel.send(event, "", {}))
+            result = asyncio.run(channel.send(event, "", {}))
 
         # Should return failure result, not raise exception
         self.assertFalse(result.success)
@@ -186,7 +186,7 @@ class TestWebhookChannelDelivery(unittest.TestCase):
             message="Test",
         )
 
-        result = asyncio.get_event_loop().run_until_complete(channel.send(event, "", {}))  # Empty recipient too
+        result = asyncio.run(channel.send(event, "", {}))  # Empty recipient too
 
         self.assertFalse(result.success)
         self.assertIn("url", result.error_message.lower())
@@ -225,7 +225,6 @@ class TestDeliveryLogging(unittest.TestCase):
         )
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         # Create a channel first (FK constraint)
         channel = ChannelConfig(
@@ -233,10 +232,10 @@ class TestDeliveryLogging(unittest.TestCase):
             channel_type=ChannelType.WEBHOOK,
             webhook_url="https://example.com/webhook",
         )
-        channel_id = loop.run_until_complete(store.create_channel(channel))
+        channel_id = asyncio.run(store.create_channel(channel))
 
         # Log a delivery
-        loop.run_until_complete(
+        asyncio.run(
             store.log_delivery(
                 channel_id=channel_id,
                 event_type=NotificationEventType.JOB_COMPLETED,
@@ -248,7 +247,7 @@ class TestDeliveryLogging(unittest.TestCase):
         )
 
         # Verify it's in history
-        history = loop.run_until_complete(store.get_delivery_history(limit=10))
+        history = asyncio.run(store.get_delivery_history(limit=10))
 
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["channel_id"], channel_id)
@@ -268,7 +267,6 @@ class TestDeliveryLogging(unittest.TestCase):
         )
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         # Create a channel first (FK constraint)
         channel = ChannelConfig(
@@ -276,9 +274,9 @@ class TestDeliveryLogging(unittest.TestCase):
             channel_type=ChannelType.WEBHOOK,
             webhook_url="https://example.com/webhook",
         )
-        channel_id = loop.run_until_complete(store.create_channel(channel))
+        channel_id = asyncio.run(store.create_channel(channel))
 
-        loop.run_until_complete(
+        asyncio.run(
             store.log_delivery(
                 channel_id=channel_id,
                 event_type=NotificationEventType.JOB_FAILED,
@@ -289,7 +287,7 @@ class TestDeliveryLogging(unittest.TestCase):
             )
         )
 
-        history = loop.run_until_complete(store.get_delivery_history(limit=10, status=DeliveryStatus.FAILED))
+        history = asyncio.run(store.get_delivery_history(limit=10, status=DeliveryStatus.FAILED))
 
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["error_message"], "Connection timeout")
@@ -307,7 +305,6 @@ class TestDeliveryLogging(unittest.TestCase):
         )
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         # Create a channel first (FK constraint)
         channel = ChannelConfig(
@@ -315,11 +312,11 @@ class TestDeliveryLogging(unittest.TestCase):
             channel_type=ChannelType.WEBHOOK,
             webhook_url="https://example.com/webhook",
         )
-        channel_id = loop.run_until_complete(store.create_channel(channel))
+        channel_id = asyncio.run(store.create_channel(channel))
 
         # Log multiple deliveries
         for i in range(5):
-            loop.run_until_complete(
+            asyncio.run(
                 store.log_delivery(
                     channel_id=channel_id,
                     event_type=NotificationEventType.JOB_COMPLETED,
@@ -329,7 +326,7 @@ class TestDeliveryLogging(unittest.TestCase):
             )
 
         for i in range(2):
-            loop.run_until_complete(
+            asyncio.run(
                 store.log_delivery(
                     channel_id=channel_id,
                     event_type=NotificationEventType.JOB_FAILED,
@@ -339,7 +336,7 @@ class TestDeliveryLogging(unittest.TestCase):
                 )
             )
 
-        stats = loop.run_until_complete(store.get_channel_stats(channel_id=channel_id))
+        stats = asyncio.run(store.get_channel_stats(channel_id=channel_id))
 
         self.assertEqual(stats["total"], 7)
         self.assertEqual(stats["delivered"], 5)
@@ -381,7 +378,6 @@ class TestPreferenceBasedRouting(unittest.TestCase):
         )
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         # Create a channel first (FK constraint)
         channel = ChannelConfig(
@@ -389,7 +385,7 @@ class TestPreferenceBasedRouting(unittest.TestCase):
             channel_type=ChannelType.WEBHOOK,
             webhook_url="https://example.com/webhook",
         )
-        channel_id = loop.run_until_complete(store.create_channel(channel))
+        channel_id = asyncio.run(store.create_channel(channel))
 
         # Save a preference
         pref = NotificationPreference(
@@ -398,10 +394,10 @@ class TestPreferenceBasedRouting(unittest.TestCase):
             is_enabled=True,
         )
 
-        loop.run_until_complete(store.set_preference(pref))
+        asyncio.run(store.set_preference(pref))
 
         # Retrieve preferences
-        prefs = loop.run_until_complete(store.get_preferences())
+        prefs = asyncio.run(store.get_preferences())
 
         self.assertEqual(len(prefs), 1)
         self.assertEqual(prefs[0].channel_id, channel_id)
@@ -423,7 +419,6 @@ class TestPreferenceBasedRouting(unittest.TestCase):
         )
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         # Create a channel first (FK constraint)
         channel = ChannelConfig(
@@ -431,7 +426,7 @@ class TestPreferenceBasedRouting(unittest.TestCase):
             channel_type=ChannelType.WEBHOOK,
             webhook_url="https://example.com/webhook",
         )
-        channel_id = loop.run_until_complete(store.create_channel(channel))
+        channel_id = asyncio.run(store.create_channel(channel))
 
         # Save a disabled preference
         pref = NotificationPreference(
@@ -440,9 +435,9 @@ class TestPreferenceBasedRouting(unittest.TestCase):
             is_enabled=False,
         )
 
-        loop.run_until_complete(store.set_preference(pref))
+        asyncio.run(store.set_preference(pref))
 
-        prefs = loop.run_until_complete(store.get_preferences())
+        prefs = asyncio.run(store.get_preferences())
 
         self.assertEqual(len(prefs), 1)
         self.assertFalse(prefs[0].is_enabled)
@@ -462,7 +457,6 @@ class TestPreferenceBasedRouting(unittest.TestCase):
         )
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         # Create a channel first (required for preference)
         channel = ChannelConfig(
@@ -471,7 +465,7 @@ class TestPreferenceBasedRouting(unittest.TestCase):
             webhook_url="https://example.com/webhook",
             is_enabled=True,
         )
-        channel_id = loop.run_until_complete(store.create_channel(channel))
+        channel_id = asyncio.run(store.create_channel(channel))
 
         # Create preferences for different event types
         pref1 = NotificationPreference(
@@ -485,11 +479,11 @@ class TestPreferenceBasedRouting(unittest.TestCase):
             is_enabled=True,
         )
 
-        loop.run_until_complete(store.set_preference(pref1))
-        loop.run_until_complete(store.set_preference(pref2))
+        asyncio.run(store.set_preference(pref1))
+        asyncio.run(store.set_preference(pref2))
 
         # Get preferences for specific event
-        completed_prefs = loop.run_until_complete(store.get_preferences_for_event(NotificationEventType.JOB_COMPLETED))
+        completed_prefs = asyncio.run(store.get_preferences_for_event(NotificationEventType.JOB_COMPLETED))
 
         self.assertEqual(len(completed_prefs), 1)
         self.assertEqual(completed_prefs[0].event_type, NotificationEventType.JOB_COMPLETED)
@@ -524,7 +518,6 @@ class TestChannelManagement(unittest.TestCase):
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.protocols import ChannelType
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         channel = ChannelConfig(
             name="Slack Webhook",
@@ -533,10 +526,10 @@ class TestChannelManagement(unittest.TestCase):
             is_enabled=True,
         )
 
-        channel_id = loop.run_until_complete(store.create_channel(channel))
+        channel_id = asyncio.run(store.create_channel(channel))
         self.assertGreater(channel_id, 0)
 
-        retrieved = loop.run_until_complete(store.get_channel(channel_id))
+        retrieved = asyncio.run(store.get_channel(channel_id))
         self.assertIsNotNone(retrieved)
         self.assertEqual(retrieved.name, "Slack Webhook")
         self.assertEqual(retrieved.webhook_url, "https://hooks.slack.com/test")
@@ -550,7 +543,6 @@ class TestChannelManagement(unittest.TestCase):
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.protocols import ChannelType
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         # Create enabled and disabled channels
         enabled = ChannelConfig(
@@ -566,16 +558,16 @@ class TestChannelManagement(unittest.TestCase):
             is_enabled=False,
         )
 
-        loop.run_until_complete(store.create_channel(enabled))
-        loop.run_until_complete(store.create_channel(disabled))
+        asyncio.run(store.create_channel(enabled))
+        asyncio.run(store.create_channel(disabled))
 
         # Get only enabled
-        channels = loop.run_until_complete(store.list_channels(enabled_only=True))
+        channels = asyncio.run(store.list_channels(enabled_only=True))
         self.assertEqual(len(channels), 1)
         self.assertEqual(channels[0].name, "Enabled")
 
         # Get all
-        all_channels = loop.run_until_complete(store.list_channels(enabled_only=False))
+        all_channels = asyncio.run(store.list_channels(enabled_only=False))
         self.assertEqual(len(all_channels), 2)
 
     def test_delete_channel(self):
@@ -587,7 +579,6 @@ class TestChannelManagement(unittest.TestCase):
         from simpletuner.simpletuner_sdk.server.services.cloud.notification.protocols import ChannelType
 
         store = NotificationStore(db_path=self.db_path)
-        loop = asyncio.get_event_loop()
 
         channel = ChannelConfig(
             name="To Delete",
@@ -595,15 +586,15 @@ class TestChannelManagement(unittest.TestCase):
             webhook_url="https://example.com/delete",
         )
 
-        channel_id = loop.run_until_complete(store.create_channel(channel))
-        self.assertIsNotNone(loop.run_until_complete(store.get_channel(channel_id)))
+        channel_id = asyncio.run(store.create_channel(channel))
+        self.assertIsNotNone(asyncio.run(store.get_channel(channel_id)))
 
         # Delete
-        deleted = loop.run_until_complete(store.delete_channel(channel_id))
+        deleted = asyncio.run(store.delete_channel(channel_id))
         self.assertTrue(deleted)
 
         # Verify gone
-        self.assertIsNone(loop.run_until_complete(store.get_channel(channel_id)))
+        self.assertIsNone(asyncio.run(store.get_channel(channel_id)))
 
 
 if __name__ == "__main__":

@@ -57,7 +57,8 @@ class AsyncJobStore:
     """
 
     _instance: Optional["AsyncJobStore"] = None
-    _init_lock = asyncio.Lock()
+    _init_lock: Optional[asyncio.Lock] = None
+    _lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def __init__(self, config_dir: Optional[Path] = None):
         """Initialize the store.
@@ -83,6 +84,18 @@ class AsyncJobStore:
     @classmethod
     async def get_instance(cls, config_dir: Optional[Path] = None) -> "AsyncJobStore":
         """Get or create the singleton instance with async initialization."""
+        # Fast path - instance already exists
+        if cls._instance is not None:
+            return cls._instance
+
+        # Get current event loop
+        current_loop = asyncio.get_running_loop()
+
+        # Recreate lock if it's bound to a different loop (common in tests)
+        if cls._init_lock is None or cls._lock_loop is not current_loop:
+            cls._init_lock = asyncio.Lock()
+            cls._lock_loop = current_loop
+
         async with cls._init_lock:
             if cls._instance is None:
                 instance = cls(config_dir)
@@ -303,10 +316,16 @@ class AsyncJobStore:
     @classmethod
     async def reset_instance(cls) -> None:
         """Reset singleton (for testing)."""
+        # Get current event loop and ensure lock is valid
+        current_loop = asyncio.get_running_loop()
+        if cls._init_lock is None or cls._lock_loop is not current_loop:
+            cls._init_lock = asyncio.Lock()
+            cls._lock_loop = current_loop
+
         async with cls._init_lock:
             if cls._instance:
                 await cls._instance.close()
-                cls._instance = None
+            cls._instance = None
 
     def get_database_path(self) -> Path:
         """Get database path."""

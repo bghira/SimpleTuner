@@ -218,7 +218,7 @@ class TestMetricCollection(unittest.TestCase):
             mock_store.list_jobs = AsyncMock(return_value=[])
             mock_get_store.return_value = mock_store
 
-            metrics = asyncio.get_event_loop().run_until_complete(collector._collect_health_metrics())
+            metrics = asyncio.run(collector._collect_health_metrics())
 
         metric_names = [m.name for m in metrics]
         self.assertIn("simpletuner_uptime_seconds", metric_names)
@@ -233,7 +233,7 @@ class TestMetricCollection(unittest.TestCase):
         collector.record_request("/api/test", "GET", 200, 50.0)
 
         # Collect only http and rate_limits
-        metrics = asyncio.get_event_loop().run_until_complete(collector.collect(categories=["http", "rate_limits"]))
+        metrics = asyncio.run(collector.collect(categories=["http", "rate_limits"]))
 
         metric_names = [m.name for m in metrics]
 
@@ -252,7 +252,7 @@ class TestMetricCollection(unittest.TestCase):
         collector = CloudMetricsCollector()
 
         # Should not raise with invalid category
-        metrics = asyncio.get_event_loop().run_until_complete(collector.collect(categories=["invalid_category"]))
+        metrics = asyncio.run(collector.collect(categories=["invalid_category"]))
 
         # Should return empty or only valid category metrics
         self.assertIsInstance(metrics, list)

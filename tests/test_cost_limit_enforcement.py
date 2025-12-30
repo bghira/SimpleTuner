@@ -26,7 +26,7 @@ class MockJobStore:
 
     async def get_metrics_summary(self, days: int = 30) -> Dict[str, Any]:
         """Mock metrics summary - the actual method used by _check_cost_limit."""
-        return {"total_cost_30d": self.current_spend}
+        return {"total_cost_usd": self.current_spend}
 
 
 @dataclass
@@ -80,32 +80,28 @@ class TestCostLimitEnforcement(unittest.TestCase):
         """Test that disabled cost limits allow all jobs."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(self._run_cost_check(limit_enabled=False, current_spend=1000.0))
+        result = asyncio.run(self._run_cost_check(limit_enabled=False, current_spend=1000.0))
         self.assertIsNone(result)
 
     def test_zero_limit_amount_allows_job(self):
         """Test that zero limit amount allows jobs (effectively disabled)."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
-            self._run_cost_check(limit_enabled=True, limit_amount=0, current_spend=100.0)
-        )
+        result = asyncio.run(self._run_cost_check(limit_enabled=True, limit_amount=0, current_spend=100.0))
         self.assertIsNone(result)
 
     def test_negative_limit_amount_allows_job(self):
         """Test that negative limit amount allows jobs (invalid config)."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
-            self._run_cost_check(limit_enabled=True, limit_amount=-50, current_spend=100.0)
-        )
+        result = asyncio.run(self._run_cost_check(limit_enabled=True, limit_amount=-50, current_spend=100.0))
         self.assertIsNone(result)
 
     def test_under_limit_allows_job(self):
         """Test that spending under limit allows jobs."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             self._run_cost_check(
                 limit_enabled=True,
                 limit_amount=100.0,
@@ -119,7 +115,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         """Test that exceeded limit blocks job when action is 'block'."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             self._run_cost_check(
                 limit_enabled=True,
                 limit_amount=100.0,
@@ -145,7 +141,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         store = MockJobStore(provider_config=config, current_spend=150.0)
         ctx = MockCommandContext(job_store=store)
 
-        result = asyncio.get_event_loop().run_until_complete(cmd._check_cost_limit(ctx))
+        result = asyncio.run(cmd._check_cost_limit(ctx))
 
         # Should not return error (job proceeds)
         self.assertIsNone(result)
@@ -167,7 +163,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         store = MockJobStore(provider_config=config, current_spend=85.0)  # 85% of limit
         ctx = MockCommandContext(job_store=store)
 
-        result = asyncio.get_event_loop().run_until_complete(cmd._check_cost_limit(ctx))
+        result = asyncio.run(cmd._check_cost_limit(ctx))
 
         # Should not block
         self.assertIsNone(result)
@@ -179,7 +175,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         """Test that daily period uses correct number of days."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             self._run_cost_check(
                 limit_enabled=True,
                 limit_amount=10.0,
@@ -195,7 +191,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         """Test that weekly period uses correct number of days."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             self._run_cost_check(
                 limit_enabled=True,
                 limit_amount=70.0,
@@ -212,7 +208,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         """Test that yearly period uses correct number of days."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             self._run_cost_check(
                 limit_enabled=True,
                 limit_amount=1000.0,
@@ -228,7 +224,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         """Test that unknown period defaults to 30 days (monthly)."""
         import asyncio
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             self._run_cost_check(
                 limit_enabled=True,
                 limit_amount=100.0,
@@ -254,7 +250,7 @@ class TestCostLimitEnforcement(unittest.TestCase):
         store = MockJobStore(provider_config=config, current_spend=1000.0)
         ctx = MockCommandContext(job_store=store)
 
-        result = asyncio.get_event_loop().run_until_complete(cmd._check_cost_limit(ctx))
+        result = asyncio.run(cmd._check_cost_limit(ctx))
         # Should pass since cost_limit_enabled is not set
         self.assertIsNone(result)
 

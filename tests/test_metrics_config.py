@@ -23,10 +23,8 @@ class TestMetricsConfigRoutes(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -100,10 +98,8 @@ class TestMetricCategories(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -151,10 +147,8 @@ class TestMetricTemplates(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -248,10 +242,8 @@ class TestMetricsPreview(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -302,10 +294,8 @@ class TestMetricsHints(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):

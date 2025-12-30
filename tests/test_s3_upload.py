@@ -77,7 +77,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.get_event_loop().run_until_complete(s3_put_object("test-bucket", "test.txt", request))
+                asyncio.run(s3_put_object("test-bucket", "test.txt", request))
             self.assertEqual(ctx.exception.status_code, 401)
             self.assertIn("Authentication required", ctx.exception.detail)
 
@@ -102,7 +102,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.get_event_loop().run_until_complete(s3_put_object("test-bucket", "test.txt", request))
+                asyncio.run(s3_put_object("test-bucket", "test.txt", request))
             self.assertEqual(ctx.exception.status_code, 401)
             self.assertIn("Invalid upload token", ctx.exception.detail)
 
@@ -124,7 +124,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
             "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
             return_value=mock_store,
         ):
-            result = asyncio.get_event_loop().run_until_complete(s3_put_object("test-bucket", "test.txt", request))
+            result = asyncio.run(s3_put_object("test-bucket", "test.txt", request))
 
         self.assertIn("ETag", result)
         self.assertEqual(result["Key"], "test.txt")
@@ -153,7 +153,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
             "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
             return_value=mock_store,
         ):
-            result = asyncio.get_event_loop().run_until_complete(s3_put_object("bucket2", "secret.bin", request))
+            result = asyncio.run(s3_put_object("bucket2", "secret.bin", request))
 
         self.assertIn("ETag", result)
 
@@ -198,7 +198,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.get_event_loop().run_until_complete(s3_put_object("../escape", "file.txt", request))
+                asyncio.run(s3_put_object("../escape", "file.txt", request))
             self.assertEqual(ctx.exception.status_code, 400)
             self.assertIn("Invalid", ctx.exception.detail)
 
@@ -223,7 +223,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
-                asyncio.get_event_loop().run_until_complete(s3_put_object("bucket", "../../../etc/passwd", request))
+                asyncio.run(s3_put_object("bucket", "../../../etc/passwd", request))
             self.assertEqual(ctx.exception.status_code, 400)
 
     def test_get_with_dotdot_in_bucket_blocked(self):
@@ -235,7 +235,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
         from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
 
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.get_event_loop().run_until_complete(s3_get_object("../escape", "file.txt"))
+            asyncio.run(s3_get_object("../escape", "file.txt"))
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_get_with_dotdot_in_key_blocked(self):
@@ -247,7 +247,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
         from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
 
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.get_event_loop().run_until_complete(s3_get_object("bucket", "../../etc/passwd"))
+            asyncio.run(s3_get_object("bucket", "../../etc/passwd"))
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_list_objects_with_path_traversal_blocked(self):
@@ -259,7 +259,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
         from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_objects
 
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.get_event_loop().run_until_complete(s3_list_objects("../escape"))
+            asyncio.run(s3_list_objects("../escape"))
         self.assertEqual(ctx.exception.status_code, 400)
 
 
@@ -293,7 +293,7 @@ class TestS3GetObject(unittest.TestCase):
         bucket_dir.mkdir()
         (bucket_dir / "myfile.txt").write_bytes(b"hello world")
 
-        result = asyncio.get_event_loop().run_until_complete(s3_get_object("mybucket", "myfile.txt"))
+        result = asyncio.run(s3_get_object("mybucket", "myfile.txt"))
 
         self.assertEqual(result, b"hello world")
 
@@ -306,7 +306,7 @@ class TestS3GetObject(unittest.TestCase):
         from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
 
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.get_event_loop().run_until_complete(s3_get_object("nobucket", "nofile.txt"))
+            asyncio.run(s3_get_object("nobucket", "nofile.txt"))
         self.assertEqual(ctx.exception.status_code, 404)
 
     def test_get_nested_object_path(self):
@@ -320,7 +320,7 @@ class TestS3GetObject(unittest.TestCase):
         nested_dir.mkdir(parents=True)
         (nested_dir / "deep.txt").write_bytes(b"deep content")
 
-        result = asyncio.get_event_loop().run_until_complete(s3_get_object("bucket", "subdir/nested/deep.txt"))
+        result = asyncio.run(s3_get_object("bucket", "subdir/nested/deep.txt"))
 
         self.assertEqual(result, b"deep content")
 
@@ -350,7 +350,7 @@ class TestS3ListBuckets(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_buckets
 
-        result = asyncio.get_event_loop().run_until_complete(s3_list_buckets())
+        result = asyncio.run(s3_list_buckets())
 
         self.assertEqual(result["Buckets"], [])
         self.assertEqual(result["total_size"], 0)
@@ -371,7 +371,7 @@ class TestS3ListBuckets(unittest.TestCase):
         bucket2.mkdir()
         (bucket2 / "big.bin").write_bytes(b"x" * 100)  # 100 bytes
 
-        result = asyncio.get_event_loop().run_until_complete(s3_list_buckets())
+        result = asyncio.run(s3_list_buckets())
 
         self.assertEqual(len(result["Buckets"]), 2)
         self.assertEqual(result["total_size"], 108)
@@ -407,7 +407,7 @@ class TestS3ListObjects(unittest.TestCase):
 
         from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_objects
 
-        result = asyncio.get_event_loop().run_until_complete(s3_list_objects("nonexistent"))
+        result = asyncio.run(s3_list_objects("nonexistent"))
 
         self.assertEqual(result["Contents"], [])
         self.assertEqual(result["Name"], "nonexistent")
@@ -426,7 +426,7 @@ class TestS3ListObjects(unittest.TestCase):
         subdir.mkdir()
         (subdir / "file2.txt").write_bytes(b"content2content2")
 
-        result = asyncio.get_event_loop().run_until_complete(s3_list_objects("mybucket"))
+        result = asyncio.run(s3_list_objects("mybucket"))
 
         self.assertEqual(len(result["Contents"]), 2)
 
