@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from ._shared import get_client_ip, get_job_store, get_local_upload_dir
+from ...services.cloud.auth import User, UserStore, get_optional_user
+from ._shared import get_client_ip, get_local_upload_dir
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ async def put_object(bucket: str, key: str, request: Request) -> Dict[str, Any]:
 
     Requires authentication via per-job upload token.
     """
+    from ._shared import get_job_store
+
     store = get_job_store()
     client_ip = get_client_ip(request)
 
@@ -91,8 +94,32 @@ async def put_object(bucket: str, key: str, request: Request) -> Dict[str, Any]:
 
 
 @router.get("/{bucket}/{key:path}")
-async def get_object(bucket: str, key: str) -> bytes:
-    """S3-compatible GET Object endpoint."""
+async def get_object(bucket: str, key: str, request: Request, user: Optional[User] = Depends(get_optional_user)) -> bytes:
+    """S3-compatible GET Object endpoint.
+
+    Authentication is optional:
+    - In single-user mode (no auth configured), allows unauthenticated access
+    - In multi-user mode (auth enabled), requires authentication
+
+    Requires authentication when the system has multiple users configured.
+    """
+    client_ip = get_client_ip(request)
+
+    # Check if authentication is required
+    # If auth middleware returned None, we're in multi-user mode without valid auth
+    if user is None:
+        # Check if we have multiple users (auth is enabled)
+        user_store = UserStore()
+        has_users = await user_store.has_any_users()
+        if has_users:
+            logger.warning("Storage GET without authentication from IP: %s (auth enabled)", client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to access storage objects. Please log in or provide an API key.",
+            )
+        # else: no users exist, single-user mode - allow unauthenticated access
+
+    # Validate bucket and key to prevent path traversal
     if ".." in bucket or ".." in key:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid bucket or key path")
 
@@ -111,8 +138,26 @@ async def get_object(bucket: str, key: str) -> bytes:
 
 
 @router.get("")
-async def list_buckets() -> Dict[str, Any]:
-    """List all upload buckets (job output directories)."""
+async def list_buckets(request: Request, user: Optional[User] = Depends(get_optional_user)) -> Dict[str, Any]:
+    """List all upload buckets (job output directories).
+
+    Authentication is optional:
+    - In single-user mode (no auth configured), allows unauthenticated access
+    - In multi-user mode (auth enabled), requires authentication
+    """
+    client_ip = get_client_ip(request)
+
+    # Check if authentication is required
+    if user is None:
+        user_store = UserStore()
+        has_users = await user_store.has_any_users()
+        if has_users:
+            logger.warning("Storage list buckets without authentication from IP: %s (auth enabled)", client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to list storage buckets. Please log in or provide an API key.",
+            )
+
     upload_dir = get_local_upload_dir()
 
     if not upload_dir.exists():
@@ -152,8 +197,26 @@ async def list_buckets() -> Dict[str, Any]:
 
 
 @router.get("/{bucket}")
-async def list_objects(bucket: str) -> Dict[str, Any]:
-    """S3-compatible list objects in bucket."""
+async def list_objects(bucket: str, request: Request, user: Optional[User] = Depends(get_optional_user)) -> Dict[str, Any]:
+    """S3-compatible list objects in bucket.
+
+    Authentication is optional:
+    - In single-user mode (no auth configured), allows unauthenticated access
+    - In multi-user mode (auth enabled), requires authentication
+    """
+    client_ip = get_client_ip(request)
+
+    # Check if authentication is required
+    if user is None:
+        user_store = UserStore()
+        has_users = await user_store.has_any_users()
+        if has_users:
+            logger.warning("Storage list objects without authentication from IP: %s (auth enabled)", client_ip)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to list storage objects. Please log in or provide an API key.",
+            )
+
     # Validate bucket name to prevent path traversal
     if ".." in bucket or "/" in bucket or "\\" in bucket:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid bucket name")

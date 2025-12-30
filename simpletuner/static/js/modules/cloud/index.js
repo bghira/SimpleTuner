@@ -125,23 +125,24 @@ if (!window.cloudDashboardComponent) {
                 }
 
                 // Listen for connection status events
-                document.addEventListener('trainer-connection-status', (event) => {
+                this._sseEventHandler = (event) => {
                     if (event.detail) {
                         this.sseConnection.status = event.detail.status || 'unknown';
                         this.sseConnection.message = event.detail.message || '';
                         this.sseConnection.lastUpdated = new Date();
                     }
-                });
+                };
+                document.addEventListener('trainer-connection-status', this._sseEventHandler);
 
                 // Also hook into the global updateConnectionStatus if we can
-                const originalUpdate = window.updateConnectionStatus;
+                this._originalUpdateConnectionStatus = window.updateConnectionStatus;
                 const self = this;
                 window.updateConnectionStatus = function(status, message) {
                     self.sseConnection.status = status || 'unknown';
                     self.sseConnection.message = message || '';
                     self.sseConnection.lastUpdated = new Date();
-                    if (originalUpdate) {
-                        originalUpdate(status, message);
+                    if (self._originalUpdateConnectionStatus) {
+                        self._originalUpdateConnectionStatus(status, message);
                     }
                 };
             },
@@ -331,6 +332,16 @@ if (!window.cloudDashboardComponent) {
                 this.stopPolling();
                 this.stopInlineProgressPolling();
                 this.stopHealthCheckAutoRefresh();
+
+                // Clean up SSE connection monitor
+                if (this._sseEventHandler) {
+                    document.removeEventListener('trainer-connection-status', this._sseEventHandler);
+                    this._sseEventHandler = null;
+                }
+                if (this._originalUpdateConnectionStatus) {
+                    window.updateConnectionStatus = this._originalUpdateConnectionStatus;
+                    this._originalUpdateConnectionStatus = null;
+                }
             },
 
             getActiveProvider() {

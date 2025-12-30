@@ -5,6 +5,7 @@ Provides login, logout, session management, and API key operations.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -21,6 +22,9 @@ from .users import UserResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["auth"])
+
+# Lock to prevent TOCTOU race condition in first-admin creation
+_first_admin_lock = asyncio.Lock()
 
 
 # ==================== Request/Response Models ====================
@@ -139,62 +143,63 @@ async def create_first_admin(
     This endpoint is only available when no users exist.
     Creates an admin user and logs them in automatically.
     """
-    store = _get_store()
+    async with _first_admin_lock:
+        store = _get_store()
 
-    # Check if setup is still needed
-    if await store.has_any_users():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Setup already completed. Use normal registration.",
-        )
+        # Check if setup is still needed
+        if await store.has_any_users():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Setup already completed. Use normal registration.",
+            )
 
-    try:
-        # Create the admin user
-        user = await store.create_user(
-            email=data.email,
-            username=data.username,
-            password=data.password,
-            display_name=data.display_name,
-            is_admin=True,
-            level_names=["admin"],
-        )
+        try:
+            # Create the admin user
+            user = await store.create_user(
+                email=data.email,
+                username=data.username,
+                password=data.password,
+                display_name=data.display_name,
+                is_admin=True,
+                level_names=["admin"],
+            )
 
-        # Create session and log in
-        client_ip = get_client_ip(request)
-        user_agent = request.headers.get("User-Agent", "")[:500]
-        session_id = await store.create_session(
-            user_id=user.id,
-            ip_address=client_ip,
-            user_agent=user_agent,
-            expires_hours=24 * 30,  # 30 days for first admin
-        )
+            # Create session and log in
+            client_ip = get_client_ip(request)
+            user_agent = request.headers.get("User-Agent", "")[:500]
+            session_id = await store.create_session(
+                user_id=user.id,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                expires_hours=24 * 30,  # 30 days for first admin
+            )
 
-        # Set session cookie
-        response.set_cookie(
-            key=SESSION_COOKIE_NAME,
-            value=session_id,
-            httponly=True,
-            secure=request.url.scheme == "https",
-            samesite="lax",
-            max_age=60 * 60 * 24 * 30,  # 30 days
-        )
+            # Set session cookie
+            response.set_cookie(
+                key=SESSION_COOKIE_NAME,
+                value=session_id,
+                httponly=True,
+                secure=request.url.scheme == "https",
+                samesite="lax",
+                max_age=60 * 60 * 24 * 30,  # 30 days
+            )
 
-        # Reload user with permissions
-        user = await store.get_user(user.id)
+            # Reload user with permissions
+            user = await store.get_user(user.id)
 
-        logger.info("First admin user created: %s", user.username)
+            logger.info("First admin user created: %s", user.username)
 
-        return LoginResponse(
-            success=True,
-            user=user.to_dict(),
-            message="Admin account created successfully",
-        )
+            return LoginResponse(
+                success=True,
+                user=user.to_dict(),
+                message="Admin account created successfully",
+            )
 
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            )
 
 
 # ==================== Session Routes ====================
