@@ -9,6 +9,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 
 from ...services.cloud import CloudJobStatus, JobType, UnifiedJob
 from ...services.cloud.auth import get_optional_user
@@ -174,7 +175,15 @@ async def cancel_job(
         except Exception as exc:
             logger.warning("Could not terminate local process %s: %s", job_id, exc)
 
-    await store.update_job(job_id, {"status": CloudJobStatus.CANCELLED.value})
+    from datetime import datetime, timezone
+
+    await store.update_job(
+        job_id,
+        {
+            "status": CloudJobStatus.CANCELLED.value,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
 
     store.log_audit_event(
         action="job.cancelled",
@@ -265,6 +274,49 @@ async def get_job_logs(job_id: str) -> Dict[str, Any]:
 
     logs = await fetch_job_logs(job)
     return {"job_id": job_id, "logs": logs}
+
+
+@router.get("/jobs/{job_id}/logs/stream")
+async def stream_job_logs(job_id: str) -> StreamingResponse:
+    """Stream logs for a job in real-time (SSE).
+
+    Tails the log file and sends new lines as they appear.
+    Ends when the job reaches a terminal state.
+    """
+    import asyncio
+
+    from ...services.cloud.job_logs import stream_local_logs
+
+    store = get_job_store()
+    job = await store.get_job(job_id)
+
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {job_id}")
+
+    async def event_generator():
+        terminal_states = {"completed", "failed", "cancelled"}
+
+        async for line in stream_local_logs(job):
+            # Send line as SSE event
+            yield f"data: {line}\n\n"
+
+            # Check if job finished
+            updated_job = await store.get_job(job_id)
+            if updated_job and updated_job.status in terminal_states:
+                yield f"event: done\ndata: {updated_job.status}\n\n"
+                break
+
+        yield "event: done\ndata: stream_end\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/jobs/{job_id}/inline-progress")

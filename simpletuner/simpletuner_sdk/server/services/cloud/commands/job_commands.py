@@ -243,7 +243,7 @@ class SubmitJobCommand(Command[SubmitJobData]):
             from ..auth import QuotaChecker
 
             async_store = await AsyncJobStore.get_instance()
-            quotas = ctx.user_store.get_quotas(self.user.id)
+            quotas = await ctx.user_store.get_quotas(self.user.id)
             max_concurrent = quotas.get("max_concurrent_jobs", 5)
 
             self._reservation_id = await async_store.reserve_job_slot(
@@ -416,9 +416,14 @@ class SubmitJobCommand(Command[SubmitJobData]):
                 client = ProviderFactory.get_provider(job.provider)
                 await client.cancel_job(self._created_job_id)
 
+            from datetime import datetime, timezone
+
             await ctx.job_store.update_job(
                 self._created_job_id,
-                {"status": CloudJobStatus.CANCELLED.value},
+                {
+                    "status": CloudJobStatus.CANCELLED.value,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
             )
             return True
         except Exception as exc:
@@ -529,10 +534,15 @@ class CancelJobCommand(Command[CancelJobData]):
             except Exception as exc:
                 logger.warning("Could not terminate local process %s: %s", self.job_id, exc)
 
-        # Update status
+        # Update status and set completion time
+        from datetime import datetime, timezone
+
         await ctx.job_store.update_job(
             self.job_id,
-            {"status": CloudJobStatus.CANCELLED.value},
+            {
+                "status": CloudJobStatus.CANCELLED.value,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
 
         ctx.log_audit(

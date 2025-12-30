@@ -180,11 +180,23 @@ async def get_queue_stats(
     scheduler = get_scheduler()
     overview = await scheduler.get_queue_overview()
 
+    # Also count running local jobs from the job store (they bypass the queue)
+    running_count = overview.get("running", 0)
+    try:
+        from ..services.cloud.async_job_store import AsyncJobStore
+        from ..services.cloud.base import JobType
+
+        job_store = await AsyncJobStore.get_instance()
+        local_running = await job_store.list_jobs(status="running", job_type=JobType.LOCAL, limit=100)
+        running_count += len(local_running)
+    except Exception:
+        pass
+
     return QueueStatsResponse(
         by_status=overview.get("by_status", {}),
         by_user={str(k): v for k, v in overview.get("by_user", {}).items()},
         queue_depth=overview.get("queue_depth", 0),
-        running=overview.get("running", 0),
+        running=running_count,
         avg_wait_seconds=overview.get("avg_wait_seconds"),
         max_concurrent=overview.get("max_concurrent", 5),
         user_max_concurrent=overview.get("user_max_concurrent", 2),
@@ -447,6 +459,96 @@ async def cleanup_old_entries(
         "deleted": deleted,
         "days": days,
     }
+
+
+# --- Local job submission ---
+
+
+class LocalJobSubmitRequest(BaseModel):
+    """Request to submit a local training job."""
+
+    config_name: str = Field(..., description="Name of config to load from disk")
+
+
+class LocalJobSubmitResponse(BaseModel):
+    """Response from local job submission."""
+
+    success: bool
+    job_id: Optional[str] = None
+    status: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.post("/submit", response_model=LocalJobSubmitResponse)
+async def submit_local_job(
+    request: LocalJobSubmitRequest,
+    user: Optional[User] = Depends(get_optional_user),
+) -> LocalJobSubmitResponse:
+    """Submit a local training job.
+
+    Loads the config from disk and starts the training process locally.
+    """
+    from pathlib import Path
+
+    from ..services.config_store import ConfigStore
+    from ..services.training_service import start_training_job
+    from ..services.webui_state import WebUIStateStore
+
+    try:
+        # Load config from disk
+        defaults = WebUIStateStore().load_defaults()
+        if not defaults.configs_dir:
+            return LocalJobSubmitResponse(
+                success=False,
+                error="No configs directory configured",
+            )
+
+        config_store = ConfigStore(
+            config_dir=Path(defaults.configs_dir).expanduser(),
+            config_type="model",
+        )
+
+        try:
+            config, _ = config_store.load_config(request.config_name)
+        except FileNotFoundError:
+            return LocalJobSubmitResponse(
+                success=False,
+                error=f"Config '{request.config_name}' not found",
+            )
+
+        # Start the training job (path resolution happens inside start_training_job)
+        job_id = start_training_job(config, env_name=request.config_name)
+
+        # Broadcast SSE event so UI updates in real-time
+        try:
+            from ..services.sse_manager import get_sse_manager
+
+            sse_manager = get_sse_manager()
+            await sse_manager.broadcast(
+                data={
+                    "type": "training.status",
+                    "status": "starting",
+                    "job_id": job_id,
+                    "config_name": request.config_name,
+                    "message": f"Training job {job_id} starting",
+                },
+                event_type="training.status",
+            )
+        except Exception as exc:
+            logger.warning("Failed to broadcast SSE event: %s", exc)
+
+        return LocalJobSubmitResponse(
+            success=True,
+            job_id=job_id,
+            status="starting",
+        )
+
+    except Exception as exc:
+        logger.error("Failed to submit local job: %s", exc, exc_info=True)
+        return LocalJobSubmitResponse(
+            success=False,
+            error=str(exc),
+        )
 
 
 # --- Polling preference endpoints ---

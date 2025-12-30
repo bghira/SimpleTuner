@@ -298,6 +298,12 @@ def _add_jobs_parser(subparsers):
         default="table",
         help="Output format (default: table)",
     )
+    list_parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="Comma-separated list of fields to output (e.g., job_id,status,config_name,created_at)",
+    )
 
     # submit
     submit_parser = jobs_subparsers.add_parser(

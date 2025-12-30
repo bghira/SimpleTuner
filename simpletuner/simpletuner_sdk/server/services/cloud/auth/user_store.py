@@ -687,6 +687,46 @@ class UserStore:
         """Get quotas for teams."""
         return await self._quotas.get_for_teams(team_ids)
 
+    async def get_quotas(self, user_id: int) -> Dict[str, Any]:
+        """Get effective quota settings for a user as a simple dict.
+
+        Aggregates user, level, and global quotas into a dict with keys like
+        'max_concurrent_jobs'. Returns defaults if no quotas are configured.
+        """
+        result = {
+            "max_concurrent_jobs": 5,
+            "max_daily_jobs": 100,
+            "max_monthly_cost": None,
+        }
+
+        try:
+            # Get quotas from all scopes
+            user_quotas = await self.get_user_quotas(user_id)
+            global_quotas = await self.get_global_quotas()
+
+            # Get user's level IDs
+            user = await self.get_user(user_id)
+            level_quotas = []
+            if user and user.level_ids:
+                level_quotas = await self.get_level_quotas(list(user.level_ids))
+
+            # Merge quotas - user overrides level overrides global
+            all_quotas = global_quotas + level_quotas + user_quotas
+            for quota in all_quotas:
+                quota_type = getattr(quota, "quota_type", None) or quota.get("quota_type")
+                limit_value = getattr(quota, "limit_value", None) or quota.get("limit_value")
+
+                if quota_type == "concurrent_jobs" and limit_value is not None:
+                    result["max_concurrent_jobs"] = int(limit_value)
+                elif quota_type == "daily_jobs" and limit_value is not None:
+                    result["max_daily_jobs"] = int(limit_value)
+                elif quota_type == "monthly_cost" and limit_value is not None:
+                    result["max_monthly_cost"] = float(limit_value)
+        except Exception:
+            pass
+
+        return result
+
     # ==================== Organization Operations ====================
 
     async def create_organization(

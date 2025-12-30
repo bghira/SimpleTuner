@@ -265,6 +265,7 @@ def _jobs_list(args) -> int:
     limit = getattr(args, "limit", 20)
     status_filter = getattr(args, "status", None)
     output_format = getattr(args, "format", "table")
+    output_fields = getattr(args, "output", None)
 
     params = [f"limit={limit}"]
     if status_filter:
@@ -280,9 +281,21 @@ def _jobs_list(args) -> int:
         return 0
 
     if output_format == "json":
-        print(json.dumps(jobs, indent=2))
+        if output_fields:
+            fields = [f.strip() for f in output_fields.split(",")]
+            filtered_jobs = [{k: j.get(k) for k in fields} for j in jobs]
+            print(json.dumps(filtered_jobs, indent=2))
+        else:
+            print(json.dumps(jobs, indent=2))
         return 0
 
+    # Custom field output
+    if output_fields:
+        fields = [f.strip() for f in output_fields.split(",")]
+        _print_custom_fields(jobs, fields)
+        return 0
+
+    # Default table output
     print(f"{'Job ID':<14} {'Status':<15} {'Config':<30} {'Duration':<10}")
     print("-" * 75)
 
@@ -296,6 +309,48 @@ def _jobs_list(args) -> int:
 
     print(f"\nTotal: {len(jobs)} jobs")
     return 0
+
+
+def _print_custom_fields(jobs: list, fields: list) -> None:
+    """Print jobs with custom field selection."""
+    # Field display config: (width, formatter)
+    field_config = {
+        "job_id": (14, lambda v: (v or "")[:12]),
+        "status": (15, lambda v: _format_job_status(v or "unknown")),
+        "config_name": (30, lambda v: (v or "unnamed")[:29]),
+        "duration_seconds": (10, lambda v: _format_duration(v)),
+        "duration": (10, lambda v: _format_duration(v)),
+        "created_at": (20, lambda v: (v or "-")[:19]),
+        "started_at": (20, lambda v: (v or "-")[:19]),
+        "finished_at": (20, lambda v: (v or "-")[:19]),
+        "job_type": (12, lambda v: v or "training"),
+        "error_message": (40, lambda v: (v or "-")[:39]),
+        "queue_position": (8, lambda v: str(v) if v is not None else "-"),
+        "user_id": (10, lambda v: str(v) if v is not None else "-"),
+    }
+
+    # Build header
+    header_parts = []
+    for field in fields:
+        width = field_config.get(field, (20, str))[0]
+        header_parts.append(f"{field:<{width}}")
+    print(" ".join(header_parts))
+    print("-" * (sum(field_config.get(f, (20, str))[0] + 1 for f in fields) - 1))
+
+    # Print rows
+    for job in jobs:
+        row_parts = []
+        for field in fields:
+            width, formatter = field_config.get(field, (20, lambda v: str(v) if v is not None else "-"))
+            value = job.get(field)
+            # Handle duration alias
+            if field == "duration" and value is None:
+                value = job.get("duration_seconds")
+            formatted = formatter(value)
+            row_parts.append(f"{formatted:<{width}}")
+        print(" ".join(row_parts))
+
+    print(f"\nTotal: {len(jobs)} jobs")
 
 
 def _jobs_submit(args) -> int:
@@ -317,7 +372,7 @@ def _jobs_submit(args) -> int:
 
     print(f"Submitting local job with config '{config_name}'...")
 
-    result = cloud_api_request("POST", "/api/cloud/jobs/submit", data=request_data)
+    result = cloud_api_request("POST", "/api/queue/submit", data=request_data)
 
     if result.get("success"):
         job_id = result.get("job_id", "unknown")
@@ -578,38 +633,76 @@ def _jobs_logs(args) -> int:
 
 
 def _jobs_logs_follow(job_id: str) -> int:
-    """Follow job logs in real-time by polling."""
+    """Follow job logs in real-time via SSE streaming."""
+    import os
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    from .cloud.api import get_cloud_server_url
+
     print(f"Following logs for job {job_id}... (Ctrl+C to stop)")
     print("-" * 60)
 
-    last_log_length = 0
-    terminal_states = {"completed", "failed", "cancelled"}
+    base_url = get_cloud_server_url()
+    stream_url = f"{base_url}/api/cloud/jobs/{job_id}/logs/stream"
+
+    # Build request with auth
+    req = urllib.request.Request(stream_url)
+    req.add_header("Accept", "text/event-stream")
+    req.add_header("Cache-Control", "no-cache")
+
+    api_key = os.environ.get("SIMPLETUNER_API_KEY")
+    if api_key:
+        req.add_header("X-API-Key", api_key)
+
+    # Handle SSL
+    ssl_context = None
+    if stream_url.startswith("https"):
+        if os.environ.get("SIMPLETUNER_SSL_NO_VERIFY") == "true":
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
     try:
-        while True:
-            job_result = cloud_api_request("GET", f"/api/cloud/jobs/{job_id}")
-            job = job_result.get("job", {})
+        with urllib.request.urlopen(req, timeout=None, context=ssl_context) as response:
+            buffer = ""
+            while True:
+                chunk = response.read(1)
+                if not chunk:
+                    break
 
-            if not job:
-                print(f"\nError: Job {job_id} not found.")
-                return 1
+                buffer += chunk.decode("utf-8", errors="replace")
 
-            log_result = cloud_api_request("GET", f"/api/cloud/jobs/{job_id}/logs")
-            logs = log_result.get("logs", "")
+                # Process complete SSE messages
+                while "\n\n" in buffer:
+                    message, buffer = buffer.split("\n\n", 1)
+                    for line in message.split("\n"):
+                        if line.startswith("data: "):
+                            data = line[6:]
+                            print(data)
+                        elif line.startswith("event: done"):
+                            # Next data line contains the final status
+                            pass
+                        elif line == "event: done":
+                            continue
 
-            if len(logs) > last_log_length:
-                new_content = logs[last_log_length:]
-                sys.stdout.write(new_content)
-                sys.stdout.flush()
-                last_log_length = len(logs)
+                    # Check for done event
+                    if "event: done" in message:
+                        # Extract status from the data line
+                        for line in message.split("\n"):
+                            if line.startswith("data: "):
+                                status = line[6:]
+                                if status != "stream_end":
+                                    print(f"\n--- Job {status} ---")
+                        return 0
 
-            status = job.get("status", "")
-            if status in terminal_states:
-                print(f"\n\n--- Job {status} ---")
-                break
-
-            time.sleep(2)
-
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"Error: Job {job_id} not found.")
+        else:
+            print(f"Error: HTTP {e.code} - {e.reason}")
+        return 1
     except KeyboardInterrupt:
         print("\n\nStopped following logs.")
         return 0

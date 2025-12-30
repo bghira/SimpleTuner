@@ -106,15 +106,46 @@ async def _fetch_cloud_logs(job: "UnifiedJob") -> str:
         return f"(Error fetching logs: {exc})"
 
 
+def _find_log_path(output_dir: str, job_id: str) -> Optional[str]:
+    """Find the log file path for a local job.
+
+    Checks in order:
+    1. debug.log in output_dir (legacy)
+    2. stdout.log in .simpletuner_runtime/trainer_<job_id>_*/
+    """
+    # Legacy path
+    legacy_path = os.path.join(output_dir, "debug.log")
+    if os.path.exists(legacy_path):
+        return legacy_path
+
+    # Runtime directory path - look for trainer_<job_id>_* directories
+    runtime_dir = os.path.join(output_dir, ".simpletuner_runtime")
+    if os.path.isdir(runtime_dir):
+        import glob
+
+        pattern = os.path.join(runtime_dir, f"trainer_{job_id}_*", "stdout.log")
+        matches = glob.glob(pattern)
+        if matches:
+            # Return the most recently modified one
+            return max(matches, key=os.path.getmtime)
+
+    return None
+
+
 def _fetch_local_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
     """Fetch logs from local job output directory."""
-    output_dir = job.metadata.get("output_dir")
+    output_dir = job.output_url
     if not output_dir:
         return "(No output directory recorded)"
 
-    log_path = os.path.join(output_dir, "debug.log")
-    if not os.path.exists(log_path):
-        return "(Log file not found)"
+    log_path = _find_log_path(output_dir, job.job_id)
+    if not log_path:
+        # Check if the runtime directory exists at all
+        runtime_dir = os.path.join(output_dir, ".simpletuner_runtime")
+        if os.path.isdir(runtime_dir):
+            # Runtime dir exists but no matching job - job may have been cancelled early
+            return f"(No log file found for job {job.job_id} - job may have been cancelled before training started)"
+        return "(Log file not found - no training output directory exists)"
 
     try:
         with open(log_path, "r", encoding="utf-8", errors="replace") as f:
@@ -159,10 +190,10 @@ async def get_inline_progress(job: "UnifiedJob") -> InlineProgress:
             logger.debug("Error fetching inline progress for %s: %s", job.job_id, exc)
 
     elif job.job_type == JobType.LOCAL:
-        output_dir = job.metadata.get("output_dir")
+        output_dir = job.output_url
         if output_dir:
-            log_path = os.path.join(output_dir, "debug.log")
-            if os.path.exists(log_path):
+            log_path = _find_log_path(output_dir, job.job_id)
+            if log_path:
                 try:
                     with open(log_path, "rb") as f:
                         f.seek(0, 2)
@@ -186,3 +217,56 @@ def _truncate_line(line: str, max_length: int = 80) -> str:
     if len(line) > max_length:
         return line[: max_length - 3] + "..."
     return line
+
+
+async def stream_local_logs(job: "UnifiedJob", poll_interval: float = 0.5):
+    """Stream log lines from a local job as an async generator.
+
+    Yields new lines as they appear in the log file, similar to `tail -f`.
+
+    Args:
+        job: The job to stream logs for
+        poll_interval: How often to check for new content (seconds)
+
+    Yields:
+        Log lines as they appear
+    """
+    import asyncio
+
+    output_dir = job.output_url
+    if not output_dir:
+        yield "(No output directory recorded)"
+        return
+
+    log_path = _find_log_path(output_dir, job.job_id)
+
+    # Wait for log file to appear (up to 30 seconds)
+    wait_time = 0
+    while not log_path and wait_time < 30:
+        await asyncio.sleep(1)
+        wait_time += 1
+        log_path = _find_log_path(output_dir, job.job_id)
+
+    if not log_path:
+        yield "(Log file not found)"
+        return
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            # Start from beginning and stream all content
+            while True:
+                line = f.readline()
+                if line:
+                    yield line.rstrip("\n\r")
+                else:
+                    # No new content, wait and check again
+                    await asyncio.sleep(poll_interval)
+
+                    # Check if file was rotated/replaced
+                    new_path = _find_log_path(output_dir, job.job_id)
+                    if new_path and new_path != log_path:
+                        # File changed, reopen
+                        break
+
+    except Exception as exc:
+        yield f"(Error reading log file: {exc})"

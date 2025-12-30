@@ -1021,9 +1021,13 @@ def validate_training_config(
     )
 
 
-def start_training_job(runtime_config: Dict[str, Any]) -> str:
-    """Submit a training job via the process keeper and return the job identifier."""
+def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] = None) -> str:
+    """Submit a training job via the process keeper and return the job identifier.
 
+    Args:
+        runtime_config: The training configuration dictionary.
+        env_name: Optional environment/config directory name for display purposes.
+    """
     job_id = str(uuid.uuid4())[:8]
 
     runtime_payload = dict(runtime_config)
@@ -1047,6 +1051,31 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
     except Exception:
         defaults = WebUIDefaults()
     configs_dir = getattr(defaults, "configs_dir", None)
+
+    # Resolve relative paths in config (data_backend_config, etc.)
+    if configs_dir:
+        from ..utils.paths import resolve_config_path
+
+        configs_path = Path(configs_dir).expanduser()
+        for key in ("data_backend_config", "--data_backend_config"):
+            if key in runtime_payload and runtime_payload[key]:
+                raw_path = runtime_payload[key]
+                # Skip if already absolute
+                if not Path(raw_path).is_absolute():
+                    resolved = resolve_config_path(
+                        raw_path,
+                        config_dir=configs_path,
+                        check_cwd_first=False,
+                    )
+                    if resolved:
+                        runtime_payload[key] = str(resolved)
+                        # Keep both forms in sync
+                        other_key = "--data_backend_config" if key == "data_backend_config" else "data_backend_config"
+                        runtime_payload[other_key] = str(resolved)
+                    else:
+                        raise FileNotFoundError(f"Data backend config file {raw_path} not found.")
+                break
+
     try:
         _prepare_user_prompt_library(runtime_payload, job_id=job_id, configs_dir=configs_dir)
     except FileNotFoundError:
@@ -1090,7 +1119,8 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
         job_store = _get_job_store()
 
         config_name = (
-            runtime_config.get("--model_alias")
+            env_name
+            or runtime_config.get("--model_alias")
             or runtime_config.get("model_alias")
             or runtime_config.get("--tracker_run_name")
             or runtime_config.get("tracker_run_name")
