@@ -16,6 +16,9 @@
 {% elif tab_name == 'training' %}
 <link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-training">
 <link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode-training">
+{% elif tab_name == 'validation' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-validation">
+<link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode-validation">
 {% endif %}
 
 {% if prompt_libraries is defined %}
@@ -1100,13 +1103,428 @@ if (!window.hardwareHeroCTA) {
     }
 })();
 </script>
+{% elif tab_name == 'validation' %}
+<script>
+// Validation Easy Mode Component - inline for HTMX swaps
+(function() {
+    'use strict';
+
+    function validationEzModeComponent() {
+        return {
+            loading: true,
+            error: null,
+
+            // Validation schedule
+            validation_step_interval: 100,
+            validation_epoch_interval: null,
+            validation_num_inference_steps: 30,
+
+            // Prompts
+            validation_prompt: '',
+            validation_negative_prompt: 'blurry, cropped, ugly',
+
+            // Guidance
+            validation_guidance: 7.5,
+
+            // Seeds
+            validation_randomize: false,
+            validation_seed: null,
+
+            // Prompt library
+            validation_prompt_library: false,
+            user_prompt_library: '',
+            promptLibraries: [],
+            promptLibraryEntries: [],
+            selectedLibrary: null,
+            libraryLoading: false,
+            showLibraryEditor: false,
+            newLibraryName: '',
+            editingEntries: [],
+
+            hints: { ez_mode: true },
+            _cleanupFns: [],
+
+            showEzMode() {
+                return this.hints.ez_mode;
+            },
+
+            dismissEzMode() {
+                this.hints.ez_mode = false;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_validation_hints') || '{}');
+                    stored.ez_mode = false;
+                    localStorage.setItem('st_validation_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            restoreEzMode() {
+                this.hints.ez_mode = true;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_validation_hints') || '{}');
+                    stored.ez_mode = true;
+                    localStorage.setItem('st_validation_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            async init() {
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_validation_hints') || '{}');
+                    this.hints.ez_mode = stored.ez_mode !== false;
+                } catch (e) { }
+
+                await this.loadPromptLibraries();
+
+                this.syncFromForm();
+                this.setupFormWatchers();
+                this.watchEnvironmentChanges();
+                this.watchTrainerStore();
+                this.loading = false;
+            },
+
+            watchTrainerStore() {
+                let attempts = 0;
+                const maxAttempts = 50;
+                const checkStore = () => {
+                    const store = window.Alpine?.store?.('trainer');
+                    const config = store?.activeEnvironmentConfig;
+
+                    if (config && Object.keys(config).length > 0) {
+                        this.syncFromForm();
+                        return;
+                    }
+
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStore, 100);
+                    }
+                };
+
+                setTimeout(checkStore, 100);
+            },
+
+            destroy() {
+                this._cleanupFns.forEach(fn => fn());
+                this._cleanupFns = [];
+            },
+
+            watchEnvironmentChanges() {
+                const handler = () => {
+                    setTimeout(() => this.syncFromForm(), 100);
+                };
+                document.addEventListener('environment-loaded', handler);
+                document.addEventListener('environment-switched', handler);
+
+                const htmxHandler = (evt) => {
+                    if (evt.detail?.target?.id === 'validation-tab-content') {
+                        setTimeout(() => this.syncFromForm(), 100);
+                    }
+                };
+                document.body.addEventListener('htmx:afterSettle', htmxHandler);
+
+                this._cleanupFns.push(() => {
+                    document.removeEventListener('environment-loaded', handler);
+                    document.removeEventListener('environment-switched', handler);
+                    document.body.removeEventListener('htmx:afterSettle', htmxHandler);
+                });
+            },
+
+            async loadPromptLibraries() {
+                try {
+                    const response = await fetch('/api/prompt-libraries');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.promptLibraries = data.libraries || [];
+                    }
+                } catch (err) {
+                    console.error('[VALIDATION EZ MODE] Failed to load prompt libraries:', err);
+                }
+            },
+
+            async loadLibraryEntries(filename) {
+                if (!filename) {
+                    this.promptLibraryEntries = [];
+                    this.selectedLibrary = null;
+                    return;
+                }
+                this.libraryLoading = true;
+                try {
+                    const response = await fetch(`/api/prompt-libraries/${encodeURIComponent(filename)}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        const entries = data.entries || {};
+                        this.promptLibraryEntries = Object.entries(entries).map(([shortname, value]) => ({
+                            shortname,
+                            prompt: typeof value === 'string' ? value : value.prompt || ''
+                        }));
+                        this.selectedLibrary = data.library;
+                    }
+                } catch (err) {
+                    console.error('[VALIDATION EZ MODE] Failed to load library entries:', err);
+                } finally {
+                    this.libraryLoading = false;
+                }
+            },
+
+            syncFromForm() {
+                const fields = [
+                    'validation_step_interval', 'validation_epoch_interval', 'validation_num_inference_steps',
+                    'validation_prompt', 'validation_negative_prompt',
+                    'validation_guidance', 'validation_randomize', 'validation_seed',
+                    'validation_prompt_library', 'user_prompt_library'
+                ];
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    for (const fieldName of fields) {
+                        const prefixedKey = `--${fieldName}`;
+                        const value = config[prefixedKey] ?? config[fieldName];
+                        if (value !== undefined && value !== null) {
+                            if (typeof value === 'boolean') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'number') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'string') {
+                                if (value === 'true' || value === 'false') {
+                                    this[fieldName] = value === 'true';
+                                } else {
+                                    this[fieldName] = value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            this[fieldName] = el.checked;
+                        } else if (el.type === 'number' || el.type === 'range') {
+                            const val = parseFloat(el.value);
+                            this[fieldName] = isNaN(val) ? null : val;
+                        } else {
+                            this[fieldName] = el.value || '';
+                        }
+                    }
+                }
+
+                // Load library entries if a library is selected
+                if (this.user_prompt_library) {
+                    const segments = this.user_prompt_library.split(/[/\\]+/);
+                    const filename = segments[segments.length - 1];
+                    if (filename) {
+                        this.loadLibraryEntries(filename);
+                    }
+                }
+            },
+
+            setupFormWatchers() {
+                const fields = [
+                    'validation_step_interval', 'validation_epoch_interval', 'validation_num_inference_steps',
+                    'validation_prompt', 'validation_negative_prompt',
+                    'validation_guidance', 'validation_randomize', 'validation_seed',
+                    'validation_prompt_library', 'user_prompt_library'
+                ];
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        const handler = () => {
+                            if (el.type === 'checkbox') {
+                                this[fieldName] = el.checked;
+                            } else if (el.type === 'number' || el.type === 'range') {
+                                const val = parseFloat(el.value);
+                                this[fieldName] = isNaN(val) ? null : val;
+                            } else {
+                                this[fieldName] = el.value || '';
+                            }
+                        };
+                        el.addEventListener('change', handler);
+                        el.addEventListener('input', handler);
+                        this._cleanupFns.push(() => {
+                            el.removeEventListener('change', handler);
+                            el.removeEventListener('input', handler);
+                        });
+                    }
+                }
+            },
+
+            updateFormField(fieldName, value) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore) {
+                    const canonicalKey = `--${fieldName}`;
+                    if (typeof trainerStore.updateConfigValue === 'function') {
+                        trainerStore.updateConfigValue(canonicalKey, value);
+                    } else if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[canonicalKey] = value;
+                    }
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    }
+                }
+            },
+
+            // Field change handlers
+            onValidationStepIntervalChange(value) { const v = parseInt(value) || 100; this.validation_step_interval = v; this.updateFormField('validation_step_interval', v); },
+            onValidationEpochIntervalChange(value) { const v = value ? parseInt(value) : null; this.validation_epoch_interval = v; this.updateFormField('validation_epoch_interval', v); },
+            onValidationInferenceStepsChange(value) { const v = parseInt(value) || 30; this.validation_num_inference_steps = v; this.updateFormField('validation_num_inference_steps', v); },
+            onValidationPromptChange(value) { this.validation_prompt = value; this.updateFormField('validation_prompt', value); },
+            onValidationNegativePromptChange(value) { this.validation_negative_prompt = value; this.updateFormField('validation_negative_prompt', value); },
+            onValidationGuidanceChange(value) { const v = parseFloat(value) || 7.5; this.validation_guidance = v; this.updateFormField('validation_guidance', v); },
+            onValidationRandomizeChange(checked) { this.validation_randomize = checked; this.updateFormField('validation_randomize', checked); },
+            onValidationSeedChange(value) { const v = value ? parseInt(value) : null; this.validation_seed = v; this.updateFormField('validation_seed', v); },
+            onValidationPromptLibraryChange(checked) { this.validation_prompt_library = checked; this.updateFormField('validation_prompt_library', checked); },
+
+            async onUserPromptLibraryChange(value) {
+                this.user_prompt_library = value;
+                this.updateFormField('user_prompt_library', value);
+                if (value) {
+                    const segments = value.split(/[/\\]+/);
+                    const filename = segments[segments.length - 1];
+                    if (filename) {
+                        await this.loadLibraryEntries(filename);
+                    }
+                } else {
+                    this.promptLibraryEntries = [];
+                    this.selectedLibrary = null;
+                }
+            },
+
+            // Prompt library editor
+            openLibraryEditor(createNew = false) {
+                if (createNew) {
+                    this.newLibraryName = '';
+                    this.editingEntries = [{ shortname: '', prompt: '' }];
+                    this.selectedLibrary = null;
+                } else if (this.promptLibraryEntries.length > 0) {
+                    this.editingEntries = this.promptLibraryEntries.map(e => ({ ...e }));
+                    this.editingEntries.push({ shortname: '', prompt: '' });
+                    this.newLibraryName = this.selectedLibrary?.library_name || '';
+                } else {
+                    this.newLibraryName = '';
+                    this.editingEntries = [{ shortname: '', prompt: '' }];
+                }
+                this.showLibraryEditor = true;
+            },
+
+            closeLibraryEditor() {
+                this.showLibraryEditor = false;
+                this.editingEntries = [];
+                this.newLibraryName = '';
+            },
+
+            addPromptEntry() {
+                this.editingEntries.push({ shortname: '', prompt: '' });
+            },
+
+            removePromptEntry(index) {
+                this.editingEntries.splice(index, 1);
+                if (this.editingEntries.length === 0) {
+                    this.editingEntries.push({ shortname: '', prompt: '' });
+                }
+            },
+
+            async savePromptLibrary() {
+                // Validate entries
+                const validEntries = this.editingEntries.filter(e => e.shortname.trim() && e.prompt.trim());
+                if (validEntries.length === 0) {
+                    window.showToast?.('Add at least one prompt entry', 'error');
+                    return;
+                }
+
+                const libraryName = this.newLibraryName.trim();
+                if (libraryName && !/^[A-Za-z0-9._-]+$/.test(libraryName)) {
+                    window.showToast?.('Library name can only contain letters, numbers, ".", "_", or "-"', 'error');
+                    return;
+                }
+
+                const filename = libraryName ? `user_prompt_library-${libraryName}.json` : 'user_prompt_library.json';
+                const entries = validEntries.reduce((acc, e) => ({ ...acc, [e.shortname]: e.prompt }), {});
+
+                try {
+                    const response = await fetch(`/api/prompt-libraries/${encodeURIComponent(filename)}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            entries,
+                            previous_filename: this.selectedLibrary?.filename
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const data = await response.json().catch(() => ({}));
+                        throw new Error(data.detail || 'Failed to save');
+                    }
+
+                    const data = await response.json();
+                    window.showToast?.('Prompt library saved', 'success');
+
+                    // Update form field with new path
+                    const targetPath = data.library?.absolute_path || data.library?.relative_path;
+                    if (targetPath) {
+                        await this.onUserPromptLibraryChange(targetPath);
+                    }
+
+                    // Refresh libraries list
+                    await this.loadPromptLibraries();
+                    this.closeLibraryEditor();
+                } catch (err) {
+                    window.showToast?.(err.message || 'Failed to save prompt library', 'error');
+                }
+            },
+
+            resetToDefaults() {
+                const defaults = {
+                    validation_step_interval: 100,
+                    validation_epoch_interval: null,
+                    validation_num_inference_steps: 30,
+                    validation_prompt: '',
+                    validation_negative_prompt: 'blurry, cropped, ugly',
+                    validation_guidance: 7.5,
+                    validation_randomize: false,
+                    validation_seed: null,
+                    validation_prompt_library: false,
+                    user_prompt_library: ''
+                };
+
+                for (const [key, value] of Object.entries(defaults)) {
+                    this[key] = value;
+                    this.updateFormField(key, value);
+                }
+
+                this.promptLibraryEntries = [];
+                this.selectedLibrary = null;
+                window.showToast?.('Settings reset to defaults', 'success');
+            }
+        };
+    }
+
+    // Register with Alpine
+    if (window.Alpine) {
+        window.Alpine.data('validationEzModeComponent', validationEzModeComponent);
+    } else {
+        document.addEventListener('alpine:init', () => {
+            window.Alpine.data('validationEzModeComponent', validationEzModeComponent);
+        });
+    }
+})();
+</script>
 {% endif %}
 
 <div class="tab-fragment"
      id="{{ tab_name }}-tab-content"
      data-tab-name="{{ tab_name }}"
      data-danger-mode="{{ 'true' if danger_mode_enabled | default(false) else 'false' }}"
-     {% if tab_name == 'publishing' %}x-data="publishingHeroCTA()" x-init="init()"{% elif tab_name == 'hardware' %}x-data="hardwareHeroCTA()" x-init="init()"{% elif tab_name == 'model' %}x-data="modelEzModeComponent()" x-init="init()"{% elif tab_name == 'basic' %}x-data="basicEzModeComponent()" x-init="init()"{% elif tab_name == 'training' %}x-data="trainingEzModeComponent()" x-init="init()"{% endif %}>
+     {% if tab_name == 'publishing' %}x-data="publishingHeroCTA()" x-init="init()"{% elif tab_name == 'hardware' %}x-data="hardwareHeroCTA()" x-init="init()"{% elif tab_name == 'model' %}x-data="modelEzModeComponent()" x-init="init()"{% elif tab_name == 'basic' %}x-data="basicEzModeComponent()" x-init="init()"{% elif tab_name == 'training' %}x-data="trainingEzModeComponent()" x-init="init()"{% elif tab_name == 'validation' %}x-data="validationEzModeComponent()" x-init="init()"{% endif %}>
 
     {% if tab_name == 'publishing' %}
     <!-- Hero CTA - Introduction to publishing -->
@@ -1748,6 +2166,273 @@ if (!window.hardwareHeroCTA) {
     </div>
 
     <div x-show="!hints.ez_mode" x-cloak>
+    {% elif tab_name == 'validation' %}
+    <!-- Validation Easy Mode Hero -->
+    <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="hero-cta hero-cta--amber" data-theme="amber" data-icon-shape="rounded">
+            <button type="button" class="hero-dismiss-btn" @click="dismissEzMode()" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="hero-content text-start">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <div class="hero-icon hero-icon--rounded flex-shrink-0">
+                        <i class="fas fa-eye"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <h2 class="hero-title mb-2">Validation — Easy Mode</h2>
+                        <p class="hero-description mb-0">
+                            Validation generates sample images during training so you can see how your model is learning. These previews help you catch problems early—like overfitting or wrong concepts—before wasting hours on a bad run.
+                        </p>
+                    </div>
+                </div>
+
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center py-4">
+                <div class="spinner-border text-light spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- Easy Mode Form -->
+            <div x-show="!loading" class="ez-mode-form mt-4">
+
+                <!-- Step 1: Validation Schedule -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">1</span>
+                        <span class="ez-step-title">Validation Schedule</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Control how often validation images are generated. More frequent validation gives you better visibility into training progress but adds overhead. Balance between insight and training speed.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Validate Every N Steps</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_step_interval"
+                                       @input="onValidationStepIntervalChange($event.target.value)"
+                                       min="1">
+                                <div class="form-text">Generate validation images every N training steps. Lower values (50-100) catch problems faster but slow training. Higher values (250-500) are less intrusive. For quick 500-step runs, try 100. For longer runs, 250-500 works well.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Validate Every N Epochs</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_epoch_interval"
+                                       @input="onValidationEpochIntervalChange($event.target.value)"
+                                       min="1"
+                                       placeholder="Disabled">
+                                <div class="form-text">Additionally validate at the end of every N epochs. Complements step-based validation. Leave empty to only use step interval.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Inference Steps</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_num_inference_steps"
+                                       @input="onValidationInferenceStepsChange($event.target.value)"
+                                       min="1" max="100">
+                                <div class="form-text">Denoising steps for validation images. More steps = better quality but slower. 20-30 is typical. Use fewer (10-15) for speed during training; you're checking concepts, not final quality.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Validation Prompts -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">2</span>
+                        <span class="ez-step-title">Validation Prompts</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            These prompts will be used to generate preview images during training. Choose prompts that test what you're training—if you're training a character, use prompts featuring that character. If training a style, use prompts that should show that style.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="form-label">Validation Prompt</label>
+                                <textarea class="form-control" rows="3"
+                                          x-model="validation_prompt"
+                                          @input="onValidationPromptChange($event.target.value)"
+                                          placeholder="e.g., a portrait photo of [trigger word], professional lighting, 4k"></textarea>
+                                <div class="form-text">The prompt used to generate validation images. Include your trigger word if training a concept. This tests whether your training is working—if the generated images don't match what you expect, something's wrong.</div>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label">Negative Prompt</label>
+                                <textarea class="form-control" rows="2"
+                                          x-model="validation_negative_prompt"
+                                          @input="onValidationNegativePromptChange($event.target.value)"
+                                          placeholder="blurry, cropped, ugly"></textarea>
+                                <div class="form-text">What to avoid in generated images. Common values: "blurry, cropped, ugly, deformed". Leave empty to disable negative prompting.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Prompt Library -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">3</span>
+                        <span class="ez-step-title">Prompt Library</span>
+                        <span class="badge bg-secondary ms-2">Optional</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Instead of a single prompt, use a library of prompts to test your model from multiple angles. Each validation run cycles through your library, giving you diverse samples to evaluate training progress.
+                        </p>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Select Prompt Library</label>
+                                <select class="form-select"
+                                        @change="onUserPromptLibraryChange($event.target.value)">
+                                    <option value="">None (use single prompt above)</option>
+                                    <template x-for="lib in promptLibraries" :key="lib.filename">
+                                        <option :value="lib.absolute_path" x-text="lib.display_name + ' (' + lib.prompt_count + ' prompts)'"
+                                                :selected="user_prompt_library && user_prompt_library.endsWith(lib.filename)"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text">Choose an existing prompt library or create a new one below.</div>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <button type="button" class="btn btn-sm btn-outline-primary me-2" @click="openLibraryEditor(true)">
+                                    <i class="fas fa-plus me-1"></i> New Library
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        x-show="promptLibraryEntries.length > 0"
+                                        @click="openLibraryEditor(false)">
+                                    <i class="fas fa-edit me-1"></i> Edit Current
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Current library preview -->
+                        <div x-show="promptLibraryEntries.length > 0 && !showLibraryEditor" class="mt-3">
+                            <div class="small text-muted mb-2">
+                                <i class="fas fa-list me-1"></i>
+                                <span x-text="promptLibraryEntries.length"></span> prompts in library:
+                            </div>
+                            <div class="prompt-library-preview" style="max-height: 150px; overflow-y: auto;">
+                                <template x-for="(entry, idx) in promptLibraryEntries" :key="idx">
+                                    <div class="d-flex gap-2 mb-1 small">
+                                        <span class="badge bg-secondary" x-text="entry.shortname" style="min-width: 80px;"></span>
+                                        <span class="text-truncate" x-text="entry.prompt" style="opacity: 0.9;"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Inline library editor -->
+                        <div x-show="showLibraryEditor" class="mt-3 p-3 border rounded" style="background: rgba(0,0,0,0.2);">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="mb-0"><i class="fas fa-edit me-2"></i>Edit Prompt Library</h6>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" @click="closeLibraryEditor()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label small">Library Name</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="newLibraryName"
+                                       placeholder="my-prompts (optional, creates user_prompt_library-name.json)">
+                            </div>
+
+                            <div class="mb-2 small text-muted">Prompt Entries:</div>
+                            <template x-for="(entry, idx) in editingEntries" :key="idx">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-3">
+                                        <input type="text" class="form-control form-control-sm"
+                                               x-model="editingEntries[idx].shortname"
+                                               placeholder="ID">
+                                    </div>
+                                    <div class="col-8">
+                                        <textarea class="form-control form-control-sm" rows="1"
+                                                  x-model="editingEntries[idx].prompt"
+                                                  placeholder="Prompt text"></textarea>
+                                    </div>
+                                    <div class="col-1">
+                                        <button type="button" class="btn btn-sm btn-link text-danger p-0"
+                                                @click="removePromptEntry(idx)" title="Remove">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div class="d-flex gap-2 mt-3">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" @click="addPromptEntry()">
+                                    <i class="fas fa-plus me-1"></i> Add Entry
+                                </button>
+                                <button type="button" class="btn btn-sm btn-primary" @click="savePromptLibrary()">
+                                    <i class="fas fa-save me-1"></i> Save Library
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 4: Generation Settings -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">4</span>
+                        <span class="ez-step-title">Generation Settings</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Control how validation images are generated. Consistent seeds help you compare training progress across checkpoints; random seeds give variety but make comparison harder.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Guidance Scale (CFG)</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_guidance"
+                                       @input="onValidationGuidanceChange($event.target.value)"
+                                       step="0.5" min="1" max="30">
+                                <div class="form-text">How closely to follow the prompt. 7-8 is standard. Higher (10-15) = more literal. For distilled models (Flux schnell), use 1.0.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mt-4">
+                                    <input type="checkbox" class="form-check-input" id="ez_validation_randomize"
+                                           x-model="validation_randomize"
+                                           @change="onValidationRandomizeChange($event.target.checked)">
+                                    <label class="form-check-label" for="ez_validation_randomize">
+                                        <strong>Randomize Seeds</strong>
+                                    </label>
+                                </div>
+                                <div class="form-text">When enabled, each validation uses a random seed for variety. Disable to use a fixed seed for consistent comparison.</div>
+                            </div>
+                            <div class="col-md-4" x-show="!validation_randomize">
+                                <label class="form-label">Fixed Seed</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_seed"
+                                       @input="onValidationSeedChange($event.target.value)"
+                                       min="0"
+                                       placeholder="Random">
+                                <div class="form-text">Using the same seed produces the same "random" noise, making it easier to compare outputs across training steps.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="ez-step-actions mt-4 d-flex justify-content-between align-items-center">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetToDefaults()">
+                        <i class="fas fa-undo me-1"></i> Reset to Defaults
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                        <i class="fas fa-sliders-h me-1"></i> Switch to Full Form
+                    </button>
+                </div>
+
+            </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!hints.ez_mode" x-cloak>
     {% elif tab_name == 'model' %}
     <!-- Model EZ Mode Hero -->
     <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
@@ -2133,7 +2818,7 @@ if (!window.hardwareHeroCTA) {
                         aria-label="Show introduction">
                     <i class="fas fa-question-circle"></i><span class="btn-text"> Help</span>
                 </button>
-                {% elif tab_name in ('model', 'basic', 'training') %}
+                {% elif tab_name in ('model', 'basic', 'training', 'validation') %}
                 <button type="button"
                         class="btn btn-outline-secondary"
                         x-show="!hints.ez_mode"
@@ -2348,7 +3033,7 @@ if (!window.hardwareHeroCTA) {
         </div>
     </div>
 
-    {% if tab_name in ('publishing', 'hardware', 'model', 'basic', 'training') %}
+    {% if tab_name in ('publishing', 'hardware', 'model', 'basic', 'training', 'validation') %}
     </div>
     <!-- End hero content wrapper -->
     {% endif %}
