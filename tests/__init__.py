@@ -12,8 +12,10 @@ _original_showwarning = warnings.showwarning
 def _filtered_showwarning(message, category, filename, lineno, file=None, line=None):
     msg_str = str(message)
     # Suppress SWIG-related deprecation warnings from importlib bootstrap
-    if category is DeprecationWarning and "Swig" in msg_str and "__module__" in msg_str:
-        return
+    if category is DeprecationWarning and "__module__" in msg_str:
+        # Cover all SWIG variants: SwigPyPacked, SwigPyObject, swigvarlink
+        if "Swig" in msg_str or "swig" in msg_str:
+            return
     return _original_showwarning(message, category, filename, lineno, file, line)
 
 
