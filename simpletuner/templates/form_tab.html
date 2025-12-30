@@ -10,6 +10,9 @@
 {% elif tab_name == 'model' %}
 <link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-model">
 <link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode">
+{% elif tab_name == 'basic' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-basic">
+<link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode-basic">
 {% endif %}
 
 {% if prompt_libraries is defined %}
@@ -470,13 +473,346 @@ if (!window.hardwareHeroCTA) {
     }
 })();
 </script>
+{% elif tab_name == 'basic' %}
+<script>
+// Basic EZ Mode Component - inline for HTMX swaps
+(function() {
+    'use strict';
+
+    function basicEzModeComponent() {
+        return {
+            loading: true,
+            error: null,
+
+            // Project settings
+            report_to: 'wandb',
+            tracker_project_name: 'simpletuner',
+            tracker_run_name: 'simpletuner-testing',
+            output_dir: 'simpletuner-results',
+
+            // Checkpoint
+            resume_from_checkpoint: 'latest',
+            checkpointChoices: [
+                { value: 'latest', label: 'Latest checkpoint (automatic)' },
+                { value: '', label: 'None (start from scratch)' }
+            ],
+
+            // Dataset configuration
+            data_backend_config: '',
+            dataBackendChoices: [],
+            override_dataset_config: false,
+            disable_bucket_pruning: false,
+            allow_dataset_oversubscription: false,
+            train_batch_size: 4,
+
+            // Dataset defaults
+            minimum_image_size: null,
+            maximum_image_size: null,
+            target_downsample_size: null,
+            resolution: 1024,
+            caption_strategy: 'textfile',
+
+            hints: { ez_mode: true },
+            _cleanupFns: [],
+
+            showEzMode() {
+                return this.hints.ez_mode;
+            },
+
+            dismissEzMode() {
+                this.hints.ez_mode = false;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_basic_hints') || '{}');
+                    stored.ez_mode = false;
+                    localStorage.setItem('st_basic_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            restoreEzMode() {
+                this.hints.ez_mode = true;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_basic_hints') || '{}');
+                    stored.ez_mode = true;
+                    localStorage.setItem('st_basic_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            async init() {
+                // Load persisted state
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_basic_hints') || '{}');
+                    this.hints.ez_mode = stored.ez_mode !== false;
+                } catch (e) { }
+
+                await this.loadDataBackendChoices();
+                await this.loadCheckpointChoices();
+
+                // Initial sync attempt
+                this.syncFromForm();
+                this.setupFormWatchers();
+                this.watchEnvironmentChanges();
+                this.watchTrainerStore();
+                this.loading = false;
+            },
+
+            watchTrainerStore() {
+                let attempts = 0;
+                const maxAttempts = 50;
+                const checkStore = () => {
+                    const store = window.Alpine?.store?.('trainer');
+                    const config = store?.activeEnvironmentConfig;
+
+                    if (config && Object.keys(config).length > 0) {
+                        this.syncFromForm();
+                        return;
+                    }
+
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStore, 100);
+                    }
+                };
+
+                setTimeout(checkStore, 100);
+            },
+
+            destroy() {
+                this._cleanupFns.forEach(fn => fn());
+                this._cleanupFns = [];
+            },
+
+            watchEnvironmentChanges() {
+                const handler = () => {
+                    setTimeout(() => {
+                        this.syncFromForm();
+                        this.loadCheckpointChoices();
+                    }, 100);
+                };
+                document.addEventListener('environment-loaded', handler);
+                document.addEventListener('environment-switched', handler);
+
+                const htmxHandler = (evt) => {
+                    if (evt.detail?.target?.id === 'basic-tab-content') {
+                        setTimeout(() => this.syncFromForm(), 100);
+                    }
+                };
+                document.body.addEventListener('htmx:afterSettle', htmxHandler);
+
+                this._cleanupFns.push(() => {
+                    document.removeEventListener('environment-loaded', handler);
+                    document.removeEventListener('environment-switched', handler);
+                    document.body.removeEventListener('htmx:afterSettle', htmxHandler);
+                });
+            },
+
+            async loadDataBackendChoices() {
+                try {
+                    // Use the field metadata endpoint to get dynamic choices for data_backend_config
+                    const response = await fetch('/api/fields/field/data_backend_config');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.dataBackendChoices = data.choices || [];
+                    }
+                } catch (err) {
+                    console.error('[BASIC EZ MODE] Failed to load data backend choices:', err);
+                }
+            },
+
+            async loadCheckpointChoices() {
+                try {
+                    const outputDir = this.output_dir || 'simpletuner-results';
+                    const response = await fetch(`/api/training/checkpoints?output_dir=${encodeURIComponent(outputDir)}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        const baseChoices = [
+                            { value: 'latest', label: 'Latest checkpoint (automatic)' },
+                            { value: '', label: 'None (start from scratch)' }
+                        ];
+                        if (data.checkpoints && data.checkpoints.length > 0) {
+                            const ckptChoices = data.checkpoints.map(c => ({
+                                value: c.path || c.name,
+                                label: c.name || c.path
+                            }));
+                            this.checkpointChoices = [...baseChoices, ...ckptChoices];
+                        } else {
+                            this.checkpointChoices = baseChoices;
+                        }
+                    }
+                } catch (err) {
+                    console.error('[BASIC EZ MODE] Failed to load checkpoints:', err);
+                }
+            },
+
+            syncFromForm() {
+                const fields = [
+                    'report_to', 'tracker_project_name', 'tracker_run_name', 'output_dir',
+                    'resume_from_checkpoint', 'data_backend_config', 'override_dataset_config',
+                    'disable_bucket_pruning', 'allow_dataset_oversubscription', 'train_batch_size',
+                    'minimum_image_size', 'maximum_image_size', 'target_downsample_size',
+                    'resolution', 'caption_strategy'
+                ];
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    for (const fieldName of fields) {
+                        const prefixedKey = `--${fieldName}`;
+                        const value = config[prefixedKey] ?? config[fieldName];
+                        if (value !== undefined && value !== null) {
+                            if (typeof value === 'boolean') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'number') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'string') {
+                                if (value === 'true' || value === 'false') {
+                                    this[fieldName] = value === 'true';
+                                } else {
+                                    this[fieldName] = value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            this[fieldName] = el.checked;
+                        } else if (el.type === 'number' || el.type === 'range') {
+                            const val = parseFloat(el.value);
+                            this[fieldName] = isNaN(val) ? null : val;
+                        } else {
+                            this[fieldName] = el.value || '';
+                        }
+                    }
+                }
+            },
+
+            setupFormWatchers() {
+                const fields = [
+                    'report_to', 'tracker_project_name', 'tracker_run_name', 'output_dir',
+                    'resume_from_checkpoint', 'data_backend_config', 'override_dataset_config',
+                    'disable_bucket_pruning', 'allow_dataset_oversubscription', 'train_batch_size',
+                    'minimum_image_size', 'maximum_image_size', 'target_downsample_size',
+                    'resolution', 'caption_strategy'
+                ];
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        const handler = () => {
+                            if (el.type === 'checkbox') {
+                                this[fieldName] = el.checked;
+                            } else if (el.type === 'number' || el.type === 'range') {
+                                const val = parseFloat(el.value);
+                                this[fieldName] = isNaN(val) ? null : val;
+                            } else {
+                                this[fieldName] = el.value || '';
+                            }
+                            if (fieldName === 'output_dir') {
+                                this.loadCheckpointChoices();
+                            }
+                        };
+                        el.addEventListener('change', handler);
+                        el.addEventListener('input', handler);
+                        this._cleanupFns.push(() => {
+                            el.removeEventListener('change', handler);
+                            el.removeEventListener('input', handler);
+                        });
+                    }
+                }
+            },
+
+            updateFormField(fieldName, value) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore) {
+                    const canonicalKey = `--${fieldName}`;
+                    if (typeof trainerStore.updateConfigValue === 'function') {
+                        trainerStore.updateConfigValue(canonicalKey, value);
+                    } else if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[canonicalKey] = value;
+                    }
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    }
+                }
+            },
+
+            // Field change handlers
+            onReportToChange(value) { this.report_to = value; this.updateFormField('report_to', value); },
+            onProjectNameChange(value) { this.tracker_project_name = value; this.updateFormField('tracker_project_name', value); },
+            onRunNameChange(value) { this.tracker_run_name = value; this.updateFormField('tracker_run_name', value); },
+            onOutputDirChange(value) {
+                this.output_dir = value;
+                this.updateFormField('output_dir', value);
+                this.loadCheckpointChoices();
+            },
+            onResumeFromCheckpointChange(value) { this.resume_from_checkpoint = value; this.updateFormField('resume_from_checkpoint', value); },
+            onDataBackendConfigChange(value) { this.data_backend_config = value; this.updateFormField('data_backend_config', value); },
+            onOverrideDatasetConfigChange(checked) { this.override_dataset_config = checked; this.updateFormField('override_dataset_config', checked); },
+            onDisableBucketPruningChange(checked) { this.disable_bucket_pruning = checked; this.updateFormField('disable_bucket_pruning', checked); },
+            onAllowOversubscriptionChange(checked) { this.allow_dataset_oversubscription = checked; this.updateFormField('allow_dataset_oversubscription', checked); },
+            onBatchSizeChange(value) { const v = parseInt(value) || 1; this.train_batch_size = v; this.updateFormField('train_batch_size', v); },
+            onMinImageSizeChange(value) { const v = value ? parseInt(value) : null; this.minimum_image_size = v; this.updateFormField('minimum_image_size', v); },
+            onMaxImageSizeChange(value) { const v = value ? parseInt(value) : null; this.maximum_image_size = v; this.updateFormField('maximum_image_size', v); },
+            onTargetDownsampleChange(value) { const v = value ? parseInt(value) : null; this.target_downsample_size = v; this.updateFormField('target_downsample_size', v); },
+            onResolutionChange(value) { const v = parseInt(value) || 1024; this.resolution = v; this.updateFormField('resolution', v); },
+            onCaptionStrategyChange(value) { this.caption_strategy = value; this.updateFormField('caption_strategy', value); },
+
+            resetToDefaults() {
+                const defaults = {
+                    report_to: 'wandb',
+                    tracker_project_name: 'simpletuner',
+                    tracker_run_name: 'simpletuner-testing',
+                    output_dir: 'simpletuner-results',
+                    resume_from_checkpoint: 'latest',
+                    override_dataset_config: false,
+                    disable_bucket_pruning: false,
+                    allow_dataset_oversubscription: false,
+                    train_batch_size: 4,
+                    minimum_image_size: null,
+                    maximum_image_size: null,
+                    target_downsample_size: null,
+                    resolution: 1024,
+                    caption_strategy: 'textfile'
+                };
+
+                for (const [key, value] of Object.entries(defaults)) {
+                    this[key] = value;
+                    this.updateFormField(key, value);
+                }
+
+                window.showToast?.('Settings reset to defaults', 'success');
+            }
+        };
+    }
+
+    // Register with Alpine
+    if (window.Alpine) {
+        window.Alpine.data('basicEzModeComponent', basicEzModeComponent);
+    } else {
+        document.addEventListener('alpine:init', () => {
+            window.Alpine.data('basicEzModeComponent', basicEzModeComponent);
+        });
+    }
+})();
+</script>
 {% endif %}
 
 <div class="tab-fragment"
      id="{{ tab_name }}-tab-content"
      data-tab-name="{{ tab_name }}"
      data-danger-mode="{{ 'true' if danger_mode_enabled | default(false) else 'false' }}"
-     {% if tab_name == 'publishing' %}x-data="publishingHeroCTA()" x-init="init()"{% elif tab_name == 'hardware' %}x-data="hardwareHeroCTA()" x-init="init()"{% elif tab_name == 'model' %}x-data="modelEzModeComponent()" x-init="init()"{% endif %}>
+     {% if tab_name == 'publishing' %}x-data="publishingHeroCTA()" x-init="init()"{% elif tab_name == 'hardware' %}x-data="hardwareHeroCTA()" x-init="init()"{% elif tab_name == 'model' %}x-data="modelEzModeComponent()" x-init="init()"{% elif tab_name == 'basic' %}x-data="basicEzModeComponent()" x-init="init()"{% endif %}>
 
     {% if tab_name == 'publishing' %}
     <!-- Hero CTA - Introduction to publishing -->
@@ -584,6 +920,276 @@ if (!window.hardwareHeroCTA) {
     {% endcall %}
 
     <div x-show="!showHeroCTA()" x-cloak>
+    {% elif tab_name == 'basic' %}
+    <!-- Basic EZ Mode Hero -->
+    <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="hero-cta hero-cta--indigo" data-theme="indigo" data-icon-shape="rounded">
+            <button type="button" class="hero-dismiss-btn" @click="dismissEzMode()" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="hero-content text-start">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <div class="hero-icon hero-icon--rounded flex-shrink-0">
+                        <i class="fas fa-rocket"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <h2 class="hero-title mb-2">Quick Start — Easy Mode</h2>
+                        <p class="hero-description mb-0">
+                            Get training quickly with these essential settings. This simplified view covers the core options you need to start your first training run. For advanced configuration, dismiss this panel to access the full form.
+                        </p>
+                    </div>
+                </div>
+
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center py-4">
+                <div class="spinner-border text-light spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- EZ Mode Form -->
+            <div x-show="!loading" class="ez-mode-form mt-4">
+
+                <!-- Step 1: Project Identity -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">1</span>
+                        <span class="ez-step-title">Project Identity</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Give your training run a name so you can track it in logging platforms and find your checkpoints later.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Project Name</label>
+                                <input type="text" class="form-control"
+                                       x-model="tracker_project_name"
+                                       @input="onProjectNameChange($event.target.value)"
+                                       placeholder="simpletuner">
+                                <div class="form-text">Groups related training runs together in WandB or TensorBoard. Think of it as a folder name.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Run Name</label>
+                                <input type="text" class="form-control"
+                                       x-model="tracker_run_name"
+                                       @input="onRunNameChange($event.target.value)"
+                                       placeholder="my-first-lora">
+                                <div class="form-text">Identifies this specific training attempt. Use something descriptive like "flux-style-v2" or "character-lora-attempt3".</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-6">
+                                <label class="form-label">Logging Platform</label>
+                                <select class="form-select"
+                                        x-model="report_to"
+                                        @change="onReportToChange($event.target.value)">
+                                    <option value="wandb">Weights & Biases (Recommended)</option>
+                                    <option value="tensorboard">TensorBoard (Local)</option>
+                                    <option value="none">None</option>
+                                </select>
+                                <div class="form-text">
+                                    <strong>WandB</strong> provides cloud-based dashboards with loss graphs, sample images, and easy sharing.
+                                    <strong>TensorBoard</strong> runs locally.
+                                    <strong>None</strong> disables logging entirely.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Output Directory</label>
+                                <input type="text" class="form-control"
+                                       x-model="output_dir"
+                                       @input="onOutputDirChange($event.target.value)"
+                                       placeholder="simpletuner-results">
+                                <div class="form-text">Where checkpoints and trained weights will be saved. Use absolute paths (like /home/user/models) or relative paths from the SimpleTuner directory.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-6">
+                                <label class="form-label">Resume from Checkpoint</label>
+                                <select class="form-select"
+                                        x-model="resume_from_checkpoint"
+                                        @change="onResumeFromCheckpointChange($event.target.value)">
+                                    <template x-for="choice in checkpointChoices" :key="choice.value">
+                                        <option :value="choice.value" x-text="choice.label" :selected="choice.value === resume_from_checkpoint"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text">Continue training from a previous checkpoint. "Latest" automatically finds the most recent one. Useful if training was interrupted or you want to train longer. <strong>Note:</strong> Cloud training runs are currently stateless and do not support resuming from checkpoints.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Dataset Configuration -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">2</span>
+                        <span class="ez-step-title">Dataset Configuration</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Connect your training images. Create dataset configurations in the <strong>Datasets</strong> tab first, then select them here.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-8">
+                                <label class="form-label">Data Backend Config</label>
+                                <select class="form-select"
+                                        x-model="data_backend_config"
+                                        @change="onDataBackendConfigChange($event.target.value)">
+                                    <option value="">Select a dataset configuration...</option>
+                                    <template x-for="choice in dataBackendChoices" :key="choice.value || choice">
+                                        <option :value="choice.value || choice" x-text="choice.label || choice" :selected="(choice.value || choice) === data_backend_config"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text">The dataset plan that defines where your images are located and how they should be processed. Create new ones in the Datasets tab.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Batch Size</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="train_batch_size"
+                                       @input="onBatchSizeChange($event.target.value)"
+                                       min="1" max="64">
+                                <div class="form-text">Images processed per training step (per GPU). Higher = faster but needs more VRAM. Start with 1-4.</div>
+                            </div>
+                        </div>
+
+                        <div class="ez-section-divider mt-4">
+                            <span>Advanced Dataset Options</span>
+                        </div>
+
+                        <div class="ez-option-list mt-3">
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_override_dataset_config"
+                                           x-model="override_dataset_config"
+                                           @change="onOverrideDatasetConfigChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_override_dataset_config">
+                                    <div class="ez-option-name">Override Dataset Config</div>
+                                    <div class="ez-option-desc">Skip validation that ensures your dataset config matches the cached data. Enable only when intentionally modifying dataset behavior after caching has started. <strong>Warning:</strong> Changing dataset settings after caching can cause unexpected behavior.</div>
+                                </label>
+                            </div>
+
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_disable_bucket_pruning"
+                                           x-model="disable_bucket_pruning"
+                                           @change="onDisableBucketPruningChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_disable_bucket_pruning">
+                                    <div class="ez-option-name">Disable Bucket Pruning</div>
+                                    <div class="ez-option-desc">Normally, aspect ratio buckets with too few images are removed to prevent oversampling. Enable this for tiny datasets where you want to use every image regardless of batch size requirements. May affect training statistics.</div>
+                                </label>
+                            </div>
+
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_allow_oversubscription"
+                                           x-model="allow_dataset_oversubscription"
+                                           @change="onAllowOversubscriptionChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_allow_oversubscription">
+                                    <div class="ez-option-name">Allow Dataset Oversubscription</div>
+                                    <div class="ez-option-desc">Automatically increase dataset repeats when your image count is smaller than the effective batch size (batch × GPUs × gradient accumulation). Useful for very small datasets or multi-GPU training. The trainer will calculate the minimum repeats needed.</div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Dataset Defaults -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">3</span>
+                        <span class="ez-step-title">Dataset Defaults</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="alert alert-info py-2 mb-3">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>These are fallback values.</strong> They apply to new datasets or datasets where you haven't specified these options. Individual dataset entries can override these settings.
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Training Resolution</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="resolution"
+                                       @input="onResolutionChange($event.target.value)"
+                                       min="256" max="4096" step="64">
+                                <div class="form-text">Default target resolution in pixels. Must be divisible by 64. SDXL/Flux typically use 1024, SD1.5 uses 512. Higher = better quality but more VRAM.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Minimum Image Size</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="minimum_image_size"
+                                       @input="onMinImageSizeChange($event.target.value)"
+                                       min="128" step="64"
+                                       placeholder="None">
+                                <div class="form-text">Images smaller than this (on any side) may be upscaled, which can harm quality. Leave empty for no minimum. Recommended: set near your training resolution.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Maximum Image Size</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="maximum_image_size"
+                                       @input="onMaxImageSizeChange($event.target.value)"
+                                       min="256" step="64"
+                                       placeholder="None">
+                                <div class="form-text">Without this limit, very large images (e.g., 4000×3000) get randomly cropped to training resolution, often cutting out the subject entirely and training on meaningless background patches. Set this to downsample oversized images first, preserving the full scene before cropping.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-4">
+                                <label class="form-label">Downsample Target</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="target_downsample_size"
+                                       @input="onTargetDownsampleChange($event.target.value)"
+                                       min="256" step="64"
+                                       placeholder="None">
+                                <div class="form-text">When downsampling oversized images, resize them to this target before cropping. Works with Maximum Image Size. Leave empty to disable.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Caption Strategy</label>
+                                <select class="form-select"
+                                        x-model="caption_strategy"
+                                        @change="onCaptionStrategyChange($event.target.value)">
+                                    <option value="textfile">Text Files (.txt)</option>
+                                    <option value="filename">Filename</option>
+                                    <option value="instance_prompt">Instance Prompt</option>
+                                    <option value="parquet">Parquet Dataset</option>
+                                </select>
+                                <div class="form-text">
+                                    <strong>Text Files:</strong> Look for photo.txt alongside photo.jpg (matching filename, different extension).<br>
+                                    <strong>Filename:</strong> Use the image filename as the caption.<br>
+                                    <strong>Instance Prompt:</strong> Same caption for all images (set below).<br>
+                                    <strong>Parquet:</strong> Load from structured dataset files.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="ez-step-actions mt-4 d-flex justify-content-between align-items-center">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetToDefaults()">
+                        <i class="fas fa-undo me-1"></i> Reset to Defaults
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                        <i class="fas fa-sliders-h me-1"></i> Switch to Full Form
+                    </button>
+                </div>
+
+            </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!hints.ez_mode" x-cloak>
     {% elif tab_name == 'model' %}
     <!-- Model EZ Mode Hero -->
     <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
@@ -601,7 +1207,7 @@ if (!window.hardwareHeroCTA) {
                         <i class="fas fa-cube"></i>
                     </div>
                     <div class="flex-grow-1">
-                        <h2 class="hero-title mb-2">Model Configuration — EZ Mode</h2>
+                        <h2 class="hero-title mb-2">Model Configuration — Easy Mode</h2>
                         <p class="hero-description mb-0">
                             Configure the essential model settings quickly. For advanced options, dismiss this panel to access the full form.
                         </p>
@@ -969,15 +1575,15 @@ if (!window.hardwareHeroCTA) {
                         aria-label="Show introduction">
                     <i class="fas fa-question-circle"></i><span class="btn-text"> Help</span>
                 </button>
-                {% elif tab_name == 'model' %}
+                {% elif tab_name in ('model', 'basic') %}
                 <button type="button"
                         class="btn btn-outline-secondary"
                         x-show="!hints.ez_mode"
                         x-cloak
                         @click="restoreEzMode()"
-                        title="Show EZ Mode"
-                        aria-label="Show EZ Mode">
-                    <i class="fas fa-magic"></i><span class="btn-text"> EZ Mode</span>
+                        title="Show Easy Mode"
+                        aria-label="Show Easy Mode">
+                    <i class="fas fa-magic"></i><span class="btn-text"> Easy Mode</span>
                 </button>
                 {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="collapse-all-{{ tab_name }}" title="Collapse all sections" aria-label="Collapse all sections">
@@ -1184,7 +1790,7 @@ if (!window.hardwareHeroCTA) {
         </div>
     </div>
 
-    {% if tab_name in ('publishing', 'hardware', 'model') %}
+    {% if tab_name in ('publishing', 'hardware', 'model', 'basic') %}
     </div>
     <!-- End hero content wrapper -->
     {% endif %}
