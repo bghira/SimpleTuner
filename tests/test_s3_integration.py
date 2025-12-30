@@ -40,7 +40,6 @@ class TestS3StorageRoutes(APITestCase, unittest.TestCase):
         import shutil
 
         shutil.rmtree(self._upload_dir, ignore_errors=True)
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):

@@ -75,6 +75,26 @@ class APITestEnvironmentMixin:
             if hasattr(self, "_tmpdir") and self._tmpdir is not None:
                 self._tmpdir.cleanup()
 
+    async def _async_cleanup_cloud_services(self) -> None:
+        """Async cleanup of cloud service connections."""
+        # Close AsyncSQLiteStore instances (aiosqlite connections)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.storage.async_base import AsyncSQLiteStore
+
+            await AsyncSQLiteStore.close_all_instances()
+        except (ImportError, Exception):
+            pass
+
+        # Close AsyncJobStore
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
+
+            if AsyncJobStore._instance is not None:
+                await AsyncJobStore._instance.close()
+            AsyncJobStore._instance = None
+        except (ImportError, Exception):
+            pass
+
     def _cleanup_cloud_services(self) -> None:
         """Clean up cloud service singletons between tests.
 
@@ -84,31 +104,14 @@ class APITestEnvironmentMixin:
         """
         import asyncio
 
-        async def _async_cleanup():
-            # Close AsyncSQLiteStore instances (aiosqlite connections)
-            try:
-                from simpletuner.simpletuner_sdk.server.services.cloud.storage.async_base import AsyncSQLiteStore
-
-                await AsyncSQLiteStore.close_all_instances()
-            except (ImportError, Exception):
-                pass
-
-            # Close AsyncJobStore
-            try:
-                from simpletuner.simpletuner_sdk.server.services.cloud.async_job_store import AsyncJobStore
-
-                if AsyncJobStore._instance is not None:
-                    await AsyncJobStore._instance.close()
-                AsyncJobStore._instance = None
-            except (ImportError, Exception):
-                pass
-
-        # Run async cleanup
+        # Run async cleanup only if no loop is running (sync test context)
+        # For async tests, _async_cleanup_cloud_services is called directly
         try:
-            asyncio.run(_async_cleanup())
+            asyncio.get_running_loop()
+            # Already in an async context - skip, async teardown will handle it
         except RuntimeError:
-            # Event loop already running - can't use asyncio.run
-            pass
+            # No running loop - safe to use asyncio.run
+            asyncio.run(self._async_cleanup_cloud_services())
 
         # Reset container (high-level service registry)
         try:
@@ -221,6 +224,8 @@ class AsyncAPITestCase(APITestEnvironmentMixin):
         self._setup_api_environment()
 
     async def asyncTearDown(self) -> None:  # pragma: no cover - exercised indirectly
+        # Run async cleanup first while we're in an async context
+        await self._async_cleanup_cloud_services()
         self._teardown_api_environment()
         await super().asyncTearDown() if hasattr(super(), "asyncTearDown") else None
 

@@ -46,7 +46,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self.patcher_dir = patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_local_upload_dir",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_local_upload_dir",
             return_value=Path(self.temp_dir),
         )
         self.patcher_dir.start()
@@ -64,7 +64,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_put_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import put_object as s3_put_object
 
         request = MockRequest(headers={}, body=b"test content")
 
@@ -73,7 +73,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         mock_store.get_job_by_upload_token = AsyncMock(return_value=None)
 
         with patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_job_store",
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
@@ -87,7 +87,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_put_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import put_object as s3_put_object
 
         request = MockRequest(
             headers={"X-Upload-Token": "invalid-token"},
@@ -98,7 +98,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         mock_store.get_job_by_upload_token = AsyncMock(return_value=None)
 
         with patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_job_store",
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
@@ -110,7 +110,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         """Test PUT with valid token succeeds."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_put_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import put_object as s3_put_object
 
         request = MockRequest(
             headers={"X-Upload-Token": "valid-token-123"},
@@ -121,7 +121,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         mock_store.get_job_by_upload_token = AsyncMock(return_value=MockJob("job-456"))
 
         with patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_job_store",
             return_value=mock_store,
         ):
             result = asyncio.run(s3_put_object("test-bucket", "test.txt", request))
@@ -139,7 +139,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         """Test X-SimpleTuner-Secret header is accepted for auth."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_put_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import put_object as s3_put_object
 
         request = MockRequest(
             headers={"X-SimpleTuner-Secret": "valid-token-123"},
@@ -150,7 +150,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         mock_store.get_job_by_upload_token = AsyncMock(return_value=MockJob("job-789"))
 
         with patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_job_store",
             return_value=mock_store,
         ):
             result = asyncio.run(s3_put_object("bucket2", "secret.bin", request))
@@ -165,7 +165,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self.patcher_dir = patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_local_upload_dir",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_local_upload_dir",
             return_value=Path(self.temp_dir),
         )
         self.patcher_dir.start()
@@ -183,7 +183,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_put_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import put_object as s3_put_object
 
         request = MockRequest(
             headers={"X-Upload-Token": "valid"},
@@ -194,7 +194,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
         mock_store.get_job_by_upload_token = AsyncMock(return_value=MockJob())
 
         with patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_job_store",
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
@@ -208,7 +208,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_put_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import put_object as s3_put_object
 
         request = MockRequest(
             headers={"X-Upload-Token": "valid"},
@@ -219,7 +219,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
         mock_store.get_job_by_upload_token = AsyncMock(return_value=MockJob())
 
         with patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_job_store",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_job_store",
             return_value=mock_store,
         ):
             with self.assertRaises(HTTPException) as ctx:
@@ -232,7 +232,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
         with self.assertRaises(HTTPException) as ctx:
             asyncio.run(s3_get_object("../escape", "file.txt"))
@@ -244,7 +244,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
         with self.assertRaises(HTTPException) as ctx:
             asyncio.run(s3_get_object("bucket", "../../etc/passwd"))
@@ -256,7 +256,7 @@ class TestS3PathTraversalPrevention(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_objects
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_objects as s3_list_objects
 
         with self.assertRaises(HTTPException) as ctx:
             asyncio.run(s3_list_objects("../escape"))
@@ -270,7 +270,7 @@ class TestS3GetObject(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self.patcher_dir = patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_local_upload_dir",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_local_upload_dir",
             return_value=Path(self.temp_dir),
         )
         self.patcher_dir.start()
@@ -286,7 +286,7 @@ class TestS3GetObject(unittest.TestCase):
         """Test GET existing object returns its content."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
         # Create a file
         bucket_dir = Path(self.temp_dir) / "mybucket"
@@ -303,7 +303,7 @@ class TestS3GetObject(unittest.TestCase):
 
         from fastapi import HTTPException
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
         with self.assertRaises(HTTPException) as ctx:
             asyncio.run(s3_get_object("nobucket", "nofile.txt"))
@@ -313,7 +313,7 @@ class TestS3GetObject(unittest.TestCase):
         """Test GET object in nested path."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_get_object
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import get_object as s3_get_object
 
         # Create nested structure
         nested_dir = Path(self.temp_dir) / "bucket" / "subdir" / "nested"
@@ -332,7 +332,7 @@ class TestS3ListBuckets(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self.patcher_dir = patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_local_upload_dir",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_local_upload_dir",
             return_value=Path(self.temp_dir),
         )
         self.patcher_dir.start()
@@ -348,7 +348,7 @@ class TestS3ListBuckets(unittest.TestCase):
         """Test list buckets with no buckets returns empty."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_buckets
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_buckets as s3_list_buckets
 
         result = asyncio.run(s3_list_buckets())
 
@@ -359,7 +359,7 @@ class TestS3ListBuckets(unittest.TestCase):
         """Test list buckets returns bucket metadata."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_buckets
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_buckets as s3_list_buckets
 
         # Create buckets with files
         bucket1 = Path(self.temp_dir) / "bucket1"
@@ -389,7 +389,7 @@ class TestS3ListObjects(unittest.TestCase):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self.patcher_dir = patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.s3.get_local_upload_dir",
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_local_upload_dir",
             return_value=Path(self.temp_dir),
         )
         self.patcher_dir.start()
@@ -405,7 +405,7 @@ class TestS3ListObjects(unittest.TestCase):
         """Test list objects in empty bucket returns empty list."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_objects
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_objects as s3_list_objects
 
         result = asyncio.run(s3_list_objects("nonexistent"))
 
@@ -416,7 +416,7 @@ class TestS3ListObjects(unittest.TestCase):
         """Test list objects returns object details."""
         import asyncio
 
-        from simpletuner.simpletuner_sdk.server.routes.cloud.s3 import s3_list_objects
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import list_objects as s3_list_objects
 
         # Create bucket with files
         bucket = Path(self.temp_dir) / "mybucket"

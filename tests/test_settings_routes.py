@@ -28,10 +28,8 @@ class TestHintsRoutes(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -126,10 +124,8 @@ class TestDataConsentRoutes(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -298,10 +294,8 @@ class TestPollingRoutes(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -354,10 +348,8 @@ class TestLocalUploadConfig(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -384,10 +376,8 @@ class TestSystemStatus(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -415,10 +405,8 @@ class TestPublishingStatus(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
@@ -450,10 +438,8 @@ class TestCredentialSecuritySettings(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
 
     def tearDown(self):
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
