@@ -59,7 +59,16 @@ def _update_job_store_status(job_id: str | None, status: str) -> None:
             import threading
 
             def _update():
-                asyncio.run(job_store.update_job(job_id, updates))
+                try:
+                    asyncio.run(job_store.update_job(job_id, updates))
+                except Exception as thread_exc:
+                    # Best-effort background update - log the failure but don't propagate.
+                    # During testing, the database or logger may be unavailable during cleanup,
+                    # so we wrap logging in its own try/except to prevent traceback noise.
+                    try:
+                        logger.debug("Background job update failed: %s", thread_exc)
+                    except Exception:
+                        pass
 
             threading.Thread(target=_update, daemon=True).start()
     except Exception as exc:

@@ -112,12 +112,30 @@ class BaseSQLiteStore:
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Async lock for coordinating database access
-        self._lock = asyncio.Lock()
+        # Async lock for coordinating database access (lazy initialized)
+        self.__lock: Optional[asyncio.Lock] = None
+        self.__lock_loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Initialize database schema
         self._init_schema()
         self._initialized = True
+
+    @property
+    def _lock(self) -> asyncio.Lock:
+        """Get the async lock, creating one for the current event loop if needed."""
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop - create lock without binding
+            if self.__lock is None:
+                self.__lock = asyncio.Lock()
+            return self.__lock
+
+        # Recreate lock if bound to a different loop
+        if self.__lock is None or self.__lock_loop is not current_loop:
+            self.__lock = asyncio.Lock()
+            self.__lock_loop = current_loop
+        return self.__lock
 
     def _get_default_db_path(self) -> Path:
         """Get the default database path for this store.
