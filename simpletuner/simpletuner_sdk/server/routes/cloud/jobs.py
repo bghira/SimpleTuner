@@ -194,14 +194,33 @@ async def cancel_job(
         user_id=str(user.id) if user else None,
     )
 
+    job_type_label = "Local" if job.is_local else "Cloud"
     emit_cloud_event(
         "cloud.job.cancelled",
         job_id,
-        f"Cloud job cancelled: {job.config_name or job_id[:12]}",
+        f"{job_type_label} job cancelled: {job.config_name or job_id[:12]}",
         severity="warning",
         config_name=job.config_name,
         provider=job.provider,
     )
+
+    # Broadcast SSE event so UI updates training status
+    try:
+        from ...services.sse_manager import get_sse_manager
+
+        sse_manager = get_sse_manager()
+        await sse_manager.broadcast(
+            data={
+                "type": "training.status",
+                "status": "cancelled",
+                "job_id": job_id,
+                "config_name": job.config_name,
+                "message": f"{job_type_label} job cancelled",
+            },
+            event_type="training.status",
+        )
+    except Exception as exc:
+        logger.warning("Failed to broadcast SSE event: %s", exc)
 
     return {"success": True, "job_id": job_id, "status": CloudJobStatus.CANCELLED.value}
 

@@ -1137,6 +1137,16 @@ def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] =
         local_job.status = CloudJobStatus.RUNNING.value
         local_job.started_at = datetime.now(timezone.utc).isoformat()
 
+        # Store run name in metadata for display in job list
+        run_name = (
+            runtime_config.get("--tracker_run_name")
+            or runtime_config.get("tracker_run_name")
+            or runtime_config.get("--model_alias")
+            or runtime_config.get("model_alias")
+        )
+        if run_name:
+            local_job.metadata["run_name"] = run_name
+
         # Store job asynchronously (fire-and-forget)
         import asyncio
 
