@@ -197,14 +197,12 @@ class TestDataUploadPreview(APITestCase, unittest.TestCase):
 
     def setUp(self):
         super().setUp()
-        self._setup_api_environment()
         self._data_dir = tempfile.mkdtemp()
 
     def tearDown(self):
         import shutil
 
         shutil.rmtree(self._data_dir, ignore_errors=True)
-        self._teardown_api_environment()
         super().tearDown()
 
     def _get_client(self):
