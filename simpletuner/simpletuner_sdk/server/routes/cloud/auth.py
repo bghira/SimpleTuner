@@ -115,18 +115,22 @@ def _get_store() -> UserStore:
 async def get_setup_status() -> SetupStatusResponse:
     """Check if first-run setup is needed.
 
-    Returns whether any users exist and if an admin has been created.
+    Returns whether setup is needed (no real users, or only auto-created local user).
     Use this to determine if the setup wizard should be shown.
     """
     store = _get_store()
     user_count = await store.get_user_count()
 
-    # Check if there's at least one admin
-    users = await store.list_users(limit=1)
-    has_admin = any(u.is_admin for u in users)
+    # Check if there's at least one admin (excluding auto-created local user)
+    users = await store.list_users(limit=2)
+    real_users = [u for u in users if u.username != "local" or u.email != "local@localhost"]
+    has_admin = any(u.is_admin for u in real_users)
+
+    # Setup is needed if no users exist, or only the auto-created local user exists
+    needs_setup = await store.needs_first_admin_setup()
 
     return SetupStatusResponse(
-        needs_setup=user_count == 0,
+        needs_setup=needs_setup,
         has_admin=has_admin,
         user_count=user_count,
     )
@@ -140,20 +144,26 @@ async def create_first_admin(
 ) -> LoginResponse:
     """Create the first admin user during initial setup.
 
-    This endpoint is only available when no users exist.
-    Creates an admin user and logs them in automatically.
+    This endpoint is only available when no real users exist.
+    If only the auto-created 'local' placeholder user exists, it will be
+    replaced with the new admin user.
     """
     async with _first_admin_lock:
         store = _get_store()
 
-        # Check if setup is still needed
-        if await store.has_any_users():
+        # Check if setup is still needed (no users, or only auto-created local user)
+        if not await store.needs_first_admin_setup():
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Setup already completed. Use normal registration.",
             )
 
         try:
+            # Remove auto-created local user if it exists
+            local_user = await store.get_user_by_username("local")
+            if local_user and local_user.email == "local@localhost":
+                await store.delete_user(local_user.id)
+
             # Create the admin user
             user = await store.create_user(
                 email=data.email,
@@ -379,13 +389,6 @@ async def create_api_key(
             detail="Permission denied: api.keys.own",
         )
 
-    # Calculate expiration
-    expires_at = None
-    if data.expires_days:
-        from datetime import timedelta
-
-        expires_at = (datetime.now(timezone.utc) + timedelta(days=data.expires_days)).isoformat()
-
     # Validate scoped permissions
     scoped_permissions = None
     if data.scoped_permissions:
@@ -401,10 +404,10 @@ async def create_api_key(
         scoped_permissions = set(data.scoped_permissions)
 
     store = _get_store()
-    full_key, api_key = await store.create_api_key(
+    api_key, full_key = await store.create_api_key(
         user_id=user.id,
         name=data.name,
-        expires_at=expires_at,
+        expires_in_days=data.expires_days,
         scoped_permissions=scoped_permissions,
     )
 

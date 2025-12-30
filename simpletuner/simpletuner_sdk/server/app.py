@@ -17,7 +17,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .utils.paths import get_simpletuner_root, get_static_directory, get_template_directory
+from .utils.paths import get_avatars_directory, get_simpletuner_root, get_static_directory, get_template_directory
 
 logger = logging.getLogger("SimpleTunerServer")
 
@@ -483,6 +483,11 @@ def create_app(
 
         setup_security_middleware(app)
 
+    # Mount avatars directory FIRST (more specific path must come before /static)
+    # User-uploaded content stored in SimpleTuner home dir, not package static dir
+    avatars_dir = get_avatars_directory()
+    app.mount("/static/avatars", StaticFiles(directory=str(avatars_dir)), name="avatars")
+
     # Mount static files if directory exists
     if static_dir and os.path.exists(static_dir):
         app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -491,11 +496,6 @@ def create_app(
         static_path = get_static_directory()
         if static_path.exists():
             app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
-
-    # Mount avatars directory (user-uploaded content)
-    avatars_dir = Path("data/avatars")
-    avatars_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/static/avatars", StaticFiles(directory=str(avatars_dir)), name="avatars")
 
     # Set up template directory
     if template_dir:

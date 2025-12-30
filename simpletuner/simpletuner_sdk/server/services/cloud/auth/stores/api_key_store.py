@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 
 from ..models import APIKey
-from ..password import get_api_key_generator, get_password_hasher
+from ..password import get_api_key_generator
 from .base import BaseAuthStore
 
 logger = logging.getLogger(__name__)
@@ -67,11 +67,9 @@ class APIKeyStore(BaseAuthStore):
             The raw key is only returned once and cannot be retrieved later.
         """
         generator = get_api_key_generator()
-        hasher = get_password_hasher()
 
-        raw_key = generator.generate()
-        key_prefix = raw_key[:8]
-        key_hash = hasher.hash(raw_key)
+        # Generator returns (full_key, prefix_for_display, hash_for_storage)
+        raw_key, key_prefix, key_hash = generator.generate()
 
         now = datetime.now(timezone.utc)
         expires_at = None
@@ -133,7 +131,7 @@ class APIKeyStore(BaseAuthStore):
         Returns:
             Dict with user_id and scoped_permissions if valid, None otherwise
         """
-        hasher = get_password_hasher()
+        generator = get_api_key_generator()
         now = datetime.now(timezone.utc).isoformat()
         loop = asyncio.get_running_loop()
 
@@ -153,7 +151,7 @@ class APIKeyStore(BaseAuthStore):
                 )
 
                 for row in cursor.fetchall():
-                    if hasher.verify(row["key_hash"], raw_key):
+                    if generator.verify(row["key_hash"], raw_key):
                         # Update last used timestamp
                         cursor.execute(
                             "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
@@ -233,12 +231,63 @@ class APIKeyStore(BaseAuthStore):
 
         return await loop.run_in_executor(None, _list)
 
-    async def revoke(self, key_id: int, user_id: int) -> bool:
+    async def get(self, key_id: int) -> Optional[APIKey]:
+        """Get an API key by ID.
+
+        Args:
+            key_id: Key ID to fetch
+
+        Returns:
+            APIKey object if found, None otherwise
+        """
+        loop = asyncio.get_running_loop()
+
+        def _get():
+            conn = self._get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT id, user_id, name, key_prefix, created_at,
+                           last_used_at, expires_at, is_active, scoped_permissions
+                    FROM api_keys
+                    WHERE id = ?
+                    """,
+                    (key_id,),
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+
+                scoped = None
+                if row["scoped_permissions"]:
+                    try:
+                        scoped = set(json.loads(row["scoped_permissions"]))
+                    except json.JSONDecodeError:
+                        pass
+
+                return APIKey(
+                    id=row["id"],
+                    user_id=row["user_id"],
+                    name=row["name"],
+                    key_prefix=row["key_prefix"],
+                    created_at=row["created_at"],
+                    last_used_at=row["last_used_at"],
+                    expires_at=row["expires_at"],
+                    is_active=bool(row["is_active"]),
+                    scoped_permissions=scoped,
+                )
+            finally:
+                conn.close()
+
+        return await loop.run_in_executor(None, _get)
+
+    async def revoke(self, key_id: int, user_id: Optional[int] = None) -> bool:
         """Revoke an API key.
 
         Args:
             key_id: Key ID to revoke
-            user_id: User ID (for authorization check)
+            user_id: User ID (for authorization check). If None, revokes any key (admin mode).
 
         Returns:
             True if revoked, False if not found or not owned by user
@@ -249,13 +298,21 @@ class APIKeyStore(BaseAuthStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    UPDATE api_keys SET is_active = 0
-                    WHERE id = ? AND user_id = ?
-                    """,
-                    (key_id, user_id),
-                )
+                if user_id is None:
+                    # Admin mode - revoke any key
+                    cursor.execute(
+                        "UPDATE api_keys SET is_active = 0 WHERE id = ?",
+                        (key_id,),
+                    )
+                else:
+                    # User mode - only revoke own keys
+                    cursor.execute(
+                        """
+                        UPDATE api_keys SET is_active = 0
+                        WHERE id = ? AND user_id = ?
+                        """,
+                        (key_id, user_id),
+                    )
                 conn.commit()
                 return cursor.rowcount > 0
             finally:

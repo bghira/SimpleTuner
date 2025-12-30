@@ -261,8 +261,11 @@ async def get_auth_status() -> AuthStatusResponse:
     """
     try:
         store = _get_store()
-        users = await store.list_users()
-        user_count = len(users)
+        # Get active users for display count
+        active_users = await store.list_users(include_inactive=False)
+        # Also check for inactive users - if any exist, auth was configured
+        all_users = await store.list_users(include_inactive=True)
+        user_count = len(active_users)
 
         # Check for external auth providers
         has_providers = False
@@ -275,8 +278,11 @@ async def get_auth_status() -> AuthStatusResponse:
         except Exception:
             pass
 
-        # Auth is "in use" if there are multiple users or external providers
-        in_use = user_count > 1 or has_providers
+        # Auth is "in use" if there are any real users (active OR inactive, excluding
+        # auto-created 'local' placeholder) or external auth providers are configured.
+        # We check all_users so deactivating users doesn't revert to open mode.
+        real_users = [u for u in all_users if not (u.username == "local" and u.email == "local@localhost")]
+        in_use = len(real_users) > 0 or has_providers
 
         return AuthStatusResponse(
             in_use=in_use,
@@ -860,6 +866,25 @@ async def update_user(
             detail=f"User {user_id} not found",
         )
 
+    # Check if this update would leave no active admins
+    would_deactivate = data.is_active is False
+    would_remove_admin = data.is_admin is False
+    if user.is_admin and (would_deactivate or would_remove_admin):
+        all_users = await store.list_users(include_inactive=False)
+        # Count admins that would remain after this change
+        remaining_admins = [u for u in all_users if u.is_admin and u.id != user_id]
+        if not remaining_admins:
+            if would_deactivate:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot deactivate the last active admin user",
+                )
+            if would_remove_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot remove admin role from the last admin user",
+                )
+
     # Build updates dict
     updates = {}
     if data.email is not None:
@@ -903,6 +928,17 @@ async def delete_user(
             detail="Cannot delete your own account",
         )
 
+    # Check if this would leave no active admins
+    target_user = await store.get_user(user_id)
+    if target_user and target_user.is_admin:
+        all_users = await store.list_users(include_inactive=False)
+        active_admins = [u for u in all_users if u.is_admin and u.id != user_id]
+        if not active_admins:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete the last active admin user",
+            )
+
     success = await store.delete_user(user_id)
 
     if not success:
@@ -933,6 +969,17 @@ async def deactivate_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot deactivate your own account",
         )
+
+    # Check if this would leave no active admins
+    target_user = await store.get_user(user_id)
+    if target_user and target_user.is_admin:
+        all_users = await store.list_users(include_inactive=False)
+        active_admins = [u for u in all_users if u.is_admin and u.id != user_id]
+        if not active_admins:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot deactivate the last active admin user",
+            )
 
     success = await store.deactivate_user(user_id)
 
@@ -1745,9 +1792,10 @@ async def upload_avatar_data(
     file_hash = hashlib.md5(image_bytes).hexdigest()[:8]
     filename = f"avatar_{user.id}_{file_hash}.{image_type}"
 
-    # Create avatars directory
-    avatars_dir = Path("data/avatars")
-    avatars_dir.mkdir(parents=True, exist_ok=True)
+    # Get avatars directory from centralized path utility
+    from ...utils.paths import get_avatars_directory
+
+    avatars_dir = get_avatars_directory()
 
     # Save file
     avatar_path = avatars_dir / filename
@@ -1773,7 +1821,7 @@ async def delete_my_avatar(
 
     Requires api.access permission.
     """
-    from pathlib import Path
+    from ...utils.paths import get_avatars_directory
 
     store = _get_store()
 
@@ -1784,7 +1832,7 @@ async def delete_my_avatar(
     # Optionally delete the file
     if old_url and old_url.startswith("/static/avatars/"):
         filename = old_url.split("/")[-1]
-        avatar_path = Path("data/avatars") / filename
+        avatar_path = get_avatars_directory() / filename
         if avatar_path.exists():
             try:
                 avatar_path.unlink()

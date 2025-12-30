@@ -142,12 +142,11 @@ def _auth_status(args) -> int:
         print("    All API endpoints are accessible without authentication.")
         print()
         print("To set up authentication:")
-        print("  1. Open the web UI: simpletuner server")
-        print("  2. Go to the Cloud tab to create your admin account")
-        print("  3. Use the Administration section in the sidebar to manage users")
+        print("  Option 1: CLI setup (recommended for headless)")
+        print("    simpletuner auth setup")
         print()
-        print("Or create users via CLI:")
-        print("  simpletuner auth users create --email admin@example.com --username admin --admin")
+        print("  Option 2: Create users directly")
+        print("    simpletuner auth users create --email admin@example.com --username admin --admin")
 
     return 0
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 import threading
 from pathlib import Path
@@ -16,7 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 def get_default_db_path() -> Path:
-    """Get the default database path for auth stores."""
+    """Get the default database path for auth stores.
+
+    Checks SIMPLETUNER_AUTH_DB_PATH environment variable first for test isolation.
+    """
+    env_path = os.environ.get("SIMPLETUNER_AUTH_DB_PATH")
+    if env_path:
+        return Path(env_path)
     return Path.home() / ".simpletuner" / "config" / "cloud" / "jobs.db"
 
 

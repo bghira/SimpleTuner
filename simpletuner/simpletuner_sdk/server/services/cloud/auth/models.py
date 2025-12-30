@@ -264,8 +264,8 @@ class APIKey:
     user_id: int
     name: str
     key_prefix: str  # First 8 chars for identification (e.g., "st_abc123")
-    key_hash: str  # Hashed full key
     created_at: str
+    key_hash: Optional[str] = None  # Omitted in create response, present when reading from DB
     last_used_at: Optional[str] = None
     expires_at: Optional[str] = None
     is_active: bool = True

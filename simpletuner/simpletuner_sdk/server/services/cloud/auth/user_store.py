@@ -26,7 +26,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .models import (
     APIKey,
@@ -366,6 +366,23 @@ class UserStore:
         """Check if any users exist."""
         return await self._users.has_any_users()
 
+    async def needs_first_admin_setup(self) -> bool:
+        """Check if first-admin setup is needed.
+
+        Returns True if:
+        1. No users exist, OR
+        2. Only the auto-created 'local' user exists
+
+        This allows first-admin setup to work even after the middleware
+        has auto-created the local placeholder user.
+        """
+        users = await self.list_users(limit=2)
+        if not users:
+            return True
+        if len(users) == 1 and users[0].username == "local":
+            return True
+        return False
+
     # ==================== API Key Operations ====================
 
     async def create_api_key(
@@ -378,17 +395,52 @@ class UserStore:
         """Create a new API key."""
         return await self._api_keys.create(user_id, name, expires_in_days, scoped_permissions)
 
-    async def authenticate_api_key(self, raw_key: str) -> Optional[Dict[str, Any]]:
-        """Authenticate using an API key."""
-        return await self._api_keys.authenticate(raw_key)
+    async def authenticate_api_key(self, raw_key: str) -> Optional[Tuple[User, APIKey]]:
+        """Authenticate using an API key.
+
+        Returns:
+            Tuple of (User, APIKey) if valid, None otherwise
+        """
+        result = await self._api_keys.authenticate(raw_key)
+        if not result:
+            return None
+
+        # Fetch full User and APIKey objects
+        user = await self.get_user(result["user_id"])
+        if not user:
+            return None
+
+        api_key = await self._api_keys.get(result["api_key_id"])
+        if not api_key:
+            return None
+
+        return user, api_key
 
     async def list_api_keys(self, user_id: int) -> List[APIKey]:
         """List all API keys for a user."""
         return await self._api_keys.list_for_user(user_id)
 
-    async def revoke_api_key(self, key_id: int, user_id: int) -> bool:
-        """Revoke an API key."""
+    async def revoke_api_key(self, key_id: int, user_id: Optional[int] = None) -> bool:
+        """Revoke an API key.
+
+        Args:
+            key_id: Key ID to revoke
+            user_id: User ID (for authorization check). If None, revokes any key (admin mode).
+        """
         return await self._api_keys.revoke(key_id, user_id)
+
+    async def delete_api_key(self, key_id: int, user_id: int) -> bool:
+        """Delete an API key permanently.
+
+        Args:
+            key_id: Key ID to delete
+            user_id: User ID (for authorization check)
+        """
+        return await self._api_keys.delete(key_id, user_id)
+
+    async def cleanup_expired_api_keys(self) -> int:
+        """Remove expired API keys."""
+        return await self._api_keys.cleanup_expired()
 
     # ==================== Session Operations ====================
 

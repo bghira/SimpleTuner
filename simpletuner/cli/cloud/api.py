@@ -45,6 +45,11 @@ def cloud_api_request(
 
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
 
+    # Add API key authentication if available
+    api_key = os.environ.get("SIMPLETUNER_API_KEY")
+    if api_key:
+        headers["X-API-Key"] = api_key
+
     body = None
     if data is not None:
         body = json.dumps(data).encode("utf-8")
@@ -73,15 +78,17 @@ def cloud_api_request(
 
         # Provide helpful guidance for auth errors
         if e.code == 401 or "authentication required" in error_msg.lower():
-            print(f"Error: {error_msg}", file=sys.stderr)
+            print("Error: Authentication required", file=sys.stderr)
             print("", file=sys.stderr)
-            print("Authentication is required for this command.", file=sys.stderr)
-            print("Run 'simpletuner auth status' to check your auth configuration.", file=sys.stderr)
+            print("This command requires authentication.", file=sys.stderr)
             print("", file=sys.stderr)
-            print("If you haven't set up authentication yet:", file=sys.stderr)
-            print("  1. Start the server: simpletuner server", file=sys.stderr)
-            print("  2. Open the web UI and go to the Cloud tab", file=sys.stderr)
-            print("  3. Create your admin account and configure authentication", file=sys.stderr)
+            print("To authenticate:", file=sys.stderr)
+            print("  1. Open the web UI at the server URL", file=sys.stderr)
+            print("  2. Log in with your username and password", file=sys.stderr)
+            print("  3. Click your avatar (top-right) > API Keys", file=sys.stderr)
+            print("  4. Create a new API key and copy it", file=sys.stderr)
+            print("  5. Set the environment variable:", file=sys.stderr)
+            print("     export SIMPLETUNER_API_KEY=<your-api-key>", file=sys.stderr)
             sys.exit(1)
 
         print(f"Error: {error_msg}", file=sys.stderr)

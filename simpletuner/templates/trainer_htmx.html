@@ -163,6 +163,18 @@ document.addEventListener('alpine:init', () => {
             // Login required if: auth is in use, status checked, and no current user
             return this.authStatus.checked && this.authStatus.inUse && !this.currentUser;
         },
+        get isAuthChecking() {
+            // True while we're still checking auth status
+            return !this.authStatus.checked;
+        },
+        get isReady() {
+            // True when auth check is complete and we know what to show
+            return this.authStatus.checked;
+        },
+        get shouldShowApp() {
+            // Show the app when auth check is complete AND login is not required
+            return this.authStatus.checked && !this.needsLogin;
+        },
         get shouldShowAdminTab() {
             // Show admin tab if:
             // 1. Auth is not configured (single-user mode, everyone has admin access), OR
@@ -5075,6 +5087,22 @@ function trainerComponent() {
 }
 </script>
 
+<!-- Loading Screen - shown while checking auth status -->
+<div class="login-screen"
+     x-data
+     x-show="$store.cloudAuth.isAuthChecking"
+     x-cloak>
+    <div class="login-container">
+        <div class="login-card text-center">
+            <div class="login-header">
+                <i class="fas fa-cog fa-spin login-icon"></i>
+                <h1>SimpleTuner</h1>
+                <p class="text-muted">Loading...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Login Screen - shown when auth is required but user not logged in -->
 <div class="login-screen"
      x-data
@@ -5149,10 +5177,10 @@ function trainerComponent() {
     </div>
 </div>
 
-<!-- Main App - hidden when login is required -->
+<!-- Main App - shown when auth check complete and login not required -->
 <div class="dashboard-wrapper"
      x-data="trainerComponent()"
-     x-show="!$store.cloudAuth.needsLogin"
+     x-show="$store.cloudAuth.shouldShowApp"
      x-cloak
      x-init="(() => {
          // Store reference to Alpine component for external access
@@ -6540,6 +6568,11 @@ function trainerComponent() {
                                 <i class="fas fa-user me-2"></i>Profile
                             </button>
                         </li>
+                        <li>
+                            <button type="button" class="dropdown-item" data-bs-toggle="modal" data-bs-target="#apiKeysModal">
+                                <i class="fas fa-key me-2"></i>API Keys
+                            </button>
+                        </li>
                         <li><hr class="dropdown-divider"></li>
                         <li>
                             <button type="button" class="dropdown-item text-danger" @click="$store.cloudAuth.logout()">
@@ -7262,5 +7295,6 @@ if (window.shouldUseModules && window.shouldUseModules()) {
 {% include 'partials/deepspeed_builder_modal.html' %}
 {% include 'partials/memory_presets_modal.html' %}
 {% include 'partials/user_profile_modal.html' %}
+{% include 'partials/api_keys_modal.html' %}
 
 {% endblock %}

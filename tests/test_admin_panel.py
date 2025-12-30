@@ -633,6 +633,20 @@ class TestAPIKey(unittest.TestCase):
         self.assertIn("job.view.own", key.scoped_permissions)
         self.assertNotIn("admin.users", key.scoped_permissions)
 
+    def test_api_key_without_hash(self):
+        """Test creating an API key without key_hash (as returned from create)."""
+        key = APIKey(
+            id=1,
+            user_id=1,
+            name="New Key",
+            key_prefix="st_abc123",
+            created_at="2024-01-15T10:00:00Z",
+        )
+
+        self.assertEqual(key.name, "New Key")
+        self.assertIsNone(key.key_hash)
+        self.assertTrue(key.is_active)
+
 
 class TestAuthProvider(unittest.TestCase):
     """Tests for AuthProvider enum."""

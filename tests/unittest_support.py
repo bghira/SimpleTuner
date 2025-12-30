@@ -47,6 +47,11 @@ class APITestEnvironmentMixin:
         dataset_plan = self.tmp_path / "dataset_plan.json"
         os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = str(dataset_plan)
 
+        # Redirect auth database to temp directory for test isolation
+        self._previous_auth_db = os.environ.get("SIMPLETUNER_AUTH_DB_PATH")
+        auth_db = self.tmp_path / "test_auth.db"
+        os.environ["SIMPLETUNER_AUTH_DB_PATH"] = str(auth_db)
+
         # Disable TQDM progress bars during tests
         self._previous_tqdm_disable = os.environ.get("TQDM_DISABLE")
         os.environ["TQDM_DISABLE"] = "1"
@@ -61,6 +66,12 @@ class APITestEnvironmentMixin:
                 os.environ["SIMPLETUNER_DATASET_PLAN_PATH"] = self._previous_dataset_plan
             else:
                 os.environ.pop("SIMPLETUNER_DATASET_PLAN_PATH", None)
+
+            # Restore auth database path
+            if self._previous_auth_db is not None:
+                os.environ["SIMPLETUNER_AUTH_DB_PATH"] = self._previous_auth_db
+            else:
+                os.environ.pop("SIMPLETUNER_AUTH_DB_PATH", None)
 
             # Restore TQDM setting
             if self._previous_tqdm_disable is not None:

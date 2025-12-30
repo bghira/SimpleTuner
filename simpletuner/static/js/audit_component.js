@@ -237,6 +237,13 @@ if (!window.auditLogComponent) {
 
             showEntryDetails(entry) {
                 this.selectedEntry = entry;
+                // Lazy-initialize modal if not already done (handles HTMX tab loads)
+                if (!this.detailsModalInstance && typeof bootstrap !== 'undefined') {
+                    const detailsModalEl = document.getElementById('auditEntryDetailsModal');
+                    if (detailsModalEl) {
+                        this.detailsModalInstance = new bootstrap.Modal(detailsModalEl);
+                    }
+                }
                 if (this.detailsModalInstance) {
                     this.detailsModalInstance.show();
                 }
@@ -332,6 +339,13 @@ if (!window.auditLogComponent) {
             },
 
             showExportModal() {
+                // Lazy-initialize modal if not already done (handles HTMX tab loads)
+                if (!this.exportModalInstance && typeof bootstrap !== 'undefined') {
+                    const exportModalEl = document.getElementById('auditExportOptionsModal');
+                    if (exportModalEl) {
+                        this.exportModalInstance = new bootstrap.Modal(exportModalEl);
+                    }
+                }
                 if (this.exportModalInstance) {
                     this.exportModalInstance.show();
                 }
