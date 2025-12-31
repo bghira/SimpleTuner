@@ -57,26 +57,19 @@
                        placeholder="100">
                 <div class="form-text small">Activates at this step</div>
             </div>
+        </div>
 
-            <!-- Status indicator -->
-            <div class="col-md-4">
-                <label class="form-label small">&nbsp;</label>
-                <div class="alert small py-2 px-3 mb-0"
-                     :class="{
-                         'alert-success': editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode,
-                         'alert-info': editingDataset._scheduleMode === 'epoch' || editingDataset._scheduleMode === 'step'
-                     }">
-                    <template x-if="editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode">
-                        <span><i class="fas fa-check-circle me-1"></i> Available from start</span>
-                    </template>
-                    <template x-if="editingDataset._scheduleMode === 'epoch'">
-                        <span><i class="fas fa-clock me-1"></i> Skipped until epoch <strong x-text="editingDataset.start_epoch || 2"></strong></span>
-                    </template>
-                    <template x-if="editingDataset._scheduleMode === 'step'">
-                        <span><i class="fas fa-clock me-1"></i> Skipped until step <strong x-text="editingDataset.start_step || 1"></strong></span>
-                    </template>
-                </div>
-            </div>
+        <!-- Status indicator - no row wrapper, flows naturally -->
+        <div class="alert alert-info small py-2 px-3 mb-0 mt-2">
+            <span x-show="editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode">
+                <i class="fas fa-check-circle me-1"></i> This dataset is available from the start of training
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'epoch'" x-cloak>
+                <i class="fas fa-clock me-1"></i> This dataset will be skipped until epoch <strong x-text="editingDataset.start_epoch || 2"></strong>
+            </span>
+            <span x-show="editingDataset._scheduleMode === 'step'" x-cloak>
+                <i class="fas fa-clock me-1"></i> This dataset will be skipped until step <strong x-text="editingDataset.start_step || 1"></strong>
+            </span>
         </div>
     </div>
 </div>
