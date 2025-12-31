@@ -4006,18 +4006,31 @@ def get_huggingface_backend(
 
 
 def select_dataloader_index(step, backends):
-    # Generate weights for each backend based on some criteria
+    # Generate weights for each backend based on some criteria, filtering out inactive backends
     weights = []
     backend_ids = []
     for backend_id, backend in backends.items():
         weight = get_backend_weight(backend_id, backend, step)
+        if weight <= 0:
+            continue
         weights.append(weight)
         backend_ids.append(backend_id)
 
+    if not backend_ids:
+        # No active datasets available for sampling
+        # Check if any datasets have been exhausted - if so, this is a normal epoch end
+        # If no datasets have been exhausted, this is a misconfiguration error
+        if StateTracker.exhausted_backends:
+            return None
+        current_epoch = StateTracker.get_epoch()
+        next_step = (StateTracker.get_global_step() or 0) + 1
+        raise ValueError(
+            f"No active datasets available for sampling at epoch {current_epoch}, step {next_step}. "
+            "Adjust start_epoch/start_step so at least one dataset is active."
+        )
+
     weights = torch.tensor(weights, dtype=torch.float32)
     weights /= weights.sum()  # Normalize the weights
-    if weights.sum() == 0:
-        return None
 
     # Sample a backend index based on the weights
     chosen_index = torch.multinomial(weights, 1).item()

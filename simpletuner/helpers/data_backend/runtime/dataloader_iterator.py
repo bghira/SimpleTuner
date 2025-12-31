@@ -48,6 +48,11 @@ def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str
         backend_ids.append(backend_id)
 
     if not backend_ids:
+        # No active datasets available for sampling
+        # Check if any datasets have been exhausted - if so, this is a normal epoch end
+        # If no datasets have been exhausted, this is a misconfiguration error
+        if StateTracker.exhausted_backends:
+            return None
         try:
             next_step = (StateTracker.get_global_step() or 0) + 1
         except Exception:
@@ -281,6 +286,16 @@ def random_dataloader_iterator(step: int, backends: Dict[str, Any]) -> Union[Any
             chosen_backend_id = sampler.next_backend_id(step, backends)
         if chosen_backend_id is None:
             chosen_backend_id = select_dataloader_index(step, backends)
+        if chosen_backend_id is None:
+            # No active backends available - signal epoch end
+            logger.info(
+                "No active datasets available for sampling. "
+                "This may happen when datasets with start_epoch/start_step are waiting to become active. "
+                "Ending epoch early."
+            )
+            StateTracker.clear_exhausted_buckets()
+            _SCALED_SAMPLERS.pop(id(backends), None)
+            return False
         backend = backends.get(chosen_backend_id)
         if backend is None:
             raise KeyError(f"Selected backend {chosen_backend_id} not found.")
