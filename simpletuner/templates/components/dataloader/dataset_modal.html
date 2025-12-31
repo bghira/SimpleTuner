@@ -89,6 +89,13 @@
                     <i class="fas fa-database"></i>
                     <span>Caching</span>
                 </button>
+                <button type="button"
+                        :class="{'active': modalTab === 'scheduling'}"
+                        @click="modalTab = 'scheduling'"
+                        x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds'">
+                    <i class="fas fa-clock"></i>
+                    <span>Scheduling</span>
+                </button>
             </div>
 
             <!-- Modal Body -->
@@ -126,6 +133,11 @@
                 <!-- Caching Tab -->
                 <div x-show="modalTab === 'advanced'" x-cloak>
                     {% include 'components/dataloader/sections/advanced_body.html' %}
+                </div>
+
+                <!-- Scheduling Tab -->
+                <div x-show="modalTab === 'scheduling'" x-cloak>
+                    {% include 'components/dataloader/sections/scheduling_body.html' %}
                 </div>
             </div>
 

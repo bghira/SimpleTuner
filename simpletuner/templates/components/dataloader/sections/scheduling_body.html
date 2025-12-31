@@ -1,0 +1,106 @@
+<!-- Scheduling Settings Body (for modal) -->
+<div class="modal-section-body">
+    <!-- Dataset Activation Scheduling -->
+    <div class="section-group" x-show="matchesParamFilter('schedule', 'start', 'epoch', 'step', 'delay', 'activation')">
+        <h6 class="modal-section-title">Dataset Activation</h6>
+        <div class="form-text small text-muted mb-3">
+            Control when this dataset becomes active during training. By default, datasets are active from the start.
+        </div>
+
+        <!-- Schedule Mode Selector -->
+        <div class="row g-2 mb-3">
+            <div class="col-12">
+                <label class="form-label small">Delay Mode <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#scheduling" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <div class="btn-group btn-group-sm w-100" role="group">
+                    <input type="radio"
+                           class="btn-check"
+                           :name="'schedule-mode-' + editingDataset.id"
+                           :id="'schedule-mode-none-' + editingDataset.id"
+                           value="none"
+                           x-model="editingDataset._scheduleMode"
+                           @change="editingDataset.start_epoch = undefined; editingDataset.start_step = undefined; markAsUnsaved()">
+                    <label class="btn btn-outline-secondary"
+                           :for="'schedule-mode-none-' + editingDataset.id">
+                        <i class="fas fa-play-circle me-1"></i> Immediate
+                    </label>
+
+                    <input type="radio"
+                           class="btn-check"
+                           :name="'schedule-mode-' + editingDataset.id"
+                           :id="'schedule-mode-epoch-' + editingDataset.id"
+                           value="epoch"
+                           x-model="editingDataset._scheduleMode"
+                           @change="editingDataset.start_step = undefined; if (!editingDataset.start_epoch || editingDataset.start_epoch < 2) editingDataset.start_epoch = 2; markAsUnsaved()">
+                    <label class="btn btn-outline-secondary"
+                           :for="'schedule-mode-epoch-' + editingDataset.id">
+                        <i class="fas fa-redo me-1"></i> By Epoch
+                    </label>
+
+                    <input type="radio"
+                           class="btn-check"
+                           :name="'schedule-mode-' + editingDataset.id"
+                           :id="'schedule-mode-step-' + editingDataset.id"
+                           value="step"
+                           x-model="editingDataset._scheduleMode"
+                           @change="editingDataset.start_epoch = undefined; if (!editingDataset.start_step || editingDataset.start_step < 1) editingDataset.start_step = 1; markAsUnsaved()">
+                    <label class="btn btn-outline-secondary"
+                           :for="'schedule-mode-step-' + editingDataset.id">
+                        <i class="fas fa-shoe-prints me-1"></i> By Step
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Epoch-based scheduling -->
+        <div class="row g-2" x-show="editingDataset._scheduleMode === 'epoch'" x-cloak>
+            <div class="col-md-6">
+                <label class="form-label small">Start Epoch <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#start_epoch" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.start_epoch"
+                       @input="markAsUnsaved()"
+                       placeholder="1">
+                <div class="form-text small">Dataset activates at this epoch (minimum 1)</div>
+            </div>
+            <div class="col-md-6">
+                <div class="alert alert-info small py-2 px-3 mb-0 mt-4">
+                    <i class="fas fa-info-circle me-1"></i>
+                    This dataset will be skipped until epoch <strong x-text="editingDataset.start_epoch || 1"></strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step-based scheduling -->
+        <div class="row g-2" x-show="editingDataset._scheduleMode === 'step'" x-cloak>
+            <div class="col-md-6">
+                <label class="form-label small">Start Step <a x-show="showDocLinks" href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DATALOADER.md#start_step" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="0"
+                       step="1"
+                       x-model.number.lazy="editingDataset.start_step"
+                       @input="markAsUnsaved()"
+                       placeholder="0">
+                <div class="form-text small">Dataset activates at this optimizer step (0 = immediate)</div>
+            </div>
+            <div class="col-md-6">
+                <div class="alert alert-info small py-2 px-3 mb-0 mt-4">
+                    <i class="fas fa-info-circle me-1"></i>
+                    This dataset will be skipped until step <strong x-text="editingDataset.start_step || 0"></strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Immediate mode info -->
+        <div class="row g-2" x-show="editingDataset._scheduleMode === 'none' || !editingDataset._scheduleMode" x-cloak>
+            <div class="col-12">
+                <div class="alert alert-success small py-2 px-3 mb-0">
+                    <i class="fas fa-check-circle me-1"></i>
+                    This dataset is available from the start of training
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
