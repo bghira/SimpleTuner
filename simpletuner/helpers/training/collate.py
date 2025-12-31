@@ -968,6 +968,18 @@ def collate_fn(batch):
             examples, latent_batch, StateTracker.get_weight_dtype()
         )
 
+    # Extract S2V audio paths for speech-to-video models
+    s2v_audio_paths = []
+    for example in examples:
+        audio_path = None
+        if isinstance(example, dict):
+            audio_path = example.get("s2v_audio_path")
+        elif hasattr(example, "image_metadata") and example.image_metadata:
+            audio_path = example.image_metadata.get("s2v_audio_path")
+        elif hasattr(example, "_s2v_audio_path"):
+            audio_path = example._s2v_audio_path
+        s2v_audio_paths.append(audio_path)
+
     return {
         "latent_batch": latent_batch,
         "latent_metadata": latent_metadata,
@@ -985,4 +997,5 @@ def collate_fn(batch):
         "is_regularisation_data": is_regularisation_data,
         "is_i2v_data": is_i2v_data,
         "conditioning_type": conditioning_type,
+        "s2v_audio_paths": s2v_audio_paths if any(s2v_audio_paths) else None,
     }
