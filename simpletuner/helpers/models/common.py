@@ -1499,12 +1499,12 @@ class ModelFoundation(ABC):
             latents = latents / scaling_factor
         return latents
 
-    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+    def pre_latent_decode(self, latents: torch.Tensor) -> torch.Tensor:
         """
-        Pre-process latents before passing to validation preview decoder.
+        Pre-process latents before passing to any decoder (VAE or TAE).
 
-        This is a hook for models that need to transform latents before decode.
-        For example, models using video decoders may need to add a frame dimension.
+        Override for model-specific shape transformations (e.g., unpacking,
+        adding frame dimensions).
 
         Args:
             latents: The latents tensor to transform
@@ -1513,6 +1513,69 @@ class ModelFoundation(ABC):
             The transformed latents tensor
         """
         return latents
+
+    # Backward compatibility alias
+    pre_validation_preview_decode = pre_latent_decode
+
+    def decode_latents_to_pixels(
+        self,
+        latents: torch.Tensor,
+        *,
+        use_tae: bool = False,
+    ) -> torch.Tensor:
+        """
+        Decode latents to pixel space using VAE or TAE.
+
+        Handles all normalization/denormalization internally - callers provide
+        latents in training format and receive pixels in consistent format.
+
+        Args:
+            latents: Latents in training/diffusion space
+            use_tae: If True, use TinyAutoEncoder (faster, lower quality)
+
+        Returns:
+            Decoded pixels in (B, T, C, H, W) format, [0, 1] range.
+            For image models, T=1.
+        """
+        latents = latents.detach()
+
+        if use_tae:
+            decoder = self.get_validation_preview_decoder()
+            if decoder is None:
+                raise ValueError(f"{self.NAME} does not support TAE decoding")
+            # TAE expects normalized latents (training space) - no denorm
+            preprocessed = self.pre_latent_decode(latents)
+            preprocessed = preprocessed.to(device=decoder.device, dtype=decoder.dtype)
+            decoded = decoder.decode(preprocessed)
+            # TAE outputs [0, 1] already
+        else:
+            vae = self.get_vae()
+            if vae is None:
+                raise ValueError(f"{self.NAME} does not have a VAE available")
+            vae_dtype = next(vae.parameters()).dtype
+            # VAE expects denormalized latents
+            denormed = self.denormalize_latents_for_preview(latents)
+            preprocessed = self.pre_latent_decode(denormed)
+            preprocessed = preprocessed.to(device=self.accelerator.device, dtype=vae_dtype)
+            with torch.no_grad():
+                decoded = vae.decode(preprocessed).sample
+            # VAE outputs [-1, 1], normalize to [0, 1]
+            decoded = (decoded.clamp(-1, 1) + 1) / 2
+
+        # Ensure consistent output format: (B, T, C, H, W)
+        return self._ensure_video_format(decoded)
+
+    def _ensure_video_format(self, decoded: torch.Tensor) -> torch.Tensor:
+        """Normalize decoded output to (B, T, C, H, W) format in [0, 1] range."""
+        if decoded.ndim == 4:
+            # (B, C, H, W) -> (B, 1, C, H, W)
+            return decoded.unsqueeze(1)
+        if decoded.ndim == 5:
+            # Check if (B, C, T, H, W) and convert to (B, T, C, H, W)
+            # Heuristic: channel dim is typically 3 or 4, frame count is larger
+            if decoded.shape[1] in (3, 4) and decoded.shape[2] > 4:
+                return decoded.permute(0, 2, 1, 3, 4)
+        return decoded
 
     def get_vae(self):
         """
@@ -4394,7 +4457,7 @@ class VideoModelFoundation(ImageModelFoundation):
         if hidden_size is None:
             raise ValueError("CREPA enabled but unable to infer transformer hidden size.")
 
-        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size)
+        self.crepa_regularizer = CrepaRegularizer(self.config, self.accelerator, hidden_size, model_foundation=self)
         model_component = self.get_trained_component(unwrap_model=False)
         if model_component is None:
             raise ValueError("CREPA requires an attached diffusion model to register its projector.")

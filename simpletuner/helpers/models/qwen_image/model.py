@@ -1373,9 +1373,9 @@ class QwenImage(ImageModelFoundation):
 
         return sample_latents
 
-    def pre_validation_preview_decode(self, latents: torch.Tensor) -> torch.Tensor:
+    def pre_latent_decode(self, latents: torch.Tensor) -> torch.Tensor:
         """
-        Pre-process latents before passing to validation preview decoder.
+        Pre-process latents before passing to any decoder (VAE or TAE).
 
         Qwen Image uses packed transformer latents that need to be untokenized/unpacked
         to spatial format, and the Wan 2.1 decoder expects rank-5 tensors (video format),

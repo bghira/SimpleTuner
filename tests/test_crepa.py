@@ -55,7 +55,7 @@ class CrepaDecodeTests(unittest.TestCase):
         vae = _DummyVAE(dtype=torch.bfloat16)
         latents = torch.randn(1, 4, 2, 2, 2, dtype=torch.float32)
 
-        decoded = reg._decode_latents(latents, vae)
+        decoded = reg._decode_latents_legacy(latents, vae)
         self.assertEqual(decoded.dtype, vae._dummy.dtype)
         self.assertEqual(decoded.shape, (1, 2, 3, 2, 2))
 

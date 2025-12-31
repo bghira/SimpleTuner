@@ -263,7 +263,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             documentation="OPTIONS.md#--crepa_model",
         )
     )
-    
+
     registry._add_field(
         ConfigField(
             name="crepa_encoder_frames_batch_size",
@@ -275,7 +275,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             default_value=-1,
             dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
             help_text="How many frames the external feature encoder processes in parallel. Zero or negative for all frames of the whole batch simultaneously.",
-            tooltip='Since DINO-like encoders are image models, they can process frames in sliced batches for lower VRAM usage at cost of speed.',
+            tooltip="Since DINO-like encoders are image models, they can process frames in sliced batches for lower VRAM usage at cost of speed.",
             importance=ImportanceLevel.EXPERIMENTAL,
             order=14,
             documentation="OPTIONS.md#--crepa_encoder_frames_batch_size",
@@ -388,6 +388,24 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.EXPERIMENTAL,
             order=20,
             documentation="OPTIONS.md#--crepa_spatial_align",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="crepa_use_tae",
+            arg_name="--crepa_use_tae",
+            ui_label="CREPA: Use Tiny AutoEncoder",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            dependencies=[FieldDependency(field="crepa_enabled", operator="equals", value=True)],
+            help_text="Use lightweight Tiny AutoEncoder instead of full VAE for frame decoding.",
+            tooltip="Faster and uses less VRAM, but lower quality decoded frames. Only works for models with TAE support (e.g., WAN).",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=21,
+            documentation="OPTIONS.md#--crepa_use_tae",
         )
     )
 

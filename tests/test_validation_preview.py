@@ -22,8 +22,15 @@ class _DummyModel:
     def denormalize_latents_for_preview(self, latents):
         return latents
 
-    def pre_validation_preview_decode(self, latents):
+    def pre_latent_decode(self, latents):
         return latents
+
+    # Backward compatibility alias
+    pre_validation_preview_decode = pre_latent_decode
+
+    def decode_latents_to_pixels(self, latents, *, use_tae=False):
+        # Return (B, T, C, H, W) format - single frame image
+        return torch.zeros(1, 1, 3, 8, 8)
 
 
 class ValidationPreviewerTests(unittest.TestCase):
@@ -42,44 +49,37 @@ class ValidationPreviewerTests(unittest.TestCase):
         self.assertTrue(previewer._should_emit_for_step(5))
 
     @patch("simpletuner.helpers.training.validation.StateTracker")
-    def test_decode_preview_skips_rescaling_when_not_required(self, mock_state_tracker):
+    def test_decode_preview_uses_unified_interface(self, mock_state_tracker):
+        """Test that _decode_preview uses the unified decode_latents_to_pixels interface."""
         handler = MagicMock()
         mock_state_tracker.get_webhook_handler.return_value = handler
         config = types.SimpleNamespace(validation_preview=True, validation_preview_steps=1)
         accelerator = types.SimpleNamespace(is_main_process=True)
         model = _DummyModel()
-        model.denormalize_latents_for_preview = MagicMock(side_effect=lambda x: x)
+        model.decode_latents_to_pixels = MagicMock(return_value=torch.zeros(1, 1, 3, 8, 8))
         previewer = ValidationPreviewer(model, accelerator, config)
-        previewer._decoder = types.SimpleNamespace(
-            is_video=False,
-            requires_vae_rescaling=False,
-            device=torch.device("cpu"),
-            dtype=torch.float32,
-            decode=lambda latents: torch.zeros(1, 3, 8, 8),
-        )
         previewer._emit_event = MagicMock()
         previewer._decode_preview(torch.zeros(1, 4, 8, 8))
-        model.denormalize_latents_for_preview.assert_not_called()
+        model.decode_latents_to_pixels.assert_called_once()
+        # Verify use_tae=True is passed
+        call_kwargs = model.decode_latents_to_pixels.call_args.kwargs
+        self.assertTrue(call_kwargs.get("use_tae", False))
 
     @patch("simpletuner.helpers.training.validation.StateTracker")
-    def test_decode_preview_rescales_when_requested(self, mock_state_tracker):
+    def test_decode_preview_handles_video_output(self, mock_state_tracker):
+        """Test that _decode_preview correctly handles multi-frame video output."""
         handler = MagicMock()
         mock_state_tracker.get_webhook_handler.return_value = handler
         config = types.SimpleNamespace(validation_preview=True, validation_preview_steps=1)
         accelerator = types.SimpleNamespace(is_main_process=True)
         model = _DummyModel()
-        model.denormalize_latents_for_preview = MagicMock(side_effect=lambda x: x)
+        # Return video with 4 frames: (B=1, T=4, C=3, H=8, W=8)
+        model.decode_latents_to_pixels = MagicMock(return_value=torch.rand(1, 4, 3, 8, 8))
         previewer = ValidationPreviewer(model, accelerator, config)
-        previewer._decoder = types.SimpleNamespace(
-            is_video=False,
-            requires_vae_rescaling=True,
-            device=torch.device("cpu"),
-            dtype=torch.float32,
-            decode=lambda latents: torch.zeros(1, 3, 8, 8),
-        )
-        previewer._emit_event = MagicMock()
-        previewer._decode_preview(torch.zeros(1, 4, 8, 8))
-        model.denormalize_latents_for_preview.assert_called_once()
+        images, video_payload = previewer._decode_preview(torch.zeros(1, 4, 8, 8))
+        # Should return first frame as image and video payload
+        self.assertEqual(len(images), 1)
+        self.assertIsNotNone(video_payload)
 
     @patch("simpletuner.helpers.training.validation.StateTracker")
     def test_emit_event_formats_step_label_with_config_total(self, mock_state_tracker):
