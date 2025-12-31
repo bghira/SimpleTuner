@@ -1,0 +1,189 @@
+<!-- partials/cloud_advanced_config.html - Advanced Provider Configuration -->
+
+<div class="cloud-card mb-4" x-show="hasAdminAccess && apiKeyState.valid" x-init="loadAdvancedConfig()">
+    <div class="cloud-card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="fas fa-cogs me-2"></i>Advanced Settings</h6>
+        <button class="btn btn-sm btn-link text-muted p-0"
+                @click="showAdvancedSettings = !showAdvancedSettings">
+            <i class="fas" :class="showAdvancedSettings ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+        </button>
+    </div>
+    <div class="cloud-card-body" x-show="showAdvancedSettings" x-transition>
+        <!-- SSL Warning Banner -->
+        <div class="alert alert-warning py-2 mb-3" x-show="!advancedConfig.ssl_verify">
+            <i class="fas fa-shield-alt me-1"></i>
+            <strong>SSL verification disabled.</strong> Connections may be insecure.
+        </div>
+
+        <!-- SSL Verification -->
+        <div class="setting-row d-flex justify-content-between align-items-center py-2 border-bottom border-secondary">
+            <div>
+                <div class="fw-medium">SSL Verification</div>
+                <div class="small text-muted">Verify SSL certificates for API requests</div>
+            </div>
+            <div class="form-check form-switch mb-0">
+                <input type="checkbox" class="form-check-input"
+                       :checked="advancedConfig.ssl_verify"
+                       @change="toggleSslVerification()"
+                       :disabled="advancedConfig.saving">
+            </div>
+        </div>
+
+        <!-- SSL CA Bundle -->
+        <div class="setting-row py-2 border-bottom border-secondary" x-show="!advancedConfig.ssl_verify">
+            <label class="form-label small text-muted mb-1">Custom CA Bundle Path</label>
+            <div class="input-group input-group-sm">
+                <input type="text"
+                       class="form-control form-control-sm bg-dark text-light border-secondary"
+                       x-model="advancedConfig.ssl_ca_bundle"
+                       placeholder="/path/to/ca-bundle.crt">
+                <button class="btn btn-outline-primary"
+                        @click="saveAdvancedSetting('ssl_ca_bundle', advancedConfig.ssl_ca_bundle)"
+                        :disabled="advancedConfig.saving">
+                    <i class="fas fa-save"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Proxy URL -->
+        <div class="setting-row py-2 border-bottom border-secondary">
+            <label class="form-label small text-muted mb-1">HTTP Proxy URL</label>
+            <div class="input-group input-group-sm">
+                <input type="text"
+                       class="form-control form-control-sm bg-dark text-light border-secondary"
+                       x-model="advancedConfig.proxy_url"
+                       placeholder="http://proxy.example.com:8080">
+                <button class="btn btn-outline-primary"
+                        @click="saveAdvancedSetting('proxy_url', advancedConfig.proxy_url)"
+                        :disabled="advancedConfig.saving">
+                    <i class="fas fa-save"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Request Timeout -->
+        <div class="setting-row py-2 border-bottom border-secondary">
+            <label class="form-label small text-muted mb-1">Request Timeout (seconds)</label>
+            <div class="input-group input-group-sm" style="max-width: 200px;">
+                <input type="number"
+                       class="form-control form-control-sm bg-dark text-light border-secondary"
+                       x-model.number="advancedConfig.http_timeout"
+                       min="1" max="600">
+                <button class="btn btn-outline-primary"
+                        @click="saveAdvancedSetting('http_timeout', advancedConfig.http_timeout)"
+                        :disabled="advancedConfig.saving">
+                    <i class="fas fa-save"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Webhook Security Section -->
+        <div class="webhook-security-section mt-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0 small text-muted">
+                    <i class="fas fa-shield-alt me-1"></i>Webhook Security
+                </h6>
+                <div class="d-flex align-items-center gap-2">
+                    <a href="https://replicate.com/docs/webhooks"
+                       target="_blank"
+                       class="text-muted small"
+                       title="Replicate webhook documentation"
+                       style="font-size: 0.7rem;">
+                        <i class="fas fa-external-link-alt"></i>
+                    </a>
+                    <button class="btn btn-sm btn-link text-muted p-0"
+                            @click="showWebhookSecuritySettings = !showWebhookSecuritySettings">
+                        <i class="fas" :class="showWebhookSecuritySettings ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div x-show="showWebhookSecuritySettings" x-transition>
+                <!-- Explanation -->
+                <p class="small text-muted mb-2" style="font-size: 0.7rem; line-height: 1.4;">
+                    Restrict incoming webhooks to known IP addresses. This prevents spoofed callbacks
+                    but requires knowing your provider's webhook IPs (check their docs or your server logs).
+                </p>
+
+                <!-- IP Allowlist Toggle -->
+                <div class="setting-row d-flex justify-content-between align-items-center py-2 border-bottom border-secondary">
+                    <div>
+                        <div class="fw-medium small">IP Allowlist</div>
+                        <div class="small text-muted">Only accept webhooks from specified IPs</div>
+                    </div>
+                    <div class="form-check form-switch mb-0">
+                        <input type="checkbox" class="form-check-input"
+                               :checked="advancedConfig.webhook_ip_allowlist_enabled"
+                               @change="toggleIpAllowlist()"
+                               :disabled="advancedConfig.saving">
+                    </div>
+                </div>
+
+                <!-- IP List -->
+                <div class="ip-allowlist mt-2" x-show="advancedConfig.webhook_ip_allowlist_enabled">
+                    <!-- Add IP -->
+                    <div class="input-group input-group-sm mb-2">
+                        <input type="text"
+                               class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model="advancedConfig.newIpEntry"
+                               placeholder="IP or CIDR (e.g., 192.168.1.0/24)"
+                               @keyup.enter="addIpToAllowlist()">
+                        <button class="btn btn-outline-success"
+                                @click="addIpToAllowlist()"
+                                :disabled="advancedConfig.saving">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                    <!-- Validation Error -->
+                    <div class="small text-danger mb-2" x-show="advancedConfig.ipValidationError" x-text="advancedConfig.ipValidationError"></div>
+
+                    <!-- IP List -->
+                    <div class="ip-list" x-show="advancedConfig.webhook_allowed_ips.length > 0">
+                        <template x-for="ip in advancedConfig.webhook_allowed_ips" :key="ip">
+                            <div class="d-flex justify-content-between align-items-center py-1 border-bottom border-secondary">
+                                <code class="small" x-text="ip"></code>
+                                <button class="btn btn-sm btn-link text-danger p-0"
+                                        @click="removeIpFromAllowlist(ip)"
+                                        :disabled="advancedConfig.saving">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                    <!-- Empty State -->
+                    <div class="small text-center py-2"
+                         x-show="advancedConfig.webhook_allowed_ips.length === 0">
+                        <span class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i></span>
+                        <span class="text-muted">No IPs configured &mdash; all webhooks will be rejected. Add your provider's IPs above.</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Saving Indicator -->
+        <div class="text-center text-muted small mt-2" x-show="advancedConfig.saving">
+            <i class="fas fa-spinner fa-spin me-1"></i>Saving...
+        </div>
+    </div>
+</div>
+
+<style>
+.setting-row {
+    transition: background 0.2s;
+}
+
+.setting-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ip-list {
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.webhook-security-section {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+}
+</style>

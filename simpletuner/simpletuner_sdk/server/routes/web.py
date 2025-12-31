@@ -6,15 +6,16 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..dependencies.common import TabRenderData, get_config_store, get_tab_render_data
 from ..services.search_service import SearchService
 from ..services.tab_service import TabService
 from ..services.webui_state import WebUIStateStore
-from ..utils.paths import get_template_directory
+from ..utils.cache_bust import setup_cache_busting
+from ..utils.paths import get_static_directory, get_template_directory
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,9 @@ else:
     candidate = get_template_directory()
 
 templates = Jinja2Templates(directory=str(candidate))
+
+# Set up cache busting for static assets
+setup_cache_busting(templates, static_dir=get_static_directory())
 
 # Initialize services
 tab_service = TabService(templates)
@@ -62,9 +66,29 @@ async def trainer_page(
         "active_config": active_config,
         "webui_theme": resolved_defaults.get("theme", "dark"),
         "webui_defaults": resolved_defaults,
+        "defaults": resolved_defaults,  # Template uses 'defaults' for sound settings
     }
 
     return templates.TemplateResponse(request=request, name="trainer_htmx.html", context=context)
+
+
+@router.get("/login")
+async def login_page(request: Request):
+    """Login page - redirects to trainer since login is now inline."""
+    return RedirectResponse(url="/web/trainer", status_code=302)
+
+
+@router.get("/logout")
+async def logout_page(request: Request, response: Response):
+    """Logout and redirect to login."""
+    # Clear the session cookie
+    response = RedirectResponse(url="/web/trainer", status_code=302)
+    response.delete_cookie(
+        key="st_session",
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 @router.get("/trainer/tabs/{tab_name}", response_class=HTMLResponse)

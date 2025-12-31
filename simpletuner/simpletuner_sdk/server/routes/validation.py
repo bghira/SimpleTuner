@@ -138,5 +138,5 @@ async def validate_single_field(
     return {
         "field": normalized_field,
         "valid": is_valid,
-        "messages": [message.dict() for message in filtered_messages],
+        "messages": [message.model_dump() for message in filtered_messages],
     }

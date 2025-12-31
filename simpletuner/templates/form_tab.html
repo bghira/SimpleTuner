@@ -1,7 +1,25 @@
 <!-- Generic Form Tab Template for HTMX -->
 <!-- Used by Basic, Model, Training, and Advanced tabs -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
 <link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-form">
-<script>document.getElementById('css-form-sections-form').href = '/static/css/form-sections.css?t=' + Date.now();</script>
+{% if tab_name == 'publishing' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-publishing">
+{% elif tab_name == 'hardware' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-hardware">
+{% elif tab_name == 'model' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-model">
+<link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode">
+{% elif tab_name == 'basic' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-basic">
+<link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode-basic">
+{% elif tab_name == 'training' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-training">
+<link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode-training">
+{% elif tab_name == 'validation' %}
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-validation">
+<link rel="stylesheet" href="/static/css/model-ez-mode.css" id="css-model-ez-mode-validation">
+{% endif %}
 
 {% if prompt_libraries is defined %}
 <script>
@@ -9,10 +27,2773 @@ window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
 </script>
 {% endif %}
 
+{% if tab_name == 'publishing' %}
+<script>
+// Publishing tab hero CTA state
+if (!window.publishingHeroCTA) {
+    window.publishingHeroCTA = function() {
+        return {
+            ...window.HintMixin.createMultiHint({
+                useApi: false,
+                storageKey: 'st_publishing_hints',
+                hintKeys: ['hero']
+            }),
+            showHeroCTA() { return this.hints.hero; },
+            dismissHeroCTA() { this.dismissHint('hero'); },
+            restoreHeroCTA() { this.showHint('hero'); },
+            init() { this.loadHints(); }
+        };
+    };
+}
+</script>
+{% elif tab_name == 'hardware' %}
+<script>
+// Hardware tab hero CTA state
+if (!window.hardwareHeroCTA) {
+    window.hardwareHeroCTA = function() {
+        return {
+            ...window.HintMixin.createMultiHint({
+                useApi: false,
+                storageKey: 'st_hardware_hints',
+                hintKeys: ['hero']
+            }),
+            showHeroCTA() { return this.hints.hero; },
+            dismissHeroCTA() { this.dismissHint('hero'); },
+            restoreHeroCTA() { this.showHint('hero'); },
+            init() { this.loadHints(); }
+        };
+    };
+}
+</script>
+{% elif tab_name == 'model' %}
+<script>
+// Model EZ Mode Component - inline for HTMX swaps
+(function() {
+    'use strict';
+
+    function modelEzModeComponent() {
+        return {
+            loading: true,
+            error: null,
+            modelFamilies: [],
+            modelFlavours: [],
+            model_family: '',
+            model_flavour: '',
+            model_type: 'lora',
+            lora_rank: 16,
+            vae_enable_tiling: false,
+            vae_enable_slicing: false,
+            vae_batch_size: 4,
+            gradient_checkpointing: true,
+            ramtorch: false,
+            ramtorch_preset: 'off',
+            musubi_blocks_to_swap: 0,
+            use_ema: false,
+            base_model_precision: 'no_change',
+            text_encoder_1_precision: 'no_change',
+
+            // Memory presets data
+            maxSwappableBlocks: null,
+            memoryPresetsLoading: false,
+            ramtorchPresets: [],
+
+            hints: { ez_mode: true },
+            _cleanupFns: [],
+
+            showEzMode() {
+                // Use reactive property for Alpine to track changes
+                return this.hints.ez_mode;
+            },
+
+            dismissEzMode() {
+                this.hints.ez_mode = false;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_model_hints') || '{}');
+                    stored.ez_mode = false;
+                    localStorage.setItem('st_model_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            restoreEzMode() {
+                this.hints.ez_mode = true;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_model_hints') || '{}');
+                    stored.ez_mode = true;
+                    localStorage.setItem('st_model_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            async init() {
+                // Load persisted state
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_model_hints') || '{}');
+                    this.hints.ez_mode = stored.ez_mode !== false;
+                } catch (e) { }
+
+                await this.loadModelFamilies();
+
+                // Initial sync attempt
+                this.syncFromForm();
+                this.setupFormWatchers();
+                this.watchEnvironmentChanges();
+                this.watchTrainerStore();
+                this.loading = false;
+            },
+
+            watchTrainerStore() {
+                // Poll for trainer store config since it may load after us
+                let attempts = 0;
+                const maxAttempts = 50; // 5 seconds total
+                const checkStore = () => {
+                    const store = window.Alpine?.store?.('trainer');
+                    const config = store?.activeEnvironmentConfig;
+
+                    if (config && Object.keys(config).length > 0) {
+                        // Config is ready, sync and stop polling
+                        this.syncFromForm();
+                        return;
+                    }
+
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStore, 100);
+                    }
+                };
+
+                // Start polling after a brief delay
+                setTimeout(checkStore, 100);
+            },
+
+            destroy() {
+                this._cleanupFns.forEach(fn => fn());
+                this._cleanupFns = [];
+            },
+
+            // Re-sync when environment changes
+            watchEnvironmentChanges() {
+                // Listen for environment load/switch events
+                const handler = () => {
+                    setTimeout(() => this.syncFromForm(), 100);
+                };
+                document.addEventListener('environment-loaded', handler);
+                document.addEventListener('environment-switched', handler);
+
+                // Also watch for HTMX config loads
+                const htmxHandler = (evt) => {
+                    if (evt.detail?.target?.id === 'model-tab-content') {
+                        setTimeout(() => this.syncFromForm(), 100);
+                    }
+                };
+                document.body.addEventListener('htmx:afterSettle', htmxHandler);
+
+                this._cleanupFns.push(() => {
+                    document.removeEventListener('environment-loaded', handler);
+                    document.removeEventListener('environment-switched', handler);
+                    document.body.removeEventListener('htmx:afterSettle', htmxHandler);
+                });
+            },
+
+            async loadModelFamilies() {
+                try {
+                    const response = await fetch('/api/models/wizard');
+                    if (!response.ok) throw new Error('Failed to load model families');
+                    const data = await response.json();
+                    this.modelFamilies = (data.models || []).map(m => ({
+                        value: m.family,
+                        label: m.name
+                    }));
+                } catch (err) {
+                    console.error('[EZ MODE] Failed to load model families:', err);
+                    this.error = 'Failed to load model families';
+                }
+            },
+
+            async loadModelFlavours(family) {
+                if (!family) { this.modelFlavours = []; return; }
+                try {
+                    const response = await fetch(`/api/models/${encodeURIComponent(family)}/flavours`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.modelFlavours = data.flavours || [];
+                    } else { this.modelFlavours = []; }
+                } catch (err) {
+                    console.error('[EZ MODE] Failed to load flavours:', err);
+                    this.modelFlavours = [];
+                }
+            },
+
+            async loadMemoryPresets(family) {
+                if (!family) {
+                    this.maxSwappableBlocks = null;
+                    this.ramtorchPresets = [];
+                    return;
+                }
+                this.memoryPresetsLoading = true;
+                try {
+                    const response = await fetch(`/api/models/${encodeURIComponent(family)}/acceleration-presets`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.maxSwappableBlocks = data.max_swappable_blocks;
+                        // Extract RamTorch presets
+                        this.ramtorchPresets = (data.presets || []).filter(p => p.backend === 'RAMTORCH');
+                    } else {
+                        this.maxSwappableBlocks = null;
+                        this.ramtorchPresets = [];
+                    }
+                } catch (err) {
+                    console.error('[EZ MODE] Failed to load memory presets:', err);
+                    this.maxSwappableBlocks = null;
+                    this.ramtorchPresets = [];
+                } finally {
+                    this.memoryPresetsLoading = false;
+                }
+            },
+
+            get supportsBlockSwap() {
+                return this.maxSwappableBlocks !== null && this.maxSwappableBlocks > 0;
+            },
+
+            getBlockSwapPercentage(blocks) {
+                if (!this.maxSwappableBlocks || this.maxSwappableBlocks <= 0) return 0;
+                return Math.round((blocks / this.maxSwappableBlocks) * 100);
+            },
+
+            getBlocksForPercentage(percent) {
+                if (!this.maxSwappableBlocks || this.maxSwappableBlocks <= 0) return 0;
+                return Math.round((percent / 100) * this.maxSwappableBlocks);
+            },
+
+            onBlockSwapSlider(sliderValue) {
+                const percent = parseInt(sliderValue) || 0;
+                const blocks = this.getBlocksForPercentage(percent);
+                this.musubi_blocks_to_swap = blocks;
+                this.updateFormField('musubi_blocks_to_swap', blocks);
+                if (blocks > 0 && this.ramtorch) {
+                    this.ramtorch = false;
+                    this.ramtorch_preset = 'off';
+                    this.updateFormField('ramtorch', false);
+                }
+            },
+
+            onRamtorchPresetChange(preset) {
+                this.ramtorch_preset = preset;
+                if (preset === 'off') {
+                    this.ramtorch = false;
+                    this.updateFormField('ramtorch', false);
+                    this.updateFormField('ramtorch_target_modules', '');
+                } else {
+                    // Find the preset config
+                    const presetData = this.ramtorchPresets.find(p => p.level === preset);
+                    if (presetData?.config) {
+                        this.ramtorch = true;
+                        this.updateFormField('ramtorch', true);
+                        if (presetData.config.ramtorch_target_modules) {
+                            this.updateFormField('ramtorch_target_modules', presetData.config.ramtorch_target_modules);
+                        }
+                    }
+                    // Clear block swap when using RamTorch
+                    if (this.musubi_blocks_to_swap > 0) {
+                        this.musubi_blocks_to_swap = 0;
+                        this.updateFormField('musubi_blocks_to_swap', 0);
+                    }
+                }
+            },
+
+            syncFromForm() {
+                const fields = [
+                    'model_family', 'model_flavour', 'model_type', 'lora_rank',
+                    'vae_enable_tiling', 'vae_enable_slicing', 'vae_batch_size',
+                    'gradient_checkpointing', 'ramtorch', 'musubi_blocks_to_swap', 'use_ema',
+                    'base_model_precision', 'text_encoder_1_precision'
+                ];
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    for (const fieldName of fields) {
+                        const prefixedKey = `--${fieldName}`;
+                        const value = config[prefixedKey] ?? config[fieldName];
+                        if (value !== undefined && value !== null) {
+                            if (typeof value === 'boolean') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'number') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'string') {
+                                if (value === 'true' || value === 'false') {
+                                    this[fieldName] = value === 'true';
+                                } else {
+                                    this[fieldName] = value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            this[fieldName] = el.checked;
+                        } else if (el.type === 'number' || el.type === 'range') {
+                            this[fieldName] = parseFloat(el.value) || 0;
+                        } else {
+                            this[fieldName] = el.value || '';
+                        }
+                    }
+                }
+
+                if (this.model_family) {
+                    this.loadModelFlavours(this.model_family);
+                    this.loadMemoryPresets(this.model_family);
+                }
+            },
+
+            setupFormWatchers() {
+                const fields = [
+                    'model_family', 'model_flavour', 'model_type', 'lora_rank',
+                    'vae_enable_tiling', 'vae_enable_slicing', 'vae_batch_size',
+                    'gradient_checkpointing', 'ramtorch', 'musubi_blocks_to_swap', 'use_ema',
+                    'base_model_precision', 'text_encoder_1_precision'
+                ];
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        const handler = () => {
+                            if (el.type === 'checkbox') {
+                                this[fieldName] = el.checked;
+                            } else if (el.type === 'number' || el.type === 'range') {
+                                this[fieldName] = parseFloat(el.value) || 0;
+                            } else {
+                                this[fieldName] = el.value || '';
+                            }
+                            if (fieldName === 'model_family') this.loadModelFlavours(el.value);
+                        };
+                        el.addEventListener('change', handler);
+                        el.addEventListener('input', handler);
+                        this._cleanupFns.push(() => {
+                            el.removeEventListener('change', handler);
+                            el.removeEventListener('input', handler);
+                        });
+                    }
+                }
+            },
+
+            updateFormField(fieldName, value) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value; }
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore) {
+                    const canonicalKey = `--${fieldName}`;
+                    if (typeof trainerStore.updateConfigValue === 'function') {
+                        trainerStore.updateConfigValue(canonicalKey, value);
+                    } else if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[canonicalKey] = value;
+                    }
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    }
+                }
+            },
+
+            onModelFamilyChange(value) {
+                this.model_family = value;
+                this.model_flavour = '';
+                this.updateFormField('model_family', value);
+                this.loadModelFlavours(value);
+                this.loadMemoryPresets(value);
+            },
+            onModelFlavourChange(value) { this.model_flavour = value; this.updateFormField('model_flavour', value); },
+            onModelTypeChange(value) { this.model_type = value; this.updateFormField('model_type', value); },
+            // LoRA rank uses powers of 2: [2, 4, 8, 16, 32, 64, 128, 256]
+            loraRankValues: [2, 4, 8, 16, 32, 64, 128, 256],
+
+            loraRankToSlider(rank) {
+                const idx = this.loraRankValues.indexOf(rank);
+                return idx >= 0 ? idx : 3; // Default to 16 (index 3)
+            },
+
+            onLoraRankSlider(sliderValue) {
+                const rank = this.loraRankValues[parseInt(sliderValue)] || 16;
+                this.lora_rank = rank;
+                this.updateFormField('lora_rank', rank);
+            },
+
+            onLoraRankChange(value) { const v = parseInt(value) || 16; this.lora_rank = v; this.updateFormField('lora_rank', v); },
+            onVaeTilingChange(c) { this.vae_enable_tiling = c; this.updateFormField('vae_enable_tiling', c); },
+            onVaeSlicingChange(c) { this.vae_enable_slicing = c; this.updateFormField('vae_enable_slicing', c); },
+            onVaeBatchSizeChange(v) { const n = parseInt(v) || 4; this.vae_batch_size = n; this.updateFormField('vae_batch_size', n); },
+            onGradientCheckpointingChange(c) { this.gradient_checkpointing = c; this.updateFormField('gradient_checkpointing', c); },
+            onUseEmaChange(c) { this.use_ema = c; this.updateFormField('use_ema', c); },
+            onBaseModelPrecisionChange(v) { this.base_model_precision = v; this.updateFormField('base_model_precision', v); },
+            onTextEncoderPrecisionChange(v) { this.text_encoder_1_precision = v; this.updateFormField('text_encoder_1_precision', v); },
+
+            openMemoryPresets() { window.openMemoryPresetsModal?.(); },
+
+            resetToDefaults() {
+                // Default values for EZ mode fields
+                const defaults = {
+                    model_type: 'lora',
+                    lora_rank: 16,
+                    vae_enable_tiling: false,
+                    vae_enable_slicing: false,
+                    vae_batch_size: 4,
+                    gradient_checkpointing: true,
+                    ramtorch: false,
+                    musubi_blocks_to_swap: 0,
+                    use_ema: false,
+                    base_model_precision: 'no_change',
+                    text_encoder_1_precision: 'no_change'
+                };
+
+                // Apply defaults (keep model_family and model_flavour as they are)
+                for (const [key, value] of Object.entries(defaults)) {
+                    this[key] = value;
+                    this.updateFormField(key, value);
+                }
+                // Reset local-only state
+                this.ramtorch_preset = 'off';
+                this.updateFormField('ramtorch_target_modules', '');
+
+                window.showToast?.('Settings reset to defaults', 'success');
+            },
+
+            get isLoraMode() { return this.model_type === 'lora'; },
+            get hasModelFamily() { return Boolean(this.model_family); }
+        };
+    }
+
+    // Register with Alpine
+    if (window.Alpine) {
+        window.Alpine.data('modelEzModeComponent', modelEzModeComponent);
+    } else {
+        document.addEventListener('alpine:init', () => {
+            window.Alpine.data('modelEzModeComponent', modelEzModeComponent);
+        });
+    }
+})();
+</script>
+{% elif tab_name == 'basic' %}
+<script>
+// Basic EZ Mode Component - inline for HTMX swaps
+(function() {
+    'use strict';
+
+    function basicEzModeComponent() {
+        return {
+            loading: true,
+            error: null,
+
+            // Project settings
+            report_to: 'wandb',
+            tracker_project_name: 'simpletuner',
+            tracker_run_name: 'simpletuner-testing',
+            output_dir: 'simpletuner-results',
+
+            // Checkpoint
+            resume_from_checkpoint: 'latest',
+            checkpointChoices: [
+                { value: 'latest', label: 'Latest checkpoint (automatic)' },
+                { value: '', label: 'None (start from scratch)' }
+            ],
+
+            // Dataset configuration
+            data_backend_config: '',
+            dataBackendChoices: [],
+            override_dataset_config: false,
+            disable_bucket_pruning: false,
+            allow_dataset_oversubscription: false,
+            train_batch_size: 4,
+
+            // Dataset defaults
+            minimum_image_size: null,
+            maximum_image_size: null,
+            target_downsample_size: null,
+            resolution: 1024,
+            caption_strategy: 'textfile',
+
+            hints: { ez_mode: true },
+            _cleanupFns: [],
+
+            showEzMode() {
+                return this.hints.ez_mode;
+            },
+
+            dismissEzMode() {
+                this.hints.ez_mode = false;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_basic_hints') || '{}');
+                    stored.ez_mode = false;
+                    localStorage.setItem('st_basic_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            restoreEzMode() {
+                this.hints.ez_mode = true;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_basic_hints') || '{}');
+                    stored.ez_mode = true;
+                    localStorage.setItem('st_basic_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            async init() {
+                // Load persisted state
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_basic_hints') || '{}');
+                    this.hints.ez_mode = stored.ez_mode !== false;
+                } catch (e) { }
+
+                await this.loadDataBackendChoices();
+                await this.loadCheckpointChoices();
+
+                // Initial sync attempt
+                this.syncFromForm();
+                this.setupFormWatchers();
+                this.watchEnvironmentChanges();
+                this.watchTrainerStore();
+                this.loading = false;
+            },
+
+            watchTrainerStore() {
+                let attempts = 0;
+                const maxAttempts = 50;
+                const checkStore = () => {
+                    const store = window.Alpine?.store?.('trainer');
+                    const config = store?.activeEnvironmentConfig;
+
+                    if (config && Object.keys(config).length > 0) {
+                        this.syncFromForm();
+                        return;
+                    }
+
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStore, 100);
+                    }
+                };
+
+                setTimeout(checkStore, 100);
+            },
+
+            destroy() {
+                this._cleanupFns.forEach(fn => fn());
+                this._cleanupFns = [];
+            },
+
+            watchEnvironmentChanges() {
+                const handler = () => {
+                    setTimeout(() => {
+                        this.syncFromForm();
+                        this.loadCheckpointChoices();
+                    }, 100);
+                };
+                document.addEventListener('environment-loaded', handler);
+                document.addEventListener('environment-switched', handler);
+
+                const htmxHandler = (evt) => {
+                    if (evt.detail?.target?.id === 'basic-tab-content') {
+                        setTimeout(() => this.syncFromForm(), 100);
+                    }
+                };
+                document.body.addEventListener('htmx:afterSettle', htmxHandler);
+
+                this._cleanupFns.push(() => {
+                    document.removeEventListener('environment-loaded', handler);
+                    document.removeEventListener('environment-switched', handler);
+                    document.body.removeEventListener('htmx:afterSettle', htmxHandler);
+                });
+            },
+
+            async loadDataBackendChoices() {
+                try {
+                    // Use the field metadata endpoint to get dynamic choices for data_backend_config
+                    const response = await fetch('/api/fields/field/data_backend_config');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.dataBackendChoices = data.choices || [];
+                    }
+                } catch (err) {
+                    console.error('[BASIC EZ MODE] Failed to load data backend choices:', err);
+                }
+            },
+
+            async loadCheckpointChoices() {
+                try {
+                    const outputDir = this.output_dir || 'simpletuner-results';
+                    const response = await fetch(`/api/training/checkpoints?output_dir=${encodeURIComponent(outputDir)}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        const baseChoices = [
+                            { value: 'latest', label: 'Latest checkpoint (automatic)' },
+                            { value: '', label: 'None (start from scratch)' }
+                        ];
+                        if (data.checkpoints && data.checkpoints.length > 0) {
+                            const ckptChoices = data.checkpoints.map(c => ({
+                                value: c.path || c.name,
+                                label: c.name || c.path
+                            }));
+                            this.checkpointChoices = [...baseChoices, ...ckptChoices];
+                        } else {
+                            this.checkpointChoices = baseChoices;
+                        }
+                    }
+                } catch (err) {
+                    console.error('[BASIC EZ MODE] Failed to load checkpoints:', err);
+                }
+            },
+
+            syncFromForm() {
+                const fields = [
+                    'report_to', 'tracker_project_name', 'tracker_run_name', 'output_dir',
+                    'resume_from_checkpoint', 'data_backend_config', 'override_dataset_config',
+                    'disable_bucket_pruning', 'allow_dataset_oversubscription', 'train_batch_size',
+                    'minimum_image_size', 'maximum_image_size', 'target_downsample_size',
+                    'resolution', 'caption_strategy'
+                ];
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    for (const fieldName of fields) {
+                        const prefixedKey = `--${fieldName}`;
+                        const value = config[prefixedKey] ?? config[fieldName];
+                        if (value !== undefined && value !== null) {
+                            if (typeof value === 'boolean') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'number') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'string') {
+                                if (value === 'true' || value === 'false') {
+                                    this[fieldName] = value === 'true';
+                                } else {
+                                    this[fieldName] = value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            this[fieldName] = el.checked;
+                        } else if (el.type === 'number' || el.type === 'range') {
+                            const val = parseFloat(el.value);
+                            this[fieldName] = isNaN(val) ? null : val;
+                        } else {
+                            this[fieldName] = el.value || '';
+                        }
+                    }
+                }
+            },
+
+            setupFormWatchers() {
+                const fields = [
+                    'report_to', 'tracker_project_name', 'tracker_run_name', 'output_dir',
+                    'resume_from_checkpoint', 'data_backend_config', 'override_dataset_config',
+                    'disable_bucket_pruning', 'allow_dataset_oversubscription', 'train_batch_size',
+                    'minimum_image_size', 'maximum_image_size', 'target_downsample_size',
+                    'resolution', 'caption_strategy'
+                ];
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        const handler = () => {
+                            if (el.type === 'checkbox') {
+                                this[fieldName] = el.checked;
+                            } else if (el.type === 'number' || el.type === 'range') {
+                                const val = parseFloat(el.value);
+                                this[fieldName] = isNaN(val) ? null : val;
+                            } else {
+                                this[fieldName] = el.value || '';
+                            }
+                            if (fieldName === 'output_dir') {
+                                this.loadCheckpointChoices();
+                            }
+                        };
+                        el.addEventListener('change', handler);
+                        el.addEventListener('input', handler);
+                        this._cleanupFns.push(() => {
+                            el.removeEventListener('change', handler);
+                            el.removeEventListener('input', handler);
+                        });
+                    }
+                }
+            },
+
+            updateFormField(fieldName, value) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore) {
+                    const canonicalKey = `--${fieldName}`;
+                    if (typeof trainerStore.updateConfigValue === 'function') {
+                        trainerStore.updateConfigValue(canonicalKey, value);
+                    } else if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[canonicalKey] = value;
+                    }
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    }
+                }
+            },
+
+            // Field change handlers
+            onReportToChange(value) { this.report_to = value; this.updateFormField('report_to', value); },
+            onProjectNameChange(value) { this.tracker_project_name = value; this.updateFormField('tracker_project_name', value); },
+            onRunNameChange(value) { this.tracker_run_name = value; this.updateFormField('tracker_run_name', value); },
+            onOutputDirChange(value) {
+                this.output_dir = value;
+                this.updateFormField('output_dir', value);
+                this.loadCheckpointChoices();
+            },
+            onResumeFromCheckpointChange(value) { this.resume_from_checkpoint = value; this.updateFormField('resume_from_checkpoint', value); },
+            onDataBackendConfigChange(value) { this.data_backend_config = value; this.updateFormField('data_backend_config', value); },
+            onOverrideDatasetConfigChange(checked) { this.override_dataset_config = checked; this.updateFormField('override_dataset_config', checked); },
+            onDisableBucketPruningChange(checked) { this.disable_bucket_pruning = checked; this.updateFormField('disable_bucket_pruning', checked); },
+            onAllowOversubscriptionChange(checked) { this.allow_dataset_oversubscription = checked; this.updateFormField('allow_dataset_oversubscription', checked); },
+            onBatchSizeChange(value) { const v = parseInt(value) || 1; this.train_batch_size = v; this.updateFormField('train_batch_size', v); },
+            onMinImageSizeChange(value) { const v = value ? parseInt(value) : null; this.minimum_image_size = v; this.updateFormField('minimum_image_size', v); },
+            onMaxImageSizeChange(value) { const v = value ? parseInt(value) : null; this.maximum_image_size = v; this.updateFormField('maximum_image_size', v); },
+            onTargetDownsampleChange(value) { const v = value ? parseInt(value) : null; this.target_downsample_size = v; this.updateFormField('target_downsample_size', v); },
+            onResolutionChange(value) { const v = parseInt(value) || 1024; this.resolution = v; this.updateFormField('resolution', v); },
+            onCaptionStrategyChange(value) { this.caption_strategy = value; this.updateFormField('caption_strategy', value); },
+
+            resetToDefaults() {
+                const defaults = {
+                    report_to: 'wandb',
+                    tracker_project_name: 'simpletuner',
+                    tracker_run_name: 'simpletuner-testing',
+                    output_dir: 'simpletuner-results',
+                    resume_from_checkpoint: 'latest',
+                    override_dataset_config: false,
+                    disable_bucket_pruning: false,
+                    allow_dataset_oversubscription: false,
+                    train_batch_size: 4,
+                    minimum_image_size: null,
+                    maximum_image_size: null,
+                    target_downsample_size: null,
+                    resolution: 1024,
+                    caption_strategy: 'textfile'
+                };
+
+                for (const [key, value] of Object.entries(defaults)) {
+                    this[key] = value;
+                    this.updateFormField(key, value);
+                }
+
+                window.showToast?.('Settings reset to defaults', 'success');
+            }
+        };
+    }
+
+    // Register with Alpine
+    if (window.Alpine) {
+        window.Alpine.data('basicEzModeComponent', basicEzModeComponent);
+    } else {
+        document.addEventListener('alpine:init', () => {
+            window.Alpine.data('basicEzModeComponent', basicEzModeComponent);
+        });
+    }
+})();
+</script>
+{% elif tab_name == 'training' %}
+<script>
+// Training Easy Mode Component - inline for HTMX swaps
+(function() {
+    'use strict';
+
+    function trainingEzModeComponent() {
+        return {
+            loading: true,
+            error: null,
+
+            // Training duration
+            num_train_epochs: 1,
+            max_train_steps: null,
+
+            // Checkpointing
+            checkpoint_step_interval: 500,
+            checkpoint_epoch_interval: null,
+            checkpoints_total_limit: 5,
+
+            // Learning rate
+            learning_rate: 4e-7,
+            lr_scheduler: 'constant_with_warmup',
+            lr_warmup_steps: 0,
+            lr_end: 4e-7,
+
+            // Optimizer
+            optimizer: 'adamw_bf16',
+            optimizerChoices: [],
+            max_grad_norm: 2.0,
+
+            // Flow schedule
+            flow_schedule_auto_shift: false,
+            flow_schedule_shift: 3.0,
+
+            hints: { ez_mode: true },
+            _cleanupFns: [],
+
+            showEzMode() {
+                return this.hints.ez_mode;
+            },
+
+            dismissEzMode() {
+                this.hints.ez_mode = false;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_training_hints') || '{}');
+                    stored.ez_mode = false;
+                    localStorage.setItem('st_training_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            restoreEzMode() {
+                this.hints.ez_mode = true;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_training_hints') || '{}');
+                    stored.ez_mode = true;
+                    localStorage.setItem('st_training_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            async init() {
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_training_hints') || '{}');
+                    this.hints.ez_mode = stored.ez_mode !== false;
+                } catch (e) { }
+
+                await this.loadOptimizerChoices();
+
+                this.syncFromForm();
+                this.setupFormWatchers();
+                this.watchEnvironmentChanges();
+                this.watchTrainerStore();
+                this.loading = false;
+            },
+
+            watchTrainerStore() {
+                let attempts = 0;
+                const maxAttempts = 50;
+                const checkStore = () => {
+                    const store = window.Alpine?.store?.('trainer');
+                    const config = store?.activeEnvironmentConfig;
+
+                    if (config && Object.keys(config).length > 0) {
+                        this.syncFromForm();
+                        return;
+                    }
+
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStore, 100);
+                    }
+                };
+
+                setTimeout(checkStore, 100);
+            },
+
+            destroy() {
+                this._cleanupFns.forEach(fn => fn());
+                this._cleanupFns = [];
+            },
+
+            watchEnvironmentChanges() {
+                const handler = () => {
+                    setTimeout(() => this.syncFromForm(), 100);
+                };
+                document.addEventListener('environment-loaded', handler);
+                document.addEventListener('environment-switched', handler);
+
+                const htmxHandler = (evt) => {
+                    if (evt.detail?.target?.id === 'training-tab-content') {
+                        setTimeout(() => this.syncFromForm(), 100);
+                    }
+                };
+                document.body.addEventListener('htmx:afterSettle', htmxHandler);
+
+                this._cleanupFns.push(() => {
+                    document.removeEventListener('environment-loaded', handler);
+                    document.removeEventListener('environment-switched', handler);
+                    document.body.removeEventListener('htmx:afterSettle', htmxHandler);
+                });
+            },
+
+            async loadOptimizerChoices() {
+                try {
+                    const response = await fetch('/api/fields/field/optimizer');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.optimizerChoices = data.choices || [];
+                    }
+                } catch (err) {
+                    console.error('[TRAINING EZ MODE] Failed to load optimizer choices:', err);
+                }
+            },
+
+            syncFromForm() {
+                const fields = [
+                    'num_train_epochs', 'max_train_steps',
+                    'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
+                    'learning_rate', 'lr_scheduler', 'lr_warmup_steps', 'lr_end',
+                    'optimizer', 'max_grad_norm',
+                    'flow_schedule_auto_shift', 'flow_schedule_shift'
+                ];
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    for (const fieldName of fields) {
+                        const prefixedKey = `--${fieldName}`;
+                        const value = config[prefixedKey] ?? config[fieldName];
+                        if (value !== undefined && value !== null) {
+                            if (typeof value === 'boolean') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'number') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'string') {
+                                if (value === 'true' || value === 'false') {
+                                    this[fieldName] = value === 'true';
+                                } else {
+                                    this[fieldName] = value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            this[fieldName] = el.checked;
+                        } else if (el.type === 'number' || el.type === 'range') {
+                            const val = parseFloat(el.value);
+                            this[fieldName] = isNaN(val) ? null : val;
+                        } else {
+                            this[fieldName] = el.value || '';
+                        }
+                    }
+                }
+            },
+
+            setupFormWatchers() {
+                const fields = [
+                    'num_train_epochs', 'max_train_steps',
+                    'checkpoint_step_interval', 'checkpoint_epoch_interval', 'checkpoints_total_limit',
+                    'learning_rate', 'lr_scheduler', 'lr_warmup_steps', 'lr_end',
+                    'optimizer', 'max_grad_norm',
+                    'flow_schedule_auto_shift', 'flow_schedule_shift'
+                ];
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        const handler = () => {
+                            if (el.type === 'checkbox') {
+                                this[fieldName] = el.checked;
+                            } else if (el.type === 'number' || el.type === 'range') {
+                                const val = parseFloat(el.value);
+                                this[fieldName] = isNaN(val) ? null : val;
+                            } else {
+                                this[fieldName] = el.value || '';
+                            }
+                        };
+                        el.addEventListener('change', handler);
+                        el.addEventListener('input', handler);
+                        this._cleanupFns.push(() => {
+                            el.removeEventListener('change', handler);
+                            el.removeEventListener('input', handler);
+                        });
+                    }
+                }
+            },
+
+            updateFormField(fieldName, value) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore) {
+                    const canonicalKey = `--${fieldName}`;
+                    if (typeof trainerStore.updateConfigValue === 'function') {
+                        trainerStore.updateConfigValue(canonicalKey, value);
+                    } else if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[canonicalKey] = value;
+                    }
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    }
+                }
+            },
+
+            // Field change handlers
+            onNumEpochsChange(value) { const v = parseInt(value) || 1; this.num_train_epochs = v; this.updateFormField('num_train_epochs', v); },
+            onMaxStepsChange(value) { const v = value ? parseInt(value) : null; this.max_train_steps = v; this.updateFormField('max_train_steps', v); },
+            onCheckpointStepIntervalChange(value) { const v = parseInt(value) || 500; this.checkpoint_step_interval = v; this.updateFormField('checkpoint_step_interval', v); },
+            onCheckpointEpochIntervalChange(value) { const v = value ? parseInt(value) : null; this.checkpoint_epoch_interval = v; this.updateFormField('checkpoint_epoch_interval', v); },
+            onCheckpointsTotalLimitChange(value) { const v = parseInt(value) || 5; this.checkpoints_total_limit = v; this.updateFormField('checkpoints_total_limit', v); },
+            onLearningRateChange(value) { const v = parseFloat(value) || 4e-7; this.learning_rate = v; this.updateFormField('learning_rate', v); },
+            onLrSchedulerChange(value) { this.lr_scheduler = value; this.updateFormField('lr_scheduler', value); },
+            onLrWarmupStepsChange(value) { const v = parseInt(value) || 0; this.lr_warmup_steps = v; this.updateFormField('lr_warmup_steps', v); },
+            onLrEndChange(value) { const v = parseFloat(value) || 4e-7; this.lr_end = v; this.updateFormField('lr_end', v); },
+            onOptimizerChange(value) { this.optimizer = value; this.updateFormField('optimizer', value); },
+            onMaxGradNormChange(value) { const v = parseFloat(value) || 2.0; this.max_grad_norm = v; this.updateFormField('max_grad_norm', v); },
+            onFlowAutoShiftChange(checked) { this.flow_schedule_auto_shift = checked; this.updateFormField('flow_schedule_auto_shift', checked); },
+            onFlowShiftChange(value) { const v = parseFloat(value) || 3.0; this.flow_schedule_shift = v; this.updateFormField('flow_schedule_shift', v); },
+
+            get showLrEnd() {
+                return ['cosine', 'sine', 'polynomial'].includes(this.lr_scheduler);
+            },
+
+            resetToDefaults() {
+                const defaults = {
+                    num_train_epochs: 1,
+                    max_train_steps: null,
+                    checkpoint_step_interval: 500,
+                    checkpoint_epoch_interval: null,
+                    checkpoints_total_limit: 5,
+                    learning_rate: 4e-7,
+                    lr_scheduler: 'constant_with_warmup',
+                    lr_warmup_steps: 0,
+                    lr_end: 4e-7,
+                    optimizer: 'adamw_bf16',
+                    max_grad_norm: 2.0,
+                    flow_schedule_auto_shift: false,
+                    flow_schedule_shift: 3.0
+                };
+
+                for (const [key, value] of Object.entries(defaults)) {
+                    this[key] = value;
+                    this.updateFormField(key, value);
+                }
+
+                window.showToast?.('Settings reset to defaults', 'success');
+            }
+        };
+    }
+
+    // Register with Alpine
+    if (window.Alpine) {
+        window.Alpine.data('trainingEzModeComponent', trainingEzModeComponent);
+    } else {
+        document.addEventListener('alpine:init', () => {
+            window.Alpine.data('trainingEzModeComponent', trainingEzModeComponent);
+        });
+    }
+})();
+</script>
+{% elif tab_name == 'validation' %}
+<script>
+// Validation Easy Mode Component - inline for HTMX swaps
+(function() {
+    'use strict';
+
+    function validationEzModeComponent() {
+        return {
+            loading: true,
+            error: null,
+
+            // Validation schedule
+            validation_step_interval: 100,
+            validation_epoch_interval: null,
+            validation_num_inference_steps: 30,
+
+            // Prompts
+            validation_prompt: '',
+            validation_negative_prompt: 'blurry, cropped, ugly',
+
+            // Guidance
+            validation_guidance: 7.5,
+
+            // Seeds
+            validation_randomize: false,
+            validation_seed: null,
+
+            // Prompt library
+            validation_prompt_library: false,
+            user_prompt_library: '',
+            promptLibraries: [],
+            promptLibraryEntries: [],
+            selectedLibrary: null,
+            libraryLoading: false,
+            showLibraryEditor: false,
+            newLibraryName: '',
+            editingEntries: [],
+
+            hints: { ez_mode: true },
+            _cleanupFns: [],
+
+            showEzMode() {
+                return this.hints.ez_mode;
+            },
+
+            dismissEzMode() {
+                this.hints.ez_mode = false;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_validation_hints') || '{}');
+                    stored.ez_mode = false;
+                    localStorage.setItem('st_validation_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            restoreEzMode() {
+                this.hints.ez_mode = true;
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_validation_hints') || '{}');
+                    stored.ez_mode = true;
+                    localStorage.setItem('st_validation_hints', JSON.stringify(stored));
+                } catch (e) { }
+            },
+
+            async init() {
+                try {
+                    const stored = JSON.parse(localStorage.getItem('st_validation_hints') || '{}');
+                    this.hints.ez_mode = stored.ez_mode !== false;
+                } catch (e) { }
+
+                await this.loadPromptLibraries();
+
+                this.syncFromForm();
+                this.setupFormWatchers();
+                this.watchEnvironmentChanges();
+                this.watchTrainerStore();
+                this.loading = false;
+            },
+
+            watchTrainerStore() {
+                let attempts = 0;
+                const maxAttempts = 50;
+                const checkStore = () => {
+                    const store = window.Alpine?.store?.('trainer');
+                    const config = store?.activeEnvironmentConfig;
+
+                    if (config && Object.keys(config).length > 0) {
+                        this.syncFromForm();
+                        return;
+                    }
+
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(checkStore, 100);
+                    }
+                };
+
+                setTimeout(checkStore, 100);
+            },
+
+            destroy() {
+                this._cleanupFns.forEach(fn => fn());
+                this._cleanupFns = [];
+            },
+
+            watchEnvironmentChanges() {
+                const handler = () => {
+                    setTimeout(() => this.syncFromForm(), 100);
+                };
+                document.addEventListener('environment-loaded', handler);
+                document.addEventListener('environment-switched', handler);
+
+                const htmxHandler = (evt) => {
+                    if (evt.detail?.target?.id === 'validation-tab-content') {
+                        setTimeout(() => this.syncFromForm(), 100);
+                    }
+                };
+                document.body.addEventListener('htmx:afterSettle', htmxHandler);
+
+                this._cleanupFns.push(() => {
+                    document.removeEventListener('environment-loaded', handler);
+                    document.removeEventListener('environment-switched', handler);
+                    document.body.removeEventListener('htmx:afterSettle', htmxHandler);
+                });
+            },
+
+            async loadPromptLibraries() {
+                try {
+                    const response = await fetch('/api/prompt-libraries');
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.promptLibraries = data.libraries || [];
+                    }
+                } catch (err) {
+                    console.error('[VALIDATION EZ MODE] Failed to load prompt libraries:', err);
+                }
+            },
+
+            async loadLibraryEntries(filename) {
+                if (!filename) {
+                    this.promptLibraryEntries = [];
+                    this.selectedLibrary = null;
+                    return;
+                }
+                this.libraryLoading = true;
+                try {
+                    const response = await fetch(`/api/prompt-libraries/${encodeURIComponent(filename)}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        const entries = data.entries || {};
+                        this.promptLibraryEntries = Object.entries(entries).map(([shortname, value]) => ({
+                            shortname,
+                            prompt: typeof value === 'string' ? value : value.prompt || ''
+                        }));
+                        this.selectedLibrary = data.library;
+                    }
+                } catch (err) {
+                    console.error('[VALIDATION EZ MODE] Failed to load library entries:', err);
+                } finally {
+                    this.libraryLoading = false;
+                }
+            },
+
+            syncFromForm() {
+                const fields = [
+                    'validation_step_interval', 'validation_epoch_interval', 'validation_num_inference_steps',
+                    'validation_prompt', 'validation_negative_prompt',
+                    'validation_guidance', 'validation_randomize', 'validation_seed',
+                    'validation_prompt_library', 'user_prompt_library'
+                ];
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore?.activeEnvironmentConfig) {
+                    const config = trainerStore.activeEnvironmentConfig;
+                    for (const fieldName of fields) {
+                        const prefixedKey = `--${fieldName}`;
+                        const value = config[prefixedKey] ?? config[fieldName];
+                        if (value !== undefined && value !== null) {
+                            if (typeof value === 'boolean') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'number') {
+                                this[fieldName] = value;
+                            } else if (typeof value === 'string') {
+                                if (value === 'true' || value === 'false') {
+                                    this[fieldName] = value === 'true';
+                                } else {
+                                    this[fieldName] = value;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        if (el.type === 'checkbox') {
+                            this[fieldName] = el.checked;
+                        } else if (el.type === 'number' || el.type === 'range') {
+                            const val = parseFloat(el.value);
+                            this[fieldName] = isNaN(val) ? null : val;
+                        } else {
+                            this[fieldName] = el.value || '';
+                        }
+                    }
+                }
+
+                // Load library entries if a library is selected
+                if (this.user_prompt_library) {
+                    const segments = this.user_prompt_library.split(/[/\\]+/);
+                    const filename = segments[segments.length - 1];
+                    if (filename) {
+                        this.loadLibraryEntries(filename);
+                    }
+                }
+            },
+
+            setupFormWatchers() {
+                const fields = [
+                    'validation_step_interval', 'validation_epoch_interval', 'validation_num_inference_steps',
+                    'validation_prompt', 'validation_negative_prompt',
+                    'validation_guidance', 'validation_randomize', 'validation_seed',
+                    'validation_prompt_library', 'user_prompt_library'
+                ];
+
+                for (const fieldName of fields) {
+                    const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                    if (el) {
+                        const handler = () => {
+                            if (el.type === 'checkbox') {
+                                this[fieldName] = el.checked;
+                            } else if (el.type === 'number' || el.type === 'range') {
+                                const val = parseFloat(el.value);
+                                this[fieldName] = isNaN(val) ? null : val;
+                            } else {
+                                this[fieldName] = el.value || '';
+                            }
+                        };
+                        el.addEventListener('change', handler);
+                        el.addEventListener('input', handler);
+                        this._cleanupFns.push(() => {
+                            el.removeEventListener('change', handler);
+                            el.removeEventListener('input', handler);
+                        });
+                    }
+                }
+            },
+
+            updateFormField(fieldName, value) {
+                const el = document.getElementById(fieldName) || document.querySelector(`[name="${fieldName}"]`);
+                if (el) {
+                    if (el.type === 'checkbox') { el.checked = Boolean(value); }
+                    else { el.value = value ?? ''; }
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+
+                const trainerStore = window.Alpine?.store?.('trainer');
+                if (trainerStore) {
+                    const canonicalKey = `--${fieldName}`;
+                    if (typeof trainerStore.updateConfigValue === 'function') {
+                        trainerStore.updateConfigValue(canonicalKey, value);
+                    } else if (trainerStore.activeEnvironmentConfig) {
+                        trainerStore.activeEnvironmentConfig[canonicalKey] = value;
+                    }
+                    if (typeof trainerStore.markFormDirty === 'function') {
+                        trainerStore.markFormDirty();
+                    }
+                }
+            },
+
+            // Field change handlers
+            onValidationStepIntervalChange(value) { const v = parseInt(value) || 100; this.validation_step_interval = v; this.updateFormField('validation_step_interval', v); },
+            onValidationEpochIntervalChange(value) { const v = value ? parseInt(value) : null; this.validation_epoch_interval = v; this.updateFormField('validation_epoch_interval', v); },
+            onValidationInferenceStepsChange(value) { const v = parseInt(value) || 30; this.validation_num_inference_steps = v; this.updateFormField('validation_num_inference_steps', v); },
+            onValidationPromptChange(value) { this.validation_prompt = value; this.updateFormField('validation_prompt', value); },
+            onValidationNegativePromptChange(value) { this.validation_negative_prompt = value; this.updateFormField('validation_negative_prompt', value); },
+            onValidationGuidanceChange(value) { const v = parseFloat(value) || 7.5; this.validation_guidance = v; this.updateFormField('validation_guidance', v); },
+            onValidationRandomizeChange(checked) { this.validation_randomize = checked; this.updateFormField('validation_randomize', checked); },
+            onValidationSeedChange(value) { const v = value ? parseInt(value) : null; this.validation_seed = v; this.updateFormField('validation_seed', v); },
+            onValidationPromptLibraryChange(checked) { this.validation_prompt_library = checked; this.updateFormField('validation_prompt_library', checked); },
+
+            async onUserPromptLibraryChange(value) {
+                this.user_prompt_library = value;
+                this.updateFormField('user_prompt_library', value);
+                if (value) {
+                    const segments = value.split(/[/\\]+/);
+                    const filename = segments[segments.length - 1];
+                    if (filename) {
+                        await this.loadLibraryEntries(filename);
+                    }
+                } else {
+                    this.promptLibraryEntries = [];
+                    this.selectedLibrary = null;
+                }
+            },
+
+            // Prompt library editor
+            openLibraryEditor(createNew = false) {
+                if (createNew) {
+                    this.newLibraryName = '';
+                    this.editingEntries = [{ shortname: '', prompt: '' }];
+                    this.selectedLibrary = null;
+                } else if (this.promptLibraryEntries.length > 0) {
+                    this.editingEntries = this.promptLibraryEntries.map(e => ({ ...e }));
+                    this.editingEntries.push({ shortname: '', prompt: '' });
+                    this.newLibraryName = this.selectedLibrary?.library_name || '';
+                } else {
+                    this.newLibraryName = '';
+                    this.editingEntries = [{ shortname: '', prompt: '' }];
+                }
+                this.showLibraryEditor = true;
+            },
+
+            closeLibraryEditor() {
+                this.showLibraryEditor = false;
+                this.editingEntries = [];
+                this.newLibraryName = '';
+            },
+
+            addPromptEntry() {
+                this.editingEntries.push({ shortname: '', prompt: '' });
+            },
+
+            removePromptEntry(index) {
+                this.editingEntries.splice(index, 1);
+                if (this.editingEntries.length === 0) {
+                    this.editingEntries.push({ shortname: '', prompt: '' });
+                }
+            },
+
+            async savePromptLibrary() {
+                // Validate entries
+                const validEntries = this.editingEntries.filter(e => e.shortname.trim() && e.prompt.trim());
+                if (validEntries.length === 0) {
+                    window.showToast?.('Add at least one prompt entry', 'error');
+                    return;
+                }
+
+                const libraryName = this.newLibraryName.trim();
+                if (libraryName && !/^[A-Za-z0-9._-]+$/.test(libraryName)) {
+                    window.showToast?.('Library name can only contain letters, numbers, ".", "_", or "-"', 'error');
+                    return;
+                }
+
+                const filename = libraryName ? `user_prompt_library-${libraryName}.json` : 'user_prompt_library.json';
+                const entries = validEntries.reduce((acc, e) => ({ ...acc, [e.shortname]: e.prompt }), {});
+
+                try {
+                    const response = await fetch(`/api/prompt-libraries/${encodeURIComponent(filename)}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            entries,
+                            previous_filename: this.selectedLibrary?.filename
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const data = await response.json().catch(() => ({}));
+                        throw new Error(data.detail || 'Failed to save');
+                    }
+
+                    const data = await response.json();
+                    window.showToast?.('Prompt library saved', 'success');
+
+                    // Update form field with new path
+                    const targetPath = data.library?.absolute_path || data.library?.relative_path;
+                    if (targetPath) {
+                        await this.onUserPromptLibraryChange(targetPath);
+                    }
+
+                    // Refresh libraries list
+                    await this.loadPromptLibraries();
+                    this.closeLibraryEditor();
+                } catch (err) {
+                    window.showToast?.(err.message || 'Failed to save prompt library', 'error');
+                }
+            },
+
+            resetToDefaults() {
+                const defaults = {
+                    validation_step_interval: 100,
+                    validation_epoch_interval: null,
+                    validation_num_inference_steps: 30,
+                    validation_prompt: '',
+                    validation_negative_prompt: 'blurry, cropped, ugly',
+                    validation_guidance: 7.5,
+                    validation_randomize: false,
+                    validation_seed: null,
+                    validation_prompt_library: false,
+                    user_prompt_library: ''
+                };
+
+                for (const [key, value] of Object.entries(defaults)) {
+                    this[key] = value;
+                    this.updateFormField(key, value);
+                }
+
+                this.promptLibraryEntries = [];
+                this.selectedLibrary = null;
+                window.showToast?.('Settings reset to defaults', 'success');
+            }
+        };
+    }
+
+    // Register with Alpine
+    if (window.Alpine) {
+        window.Alpine.data('validationEzModeComponent', validationEzModeComponent);
+    } else {
+        document.addEventListener('alpine:init', () => {
+            window.Alpine.data('validationEzModeComponent', validationEzModeComponent);
+        });
+    }
+})();
+</script>
+{% endif %}
+
 <div class="tab-fragment"
      id="{{ tab_name }}-tab-content"
      data-tab-name="{{ tab_name }}"
-     data-danger-mode="{{ 'true' if danger_mode_enabled | default(false) else 'false' }}">
+     data-danger-mode="{{ 'true' if danger_mode_enabled | default(false) else 'false' }}"
+     {% if tab_name == 'publishing' %}x-data="publishingHeroCTA()" x-init="init()"{% elif tab_name == 'hardware' %}x-data="hardwareHeroCTA()" x-init="init()"{% elif tab_name == 'model' %}x-data="modelEzModeComponent()" x-init="init()"{% elif tab_name == 'basic' %}x-data="basicEzModeComponent()" x-init="init()"{% elif tab_name == 'training' %}x-data="trainingEzModeComponent()" x-init="init()"{% elif tab_name == 'validation' %}x-data="validationEzModeComponent()" x-init="init()"{% endif %}>
+
+    {% if tab_name == 'publishing' %}
+    <!-- Hero CTA - Introduction to publishing -->
+    {% call hero_cta(
+        theme='green',
+        icon_class='fa-cloud-upload-alt',
+        icon_shape='rounded',
+        title='Publishing to HuggingFace Hub',
+        description='Configure automatic uploads of your trained models and checkpoints to the HuggingFace Hub. This allows you to share your work, version your models, and make them accessible to others.',
+        features=[
+            {'icon': 'fa-key', 'color': 'text-warning', 'label': 'Authentication'},
+            {'icon': 'fa-code-branch', 'color': 'text-info', 'label': 'Repository Config'},
+            {'icon': 'fa-upload', 'color': 'text-success', 'label': 'Auto-Upload'},
+        ],
+        show_condition='showHeroCTA()',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Dismiss', 'icon': 'fa-check', 'action': 'dismissHeroCTA()'},
+        tip_text='You can upload checkpoints manually from the <strong>Checkpoints</strong> tab, or enable automatic uploads here.'
+    ) %}
+    <div class="hero-details mt-4">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-key text-warning me-2"></i>Authentication</h6>
+                    <p class="small text-muted mb-0">
+                        Connect your HuggingFace account using an access token. Tokens are stored securely
+                        in your local HuggingFace cache (~/.cache/huggingface/token).
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-code-branch text-info me-2"></i>Repository Settings</h6>
+                    <p class="small text-muted mb-0">
+                        Configure your Hub repository ID, visibility (public/private), and whether to
+                        push checkpoints automatically during training.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-upload text-success me-2"></i>Automatic Uploads</h6>
+                    <p class="small text-muted mb-0">
+                        Enable "Push to Hub" to automatically upload checkpoints as they're saved.
+                        Great for long training runs where you want continuous backups.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endcall %}
+
+    <div x-show="!showHeroCTA()" x-cloak>
+    {% elif tab_name == 'hardware' %}
+    <!-- Hero CTA - Introduction to hardware settings -->
+    {% call hero_cta(
+        theme='purple',
+        icon_class='fa-microchip',
+        icon_shape='rounded',
+        title='Hardware & Distributed Training',
+        description='Configure multi-GPU training, distributed computing, and system resource settings. Most users can leave these at their defaults — SimpleTuner auto-detects your hardware.',
+        features=[
+            {'icon': 'fa-project-diagram', 'color': 'text-info', 'label': 'Multi-GPU'},
+            {'icon': 'fa-server', 'color': 'text-warning', 'label': 'Multi-Node'},
+            {'icon': 'fa-cogs', 'color': 'text-success', 'label': 'Worker Threads'},
+        ],
+        show_condition='showHeroCTA()',
+        dismiss_method='dismissHeroCTA()',
+        cta_primary={'label': 'Dismiss', 'icon': 'fa-check', 'action': 'dismissHeroCTA()'},
+        tip_text='For single-GPU training, you typically don\'t need to change anything here. These settings become important for multi-GPU or multi-machine setups.'
+    ) %}
+    <div class="hero-details mt-4">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-project-diagram text-info me-2"></i>Multi-GPU (FSDP/DeepSpeed)</h6>
+                    <p class="small text-muted mb-0">
+                        Enable Fully Sharded Data Parallel (FSDP) or DeepSpeed to split your model across
+                        multiple GPUs, reducing memory per device and enabling larger batch sizes.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-server text-warning me-2"></i>Multi-Node Training</h6>
+                    <p class="small text-muted mb-0">
+                        Scale beyond a single machine. <strong>Note:</strong> Multi-node via WebUI is experimental —
+                        for production use, follow
+                        <a href="https://github.com/bghira/SimpleTuner/blob/main/documentation/DISTRIBUTED.md" target="_blank" rel="noopener">DISTRIBUTED.md <i class="fas fa-external-link-alt fa-xs"></i></a>
+                        and use the command-line approach.
+                    </p>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="hero-detail-card">
+                    <h6><i class="fas fa-cogs text-success me-2"></i>Worker & Thread Settings</h6>
+                    <p class="small text-muted mb-0">
+                        Tune the number of data loading workers and PyTorch threads to optimize
+                        CPU utilization during preprocessing and training.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endcall %}
+
+    <div x-show="!showHeroCTA()" x-cloak>
+    {% elif tab_name == 'basic' %}
+    <!-- Basic EZ Mode Hero -->
+    <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="hero-cta hero-cta--indigo" data-theme="indigo" data-icon-shape="rounded">
+            <button type="button" class="hero-dismiss-btn" @click="dismissEzMode()" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="hero-content text-start">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <div class="hero-icon hero-icon--rounded flex-shrink-0">
+                        <i class="fas fa-rocket"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <h2 class="hero-title mb-2">Quick Start — Easy Mode</h2>
+                        <p class="hero-description mb-0">
+                            Get training quickly with these essential settings. This simplified view covers the core options you need to start your first training run. For advanced configuration, dismiss this panel to access the full form.
+                        </p>
+                    </div>
+                </div>
+
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center py-4">
+                <div class="spinner-border text-light spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- EZ Mode Form -->
+            <div x-show="!loading" class="ez-mode-form mt-4">
+
+                <!-- Step 1: Project Identity -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">1</span>
+                        <span class="ez-step-title">Project Identity</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Give your training run a name so you can track it in logging platforms and find your checkpoints later.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Project Name</label>
+                                <input type="text" class="form-control"
+                                       x-model="tracker_project_name"
+                                       @input="onProjectNameChange($event.target.value)"
+                                       placeholder="simpletuner">
+                                <div class="form-text">Groups related training runs together in WandB or TensorBoard. Think of it as a folder name.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Run Name</label>
+                                <input type="text" class="form-control"
+                                       x-model="tracker_run_name"
+                                       @input="onRunNameChange($event.target.value)"
+                                       placeholder="my-first-lora">
+                                <div class="form-text">Identifies this specific training attempt. Use something descriptive like "flux-style-v2" or "character-lora-attempt3".</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-6">
+                                <label class="form-label">Logging Platform</label>
+                                <select class="form-select"
+                                        x-model="report_to"
+                                        @change="onReportToChange($event.target.value)">
+                                    <option value="wandb">Weights & Biases (Recommended)</option>
+                                    <option value="tensorboard">TensorBoard (Local)</option>
+                                    <option value="none">None</option>
+                                </select>
+                                <div class="form-text">
+                                    <strong>WandB</strong> provides cloud-based dashboards with loss graphs, sample images, and easy sharing.
+                                    <strong>TensorBoard</strong> runs locally.
+                                    <strong>None</strong> disables logging entirely.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Output Directory</label>
+                                <input type="text" class="form-control"
+                                       x-model="output_dir"
+                                       @input="onOutputDirChange($event.target.value)"
+                                       placeholder="simpletuner-results">
+                                <div class="form-text">Where checkpoints and trained weights will be saved. Use absolute paths (like /home/user/models) or relative paths from the SimpleTuner directory.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-6">
+                                <label class="form-label">Resume from Checkpoint</label>
+                                <select class="form-select"
+                                        x-model="resume_from_checkpoint"
+                                        @change="onResumeFromCheckpointChange($event.target.value)">
+                                    <template x-for="choice in checkpointChoices" :key="choice.value">
+                                        <option :value="choice.value" x-text="choice.label" :selected="choice.value === resume_from_checkpoint"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text">Continue training from a previous checkpoint. "Latest" automatically finds the most recent one. Useful if training was interrupted or you want to train longer. <strong>Note:</strong> Cloud training runs are currently stateless and do not support resuming from checkpoints.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Dataset Configuration -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">2</span>
+                        <span class="ez-step-title">Dataset Configuration</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Connect your training images. Create dataset configurations in the <strong>Datasets</strong> tab first, then select them here.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-8">
+                                <label class="form-label">Data Backend Config</label>
+                                <select class="form-select"
+                                        x-model="data_backend_config"
+                                        @change="onDataBackendConfigChange($event.target.value)">
+                                    <option value="">Select a dataset configuration...</option>
+                                    <template x-for="choice in dataBackendChoices" :key="choice.value || choice">
+                                        <option :value="choice.value || choice" x-text="choice.label || choice" :selected="(choice.value || choice) === data_backend_config"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text">The dataset plan that defines where your images are located and how they should be processed. Create new ones in the Datasets tab.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Batch Size</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="train_batch_size"
+                                       @input="onBatchSizeChange($event.target.value)"
+                                       min="1" max="64">
+                                <div class="form-text">Images processed per training step (per GPU). Higher = faster but needs more VRAM. Start with 1-4.</div>
+                            </div>
+                        </div>
+
+                        <div class="ez-section-divider mt-4">
+                            <span>Advanced Dataset Options</span>
+                        </div>
+
+                        <div class="ez-option-list mt-3">
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_override_dataset_config"
+                                           x-model="override_dataset_config"
+                                           @change="onOverrideDatasetConfigChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_override_dataset_config">
+                                    <div class="ez-option-name">Override Dataset Config</div>
+                                    <div class="ez-option-desc">Skip validation that ensures your dataset config matches the cached data. Enable only when intentionally modifying dataset behavior after caching has started. <strong>Warning:</strong> Changing dataset settings after caching can cause unexpected behavior.</div>
+                                </label>
+                            </div>
+
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_disable_bucket_pruning"
+                                           x-model="disable_bucket_pruning"
+                                           @change="onDisableBucketPruningChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_disable_bucket_pruning">
+                                    <div class="ez-option-name">Disable Bucket Pruning</div>
+                                    <div class="ez-option-desc">Normally, aspect ratio buckets with too few images are removed to prevent oversampling. Enable this for tiny datasets where you want to use every image regardless of batch size requirements. May affect training statistics.</div>
+                                </label>
+                            </div>
+
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_allow_oversubscription"
+                                           x-model="allow_dataset_oversubscription"
+                                           @change="onAllowOversubscriptionChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_allow_oversubscription">
+                                    <div class="ez-option-name">Allow Dataset Oversubscription</div>
+                                    <div class="ez-option-desc">Automatically increase dataset repeats when your image count is smaller than the effective batch size (batch × GPUs × gradient accumulation). Useful for very small datasets or multi-GPU training. The trainer will calculate the minimum repeats needed.</div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Dataset Defaults -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">3</span>
+                        <span class="ez-step-title">Dataset Defaults</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="alert alert-info py-2 mb-3">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>These are fallback values.</strong> They apply to new datasets or datasets where you haven't specified these options. Individual dataset entries can override these settings.
+                        </div>
+
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Training Resolution</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="resolution"
+                                       @input="onResolutionChange($event.target.value)"
+                                       min="256" max="4096" step="64">
+                                <div class="form-text">Default target resolution in pixels. Must be divisible by 64. SDXL/Flux typically use 1024, SD1.5 uses 512. Higher = better quality but more VRAM.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Minimum Image Size</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="minimum_image_size"
+                                       @input="onMinImageSizeChange($event.target.value)"
+                                       min="128" step="64"
+                                       placeholder="None">
+                                <div class="form-text">Images smaller than this (on any side) may be upscaled, which can harm quality. Leave empty for no minimum. Recommended: set near your training resolution.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Maximum Image Size</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="maximum_image_size"
+                                       @input="onMaxImageSizeChange($event.target.value)"
+                                       min="256" step="64"
+                                       placeholder="None">
+                                <div class="form-text">Without this limit, very large images (e.g., 4000×3000) get randomly cropped to training resolution, often cutting out the subject entirely and training on meaningless background patches. Set this to downsample oversized images first, preserving the full scene before cropping.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-2">
+                            <div class="col-md-4">
+                                <label class="form-label">Downsample Target</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="target_downsample_size"
+                                       @input="onTargetDownsampleChange($event.target.value)"
+                                       min="256" step="64"
+                                       placeholder="None">
+                                <div class="form-text">When downsampling oversized images, resize them to this target before cropping. Works with Maximum Image Size. Leave empty to disable.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Caption Strategy</label>
+                                <select class="form-select"
+                                        x-model="caption_strategy"
+                                        @change="onCaptionStrategyChange($event.target.value)">
+                                    <option value="textfile">Text Files (.txt)</option>
+                                    <option value="filename">Filename</option>
+                                    <option value="instance_prompt">Instance Prompt</option>
+                                    <option value="parquet">Parquet Dataset</option>
+                                </select>
+                                <div class="form-text">
+                                    <strong>Text Files:</strong> Look for photo.txt alongside photo.jpg (matching filename, different extension).<br>
+                                    <strong>Filename:</strong> Use the image filename as the caption.<br>
+                                    <strong>Instance Prompt:</strong> Same caption for all images (set below).<br>
+                                    <strong>Parquet:</strong> Load from structured dataset files.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="ez-step-actions mt-4 d-flex justify-content-between align-items-center">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetToDefaults()">
+                        <i class="fas fa-undo me-1"></i> Reset to Defaults
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                        <i class="fas fa-sliders-h me-1"></i> Switch to Full Form
+                    </button>
+                </div>
+
+            </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!hints.ez_mode" x-cloak>
+    {% elif tab_name == 'training' %}
+    <!-- Training Easy Mode Hero -->
+    <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="hero-cta hero-cta--teal" data-theme="teal" data-icon-shape="rounded">
+            <button type="button" class="hero-dismiss-btn" @click="dismissEzMode()" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="hero-content text-start">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <div class="hero-icon hero-icon--rounded flex-shrink-0">
+                        <i class="fas fa-graduation-cap"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <h2 class="hero-title mb-2">Training Parameters — Easy Mode</h2>
+                        <p class="hero-description mb-0">
+                            Configure how long and how fast your model learns. These settings control the training process itself—get them right and your model improves steadily; get them wrong and you waste time or damage quality.
+                        </p>
+                    </div>
+                </div>
+
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center py-4">
+                <div class="spinner-border text-light spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- Easy Mode Form -->
+            <div x-show="!loading" class="ez-mode-form mt-4">
+
+                <!-- Step 1: Training Duration -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">1</span>
+                        <span class="ez-step-title">Training Duration</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Choose how long to train. You can specify either epochs (passes through your dataset) or a fixed number of steps. For small datasets (under 100 images), 1-3 epochs is typical. For larger datasets, you might use fewer epochs or set a step limit.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Number of Epochs</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="num_train_epochs"
+                                       @input="onNumEpochsChange($event.target.value)"
+                                       min="1" max="1000">
+                                <div class="form-text">One epoch = one complete pass through all your training images. More epochs let the model see your data more times, but too many causes <strong>overfitting</strong>—the model memorizes instead of learning. Start with 1-3 for LoRA, 5-10 for full fine-tuning.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Max Training Steps</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="max_train_steps"
+                                       @input="onMaxStepsChange($event.target.value)"
+                                       min="0"
+                                       placeholder="Leave empty to use epochs">
+                                <div class="form-text">If set, training stops after this many steps regardless of epochs. Useful for consistent training runs across different dataset sizes. Common ranges: 500-2000 for LoRA, 5000-20000 for full fine-tuning. Leave empty to use epochs instead.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Checkpointing -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">2</span>
+                        <span class="ez-step-title">Checkpointing</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Checkpoints are snapshots of your model during training. They let you resume if training is interrupted, compare quality at different stages, and pick the best version if you overtrain.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Save Every N Steps</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="checkpoint_step_interval"
+                                       @input="onCheckpointStepIntervalChange($event.target.value)"
+                                       min="1">
+                                <div class="form-text">Creates a checkpoint every N training steps. Lower values (100-250) give more recovery points but use more disk space. Higher values (500-1000) save less often. Match this to your training length—if training 1000 steps, 250 gives you 4 checkpoints to compare.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Save Every N Epochs</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="checkpoint_epoch_interval"
+                                       @input="onCheckpointEpochIntervalChange($event.target.value)"
+                                       min="1"
+                                       placeholder="Disabled">
+                                <div class="form-text">Additionally save at the end of every N epochs. Useful for long training runs where you want guaranteed saves at epoch boundaries. Leave empty to only use step-based checkpointing.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Checkpoints to Keep</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="checkpoints_total_limit"
+                                       @input="onCheckpointsTotalLimitChange($event.target.value)"
+                                       min="0">
+                                <div class="form-text">Maximum checkpoints kept on disk. Older ones are automatically deleted. Set to 0 for unlimited (warning: can use significant disk space). 3-5 is usually enough to find the best training point.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Learning Rate -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">3</span>
+                        <span class="ez-step-title">Learning Rate</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            The learning rate controls how much the model changes with each training step. Too high and training becomes unstable or "fries" the model. Too low and progress is painfully slow. This is often the most impactful hyperparameter.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Learning Rate</label>
+                                <input type="number" class="form-control"
+                                       x-model="learning_rate"
+                                       @input="onLearningRateChange($event.target.value)"
+                                       step="0.0000001" min="0">
+                                <div class="form-text">
+                                    <strong>LoRA typical range:</strong> 1e-4 to 5e-4 (0.0001 to 0.0005)<br>
+                                    <strong>Full fine-tuning:</strong> 1e-6 to 1e-5 (0.000001 to 0.00001)<br>
+                                    If you see NaN losses or wildly jumping values, your LR is too high. If loss barely moves, it's too low.
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">LR Scheduler</label>
+                                <select class="form-select"
+                                        x-model="lr_scheduler"
+                                        @change="onLrSchedulerChange($event.target.value)">
+                                    <option value="constant">Constant</option>
+                                    <option value="constant_with_warmup">Constant with Warmup</option>
+                                    <option value="linear">Linear Decay</option>
+                                    <option value="cosine">Cosine Annealing</option>
+                                    <option value="cosine_with_restarts">Cosine with Restarts</option>
+                                    <option value="sine">Sine Wave</option>
+                                    <option value="polynomial">Polynomial Decay</option>
+                                </select>
+                                <div class="form-text">
+                                    <strong>Constant:</strong> Same LR throughout—simple and predictable.<br>
+                                    <strong>Constant with Warmup:</strong> Starts low, ramps up, then stays flat—helps stability.<br>
+                                    <strong>Cosine/Sine:</strong> Gradually decreases LR—often produces smoother results for longer runs.
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Warmup Steps</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="lr_warmup_steps"
+                                       @input="onLrWarmupStepsChange($event.target.value)"
+                                       min="0">
+                                <div class="form-text">Number of steps to gradually increase LR from zero. Prevents early instability when the model hasn't "warmed up" yet. Typical: 5-10% of total steps. For a 1000-step run, try 50-100 warmup steps.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mt-2" x-show="showLrEnd" x-cloak>
+                            <div class="col-md-4">
+                                <label class="form-label">Learning Rate End</label>
+                                <input type="number" class="form-control"
+                                       x-model="lr_end"
+                                       @input="onLrEndChange($event.target.value)"
+                                       step="0.0000001" min="0">
+                                <div class="form-text">The LR will decay to this value by the end of training. For cosine/sine/polynomial schedulers. Usually set to 10-100x lower than your starting LR (e.g., if LR is 1e-4, try lr_end of 1e-6).</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 4: Optimizer -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">4</span>
+                        <span class="ez-step-title">Optimizer & Stability</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            The optimizer is the algorithm that actually updates model weights based on gradients. Different optimizers have different memory requirements and behaviors.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Optimizer</label>
+                                <select class="form-select"
+                                        x-model="optimizer"
+                                        @change="onOptimizerChange($event.target.value)">
+                                    <template x-for="choice in optimizerChoices" :key="choice.value">
+                                        <option :value="choice.value" x-text="choice.label" :selected="choice.value === optimizer"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text">
+                                    <strong>adamw_bf16:</strong> Fast, reliable default for most GPUs with bfloat16 support.<br>
+                                    <strong>adamw8bit:</strong> Uses less VRAM with minimal quality loss—good for memory-constrained setups.<br>
+                                    <strong>prodigy:</strong> Auto-tunes learning rate—set LR to 1.0 and let it figure things out (experimental).
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Max Gradient Norm</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="max_grad_norm"
+                                       @input="onMaxGradNormChange($event.target.value)"
+                                       step="0.1" min="0">
+                                <div class="form-text">Clips gradients that exceed this magnitude, preventing "exploding gradients" that can destabilize training. <strong>Default 2.0</strong> works well for most cases. If training is unstable with difficult data, try lowering to 1.0. Set to 0 to disable clipping entirely (not recommended).</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 5: Flow Schedule (for flow-matching models) -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">5</span>
+                        <span class="ez-step-title">Flow Schedule</span>
+                        <span class="badge bg-secondary ms-2">Flux / SD3 / Flow Models</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Flow-matching models (like Flux) use a noise schedule that can be shifted to change what the model focuses on learning. This only applies to flow-based architectures—ignore for standard diffusion models.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="form-check form-switch mb-2">
+                                    <input type="checkbox" class="form-check-input" id="ez_flow_auto_shift"
+                                           x-model="flow_schedule_auto_shift"
+                                           @change="onFlowAutoShiftChange($event.target.checked)">
+                                    <label class="form-check-label" for="ez_flow_auto_shift">
+                                        <strong>Auto Shift Schedule</strong>
+                                    </label>
+                                </div>
+                                <div class="form-text">Automatically calculates optimal schedule shift based on your training resolution. Enable this for a hands-off approach. When enabled, the manual shift value is ignored.</div>
+                            </div>
+                            <div class="col-md-6" x-show="!flow_schedule_auto_shift">
+                                <label class="form-label">Schedule Shift Value</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="flow_schedule_shift"
+                                       @input="onFlowShiftChange($event.target.value)"
+                                       step="0.1" min="0">
+                                <div class="form-text">
+                                    <strong>Higher values (3-5):</strong> Focus on composition and large-scale structure.<br>
+                                    <strong>Lower values (1-2):</strong> Focus on fine details and textures.<br>
+                                    Default of 3.0 is balanced. Adjust based on what your training data emphasizes.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="ez-step-actions mt-4 d-flex justify-content-between align-items-center">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetToDefaults()">
+                        <i class="fas fa-undo me-1"></i> Reset to Defaults
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                        <i class="fas fa-sliders-h me-1"></i> Switch to Full Form
+                    </button>
+                </div>
+
+            </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!hints.ez_mode" x-cloak>
+    {% elif tab_name == 'validation' %}
+    <!-- Validation Easy Mode Hero -->
+    <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="hero-cta hero-cta--amber" data-theme="amber" data-icon-shape="rounded">
+            <button type="button" class="hero-dismiss-btn" @click="dismissEzMode()" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="hero-content text-start">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <div class="hero-icon hero-icon--rounded flex-shrink-0">
+                        <i class="fas fa-eye"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <h2 class="hero-title mb-2">Validation — Easy Mode</h2>
+                        <p class="hero-description mb-0">
+                            Validation generates sample images during training so you can see how your model is learning. These previews help you catch problems early—like overfitting or wrong concepts—before wasting hours on a bad run.
+                        </p>
+                    </div>
+                </div>
+
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center py-4">
+                <div class="spinner-border text-light spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- Easy Mode Form -->
+            <div x-show="!loading" class="ez-mode-form mt-4">
+
+                <!-- Step 1: Validation Schedule -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">1</span>
+                        <span class="ez-step-title">Validation Schedule</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Control how often validation images are generated. More frequent validation gives you better visibility into training progress but adds overhead. Balance between insight and training speed.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Validate Every N Steps</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_step_interval"
+                                       @input="onValidationStepIntervalChange($event.target.value)"
+                                       min="1">
+                                <div class="form-text">Generate validation images every N training steps. Lower values (50-100) catch problems faster but slow training. Higher values (250-500) are less intrusive. For quick 500-step runs, try 100. For longer runs, 250-500 works well.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Validate Every N Epochs</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_epoch_interval"
+                                       @input="onValidationEpochIntervalChange($event.target.value)"
+                                       min="1"
+                                       placeholder="Disabled">
+                                <div class="form-text">Additionally validate at the end of every N epochs. Complements step-based validation. Leave empty to only use step interval.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Inference Steps</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_num_inference_steps"
+                                       @input="onValidationInferenceStepsChange($event.target.value)"
+                                       min="1" max="100">
+                                <div class="form-text">Denoising steps for validation images. More steps = better quality but slower. 20-30 is typical. Use fewer (10-15) for speed during training; you're checking concepts, not final quality.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Validation Prompts -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">2</span>
+                        <span class="ez-step-title">Validation Prompts</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            These prompts will be used to generate preview images during training. Choose prompts that test what you're training—if you're training a character, use prompts featuring that character. If training a style, use prompts that should show that style.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="form-label">Validation Prompt</label>
+                                <textarea class="form-control" rows="3"
+                                          x-model="validation_prompt"
+                                          @input="onValidationPromptChange($event.target.value)"
+                                          placeholder="e.g., a portrait photo of [trigger word], professional lighting, 4k"></textarea>
+                                <div class="form-text">The prompt used to generate validation images. Include your trigger word if training a concept. This tests whether your training is working—if the generated images don't match what you expect, something's wrong.</div>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label">Negative Prompt</label>
+                                <textarea class="form-control" rows="2"
+                                          x-model="validation_negative_prompt"
+                                          @input="onValidationNegativePromptChange($event.target.value)"
+                                          placeholder="blurry, cropped, ugly"></textarea>
+                                <div class="form-text">What to avoid in generated images. Common values: "blurry, cropped, ugly, deformed". Leave empty to disable negative prompting.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Prompt Library -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">3</span>
+                        <span class="ez-step-title">Prompt Library</span>
+                        <span class="badge bg-secondary ms-2">Optional</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Instead of a single prompt, use a library of prompts to test your model from multiple angles. Each validation run cycles through your library, giving you diverse samples to evaluate training progress.
+                        </p>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Select Prompt Library</label>
+                                <select class="form-select"
+                                        @change="onUserPromptLibraryChange($event.target.value)">
+                                    <option value="">None (use single prompt above)</option>
+                                    <template x-for="lib in promptLibraries" :key="lib.filename">
+                                        <option :value="lib.absolute_path" x-text="lib.display_name + ' (' + lib.prompt_count + ' prompts)'"
+                                                :selected="user_prompt_library && user_prompt_library.endsWith(lib.filename)"></option>
+                                    </template>
+                                </select>
+                                <div class="form-text">Choose an existing prompt library or create a new one below.</div>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <button type="button" class="btn btn-sm btn-outline-primary me-2" @click="openLibraryEditor(true)">
+                                    <i class="fas fa-plus me-1"></i> New Library
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        x-show="promptLibraryEntries.length > 0"
+                                        @click="openLibraryEditor(false)">
+                                    <i class="fas fa-edit me-1"></i> Edit Current
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Current library preview -->
+                        <div x-show="promptLibraryEntries.length > 0 && !showLibraryEditor" class="mt-3">
+                            <div class="small text-muted mb-2">
+                                <i class="fas fa-list me-1"></i>
+                                <span x-text="promptLibraryEntries.length"></span> prompts in library:
+                            </div>
+                            <div class="prompt-library-preview" style="max-height: 150px; overflow-y: auto;">
+                                <template x-for="(entry, idx) in promptLibraryEntries" :key="idx">
+                                    <div class="d-flex gap-2 mb-1 small">
+                                        <span class="badge bg-secondary" x-text="entry.shortname" style="min-width: 80px;"></span>
+                                        <span class="text-truncate" x-text="entry.prompt" style="opacity: 0.9;"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Inline library editor -->
+                        <div x-show="showLibraryEditor" class="mt-3 p-3 border rounded" style="background: rgba(0,0,0,0.2);">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h6 class="mb-0"><i class="fas fa-edit me-2"></i>Edit Prompt Library</h6>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" @click="closeLibraryEditor()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label small">Library Name</label>
+                                <input type="text" class="form-control form-control-sm"
+                                       x-model="newLibraryName"
+                                       placeholder="my-prompts (optional, creates user_prompt_library-name.json)">
+                            </div>
+
+                            <div class="mb-2 small text-muted">Prompt Entries:</div>
+                            <template x-for="(entry, idx) in editingEntries" :key="idx">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-3">
+                                        <input type="text" class="form-control form-control-sm"
+                                               x-model="editingEntries[idx].shortname"
+                                               placeholder="ID">
+                                    </div>
+                                    <div class="col-8">
+                                        <textarea class="form-control form-control-sm" rows="1"
+                                                  x-model="editingEntries[idx].prompt"
+                                                  placeholder="Prompt text"></textarea>
+                                    </div>
+                                    <div class="col-1">
+                                        <button type="button" class="btn btn-sm btn-link text-danger p-0"
+                                                @click="removePromptEntry(idx)" title="Remove">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div class="d-flex gap-2 mt-3">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" @click="addPromptEntry()">
+                                    <i class="fas fa-plus me-1"></i> Add Entry
+                                </button>
+                                <button type="button" class="btn btn-sm btn-primary" @click="savePromptLibrary()">
+                                    <i class="fas fa-save me-1"></i> Save Library
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 4: Generation Settings -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">4</span>
+                        <span class="ez-step-title">Generation Settings</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <p class="ez-step-description">
+                            Control how validation images are generated. Consistent seeds help you compare training progress across checkpoints; random seeds give variety but make comparison harder.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Guidance Scale (CFG)</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_guidance"
+                                       @input="onValidationGuidanceChange($event.target.value)"
+                                       step="0.5" min="1" max="30">
+                                <div class="form-text">How closely to follow the prompt. 7-8 is standard. Higher (10-15) = more literal. For distilled models (Flux schnell), use 1.0.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mt-4">
+                                    <input type="checkbox" class="form-check-input" id="ez_validation_randomize"
+                                           x-model="validation_randomize"
+                                           @change="onValidationRandomizeChange($event.target.checked)">
+                                    <label class="form-check-label" for="ez_validation_randomize">
+                                        <strong>Randomize Seeds</strong>
+                                    </label>
+                                </div>
+                                <div class="form-text">When enabled, each validation uses a random seed for variety. Disable to use a fixed seed for consistent comparison.</div>
+                            </div>
+                            <div class="col-md-4" x-show="!validation_randomize">
+                                <label class="form-label">Fixed Seed</label>
+                                <input type="number" class="form-control"
+                                       x-model.number="validation_seed"
+                                       @input="onValidationSeedChange($event.target.value)"
+                                       min="0"
+                                       placeholder="Random">
+                                <div class="form-text">Using the same seed produces the same "random" noise, making it easier to compare outputs across training steps.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="ez-step-actions mt-4 d-flex justify-content-between align-items-center">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetToDefaults()">
+                        <i class="fas fa-undo me-1"></i> Reset to Defaults
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                        <i class="fas fa-sliders-h me-1"></i> Switch to Full Form
+                    </button>
+                </div>
+
+            </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!hints.ez_mode" x-cloak>
+    {% elif tab_name == 'model' %}
+    <!-- Model EZ Mode Hero -->
+    <div x-show="hints.ez_mode" x-cloak class="model-ez-mode-hero mb-4"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="hero-cta hero-cta--purple" data-theme="purple" data-icon-shape="rounded">
+            <button type="button" class="hero-dismiss-btn" @click="dismissEzMode()" title="Dismiss">
+                <i class="fas fa-times"></i>
+            </button>
+
+            <div class="hero-content text-start">
+                <div class="d-flex align-items-start gap-3 mb-3">
+                    <div class="hero-icon hero-icon--rounded flex-shrink-0">
+                        <i class="fas fa-cube"></i>
+                    </div>
+                    <div class="flex-grow-1">
+                        <h2 class="hero-title mb-2">Model Configuration — Easy Mode</h2>
+                        <p class="hero-description mb-0">
+                            Configure the essential model settings quickly. For advanced options, dismiss this panel to access the full form.
+                        </p>
+                    </div>
+                </div>
+
+            <!-- Loading state -->
+            <div x-show="loading" class="text-center py-4">
+                <div class="spinner-border text-light spinner-border-sm" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+
+            <!-- EZ Mode Form -->
+            <div x-show="!loading" class="ez-mode-form mt-4">
+
+                <!-- Step 1: Choose Your Model -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">1</span>
+                        <span class="ez-step-title">Choose Your Model</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Model Family</label>
+                                <select class="form-select"
+                                        x-model="model_family"
+                                        @change="onModelFamilyChange($event.target.value)">
+                                    <option value="">Select a model family...</option>
+                                    <template x-for="fam in modelFamilies" :key="fam.value">
+                                        <option :value="fam.value" x-text="fam.label" :selected="fam.value === model_family"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Variant</label>
+                                <select class="form-select"
+                                        x-model="model_flavour"
+                                        @change="onModelFlavourChange($event.target.value)"
+                                        :disabled="modelFlavours.length === 0">
+                                    <option value="">Select a variant...</option>
+                                    <template x-for="flav in modelFlavours" :key="flav">
+                                        <option :value="flav" x-text="flav" :selected="flav === model_flavour"></option>
+                                    </template>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Training Approach -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">2</span>
+                        <span class="ez-step-title">Training Approach</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <!-- Compact choice cards -->
+                        <div class="ez-compact-choice-grid">
+                            <label class="ez-compact-choice" :class="{ 'selected': model_type === 'lora' }">
+                                <input type="radio" name="ez_model_type" value="lora"
+                                       x-model="model_type" @change="onModelTypeChange('lora')" class="d-none">
+                                <i class="fas fa-feather ez-compact-icon"></i>
+                                <span class="ez-compact-label">LoRA</span>
+                                <span class="ez-compact-badge">Recommended</span>
+                            </label>
+                            <label class="ez-compact-choice" :class="{ 'selected': model_type === 'full' }">
+                                <input type="radio" name="ez_model_type" value="full"
+                                       x-model="model_type" @change="onModelTypeChange('full')" class="d-none">
+                                <i class="fas fa-cube ez-compact-icon"></i>
+                                <span class="ez-compact-label">Full Model</span>
+                                <span class="ez-compact-badge warning">Advanced</span>
+                            </label>
+                        </div>
+                        <div class="ez-choice-explanation" x-show="model_type === 'lora'" x-cloak>
+                            <i class="fas fa-info-circle text-info me-1"></i>
+                            Train a small adapter that modifies the base model. Uses far less memory and is ideal for most use cases.
+                        </div>
+                        <div class="ez-choice-explanation" x-show="model_type === 'full'" x-cloak>
+                            <i class="fas fa-exclamation-triangle text-warning me-1"></i>
+                            Train all model weights. Requires significant VRAM and aggressive memory optimization. Very costly on cloud.
+                        </div>
+
+                        <!-- LoRA Rank (only for LoRA) -->
+                        <div class="ez-lora-rank-section mt-3" x-show="isLoraMode" x-cloak>
+                            <div class="ez-inline-option">
+                                <div class="ez-inline-label">
+                                    <strong>LoRA Rank</strong>
+                                </div>
+                                <div class="ez-rank-slider">
+                                    <input type="range" class="form-range"
+                                           :value="loraRankToSlider(lora_rank)"
+                                           @input="onLoraRankSlider($event.target.value)"
+                                           min="0" max="7" step="1">
+                                    <span class="ez-rank-value" x-text="lora_rank"></span>
+                                </div>
+                            </div>
+                            <div class="ez-rank-explanation">
+                                <p><strong>Lower ranks (4-32)</strong> are best for style transfer and simple concepts. Train faster with less data.</p>
+                                <p><strong>Higher ranks (64-128)</strong> can learn more complex concepts but require more training steps, more data, and higher batch sizes to converge properly.</p>
+                                <p class="mb-0 text-muted"><i class="fas fa-lightbulb me-1"></i>If changing rank without adjusting other settings: lower the learning rate for higher ranks, raise it for lower ranks.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 3: Memory Optimization -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">3</span>
+                        <span class="ez-step-title">Memory Optimization</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <!-- Prominent Use Presets CTA -->
+                        <div class="ez-presets-cta" @click="openMemoryPresets()">
+                            <div class="ez-presets-cta-icon">
+                                <i class="fas fa-magic"></i>
+                            </div>
+                            <div class="ez-presets-cta-content">
+                                <div class="ez-presets-cta-title">Use Memory Presets</div>
+                                <div class="ez-presets-cta-desc">
+                                    Not sure where to start? Presets automatically configure optimal settings based on your model and available hardware.
+                                </div>
+                            </div>
+                            <i class="fas fa-chevron-right ez-presets-cta-arrow"></i>
+                        </div>
+
+                        <div class="ez-section-divider">
+                            <span>Or configure manually</span>
+                        </div>
+
+                        <div class="ez-option-list">
+                            <!-- Gradient Checkpointing -->
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_grad_ckpt"
+                                           x-model="gradient_checkpointing"
+                                           @change="onGradientCheckpointingChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_grad_ckpt">
+                                    <div class="ez-option-name">Gradient Checkpointing</div>
+                                    <div class="ez-option-desc">Recomputes activations during backward pass. Saves VRAM at the cost of ~20% slower training. <strong>Recommended for most setups.</strong></div>
+                                </label>
+                            </div>
+
+                            <!-- RamTorch with presets -->
+                            <div class="ez-option-row ez-option-expandable">
+                                <div class="ez-option-info flex-grow-1">
+                                    <div class="ez-option-name">RamTorch</div>
+                                    <div class="ez-option-desc"><strong>Streams</strong> model weights from system RAM during forward/backward pass. Fast but requires substantial system memory (64GB+ recommended).</div>
+                                </div>
+                                <div class="ez-option-select">
+                                    <select class="form-select form-select-sm" style="width: 130px;"
+                                            x-model="ramtorch_preset"
+                                            @change="onRamtorchPresetChange($event.target.value)"
+                                            :disabled="!hasModelFamily">
+                                        <option value="off">Off</option>
+                                        <template x-for="preset in ramtorchPresets" :key="preset.level">
+                                            <option :value="preset.level" x-text="preset.name"></option>
+                                        </template>
+                                        <template x-if="ramtorchPresets.length === 0 && hasModelFamily && !memoryPresetsLoading">
+                                            <option value="basic" disabled>No presets available</option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="ez-ramtorch-hint" x-show="ramtorch_preset !== 'off'" x-cloak>
+                                <template x-if="ramtorchPresets.find(p => p.level === ramtorch_preset)">
+                                    <div>
+                                        <i class="fas fa-info-circle text-info me-1"></i>
+                                        <span x-text="ramtorchPresets.find(p => p.level === ramtorch_preset)?.description"></span>
+                                    </div>
+                                </template>
+                            </div>
+
+                            <!-- Block Swap with slider -->
+                            <div class="ez-option-row ez-option-expandable" x-show="supportsBlockSwap" x-cloak>
+                                <div class="ez-option-info flex-grow-1">
+                                    <div class="ez-option-name">Block Swap</div>
+                                    <div class="ez-option-desc"><strong>Moves</strong> transformer blocks to CPU memory. Uses less system RAM than RamTorch but adds latency per block.</div>
+                                </div>
+                            </div>
+                            <div class="ez-block-swap-slider" x-show="supportsBlockSwap" x-cloak>
+                                <div class="ez-block-swap-header">
+                                    <span class="ez-block-swap-label">Offload Amount</span>
+                                    <span class="ez-block-swap-value">
+                                        <span x-text="musubi_blocks_to_swap"></span>/<span x-text="maxSwappableBlocks"></span> blocks
+                                        (<span x-text="getBlockSwapPercentage(musubi_blocks_to_swap)"></span>%)
+                                    </span>
+                                </div>
+                                <input type="range" class="form-range ez-block-swap-range"
+                                       :value="getBlockSwapPercentage(musubi_blocks_to_swap)"
+                                       @input="onBlockSwapSlider($event.target.value)"
+                                       min="0" max="100" step="5">
+                                <div class="ez-block-swap-presets">
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) === 0 }"
+                                            @click="onBlockSwapSlider(0)">None</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) >= 18 && getBlockSwapPercentage(musubi_blocks_to_swap) <= 22 }"
+                                            @click="onBlockSwapSlider(20)">20%</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) >= 48 && getBlockSwapPercentage(musubi_blocks_to_swap) <= 52 }"
+                                            @click="onBlockSwapSlider(50)">50%</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) >= 78 && getBlockSwapPercentage(musubi_blocks_to_swap) <= 82 }"
+                                            @click="onBlockSwapSlider(80)">80%</button>
+                                    <button type="button" class="ez-block-preset-btn" :class="{ 'active': getBlockSwapPercentage(musubi_blocks_to_swap) === 100 }"
+                                            @click="onBlockSwapSlider(100)">100%</button>
+                                </div>
+                                <div class="ez-block-swap-hint">
+                                    <i class="fas fa-lightbulb text-warning me-1"></i>
+                                    <strong>20%</strong> for light offload, <strong>50%</strong> for balanced, <strong>80-100%</strong> for maximum VRAM savings (slowest).
+                                </div>
+                            </div>
+                            <div class="ez-option-row ez-option-subtle" x-show="!supportsBlockSwap && hasModelFamily && !memoryPresetsLoading" x-cloak>
+                                <div class="ez-option-info">
+                                    <div class="ez-option-name text-muted">Block Swap</div>
+                                    <div class="ez-option-desc text-muted">Not available for this model architecture.</div>
+                                </div>
+                            </div>
+
+                            <!-- VAE Options -->
+                            <div class="ez-vae-section">
+                                <div class="ez-option-name mb-2">VAE Options</div>
+                                <div class="ez-vae-grid">
+                                    <div class="ez-vae-item">
+                                        <div class="d-flex gap-3 mb-1">
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" id="ez_vae_tiling"
+                                                       x-model="vae_enable_tiling"
+                                                       @change="onVaeTilingChange($event.target.checked)">
+                                                <label class="form-check-label" for="ez_vae_tiling">Tiling</label>
+                                            </div>
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input" id="ez_vae_slicing"
+                                                       x-model="vae_enable_slicing"
+                                                       @change="onVaeSlicingChange($event.target.checked)">
+                                                <label class="form-check-label" for="ez_vae_slicing">Slicing</label>
+                                            </div>
+                                        </div>
+                                        <div class="ez-option-desc">Only enable if you get OOM errors during pre-caching. Mostly needed for high resolutions or video models.</div>
+                                    </div>
+                                    <div class="ez-vae-item">
+                                        <div class="d-flex align-items-center gap-2 mb-1">
+                                            <label class="form-check-label" for="ez_vae_batch">Batch Size</label>
+                                            <input type="number" class="form-control form-control-sm" id="ez_vae_batch"
+                                                   x-model.number="vae_batch_size"
+                                                   @change="onVaeBatchSizeChange($event.target.value)"
+                                                   min="1" max="32" style="width: 60px;">
+                                        </div>
+                                        <div class="ez-option-desc">How many images to process at once during VAE caching. Higher = faster but uses more VRAM. Reducing this has no impact on quality. For most datasets, 1 is fine.</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 4: Quantization (LoRA only) -->
+                <div class="ez-step" x-show="isLoraMode" x-cloak>
+                    <div class="ez-step-header">
+                        <span class="ez-step-number">4</span>
+                        <span class="ez-step-title">Quantization</span>
+                        <span class="ez-step-subtitle">Reduce precision to save VRAM</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="row g-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Base Model</label>
+                                <select class="form-select"
+                                        x-model="base_model_precision"
+                                        @change="onBaseModelPrecisionChange($event.target.value)">
+                                    <option value="no_change">No Change</option>
+                                    <option value="int8-quanto">INT8 (Quanto)</option>
+                                    <option value="int4-quanto">INT4 (Quanto)</option>
+                                    <option value="int8-torchao">INT8 (TorchAO)</option>
+                                    <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
+                                    <option value="int8-sdnq">INT8 (SDNQ)</option>
+                                    <option value="uint8-sdnq">UINT8 (SDNQ)</option>
+                                </select>
+                                <div class="ez-field-hint">Quantizing the base model has moderate quality impact but saves significant VRAM.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Text Encoder</label>
+                                <select class="form-select" :class="{ 'border-warning': text_encoder_1_precision !== 'no_change' }"
+                                        x-model="text_encoder_1_precision"
+                                        @change="onTextEncoderPrecisionChange($event.target.value)">
+                                    <option value="no_change">No Change</option>
+                                    <option value="int8-quanto">INT8 (Quanto)</option>
+                                    <option value="int4-quanto">INT4 (Quanto)</option>
+                                    <option value="int8-torchao">INT8 (TorchAO)</option>
+                                    <option value="nf4-bnb">NF4 (BitsAndBytes)</option>
+                                    <option value="int8-sdnq">INT8 (SDNQ)</option>
+                                </select>
+                                <div class="ez-field-hint" x-show="text_encoder_1_precision === 'no_change'">
+                                    <i class="fas fa-shield-alt text-success me-1"></i>Text encoder quantization has the <strong>highest quality impact</strong>. Only needed for very large encoders (Mistral, Llama).
+                                </div>
+                                <div class="ez-field-hint text-warning" x-show="text_encoder_1_precision !== 'no_change'">
+                                    <i class="fas fa-exclamation-triangle me-1"></i>Warning: Text encoder quantization significantly affects output quality. Only recommended for very large encoders.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 5: Extras -->
+                <div class="ez-step">
+                    <div class="ez-step-header">
+                        <span class="ez-step-number" x-text="isLoraMode ? '5' : '4'"></span>
+                        <span class="ez-step-title">Training Enhancements</span>
+                    </div>
+                    <div class="ez-step-content">
+                        <div class="ez-option-list">
+                            <div class="ez-option-row">
+                                <div class="ez-option-toggle">
+                                    <input type="checkbox" class="form-check-input" id="ez_use_ema"
+                                           x-model="use_ema"
+                                           @change="onUseEmaChange($event.target.checked)">
+                                </div>
+                                <label class="ez-option-info" for="ez_use_ema">
+                                    <div class="ez-option-name">EMA (Exponential Moving Average)</div>
+                                    <div class="ez-option-desc">Maintains a smoothed copy of weights for more stable training and often better final results. Uses additional memory.</div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Footer -->
+            <div class="ez-mode-footer">
+                <button type="button" class="btn btn-sm btn-outline-secondary" @click="resetToDefaults()">
+                    <i class="fas fa-undo me-1"></i>Reset to Defaults
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-light" @click="dismissEzMode()">
+                    <i class="fas fa-sliders-h me-1"></i>Switch to Full Form
+                </button>
+            </div>
+            </div>
+        </div>
+    </div>
+
+    <div x-show="!hints.ez_mode" x-cloak>
+    {% endif %}
 
     <!-- Tab Header -->
     <div class="card">
@@ -27,6 +2808,27 @@ window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
                 {% endif %}
             </div>
             <div class="btn-group btn-group-sm" role="group">
+                {% if tab_name in ('publishing', 'hardware') %}
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        x-show="!showHeroCTA()"
+                        x-cloak
+                        @click="restoreHeroCTA()"
+                        title="Show introduction"
+                        aria-label="Show introduction">
+                    <i class="fas fa-question-circle"></i><span class="btn-text"> Help</span>
+                </button>
+                {% elif tab_name in ('model', 'basic', 'training', 'validation') %}
+                <button type="button"
+                        class="btn btn-outline-secondary"
+                        x-show="!hints.ez_mode"
+                        x-cloak
+                        @click="restoreEzMode()"
+                        title="Show Easy Mode"
+                        aria-label="Show Easy Mode">
+                    <i class="fas fa-magic"></i><span class="btn-text"> Easy Mode</span>
+                </button>
+                {% endif %}
                 <button type="button" class="btn btn-outline-secondary" id="collapse-all-{{ tab_name }}" title="Collapse all sections" aria-label="Collapse all sections">
                     <i class="fas fa-compress-alt"></i><span class="btn-text"> Collapse All</span>
                 </button>
@@ -230,6 +3032,12 @@ window.__promptLibraries = {{ (prompt_libraries or []) | tojson | safe }};
             </div>
         </div>
     </div>
+
+    {% if tab_name in ('publishing', 'hardware', 'model', 'basic', 'training', 'validation') %}
+    </div>
+    <!-- End hero content wrapper -->
+    {% endif %}
+
 </div>
 
 <script>

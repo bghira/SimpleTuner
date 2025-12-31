@@ -291,7 +291,13 @@ class WebhookHandler:
         if isinstance(payload, (list, tuple, set)):
             return [self._sanitize_for_json(item, _seen) for item in payload]
 
-        if hasattr(payload, "dict") and callable(payload.dict):
+        # Support Pydantic v2 (model_dump) and v1 (dict) style serialization
+        if hasattr(payload, "model_dump") and callable(payload.model_dump):
+            try:
+                return self._sanitize_for_json(payload.model_dump(), _seen)
+            except Exception:
+                pass
+        elif hasattr(payload, "dict") and callable(payload.dict):
             try:
                 return self._sanitize_for_json(payload.dict(), _seen)
             except Exception:

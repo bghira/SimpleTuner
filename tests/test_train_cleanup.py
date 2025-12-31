@@ -82,6 +82,9 @@ class _FakeTrainer:
     def init_benchmark_base_model(self, *_, **__):
         return None
 
+    def init_delete_model_caches(self, *_, **__):
+        return None
+
     def resume_and_prepare(self, *_, **__):
         return None
 

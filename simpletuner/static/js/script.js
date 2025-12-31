@@ -162,6 +162,11 @@ fetchBroadcastEvents();
 
 // Function to show toast notification
 function showToast(message, type = 'success', duration = null) {
+    // Play sound for this notification type
+    if (window.SoundManager) {
+        window.SoundManager.play(type);
+    }
+
     let toastEl;
     const defaultMessage = type === 'success' ? 'Operation Successful!' :
                           type === 'error' ? 'An error occurred!' : 'Information!';

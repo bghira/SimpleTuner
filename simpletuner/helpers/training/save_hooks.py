@@ -543,6 +543,9 @@ class SaveHookManager:
     def _is_sdnq_model(self, model) -> bool:
         """Check if a model is SDNQ quantized."""
         try:
+            import logging
+
+            logging.getLogger("sdnq").setLevel(logging.WARNING)
             from sdnq.quantizer import QuantizationMethod
             from sdnq.training import SDNQTensor
 
@@ -566,6 +569,9 @@ class SaveHookManager:
         for proper training resumption.
         """
         try:
+            import logging
+
+            logging.getLogger("sdnq").setLevel(logging.WARNING)
             from sdnq.loader import save_sdnq_model
             from sdnq.training import convert_training_model_to_sdnq
         except ImportError:

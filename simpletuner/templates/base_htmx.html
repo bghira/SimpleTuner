@@ -12,7 +12,43 @@
     <title>{% block title %}SimpleTuner Training Studio{% endblock %}</title>
 
     <!-- Critical CSS (inline for performance) -->
-    <script>var cssTimestamp = Date.now();</script>
+    <!-- Cache busting: use server-side timestamp when available, fallback to client-side -->
+    {% set _cache_ts = cache_timestamp if cache_timestamp is defined else '' %}
+    <script>
+    var cssTimestamp = '{{ _cache_ts }}' || String(Date.now());
+    window.CACHE_TIMESTAMP = cssTimestamp;
+
+    // Cache bust a single CSS element by ID (legacy API, still works)
+    window.cacheBustCSS = function(elementId, cssPath) {
+        var el = document.getElementById(elementId);
+        if (el) {
+            // If no path provided, extract from existing href
+            var path = cssPath || el.href.split('?')[0];
+            el.href = path + '?v=' + cssTimestamp;
+        }
+    };
+
+    // Auto cache-bust all CSS links with id starting with "css-"
+    window.autoCacheBustCSS = function(root) {
+        root = root || document;
+        var links = root.querySelectorAll('link[rel="stylesheet"][id^="css-"]');
+        links.forEach(function(link) {
+            if (!link.dataset.cacheBusted) {
+                var path = link.href.split('?')[0];
+                link.href = path + '?v=' + cssTimestamp;
+                link.dataset.cacheBusted = 'true';
+            }
+        });
+    };
+
+    // Run auto cache-bust after HTMX content swaps
+    document.addEventListener('htmx:afterSwap', function(e) {
+        window.autoCacheBustCSS(e.detail.target);
+    });
+    document.addEventListener('htmx:afterSettle', function(e) {
+        window.autoCacheBustCSS(e.detail.target);
+    });
+    </script>
     <!-- Global WebUI defaults -->
     {% set show_docs_default = webui_defaults.show_documentation_links if webui_defaults is defined and webui_defaults.show_documentation_links is defined else true %}
     <script>
@@ -45,8 +81,8 @@
     <link rel="preconnect" href="https://cdnjs.cloudflare.com">
 
     <!-- External CSS (loaded asynchronously) -->
-    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
 
     <!-- Local CSS (loaded directly to avoid preload warnings) -->
     <link href="/static/css/base.css" rel="stylesheet" id="css-base">
@@ -57,11 +93,13 @@
     <script>document.getElementById('css-browser-compat').href = '/static/css/browser-compat.css?t=' + cssTimestamp;</script>
     <link href="/static/css/dataset-card.css" rel="stylesheet" id="css-dataset-card">
     <script>document.getElementById('css-dataset-card').href = '/static/css/dataset-card.css?t=' + cssTimestamp;</script>
+    <link href="/static/css/hero-cta.css" rel="stylesheet" id="css-hero-cta">
+    <script>document.getElementById('css-hero-cta').href = '/static/css/hero-cta.css?t=' + cssTimestamp;</script>
 
     <!-- Fallback for browsers without JS -->
     <noscript>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" rel="stylesheet">
     </noscript>
 
     <!-- CSS loading helper for external resources -->
@@ -73,6 +111,32 @@
     <!-- JavaScript Polyfills for Browser Compatibility -->
     <script src="/static/js/polyfills.js?v={{ asset_version }}"></script>
 
+    <!-- UI Sound effects module -->
+    <script src="/static/js/modules/sounds.js?v={{ asset_version }}"></script>
+    <script>
+        // Initialize SoundManager with user preferences
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.SoundManager) {
+                window.SoundManager.init({
+                    sounds_enabled: {{ (defaults.sounds_enabled | default(true)) | tojson }},
+                    sounds_volume: {{ defaults.sounds_volume | default(50) | int }},
+                    sounds_success_enabled: {{ (defaults.sounds_success_enabled | default(true)) | tojson }},
+                    sounds_error_enabled: {{ (defaults.sounds_error_enabled | default(true)) | tojson }},
+                    sounds_warning_enabled: {{ (defaults.sounds_warning_enabled | default(true)) | tojson }},
+                    sounds_info_enabled: {{ (defaults.sounds_info_enabled | default(true)) | tojson }},
+                    sounds_retro_hover_enabled: {{ (defaults.sounds_retro_hover_enabled | default(false)) | tojson }},
+                });
+            }
+        });
+        // Listen for settings updates
+        window.addEventListener('webui-defaults-updated', function(e) {
+            if (window.SoundManager && e.detail) {
+                const d = e.detail.resolved_defaults || e.detail.defaults || {};
+                window.SoundManager.updateSettings(d);
+            }
+        });
+    </script>
+
     <!-- Debouncing utility for performance -->
     <script src="/static/js/debounce.js?v={{ asset_version }}" defer></script>
 
@@ -80,13 +144,17 @@
     <script src="/static/js/lazy-load.js?v={{ asset_version }}" defer></script>
 
     <!-- HTMX for dynamic HTML updates -->
-    <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.8/dist/htmx.min.js"></script>
 
     <!-- Server configuration detection -->
     <script src="/static/js/server-config.js?v={{ asset_version }}"></script>
 
     <!-- Shared API helper -->
     <script src="/static/js/utils/api.js?v={{ asset_version }}"></script>
+    <!-- Shared UI helpers (badges, icons, formatters) -->
+    <script src="/static/js/utils/ui-helpers.js?v={{ asset_version }}"></script>
+    <!-- Hint dismissal mixin (API and localStorage patterns) -->
+    <script src="/static/js/utils/hint-mixin.js?v={{ asset_version }}"></script>
 
     <!-- Dataset wizard component (needs to load before Alpine) -->
     <script src="/static/js/dataset-wizard.js?v={{ asset_version }}"></script>
@@ -102,7 +170,61 @@
     <!-- Memory presets modal (registers Alpine component) -->
     <script src="/static/js/memory-presets.js?v={{ asset_version }}"></script>
 
+    <!-- Cloud dashboard state modules (must load first) -->
+    <script src="/static/js/modules/cloud/state/setup-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/provider-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/jobs-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/metrics-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/publishing-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/system-status-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/queue-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/upload-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/ui-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/modals-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/connection-state.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/state/index.js?v={{ asset_version }}"></script>
+    <!-- Cloud dashboard method modules -->
+    <script src="/static/js/modules/cloud/providers.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/jobs.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/job-submission.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/job-logs.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/metrics.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/system-status.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/queue.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/admin-modal.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/onboarding.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/utilities.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/job-notifications.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/cloud/s3_config.js?v={{ asset_version }}"></script>
+    <!-- Cloud dashboard main component -->
+    <script src="/static/js/modules/cloud/index.js?v={{ asset_version }}"></script>
+    <!-- Admin panel modules (must load before main component) -->
+    <script src="/static/js/modules/admin/hints.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/users.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/levels.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/rules.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/quotas.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/approvals.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/auth-providers.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/orgs-teams.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/audit.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/credentials.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/enterprise-onboarding.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/notifications.js?v={{ asset_version }}"></script>
+    <script src="/static/js/modules/admin/index.js?v={{ asset_version }}"></script>
+    <!-- Audit log component (registers Alpine component) -->
+    <script src="/static/js/audit_component.js?v={{ asset_version }}"></script>
+    <!-- Metrics component (registers Alpine component) -->
+    <script src="/static/js/metrics_component.js?v={{ asset_version }}"></script>
+    <!-- Notifications component (registers Alpine component) -->
+    <script src="/static/js/notifications_component.js?v={{ asset_version }}"></script>
+    <!-- Organizations component (registers Alpine component) -->
+    <script src="/static/js/orgs_component.js?v={{ asset_version }}"></script>
+    <!-- User profile component (registers Alpine component) -->
+    <script src="/static/js/user_profile_component.js?v={{ asset_version }}"></script>
+
     <!-- Alpine.js for reactive UI components -->
+    <script defer src="https://unpkg.com/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
     <!-- Custom HTMX/Alpine styles -->
@@ -338,7 +460,7 @@
     {% block body %}{% endblock %}
 
     <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
 
     <!-- HTMX Configuration -->
     <script>

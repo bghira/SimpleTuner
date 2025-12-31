@@ -110,13 +110,20 @@
     cursor: not-allowed;
 }
 
-.tab-fragment .btn,
-.tab-fragment .btn-outline-secondary {
+.tab-fragment .btn {
     color: var(--text-primary);
 }
 
 .tab-fragment .btn-outline-secondary {
-    border-color: var(--border-soft);
+    color: var(--text-primary);
+    border: 1px solid var(--border-soft) !important;
+    background: transparent !important;
+}
+
+.tab-fragment .btn-outline-secondary:hover,
+.tab-fragment .btn-outline-secondary:focus {
+    border-color: var(--border-strong, rgba(255, 255, 255, 0.25)) !important;
+    background: rgba(255, 255, 255, 0.05) !important;
 }
 
 /* Event Dock Styles */
@@ -551,25 +558,6 @@
     }
 }
 
-/* Training Status Pill */
-.training-status-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    background: var(--field-bg);
-    border: 1px solid var(--border-soft);
-    border-radius: 999px;
-    padding: 0.35rem 0.75rem;
-    font-size: 0.85rem;
-    color: var(--text-primary);
-    box-shadow: var(--shadow-training-pill);
-    margin-left: 1rem;
-}
-
-.training-status-pill i {
-    color: var(--accent-cyan);
-}
-
 /* Onboarding Overlay & Modal */
 .onboarding-overlay {
     position: fixed;
@@ -649,6 +637,289 @@
 
 .onboarding-actions .btn-primary {
     min-width: 160px;
+}
+
+/* Hero-style Onboarding Modal */
+.onboarding-modal--hero {
+    width: min(640px, 95vw);
+    max-height: 90vh;
+    overflow-y: auto;
+    text-align: center;
+}
+
+.onboarding-hero-header {
+    margin-bottom: var(--spacing-xl);
+}
+
+.onboarding-hero-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto var(--spacing-lg);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    color: white;
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
+}
+
+.onboarding-hero-icon .fa-spin-slow {
+    animation: fa-spin 3s linear infinite;
+}
+
+.onboarding-hero-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.onboarding-hero-subtitle {
+    font-size: 1rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+/* Step Progress Dots */
+.onboarding-step-progress {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-xl);
+}
+
+.step-dot {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--glass-bg);
+    border: 2px solid var(--glass-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.step-dot.active {
+    border-color: var(--accent-purple);
+    background: rgba(102, 126, 234, 0.2);
+    color: var(--accent-purple);
+}
+
+.step-dot.completed {
+    border-color: var(--success-bg);
+    background: var(--success-bg);
+    color: white;
+}
+
+.step-dot.completed i {
+    font-size: 0.65rem;
+}
+
+/* Current Step Content */
+.onboarding-step-content {
+    text-align: center;
+    margin-bottom: var(--spacing-xl);
+}
+
+.onboarding-step-content .step-header {
+    margin-bottom: var(--spacing-md);
+}
+
+.onboarding-step-content .step-badge {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent-purple);
+    background: rgba(102, 126, 234, 0.1);
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    margin-bottom: var(--spacing-sm);
+}
+
+.onboarding-step-content .step-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.onboarding-step-content .step-description {
+    color: var(--text-secondary);
+    max-width: 480px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+
+/* Form Sections in Hero Modal */
+.onboarding-modal--hero .onboarding-form-section {
+    text-align: left;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.onboarding-modal--hero .form-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-top: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: rgba(245, 158, 11, 0.1);
+    border-radius: 8px;
+    border-left: 3px solid var(--warning-bg);
+}
+
+.onboarding-modal--hero .form-hint code {
+    background: var(--glass-bg);
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.8125rem;
+}
+
+/* Hero-style Actions */
+.onboarding-modal--hero .onboarding-actions {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-md);
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid var(--glass-border);
+}
+
+.onboarding-modal--hero .onboarding-actions .btn-primary {
+    min-width: 180px;
+    padding: 0.75rem 1.5rem;
+    font-weight: 600;
+}
+
+.onboarding-modal--hero .onboarding-actions .btn-outline-secondary {
+    min-width: 100px;
+}
+
+/* Accelerate section styling */
+.onboarding-modal--hero .gpu-device-list {
+    text-align: left;
+}
+
+.onboarding-modal--hero .gpu-device-list .list-group {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.onboarding-modal--hero .gpu-device-list .list-group-item {
+    background: var(--glass-bg);
+    border-color: var(--glass-border);
+    color: var(--text-primary);
+}
+
+.onboarding-modal--hero .gpu-device-list .list-group-item:hover {
+    background: var(--glass-bg-hover);
+}
+
+/* Environment creation success state */
+.onboarding-modal--hero .environment-created-success {
+    padding: var(--spacing-xl);
+}
+
+.onboarding-modal--hero .environment-created-success .success-icon {
+    animation: successPulse 0.5s ease-out;
+}
+
+@keyframes successPulse {
+    0% { transform: scale(0.8); opacity: 0; }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Onboarding Footer */
+.onboarding-footer {
+    margin-top: var(--spacing-xl);
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid var(--glass-border);
+    text-align: center;
+}
+
+.onboarding-link {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: color 0.2s ease;
+}
+
+.onboarding-link:hover {
+    color: var(--accent-purple);
+}
+
+.onboarding-link-separator {
+    color: var(--text-muted);
+    margin: 0 var(--spacing-sm);
+}
+
+/* Onboarding Environment Form - Two Column Layout */
+.onboarding-env-form {
+    text-align: left;
+}
+
+.env-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-md) var(--spacing-lg);
+}
+
+.env-form-field {
+    min-width: 0;
+}
+
+.env-form-field--full {
+    grid-column: 1 / -1;
+}
+
+/* Field number badges */
+.field-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    background: var(--accent-purple);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 700;
+    border-radius: 50%;
+    margin-right: var(--spacing-xs);
+}
+
+.field-badge--optional {
+    background: var(--glass-border);
+    color: var(--text-secondary);
+}
+
+/* Invalid field highlighting for onboarding */
+.onboarding-env-form .is-invalid {
+    border-color: var(--danger-border) !important;
+    background-color: rgba(220, 53, 69, 0.05);
+}
+
+/* Responsive: stack on smaller screens */
+@media (max-width: 640px) {
+    .env-form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .env-form-field--full {
+        grid-column: 1;
+    }
 }
 
 /* Progress bar styles */

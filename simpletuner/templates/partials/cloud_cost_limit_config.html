@@ -1,0 +1,112 @@
+<!-- partials/cloud_cost_limit_config.html - Cost limit configuration -->
+<div class="cloud-card mb-3">
+    <div class="cloud-card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="fas fa-money-bill-wave me-2"></i>Spending Limit</h6>
+        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1"
+                @click="loadCostLimitStatus()"
+                :disabled="costLimit.loading"
+                title="Refresh">
+            <i class="fas fa-sync" :class="{ 'fa-spin': costLimit.loading }" style="font-size: 0.7rem;"></i>
+        </button>
+    </div>
+    <div class="cloud-card-body py-2">
+        <!-- Enable toggle -->
+        <div class="form-check form-switch mb-2">
+            <input type="checkbox"
+                   class="form-check-input"
+                   id="cost-limit-enabled"
+                   :checked="providerConfig.cost_limit_enabled"
+                   @change.stop="updateCostLimitSetting('cost_limit_enabled', $event.target.checked)"
+                   :disabled="costLimit.saving">
+            <label class="form-check-label small" for="cost-limit-enabled">
+                Enable spending limit
+            </label>
+        </div>
+
+        <!-- Config (shown when enabled) -->
+        <template x-if="providerConfig.cost_limit_enabled">
+            <div>
+                <!-- Amount input -->
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Limit Amount</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-dark border-secondary">$</span>
+                        <input type="number"
+                               class="form-control form-control-sm bg-dark text-light border-secondary"
+                               min="1"
+                               step="1"
+                               placeholder="50"
+                               :value="providerConfig.cost_limit_amount || ''"
+                               @change.stop="updateCostLimitSetting('cost_limit_amount', parseFloat($event.target.value) || null)"
+                               @input.stop
+                               :disabled="costLimit.saving">
+                    </div>
+                </div>
+
+                <!-- Period select -->
+                <div class="mb-2">
+                    <label class="form-label small mb-1">Period</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                            :value="providerConfig.cost_limit_period || 'monthly'"
+                            @change.stop="updateCostLimitSetting('cost_limit_period', $event.target.value)"
+                            :disabled="costLimit.saving">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                    </select>
+                </div>
+
+                <!-- Action select -->
+                <div class="mb-3">
+                    <label class="form-label small mb-1">When limit reached</label>
+                    <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                            :value="providerConfig.cost_limit_action || 'warn'"
+                            @change.stop="updateCostLimitSetting('cost_limit_action', $event.target.value)"
+                            :disabled="costLimit.saving">
+                        <option value="warn">Warn only</option>
+                        <option value="block">Block new jobs</option>
+                    </select>
+                </div>
+
+                <!-- Current status -->
+                <template x-if="costLimit.status">
+                    <div class="border-top border-secondary pt-2 mt-2">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small text-muted">Current Spend</span>
+                            <span class="small fw-medium" x-text="'$' + (costLimit.status.current_spend || 0).toFixed(2)"></span>
+                        </div>
+                        <div class="progress mb-1" style="height: 6px;">
+                            <div class="progress-bar"
+                                 :class="{
+                                     'bg-success': costLimit.status.percent_used < 60,
+                                     'bg-warning': costLimit.status.percent_used >= 60 && costLimit.status.percent_used < 80,
+                                     'bg-danger': costLimit.status.percent_used >= 80
+                                 }"
+                                 :style="'width: ' + Math.min(costLimit.status.percent_used, 100) + '%'"
+                                 role="progressbar"></div>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="small text-muted" x-text="costLimit.status.percent_used + '%'"></span>
+                            <span class="small text-muted" x-text="'of $' + (costLimit.status.limit_amount || 0).toFixed(2)"></span>
+                        </div>
+                        <template x-if="costLimit.status.is_warning || costLimit.status.is_exceeded">
+                            <div class="alert py-1 px-2 mt-2 mb-0 small"
+                                 :class="costLimit.status.is_exceeded ? 'alert-danger' : 'alert-warning'">
+                                <i class="fas me-1" :class="costLimit.status.is_exceeded ? 'fa-exclamation-circle' : 'fa-exclamation-triangle'"></i>
+                                <span x-text="costLimit.status.message"></span>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <!-- Disabled info -->
+        <template x-if="!providerConfig.cost_limit_enabled">
+            <p class="small text-muted mb-0" style="font-size: 0.7rem;">
+                <i class="fas fa-info-circle me-1"></i>
+                Set a spending limit to control cloud costs.
+            </p>
+        </template>
+    </div>
+</div>

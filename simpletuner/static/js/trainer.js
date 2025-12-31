@@ -56,10 +56,6 @@
                 window.dependencyManager.initializeFieldsInContainer(container);
             }
 
-            // Listen for field changes
-            window.addEventListener('fieldChanged', (e) => {
-                console.log('Field changed:', e.detail.field, '=', e.detail.value);
-            });
         } catch (error) {
             console.warn('Dependency manager initialization failed:', error);
             // Continue without dependency manager
@@ -1226,6 +1222,11 @@
     }
 
     showToast(message, type = 'success') {
+        // Play sound for this notification type
+        if (window.SoundManager) {
+            window.SoundManager.play(type);
+        }
+
         const toastContainer = document.querySelector('.toast-container');
         if (!toastContainer) {
             console.warn('Toast container not found, showing alert instead');

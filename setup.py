@@ -266,6 +266,7 @@ base_deps = [
     "cryptography>=41.0.0",
     "torchcodec>=0.8.1",
     "sdnq>=0.1.2",
+    "aiosqlite>=0.19.0",
 ]
 
 platform_deps_for_install = get_platform_dependencies()
@@ -284,6 +285,11 @@ extras_require = {
     "rocm": list(PLATFORM_DEPENDENCIES["rocm"]),
     "apple": list(PLATFORM_DEPENDENCIES["apple"]),
     "cpu": list(PLATFORM_DEPENDENCIES["cpu"]),
+    # State backend extras for multi-node deployments
+    "state-postgresql": ["asyncpg>=0.29.0"],
+    "state-mysql": ["aiomysql>=0.2.0"],
+    "state-redis": ["redis>=5.0.0"],
+    "state-all": ["asyncpg>=0.29.0", "aiomysql>=0.2.0", "redis>=5.0.0"],
 }
 
 # Read long description

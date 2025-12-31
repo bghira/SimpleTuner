@@ -1,0 +1,93 @@
+<!-- Admin - Team Members Modal -->
+<div class="modal fade" :class="{ 'show d-block': teamMembersOpen }" tabindex="-1" x-show="teamMembersOpen" @keydown.escape="closeTeamMembers()">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h5 class="modal-title">
+                    <i class="fas fa-users me-2"></i>
+                    Team Members: <span class="text-info" x-text="selectedTeam?.name"></span>
+                </h5>
+                <button type="button" class="btn-close btn-close-white" @click="closeTeamMembers()"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Add Member Form -->
+                <div class="mb-4 p-3 rounded" style="background: rgba(0,0,0,0.2);">
+                    <label class="form-label small text-muted">Add Member</label>
+                    <div class="input-group">
+                        <select class="form-select bg-dark text-light border-secondary" x-model="addMemberUserId" :disabled="availableTeamUsers.length === 0">
+                            <option value="">Select a user...</option>
+                            <template x-for="user in availableTeamUsers" :key="user.id">
+                                <option :value="user.id" x-text="user.display_name || user.username + ' (' + user.email + ')'"></option>
+                            </template>
+                        </select>
+                        <button class="btn btn-primary" @click="addTeamMember()" :disabled="!addMemberUserId || saving">
+                            <i class="fas" :class="saving ? 'fa-spinner fa-spin' : 'fa-plus'"></i>
+                            <span class="ms-1 d-none d-sm-inline">Add</span>
+                        </button>
+                    </div>
+                    <div class="form-text text-muted small" x-show="availableTeamUsers.length === 0">
+                        <i class="fas fa-info-circle me-1"></i>
+                        All organization members are already in this team
+                    </div>
+                </div>
+
+                <!-- Members List -->
+                <div class="team-members-list">
+                    <template x-if="teamMembersLoading">
+                        <div class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin me-2"></i>Loading members...
+                        </div>
+                    </template>
+                    <template x-if="!teamMembersLoading && teamMembers.length === 0">
+                        <div class="text-center py-4 text-muted">
+                            <i class="fas fa-user-slash fa-2x mb-2 d-block"></i>
+                            No members in this team yet
+                        </div>
+                    </template>
+                    <template x-if="!teamMembersLoading && teamMembers.length > 0">
+                        <table class="table table-dark table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>User</th>
+                                    <th class="d-none d-md-table-cell">Email</th>
+                                    <th class="d-none d-lg-table-cell">Level</th>
+                                    <th style="width: 80px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="member in teamMembers" :key="member.id">
+                                    <tr>
+                                        <td>
+                                            <div class="fw-medium" x-text="member.display_name || member.username"></div>
+                                            <div class="text-muted small d-md-none" x-text="member.email"></div>
+                                        </td>
+                                        <td class="d-none d-md-table-cell">
+                                            <span class="text-muted" x-text="member.email"></span>
+                                        </td>
+                                        <td class="d-none d-lg-table-cell">
+                                            <template x-if="member.levels && member.levels.length > 0">
+                                                <span class="badge bg-secondary" x-text="member.levels[0]"></span>
+                                            </template>
+                                            <template x-if="!member.levels || member.levels.length === 0">
+                                                <span class="text-muted small">-</span>
+                                            </template>
+                                        </td>
+                                        <td>
+                                            <button class="btn btn-sm btn-outline-danger" @click="removeTeamMember(member)" title="Remove from team">
+                                                <i class="fas fa-user-minus"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </template>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary" @click="closeTeamMembers()">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="teamMembersOpen" @click="closeTeamMembers()"></div>

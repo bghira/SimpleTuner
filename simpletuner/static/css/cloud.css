@@ -1,0 +1,542 @@
+/**
+ * Cloud Dashboard Styles
+ * Extracted from cloud_tab.html for better maintainability.
+ */
+
+/* Provider tabs */
+.cloud-provider-tabs .nav-tabs {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cloud-provider-tabs .nav-link {
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.75rem 1.25rem;
+    transition: all 0.2s ease;
+}
+
+.cloud-provider-tabs .nav-link:hover {
+    color: rgba(255, 255, 255, 0.9);
+    border-bottom-color: rgba(129, 140, 248, 0.4);
+}
+
+.cloud-provider-tabs .nav-link.active {
+    color: #fff;
+    background: transparent;
+    border-bottom-color: #818cf8;
+}
+
+/* Cloud card base */
+.cloud-card {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    background: rgba(15, 23, 42, 0.5);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+}
+
+.cloud-card-header {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.cloud-card-header h6 {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+.cloud-card-body {
+    padding: 0.5rem 0.75rem;
+}
+
+/* Main content layout */
+.cloud-main-content {
+    margin-bottom: 0;
+}
+
+.cloud-job-list-panel .cloud-card {
+    height: 100%;
+}
+
+.cloud-job-list-panel .job-list {
+    max-height: 450px;
+    overflow-y: auto;
+}
+
+/* Job details panel - visual affordance */
+.cloud-job-details-panel {
+    position: sticky;
+    top: 1rem;
+}
+
+.job-details-empty {
+    border: 2px dashed rgba(255, 255, 255, 0.1);
+    background: rgba(15, 23, 42, 0.3);
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.job-details-empty .cloud-card-body {
+    flex: none;
+}
+
+.job-details-empty .empty-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.job-details-empty .empty-icon i {
+    font-size: 1.25rem;
+    color: #64748b;
+}
+
+/* Job list items */
+.job-list-item {
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    position: relative;
+}
+
+.job-list-item:hover {
+    background: rgba(129, 140, 248, 0.08);
+}
+
+.job-list-item.active {
+    background: rgba(129, 140, 248, 0.15);
+    border-left: 3px solid #818cf8;
+}
+
+/* Selection indicator arrow */
+.job-list-item.active::after {
+    content: '';
+    position: absolute;
+    right: -1px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+    border-left: 8px solid #818cf8;
+}
+
+.job-list-item:last-child {
+    border-bottom: none;
+}
+
+/* Metric display */
+.metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #818cf8;
+    line-height: 1.2;
+}
+
+.metric-label {
+    font-size: 0.85rem;
+}
+
+.metric-value-sm {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+.metric-label-sm {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Status bars */
+.status-bars .progress {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+/* Log viewer */
+.log-viewer {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.8rem;
+    max-height: 60vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* Modal overrides */
+.modal-content.bg-dark {
+    background-color: #1e293b !important;
+}
+
+.modal.show {
+    background: rgba(0, 0, 0, 0.5);
+}
+
+/* Settings panel (slide-out) */
+.cloud-settings-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 360px;
+    max-width: 90vw;
+    height: 100vh;
+    background: #1e293b;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 1060;
+    overflow-y: auto;
+}
+
+.settings-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.2);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.settings-panel-body {
+    padding: 1rem;
+}
+
+.cloud-settings-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1059;
+}
+
+/* Mobile job details sheet */
+.cloud-job-details-sheet {
+    display: none;
+}
+
+.cloud-sheet-backdrop {
+    display: none;
+}
+
+/* Desktop: hide bottom sheet, show inline details */
+@media (min-width: 992px) {
+    .cloud-job-details-inline {
+        display: block;
+    }
+
+    .cloud-job-details-sheet {
+        display: none !important;
+    }
+
+    .cloud-sheet-backdrop {
+        display: none !important;
+    }
+}
+
+/* Tablet: 2-column, details below */
+@media (min-width: 768px) and (max-width: 991.98px) {
+    .cloud-main-content .row {
+        flex-direction: column;
+    }
+
+    .cloud-main-content .col-lg-7,
+    .cloud-main-content .col-lg-5 {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .cloud-job-list-panel .job-list {
+        max-height: 280px;
+    }
+
+    .cloud-job-details-panel {
+        position: static;
+        margin-top: 1rem;
+    }
+
+    .job-details-empty {
+        display: none;
+    }
+}
+
+/* Mobile: Compact layout */
+@media (max-width: 767.98px) {
+    /* Provider tabs: compact */
+    .cloud-provider-tabs .nav-link {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.85rem;
+    }
+
+    .cloud-provider-tabs .badge-text {
+        display: none;
+    }
+
+    .cloud-provider-tabs .badge {
+        width: 8px;
+        height: 8px;
+        padding: 0;
+        border-radius: 50%;
+        vertical-align: middle;
+    }
+
+    /* Card headers: tighter */
+    .cloud-card-header {
+        padding: 0.625rem 0.75rem;
+    }
+
+    .cloud-card-header h6 {
+        font-size: 0.8rem;
+    }
+
+    /* Card body: tighter */
+    .cloud-card-body {
+        padding: 0.75rem;
+    }
+
+    /* Job list: taller on mobile (main focus) */
+    .cloud-job-list-panel .job-list {
+        max-height: 350px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .job-list-item {
+        padding: 0.625rem 0.75rem;
+    }
+
+    /* Hide desktop details panel, use bottom sheet */
+    .cloud-job-details-panel {
+        display: none;
+    }
+
+    .cloud-job-details-sheet {
+        display: block;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 1055;
+        background: #1e293b;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 1rem 1rem 0 0;
+        max-height: 70vh;
+        overflow-y: auto;
+        transform: translateY(100%);
+        transition: transform 0.25s ease-out;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .cloud-job-details-sheet.open {
+        transform: translateY(0);
+    }
+
+    .cloud-job-details-sheet.dragging {
+        transition: none;
+    }
+
+    .cloud-job-details-sheet .sheet-handle {
+        width: 36px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.25);
+        border-radius: 2px;
+        margin: 0.625rem auto 0.375rem;
+    }
+
+    .cloud-job-details-sheet .cloud-card {
+        border: none;
+        border-radius: 0;
+        background: transparent;
+    }
+
+    .cloud-job-details-sheet .cloud-card-header {
+        background: transparent;
+        border-bottom-color: rgba(255, 255, 255, 0.06);
+    }
+
+    .cloud-sheet-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 1054;
+    }
+
+    /* Selection indicator: hide on mobile */
+    .job-list-item.active::after {
+        display: none;
+    }
+
+    /* Touch targets: 44px minimum */
+    .cloud-card .btn:not(.btn-close) {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Logs modal: near-fullscreen */
+    .cloud-logs-modal .modal-dialog {
+        margin: 0.5rem;
+        max-width: calc(100% - 1rem);
+        height: calc(100% - 1rem);
+    }
+
+    .cloud-logs-modal .modal-content {
+        height: 100%;
+        border-radius: 0.5rem;
+    }
+
+    .cloud-logs-modal .modal-header {
+        padding: 0.625rem 0.75rem;
+    }
+
+    .cloud-logs-modal .modal-title {
+        font-size: 0.85rem;
+    }
+
+    .cloud-logs-modal .modal-title code {
+        display: block;
+        font-size: 0.65rem;
+        margin-top: 0.125rem;
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .cloud-logs-modal .log-viewer {
+        max-height: calc(100vh - 130px);
+        font-size: 0.65rem;
+        padding: 0.625rem;
+    }
+
+    /* Settings panel: full width on mobile */
+    .cloud-settings-panel {
+        width: 100%;
+        max-width: 100%;
+    }
+}
+
+/* Extra small devices (< 375px) */
+@media (max-width: 374.98px) {
+    .cloud-provider-tabs .nav-link {
+        padding: 0.375rem 0.5rem;
+        font-size: 0.75rem;
+    }
+
+    .cloud-provider-tabs .nav-link i {
+        margin-right: 0.25rem !important;
+    }
+
+    .cloud-card-header h6 {
+        font-size: 0.7rem;
+    }
+
+    .cloud-job-list-panel .job-list {
+        max-height: 280px;
+    }
+}
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+    .cloud-job-details-sheet,
+    .cloud-settings-panel,
+    .job-list-item,
+    .transition {
+        transition: none !important;
+    }
+}
+
+/* Alpine.js transition utilities */
+.transition {
+    transition-property: all;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ease-in {
+    transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+}
+
+.ease-out {
+    transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
+}
+
+.duration-200 {
+    transition-duration: 200ms;
+}
+
+.duration-300 {
+    transition-duration: 300ms;
+}
+
+.opacity-0 {
+    opacity: 0;
+}
+
+.opacity-100 {
+    opacity: 1;
+}
+
+.transform {
+    transform: translateX(var(--tw-translate-x, 0)) translateY(var(--tw-translate-y, 0));
+}
+
+.translate-x-full {
+    --tw-translate-x: 100%;
+}
+
+.translate-x-0 {
+    --tw-translate-x: 0;
+}
+
+.translate-y-4 {
+    --tw-translate-y: 1rem;
+}
+
+.translate-y-0 {
+    --tw-translate-y: 0;
+}
+
+/* Provider tabs - coming soon providers (extracted from cloud_provider_tabs.html) */
+.cloud-provider-tabs .nav-link.coming-soon,
+.cloud-provider-tabs .nav-link.coming-soon:disabled {
+    color: rgba(255, 255, 255, 0.5);
+    cursor: not-allowed;
+}
+
+.cloud-provider-tabs .nav-link.coming-soon:hover {
+    border-bottom-color: transparent;
+}
+
+/* Tablet: Icon-only provider tabs with tooltip on hover */
+@media (min-width: 576px) and (max-width: 767.98px) {
+    .cloud-provider-tabs .nav-link {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .cloud-provider-tabs .provider-name {
+        display: none;
+    }
+
+    .cloud-provider-tabs .provider-badge .badge-text {
+        display: none;
+    }
+
+    .cloud-provider-tabs .provider-badge i {
+        display: inline !important;
+    }
+}

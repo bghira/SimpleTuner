@@ -26,6 +26,11 @@ export class TrainerUI {
     showToast(message, type = 'success') {
         const toastId = 'toast-' + Date.now();
 
+        // Play sound for this notification type
+        if (window.SoundManager) {
+            window.SoundManager.play(type);
+        }
+
         const toastHTML = `
             <div id="${toastId}" class="toast align-items-center text-white bg-${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'info'}" role="alert">
                 <div class="d-flex">

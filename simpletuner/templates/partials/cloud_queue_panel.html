@@ -1,0 +1,344 @@
+<!-- partials/cloud_queue_panel.html - Queue Management Panel -->
+<div class="cloud-queue-panel" x-show="showQueuePanel" x-cloak>
+    <div class="cloud-card">
+        <div class="cloud-card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">
+                <i class="fas fa-layer-group me-2"></i>Job Queue
+            </h6>
+            <button type="button" class="btn-close btn-close-white btn-sm"
+                    @click="showQueuePanel = false"
+                    aria-label="Close"></button>
+        </div>
+        <div class="cloud-card-body">
+            <!-- Queue Stats Row -->
+            <div class="queue-stats-row mb-3">
+                <div class="queue-stat">
+                    <span class="queue-stat-value" x-text="queueStats.queue_depth || 0"></span>
+                    <span class="queue-stat-label">Queued</span>
+                </div>
+                <div class="queue-stat">
+                    <span class="queue-stat-value" x-text="queueStats.running || 0"></span>
+                    <span class="queue-stat-label">Running</span>
+                </div>
+                <div class="queue-stat">
+                    <span class="queue-stat-value" x-text="queueStats.max_concurrent || 5"></span>
+                    <span class="queue-stat-label">Max Concurrent</span>
+                </div>
+                <div class="queue-stat" x-show="queueStats.avg_wait_seconds">
+                    <span class="queue-stat-value" x-text="formatWaitTime(queueStats.avg_wait_seconds)"></span>
+                    <span class="queue-stat-label">Avg Wait</span>
+                </div>
+            </div>
+
+            <!-- Concurrency Controls (admin only) -->
+            <div class="queue-controls mb-3" x-show="hasAdminAccess">
+                <div class="row g-2 align-items-end">
+                    <div class="col-4">
+                        <label class="form-label small text-muted mb-1">Global Limit</label>
+                        <input type="number" class="form-control form-control-sm"
+                               x-model.number="queueSettings.max_concurrent"
+                               min="1" max="100">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small text-muted mb-1">Per-User Limit</label>
+                        <input type="number" class="form-control form-control-sm"
+                               x-model.number="queueSettings.user_max_concurrent"
+                               min="1" max="20">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small text-muted mb-1">Per-Team Limit</label>
+                        <input type="number" class="form-control form-control-sm"
+                               x-model.number="queueSettings.team_max_concurrent"
+                               min="1" max="50"
+                               :disabled="!queueSettings.enable_fair_share">
+                    </div>
+                </div>
+                <div class="row g-2 align-items-center mt-2">
+                    <div class="col-auto">
+                        <div class="form-check form-switch">
+                            <input type="checkbox" class="form-check-input" id="enableFairShare"
+                                   x-model="queueSettings.enable_fair_share">
+                            <label class="form-check-label small" for="enableFairShare">
+                                Fair-Share Scheduling
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-auto ms-auto">
+                        <button type="button" class="btn btn-sm btn-primary"
+                                @click="updateConcurrencyLimits()"
+                                :disabled="savingQueueSettings">
+                            <i class="fas" :class="savingQueueSettings ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+                            <span class="ms-1">Save</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="small text-muted mt-1" x-show="queueSettings.enable_fair_share">
+                    <i class="fas fa-info-circle me-1"></i>Team limits distribute jobs fairly across teams
+                </div>
+            </div>
+
+            <!-- Admin Actions (admin only) -->
+            <div class="queue-admin-actions mb-3" x-show="hasAdminAccess">
+                <h6 class="section-title small text-muted mb-2">
+                    <i class="fas fa-cog me-1"></i>Queue Operations
+                </h6>
+                <div class="d-flex gap-2 flex-wrap align-items-end">
+                    <!-- Process Queue -->
+                    <button type="button" class="btn btn-sm btn-primary"
+                            @click="processQueue()"
+                            :disabled="processingQueue"
+                            title="Manually dispatch pending jobs">
+                        <i class="fas" :class="processingQueue ? 'fa-spinner fa-spin' : 'fa-play'"></i>
+                        <span class="ms-1">Process Queue</span>
+                    </button>
+                    <!-- Background Polling Toggle -->
+                    <button type="button" class="btn btn-sm"
+                            :class="pollingStatus.active ? 'btn-outline-success' : 'btn-outline-secondary'"
+                            @click="togglePolling()"
+                            :disabled="pollingStatus.loading"
+                            :title="pollingStatus.active ? 'Background polling is active. Click to disable.' : 'Background polling is inactive. Click to enable.'">
+                        <i class="fas" :class="pollingStatus.loading ? 'fa-spinner fa-spin' : (pollingStatus.active ? 'fa-satellite-dish' : 'fa-power-off')"></i>
+                        <span class="ms-1" x-text="pollingStatus.active ? 'Polling On' : 'Polling Off'"></span>
+                    </button>
+                    <!-- Cleanup -->
+                    <div class="input-group input-group-sm" style="max-width: 200px;">
+                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model.number="cleanupDays"
+                               min="1" max="365"
+                               style="max-width: 60px;"
+                               title="Days old">
+                        <button type="button" class="btn btn-sm btn-outline-warning"
+                                @click="cleanupQueue()"
+                                :disabled="cleaningQueue"
+                                title="Remove old completed/failed jobs">
+                            <i class="fas" :class="cleaningQueue ? 'fa-spinner fa-spin' : 'fa-broom'"></i>
+                            <span class="ms-1">Cleanup</span>
+                        </button>
+                    </div>
+                </div>
+                <!-- Cleanup result -->
+                <div class="small text-success mt-2" x-show="lastCleanupResult" x-transition>
+                    <i class="fas fa-check me-1"></i>
+                    Removed <span x-text="lastCleanupResult?.removed || 0"></span> old entries
+                </div>
+            </div>
+
+            <!-- Status Breakdown (visible to all users) -->
+            <div class="queue-status-breakdown mb-3" x-show="queueStats.by_status && Object.keys(queueStats.by_status).length > 0">
+                <h6 class="section-title small text-muted mb-2">
+                    <i class="fas fa-chart-pie me-1"></i>By Status
+                </h6>
+                <div class="d-flex flex-wrap gap-2">
+                    <template x-for="[status, count] in Object.entries(queueStats.by_status || {})" :key="status">
+                        <span class="badge"
+                              :class="{
+                                  'bg-warning': status === 'pending' || status === 'queued',
+                                  'bg-primary': status === 'running' || status === 'processing',
+                                  'bg-success': status === 'completed' || status === 'done',
+                                  'bg-danger': status === 'failed' || status === 'error',
+                                  'bg-secondary': status === 'cancelled'
+                              }">
+                            <span x-text="status"></span>: <span x-text="count"></span>
+                        </span>
+                    </template>
+                </div>
+            </div>
+
+            <!-- User's Queue Position (non-admin) -->
+            <div class="queue-user-position mb-3" x-show="!hasAdminAccess && userQueuePosition">
+                <div class="alert alert-info small py-2 px-3 mb-0">
+                    <i class="fas fa-user-clock me-2"></i>
+                    <span>Your job is at position <strong x-text="userQueuePosition"></strong> in the queue</span>
+                    <span x-show="userEstimatedWait" class="ms-2 text-muted">
+                        (Est. wait: <span x-text="formatWaitTime(userEstimatedWait)"></span>)
+                    </span>
+                </div>
+            </div>
+
+            <!-- Pending Jobs -->
+            <div class="queue-pending-section" x-show="visiblePendingJobs.length > 0">
+                <h6 class="section-title small text-muted mb-2">
+                    <i class="fas fa-clock me-1"></i>Pending Jobs
+                    <span class="badge bg-secondary ms-1" x-text="hasAdminAccess ? queuePendingJobs.length : visiblePendingJobs.length"></span>
+                </h6>
+                <div class="queue-job-list">
+                    <template x-for="job in visiblePendingJobs" :key="job.job_id">
+                        <div class="queue-job-item d-flex align-items-center justify-content-between">
+                            <div class="queue-job-info">
+                                <span class="queue-position" x-text="'#' + job.position"></span>
+                                <span class="queue-job-name" x-text="job.config_name || job.job_id.slice(0, 8)"></span>
+                                <span class="queue-priority badge"
+                                      :class="{
+                                          'bg-danger': job.priority_name === 'urgent' || job.priority_name === 'critical',
+                                          'bg-warning': job.priority_name === 'high',
+                                          'bg-secondary': job.priority_name === 'normal',
+                                          'bg-dark': job.priority_name === 'low'
+                                      }"
+                                      x-text="job.priority_name"></span>
+                                <span class="badge bg-info ms-1" x-show="job.is_own" style="font-size: 0.6rem;">Your job</span>
+                            </div>
+                            <div class="queue-job-actions" x-show="hasAdminAccess || job.is_own">
+                                <button type="button" class="btn btn-sm btn-outline-danger"
+                                        @click="cancelQueuedJob(job.job_id)"
+                                        title="Cancel">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Blocked Jobs (need approval) -->
+            <div class="queue-blocked-section mt-3" x-show="visibleBlockedJobs.length > 0">
+                <h6 class="section-title small text-muted mb-2">
+                    <i class="fas fa-lock me-1"></i>Awaiting Approval
+                    <span class="badge bg-warning text-dark ms-1" x-text="hasAdminAccess ? queueBlockedJobs.length : visibleBlockedJobs.length"></span>
+                </h6>
+                <div class="queue-job-list">
+                    <template x-for="job in visibleBlockedJobs" :key="job.job_id">
+                        <div class="queue-job-item blocked d-flex flex-column p-2">
+                            <!-- Job header row -->
+                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                <div class="queue-job-info d-flex align-items-center gap-2">
+                                    <span class="queue-job-name fw-medium" x-text="job.config_name || job.job_id.slice(0, 8)"></span>
+                                    <span class="badge bg-warning text-dark" style="font-size: 0.6rem;">
+                                        <i class="fas fa-hourglass-half"></i>
+                                    </span>
+                                    <span class="badge bg-info ms-1" x-show="job.is_own" style="font-size: 0.6rem;">Your job</span>
+                                </div>
+                            </div>
+                            <!-- Job details row -->
+                            <div class="queue-job-details d-flex gap-3 mb-2 text-muted small">
+                                <span x-show="job.estimated_cost > 0">
+                                    <i class="fas fa-dollar-sign me-1"></i>
+                                    <span class="text-warning" x-text="'~$' + job.estimated_cost.toFixed(2)"></span>
+                                </span>
+                                <span x-show="job.queued_at">
+                                    <i class="fas fa-clock me-1"></i>
+                                    <span x-text="getJobWaitTime(job)"></span> ago
+                                </span>
+                            </div>
+                            <!-- Status message for non-admins -->
+                            <div class="queue-job-status small text-muted" x-show="!hasAdminAccess && job.is_own">
+                                <i class="fas fa-info-circle me-1"></i>Waiting for administrator approval
+                            </div>
+                            <!-- Action buttons (admin only) -->
+                            <div class="queue-job-actions d-flex gap-2" x-show="hasAdminAccess">
+                                <button type="button" class="btn btn-sm btn-success flex-grow-1"
+                                        @click="openApprovalModal('approve', job)"
+                                        title="Approve this job">
+                                    <i class="fas fa-check me-1"></i>Approve
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-danger flex-grow-1"
+                                        @click="openApprovalModal('reject', job)"
+                                        title="Reject this job">
+                                    <i class="fas fa-times me-1"></i>Reject
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div class="queue-empty text-center text-muted py-3"
+                 x-show="visiblePendingJobs.length === 0 && visibleBlockedJobs.length === 0">
+                <i class="fas fa-inbox mb-2" style="font-size: 1.5rem; opacity: 0.5;"></i>
+                <p class="small mb-0">No jobs in queue</p>
+            </div>
+
+            <!-- Refresh Button -->
+            <div class="queue-actions mt-3 text-end">
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        @click="refreshQueueStats()"
+                        :disabled="loadingQueueStats">
+                    <i class="fas fa-sync-alt" :class="{ 'fa-spin': loadingQueueStats }"></i>
+                    <span class="ms-1">Refresh</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Approval Confirmation Modal -->
+<div class="modal fade approval-modal"
+     :class="{ 'show d-block': approvalModal.open }"
+     tabindex="-1"
+     x-show="approvalModal.open"
+     @keydown.escape="closeApprovalModal()"
+     x-cloak>
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h5 class="modal-title d-flex align-items-center">
+                    <i class="fas me-2" :class="approvalModal.action === 'approve' ? 'fa-check-circle text-success' : 'fa-times-circle text-danger'"></i>
+                    <span x-text="approvalModal.action === 'approve' ? 'Approve Job' : 'Reject Job'"></span>
+                </h5>
+                <button type="button" class="btn-close btn-close-white" @click="closeApprovalModal()"></button>
+            </div>
+            <div class="modal-body p-3">
+                <!-- Job summary -->
+                <div class="approval-summary p-3 rounded mb-3" style="background: rgba(0,0,0,0.2);">
+                    <div class="row g-2 text-center">
+                        <div class="col-12">
+                            <div class="text-muted small">Configuration</div>
+                            <div class="fw-bold" x-text="approvalModal.job?.config_name || 'Unnamed'"></div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-muted small">Est. Cost</div>
+                            <div class="text-warning fw-bold"
+                                 x-text="approvalModal.job?.estimated_cost > 0 ? '~$' + approvalModal.job.estimated_cost.toFixed(2) : 'N/A'"></div>
+                        </div>
+                        <div class="col-6">
+                            <div class="text-muted small">Priority</div>
+                            <div x-text="approvalModal.job?.priority_name || 'Normal'"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Job ID -->
+                <div class="mb-3">
+                    <label class="form-label small text-muted">Job ID</label>
+                    <code class="d-block small px-2 py-1 rounded"
+                          style="background: rgba(0,0,0,0.3); font-size: 0.75rem;"
+                          x-text="approvalModal.job?.job_id"></code>
+                </div>
+
+                <!-- Rejection reason (only for reject) -->
+                <div class="mb-3" x-show="approvalModal.action === 'reject'">
+                    <label class="form-label" for="rejectionReason">Rejection Reason <span class="text-danger">*</span></label>
+                    <textarea class="form-control bg-dark text-light border-secondary"
+                              id="rejectionReason"
+                              rows="3"
+                              placeholder="Explain why this job is being rejected..."
+                              x-model="approvalModal.reason"
+                              @input.stop></textarea>
+                </div>
+
+                <!-- Approval notes (optional, for approve) -->
+                <div class="mb-3" x-show="approvalModal.action === 'approve'">
+                    <label class="form-label" for="approvalNotes">Notes (optional)</label>
+                    <input type="text"
+                           class="form-control bg-dark text-light border-secondary"
+                           id="approvalNotes"
+                           placeholder="Optional notes..."
+                           x-model="approvalModal.notes"
+                           @input.stop>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary" @click="closeApprovalModal()">Cancel</button>
+                <button type="button"
+                        class="btn"
+                        :class="approvalModal.action === 'approve' ? 'btn-success' : 'btn-danger'"
+                        :disabled="approvalModal.processing || (approvalModal.action === 'reject' && !approvalModal.reason?.trim())"
+                        @click="submitApprovalAction()">
+                    <i class="fas me-1" :class="approvalModal.processing ? 'fa-spinner fa-spin' : (approvalModal.action === 'approve' ? 'fa-check' : 'fa-times')"></i>
+                    <span x-text="approvalModal.processing ? 'Processing...' : (approvalModal.action === 'approve' ? 'Approve' : 'Reject')"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="approvalModal.open" @click="closeApprovalModal()" x-cloak></div>

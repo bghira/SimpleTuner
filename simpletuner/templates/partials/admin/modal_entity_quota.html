@@ -1,0 +1,95 @@
+<!-- Org/Team Quota Modal -->
+<div class="modal fade" :class="{ 'show d-block': entityQuotaOpen }" tabindex="-1"
+     x-show="entityQuotaOpen" @keydown.escape="entityQuotaOpen = false">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">
+                    <i class="fas fa-tachometer-alt me-2"></i>Quota Ceilings: <span class="text-info" x-text="quotaTargetName"></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" @click="entityQuotaOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info py-2 small">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Quota ceilings limit what users in this <span x-text="quotaTargetType"></span> can use,
+                    regardless of any higher limits assigned to them individually.
+                </div>
+
+                <!-- Existing quotas -->
+                <div class="mb-4" x-show="entityQuotas.length > 0">
+                    <h6 class="small text-muted mb-2">Current Ceilings</h6>
+                    <table class="table table-dark table-sm mb-0">
+                        <thead>
+                            <tr><th>Type</th><th>Limit</th><th>Action</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="q in entityQuotas" :key="q.id || q.quota_type">
+                                <tr>
+                                    <td x-text="getQuotaTypeName(q.quota_type)"></td>
+                                    <td x-text="q.limit_value"></td>
+                                    <td><span class="badge" :class="getQuotaActionClass(q.action)" x-text="q.action"></span></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-danger" @click="deleteEntityQuota(q)" title="Remove">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Add new quota -->
+                <h6 class="small text-muted mb-2">Add Quota Ceiling</h6>
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary" x-model="newEntityQuota.quota_type">
+                            <template x-if="quotaTypes.length > 0">
+                                <template x-for="qt in quotaTypes" :key="qt.value">
+                                    <option :value="qt.value" x-text="qt.label" :title="qt.description"></option>
+                                </template>
+                            </template>
+                            <template x-if="quotaTypes.length === 0">
+                                <!-- Fallback if API not loaded -->
+                                <option value="concurrent_jobs">Concurrent Jobs</option>
+                                <option value="jobs_per_day">Jobs per Day</option>
+                                <option value="jobs_per_hour">Jobs per Hour</option>
+                                <option value="cost_daily">Daily Cost ($)</option>
+                                <option value="cost_monthly">Monthly Cost ($)</option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                               x-model.number="newEntityQuota.limit_value" min="1" placeholder="Limit">
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary" x-model="newEntityQuota.action">
+                            <template x-if="quotaActions.length > 0">
+                                <template x-for="qa in quotaActions" :key="qa.value">
+                                    <option :value="qa.value" x-text="qa.label" :title="qa.description"></option>
+                                </template>
+                            </template>
+                            <template x-if="quotaActions.length === 0">
+                                <!-- Fallback if API not loaded -->
+                                <option value="block">Block</option>
+                                <option value="warn">Warn</option>
+                                <option value="require_approval">Require Approval</option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-sm btn-primary w-100" @click="addEntityQuota()" :disabled="saving">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="entityQuotaOpen = false">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="entityQuotaOpen" @click="entityQuotaOpen = false"></div>

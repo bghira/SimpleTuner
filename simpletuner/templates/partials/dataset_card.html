@@ -123,7 +123,7 @@ function datasetAdvancedOptionsComponent() {
 </script>
 
 <div class="dataset-card"
-     x-data="datasetCardComponent({{ dataset | tojson }}, {{ dataset | tojson }})"
+     x-data='datasetCardComponent({{ dataset | tojson }}, {{ dataset | tojson }})'
      x-bind:class="{ 'loading': saving }"
      hx-target="this"
      hx-swap="outerHTML">

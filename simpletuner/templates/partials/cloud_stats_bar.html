@@ -1,0 +1,213 @@
+<!-- partials/cloud_stats_bar.html - Condensed stats footer bar -->
+<div class="cloud-stats-bar">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <!-- Connection status (left) -->
+        <div class="connection-info d-flex align-items-center gap-3">
+            <div class="conn-item">
+                <i class="fas fa-check-circle text-success"></i>
+                <span>Connected</span>
+                <template x-if="apiKeyState.userInfo?.username">
+                    <span class="conn-user" x-text="'(' + apiKeyState.userInfo.username + ')'"></span>
+                </template>
+            </div>
+            <template x-for="provider in providers.filter(p => p.id === activeProvider)" :key="provider.id">
+                <div class="conn-item">
+                    <i class="fas fa-microchip text-warning"></i>
+                    <span x-text="provider.hardware || 'N/A'"></span>
+                    <span class="conn-cost" x-text="provider.cost_per_hour ? ('$' + provider.cost_per_hour.toFixed(2) + '/hr') : ''"></span>
+                </div>
+            </template>
+        </div>
+
+        <!-- Period selector -->
+        <div class="period-selector btn-group btn-group-sm d-none d-md-flex" role="group">
+            <button type="button"
+                    class="btn"
+                    :class="metricsPeriod === 7 ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="setMetricsPeriod(7)">7d</button>
+            <button type="button"
+                    class="btn"
+                    :class="metricsPeriod === 30 ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="setMetricsPeriod(30)">30d</button>
+            <button type="button"
+                    class="btn"
+                    :class="metricsPeriod === 90 ? 'btn-primary' : 'btn-outline-secondary'"
+                    @click="setMetricsPeriod(90)">90d</button>
+        </div>
+
+        <!-- Stats row -->
+        <div class="stats-row d-flex align-items-center gap-4">
+            <!-- Job count -->
+            <div class="stat-item">
+                <span class="stat-value" x-text="metrics.job_count"></span>
+                <span class="stat-label">Jobs</span>
+            </div>
+
+            <!-- Total spent -->
+            <div class="stat-item">
+                <span class="stat-value" x-text="formatCost(metrics.total_cost)"></span>
+                <span class="stat-label">Spent</span>
+            </div>
+
+            <!-- Avg duration -->
+            <div class="stat-item">
+                <span class="stat-value" x-text="formatDuration(metrics.avg_job_duration_seconds)"></span>
+                <span class="stat-label">Avg Duration</span>
+            </div>
+
+            <!-- Status breakdown (compact) -->
+            <div class="stat-item status-breakdown">
+                <template x-if="metrics.jobs_by_status.completed">
+                    <span class="status-count status-completed" :title="metrics.jobs_by_status.completed + ' completed'">
+                        <i class="fas fa-check-circle"></i>
+                        <span x-text="metrics.jobs_by_status.completed"></span>
+                    </span>
+                </template>
+                <template x-if="metrics.jobs_by_status.running">
+                    <span class="status-count status-running" :title="metrics.jobs_by_status.running + ' running'">
+                        <i class="fas fa-play-circle"></i>
+                        <span x-text="metrics.jobs_by_status.running"></span>
+                    </span>
+                </template>
+                <template x-if="metrics.jobs_by_status.failed">
+                    <span class="status-count status-failed" :title="metrics.jobs_by_status.failed + ' failed'">
+                        <i class="fas fa-times-circle"></i>
+                        <span x-text="metrics.jobs_by_status.failed"></span>
+                    </span>
+                </template>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.cloud-stats-bar {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    padding: 0.75rem 1rem;
+    margin-top: 1rem;
+}
+
+.period-selector .btn {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.stats-row {
+    flex-wrap: wrap;
+}
+
+.stat-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+}
+
+.stat-value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #e2e8f0;
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.status-breakdown {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.status-count {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.status-count i {
+    font-size: 0.7rem;
+}
+
+.status-count.status-completed {
+    color: #10b981;
+}
+
+.status-count.status-running {
+    color: #60a5fa;
+}
+
+.status-count.status-failed {
+    color: #ef4444;
+}
+
+/* Connection info */
+.connection-info {
+    flex-wrap: wrap;
+}
+
+.conn-item {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8rem;
+    color: #94a3b8;
+}
+
+.conn-item i {
+    font-size: 0.7rem;
+}
+
+.conn-user {
+    color: #64748b;
+}
+
+.conn-cost {
+    color: #64748b;
+    font-size: 0.75rem;
+}
+
+/* Mobile */
+@media (max-width: 767.98px) {
+    .cloud-stats-bar {
+        padding: 0.625rem 0.75rem;
+    }
+
+    .connection-info {
+        display: none;
+    }
+
+    .stats-row {
+        gap: 1rem;
+    }
+
+    .stat-value {
+        font-size: 0.875rem;
+    }
+
+    .stat-label {
+        font-size: 0.65rem;
+    }
+
+    .status-breakdown {
+        display: none;
+    }
+}
+
+/* Very small screens */
+@media (max-width: 374.98px) {
+    .stats-row {
+        gap: 0.75rem;
+    }
+
+    .stat-item:last-child {
+        display: none;
+    }
+}
+</style>

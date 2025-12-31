@@ -1,0 +1,125 @@
+<!-- partials/cloud_job_list.html - Training jobs list -->
+<div class="cloud-card">
+    <div class="cloud-card-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">
+                <i class="fas fa-list me-2"></i>Jobs
+                <span class="badge bg-secondary ms-2" x-show="jobs.length > 0" x-text="jobs.length"></span>
+            </h6>
+            <!-- Sort and filter buttons (compact) -->
+            <div class="d-flex gap-1">
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    @click="jobsSortOrder = jobsSortOrder === 'desc' ? 'asc' : 'desc'"
+                    :title="jobsSortOrder === 'desc' ? 'Newest first (click for oldest)' : 'Oldest first (click for newest)'"
+                    x-show="jobs.length > 1"
+                    style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">
+                <i class="fas" :class="jobsSortOrder === 'desc' ? 'fa-sort-amount-down' : 'fa-sort-amount-up'"></i>
+            </button>
+            <button type="button"
+                    class="btn btn-sm"
+                    :class="statusFilter === 'running' ? 'btn-info' : 'btn-outline-info'"
+                    @click="statusFilter = statusFilter === 'running' ? null : 'running'"
+                    title="Filter running jobs"
+                    x-show="runningCount > 0"
+                    style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">
+                <i class="fas fa-play"></i>
+                <span class="ms-1" x-text="runningCount"></span>
+            </button>
+            <button type="button"
+                    class="btn btn-sm"
+                    :class="statusFilter === 'failed' ? 'btn-danger' : 'btn-outline-danger'"
+                    @click="statusFilter = statusFilter === 'failed' ? null : 'failed'"
+                    title="Filter failed jobs"
+                    x-show="failedCount > 0"
+                    style="padding: 0.15rem 0.4rem; font-size: 0.7rem;">
+                <i class="fas fa-exclamation-circle"></i>
+                <span class="ms-1" x-text="failedCount"></span>
+            </button>
+            </div>
+        </div>
+    </div>
+    <!-- Search bar (shows when there are jobs) -->
+    <div class="job-search-bar" x-show="jobs.length > 3">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text bg-transparent border-0">
+                <i class="fas fa-search text-muted"></i>
+            </span>
+            <input type="text"
+                   class="form-control bg-transparent border-0"
+                   placeholder="Search jobs..."
+                   x-model="jobSearchQuery"
+                   @input.stop="debounceJobSearch()"
+                   @change.stop>
+            <button type="button"
+                    class="btn btn-link text-muted p-0 px-2"
+                    x-show="jobSearchQuery"
+                    @click="jobSearchQuery = ''; filterJobsDebounced()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+    <div class="cloud-card-body p-0">
+        <!-- Loading state -->
+        <template x-if="jobsLoading && jobs.length === 0">
+            <div class="text-center py-4 text-muted">
+                <i class="fas fa-spinner fa-spin fa-lg mb-2"></i>
+                <p class="mb-0 small">Loading jobs...</p>
+            </div>
+        </template>
+
+        <!-- Empty state: Provider not configured -->
+        <template x-if="!jobsLoading && jobs.length === 0 && !isActiveProviderConfigured()">
+            <div class="text-center py-4 px-3">
+                <div class="empty-state-icon mb-3">
+                    <i class="fas fa-key fa-2x text-warning"></i>
+                </div>
+                <p class="mb-1 small fw-medium">Provider Not Configured</p>
+                <p class="mb-0 text-muted" style="font-size: 0.75rem;">
+                    Set up <span x-text="getActiveProvider()?.name || activeProvider"></span> to start training
+                </p>
+            </div>
+        </template>
+
+        <!-- Empty state: Provider configured, no jobs -->
+        <template x-if="!jobsLoading && jobs.length === 0 && isActiveProviderConfigured()">
+            <div class="text-center py-4 px-3">
+                <div class="empty-state-icon mb-3">
+                    <i class="fas fa-rocket fa-2x text-info"></i>
+                </div>
+                <p class="mb-1 small fw-medium">Ready to Train</p>
+                <p class="mb-2 text-muted" style="font-size: 0.75rem;">
+                    Configure your model and submit your first job
+                </p>
+                <button type="button"
+                        class="btn btn-sm btn-outline-primary"
+                        @click="openPreSubmitModal()">
+                    <i class="fas fa-cloud-upload-alt me-1"></i>Submit Job
+                </button>
+            </div>
+        </template>
+
+        <!-- Filter active but no matches -->
+        <template x-if="!jobsLoading && jobs.length > 0 && filteredJobs.length === 0">
+            <div class="text-center py-4 px-3">
+                <div class="empty-state-icon mb-3">
+                    <i class="fas fa-filter fa-2x text-muted"></i>
+                </div>
+                <p class="mb-1 small">No matching jobs</p>
+                <button class="btn btn-sm btn-link p-0" @click="statusFilter = null">
+                    <i class="fas fa-times me-1"></i>Clear filter
+                </button>
+            </div>
+        </template>
+
+        <!-- Job list -->
+        <div class="job-list"
+             role="listbox"
+             aria-label="Training jobs"
+             x-show="filteredJobs.length > 0">
+            <template x-for="job in filteredJobs" :key="job.job_id">
+                {% include 'partials/cloud_job_card.html' %}
+            </template>
+        </div>
+    </div>
+</div>

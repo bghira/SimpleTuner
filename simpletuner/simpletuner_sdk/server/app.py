@@ -14,11 +14,10 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .utils.paths import get_simpletuner_root, get_static_directory, get_template_directory
+from .utils.paths import get_avatars_directory, get_simpletuner_root, get_static_directory, get_template_directory
 
 logger = logging.getLogger("SimpleTunerServer")
 
@@ -83,12 +82,120 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 
-async def _autostart_training(env: str) -> None:
-    """Load configuration from the specified environment and start training."""
-    from simpletuner.cli import _candidate_config_paths
+def _coerce_cli_keys(config: dict[str, object]) -> dict[str, object]:
+    """Ensure all config keys have CLI-style '--' prefix.
+
+    Args:
+        config: Configuration dictionary with potentially unprefixed keys
+
+    Returns:
+        New dictionary with all keys prefixed with '--'
+    """
+    cli_config: dict[str, object] = {}
+    for key, value in config.items():
+        cli_key = key if str(key).startswith("--") else f"--{key}"
+        cli_config[cli_key] = value
+    return cli_config
+
+
+def _load_json_config(path: Path) -> dict[str, object]:
+    """Load and parse a JSON configuration file.
+
+    Args:
+        path: Path to the JSON config file
+
+    Returns:
+        Configuration dictionary with CLI-style keys
+    """
+    with path.open("r", encoding="utf-8") as handle:
+        raw_data = json.load(handle)
+
+    if not isinstance(raw_data, dict):
+        return {}
+
+    # Handle WebUI-style configs with _metadata wrapper
+    if "_metadata" in raw_data and isinstance(raw_data.get("config"), dict):
+        config_section = raw_data.get("config", {})
+        config_dict = config_section if isinstance(config_section, dict) else {}
+        return _coerce_cli_keys(config_dict)
+
+    return _coerce_cli_keys({k: v for k, v in raw_data.items() if k != "_metadata"})
+
+
+def _load_toml_config(path: Path) -> dict[str, object]:
+    """Load and parse a TOML configuration file.
+
+    Args:
+        path: Path to the TOML config file
+
+    Returns:
+        Configuration dictionary with CLI-style keys
+
+    Raises:
+        RuntimeError: If toml package is not installed
+    """
+    try:
+        import toml
+    except ImportError as exc:
+        raise RuntimeError("TOML support is not available; install toml to use --env with toml configs.") from exc
+
+    raw_data = toml.load(path)
+    if isinstance(raw_data, dict):
+        return _coerce_cli_keys(raw_data)
+    return {}
+
+
+def _load_env_config() -> dict[str, object]:
+    """Load configuration from environment variables.
+
+    Returns:
+        Configuration dictionary with CLI-style keys mapped from env vars
+    """
     from simpletuner.helpers.configuration import env_file
+
+    mapped: dict[str, object] = {}
+    for env_var, arg_name in env_file.env_to_args_map.items():
+        value = os.environ.get(env_var)
+        if value is None:
+            continue
+        cli_key = arg_name if arg_name.startswith("--") else f"--{arg_name}"
+        mapped[cli_key] = value
+    return mapped
+
+
+def _load_config_from_path(path: Path, backend: str) -> dict[str, object]:
+    """Load configuration from a file based on backend type.
+
+    Args:
+        path: Path to the configuration file
+        backend: Backend type ('json', 'toml', or 'env')
+
+    Returns:
+        Configuration dictionary with CLI-style keys
+    """
+    if backend == "json":
+        return _load_json_config(path)
+    if backend == "toml":
+        return _load_toml_config(path)
+    if backend == "env":
+        return _load_env_config()
+    return {}
+
+
+def _resolve_config_path(env: str) -> tuple[Path, str]:
+    """Resolve configuration file path and backend type.
+
+    Args:
+        env: Environment name to load configuration for
+
+    Returns:
+        Tuple of (config_path, backend_name)
+
+    Raises:
+        FileNotFoundError: If no configuration file is found
+    """
+    from simpletuner.cli import _candidate_config_paths
     from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
-    from simpletuner.simpletuner_sdk.server.services.training_service import start_training_job, validate_training_config
 
     store = ConfigStore()
 
@@ -98,7 +205,7 @@ async def _autostart_training(env: str) -> None:
     )
     config_path_override = os.environ.get("CONFIG_PATH")
 
-    # Respect the WebUI onboarding configs_dir if present, overriding the generic default
+    # Respect the WebUI onboarding configs_dir if present
     if getattr(store, "config_dir", None):
         resolved_config_dir = str(store.config_dir)
         if os.environ.get("SIMPLETUNER_CONFIG_DIR") != resolved_config_dir:
@@ -111,6 +218,7 @@ async def _autostart_training(env: str) -> None:
         checked = "\n  - ".join(str(path) for path in candidate_paths)
         raise FileNotFoundError(f"Configuration for environment '{env}' not found. Checked:\n  - {checked}")
 
+    # Detect backend from override or file extension
     backend = (backend_override or "").lower() or None
     if backend not in {"json", "toml", "env"}:
         suffix = config_path.suffix.lower()
@@ -121,64 +229,104 @@ async def _autostart_training(env: str) -> None:
         else:
             backend = "json"
 
-    def _coerce_cli_keys(config: dict[str, object]) -> dict[str, object]:
-        cli_config: dict[str, object] = {}
-        for key, value in config.items():
-            cli_key = key if str(key).startswith("--") else f"--{key}"
-            cli_config[cli_key] = value
-        return cli_config
+    return config_path, backend
 
-    def _load_config_from_path(path: Path, backend_name: str) -> dict[str, object]:
-        if backend_name == "json":
-            with path.open("r", encoding="utf-8") as handle:
-                raw_data = json.load(handle)
 
-            if isinstance(raw_data, dict):
-                if "_metadata" in raw_data and isinstance(raw_data.get("config"), dict):
-                    config_section = raw_data.get("config", {})
-                    config_dict = config_section if isinstance(config_section, dict) else {}
-                    return _coerce_cli_keys(config_dict)
+async def _autostart_training(env: str) -> None:
+    """Load configuration from the specified environment and start training.
 
-                return _coerce_cli_keys({k: v for k, v in raw_data.items() if k != "_metadata"})
+    Args:
+        env: Environment name to load configuration for
 
-            return {}
+    Raises:
+        FileNotFoundError: If configuration file is not found
+        RuntimeError: If configuration validation fails
+    """
+    from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+    from simpletuner.simpletuner_sdk.server.services.training_service import start_training_job, validate_training_config
 
-        if backend_name == "toml":
-            try:
-                import toml
-            except ImportError as exc:  # pragma: no cover - optional dependency
-                raise RuntimeError("TOML support is not available; install toml to use --env with toml configs.") from exc
-
-            raw_data = toml.load(path)
-            if isinstance(raw_data, dict):
-                return _coerce_cli_keys(raw_data)
-            return {}
-
-        if backend_name == "env":
-            # env configs are already loaded into the environment; map them to CLI args
-            mapped: dict[str, object] = {}
-            for env_var, arg_name in env_file.env_to_args_map.items():
-                value = os.environ.get(env_var)
-                if value is None:
-                    continue
-                cli_key = arg_name if arg_name.startswith("--") else f"--{arg_name}"
-                mapped[cli_key] = value
-            return mapped
-
-        return {}
-
+    config_path, backend = _resolve_config_path(env)
     config_data = _load_config_from_path(config_path, backend)
     complete_config = _coerce_cli_keys(config_data)
 
-    # Validate configuration
+    store = ConfigStore()
     validation_result = validate_training_config(store, complete_config, config_data)
     if validation_result.errors:
         error_list = ", ".join(validation_result.errors)
         raise RuntimeError(f"Configuration validation failed: {error_list}")
 
-    # Start the training job
     job_id = start_training_job(complete_config)
     logger.info("Auto-started training job: %s", job_id)
+
+
+def _get_retention_config() -> tuple[int, int]:
+    """Get retention configuration from environment variables.
+
+    Returns:
+        Tuple of (job_retention_days, audit_retention_days)
+
+    Environment variables:
+        SIMPLETUNER_JOB_RETENTION_DAYS: Days to retain completed jobs (default: 90)
+        SIMPLETUNER_AUDIT_RETENTION_DAYS: Days to retain audit logs (default: 90)
+
+    Enterprise compliance note: Set these to higher values (e.g., 365, 730, or 0 to disable)
+    if your organization requires longer retention periods.
+    """
+    job_retention = int(os.environ.get("SIMPLETUNER_JOB_RETENTION_DAYS", "90"))
+    audit_retention = int(os.environ.get("SIMPLETUNER_AUDIT_RETENTION_DAYS", "90"))
+    return job_retention, audit_retention
+
+
+async def _periodic_cleanup_task():
+    """
+    Background task that periodically cleans up old jobs and audit logs.
+
+    Runs daily and removes:
+    - Jobs older than SIMPLETUNER_JOB_RETENTION_DAYS (default 90)
+    - Audit log entries older than SIMPLETUNER_AUDIT_RETENTION_DAYS (default 90)
+    - Stale upload progress files older than 60 minutes
+
+    Set retention days to 0 to disable cleanup for that category.
+    """
+    # Wait 1 hour before first cleanup (let server fully start)
+    await asyncio.sleep(3600)
+
+    job_retention_days, audit_retention_days = _get_retention_config()
+    logger.info(
+        "Cleanup task started: job_retention=%d days, audit_retention=%d days",
+        job_retention_days,
+        audit_retention_days,
+    )
+
+    while True:
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.container import get_job_store
+
+            store = get_job_store()
+
+            # Allow disabling cleanup by setting retention to 0
+            jobs_removed = 0
+            if job_retention_days > 0:
+                jobs_removed = await store.cleanup_old_jobs(retention_days=job_retention_days)
+
+            audit_removed = 0
+            if audit_retention_days > 0:
+                audit_removed = await store.cleanup_audit_log(max_age_days=audit_retention_days)
+
+            upload_removed = store.cleanup_stale_upload_progress(max_age_minutes=60)
+
+            if jobs_removed > 0 or audit_removed > 0 or upload_removed > 0:
+                logger.info(
+                    "Cleanup completed: %d jobs removed, %d audit entries removed, %d stale uploads removed",
+                    jobs_removed,
+                    audit_removed,
+                    upload_removed,
+                )
+        except Exception as exc:
+            logger.warning("Periodic cleanup failed: %s", exc)
+
+        # Sleep for 24 hours before next cleanup
+        await asyncio.sleep(86400)
 
 
 @asynccontextmanager
@@ -202,14 +350,6 @@ async def lifespan(app: FastAPI):
     await initialize_sse_manager()
     logger.info("SSE manager started")
 
-    # Register signal handlers for immediate shutdown (only works in main thread)
-    try:
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-    except ValueError:
-        # signal.signal() only works in main thread - ignore in test environments
-        logger.debug("Could not register signal handlers (not in main thread)")
-
     # Auto-start training if --env was specified
     autostart_env = os.environ.get("SIMPLETUNER_SERVER_AUTOSTART_ENV")
     if autostart_env:
@@ -219,6 +359,31 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("Failed to auto-start training: %s", e)
 
+    # Start background cleanup task for cloud jobs
+    cleanup_task = asyncio.create_task(_periodic_cleanup_task())
+
+    # Start background job polling (auto-syncs job statuses without webhooks)
+    try:
+        from simpletuner.simpletuner_sdk.server.services.cloud.background_tasks import (
+            start_background_tasks,
+            stop_background_tasks,
+        )
+
+        await start_background_tasks()
+        logger.info("Background task manager started")
+    except Exception as e:
+        logger.warning("Failed to start background tasks: %s", e)
+        stop_background_tasks = None
+
+    # Configure rate limiters from provider config
+    try:
+        from simpletuner.simpletuner_sdk.server.routes.cloud._shared import configure_rate_limits_from_provider
+
+        await configure_rate_limits_from_provider()
+        logger.debug("Rate limiters configured from provider config")
+    except Exception as e:
+        logger.debug("Failed to configure rate limiters: %s", e)
+
     try:
         yield
     except asyncio.CancelledError:
@@ -226,6 +391,58 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("SimpleTuner server shutting down...")
+
+        # Stop background tasks
+        if stop_background_tasks:
+            try:
+                await stop_background_tasks()
+            except Exception as e:
+                logger.warning("Error stopping background tasks: %s", e)
+
+        # Cancel cleanup task
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+        # Close state backend (flushes pending writes, closes connections)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.container import close_state_backend
+
+            await close_state_backend()
+            logger.debug("State backend closed")
+        except Exception as e:
+            logger.debug("Error closing state backend: %s", e)
+
+        # Close all AsyncSQLiteStore instances (aiosqlite connections)
+        try:
+            from simpletuner.simpletuner_sdk.server.services.cloud.storage.async_base import AsyncSQLiteStore
+
+            await AsyncSQLiteStore.close_all_instances()
+            logger.debug("AsyncSQLiteStore instances closed")
+        except Exception as e:
+            logger.debug("Error closing AsyncSQLiteStore instances: %s", e)
+
+        # Shutdown thread_keeper executor
+        try:
+            from simpletuner.simpletuner_sdk import thread_keeper
+
+            if hasattr(thread_keeper, "executor"):
+                logger.debug("Shutting down thread_keeper executor")
+                thread_keeper.executor.shutdown(wait=True, cancel_futures=True)
+        except Exception as e:
+            logger.debug("Error shutting down thread_keeper executor: %s", e)
+
+        # Shutdown HuggingFace service executor
+        try:
+            from simpletuner.simpletuner_sdk.server.services.huggingface_service import HUGGINGFACE_SERVICE
+
+            HUGGINGFACE_SERVICE.shutdown()
+            logger.debug("HuggingFace service executor shut down")
+        except Exception as e:
+            logger.debug("Error shutting down HuggingFace service: %s", e)
+
         await shutdown_sse_manager()
         cleanup_training_processes()
 
@@ -260,24 +477,16 @@ def create_app(
     # Store SSL configuration in app state
     app.state.ssl_no_verify = ssl_no_verify
 
-    # Configure CORS if enabled
+    # Configure security middleware (CORS, rate limiting, security headers)
     if enable_cors:
-        origins = [
-            "http://localhost:8000",
-            "http://localhost:8001",
-            "http://localhost:8002",
-            "http://127.0.0.1:8000",
-            "http://127.0.0.1:8001",
-            "http://127.0.0.1:8002",
-        ]
+        from .middleware import setup_security_middleware
 
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+        setup_security_middleware(app)
+
+    # Mount avatars directory FIRST (more specific path must come before /static)
+    # User-uploaded content stored in SimpleTuner home dir, not package static dir
+    avatars_dir = get_avatars_directory()
+    app.mount("/static/avatars", StaticFiles(directory=str(avatars_dir)), name="avatars")
 
     # Mount static files if directory exists
     if static_dir and os.path.exists(static_dir):
@@ -307,6 +516,45 @@ def create_app(
             media_type="image/x-icon",
             headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
+
+    # Serve UI sounds from freedesktop sound themes
+    SOUND_THEME_PATHS = [
+        Path("/usr/share/sounds/ocean/stereo"),
+        Path("/usr/share/sounds/freedesktop/stereo"),
+        Path("/usr/share/sounds/gnome/default/alerts"),
+    ]
+    SOUND_FILE_MAP = {
+        "completion-success.oga": "completion-success.oga",
+        "dialog-error.oga": "dialog-error.oga",
+        "dialog-warning.oga": "dialog-warning.oga",
+        "dialog-information.oga": "dialog-information.oga",
+    }
+
+    @app.get("/api/sounds/{filename}", include_in_schema=False)
+    def serve_sound(filename: str):
+        # Handle retro hover sound easter egg (Norton SystemWorks 2006 tribute)
+        if filename == "retro-hover.wav":
+            retro_path = get_static_directory() / "sounds" / "retro-hover.wav"
+            if retro_path.is_file():
+                return FileResponse(
+                    retro_path,
+                    media_type="audio/wav",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+            raise HTTPException(status_code=404, detail="Retro sound not available")
+
+        if filename not in SOUND_FILE_MAP:
+            raise HTTPException(status_code=404, detail="Sound not found")
+        mapped_name = SOUND_FILE_MAP[filename]
+        for theme_path in SOUND_THEME_PATHS:
+            sound_file = theme_path / mapped_name
+            if sound_file.is_file():
+                return FileResponse(
+                    sound_file,
+                    media_type="audio/ogg",
+                    headers={"Cache-Control": "public, max-age=86400"},
+                )
+        raise HTTPException(status_code=404, detail="Sound file not available on this system")
 
     # Add routes based on mode
     if mode in (ServerMode.TRAINER, ServerMode.UNIFIED):
@@ -379,8 +627,10 @@ def _add_trainer_routes(app: FastAPI):
     _include_router_if_present(getattr(training_host, "router", None))
 
     # Add API routes
+    from .routes import global_router
     from .routes.caption_filters import router as caption_filters_router
     from .routes.checkpoints import router as checkpoints_router
+    from .routes.cloud import router as cloud_router
     from .routes.configs import router as configs_router
     from .routes.datasets import router as datasets_router
     from .routes.fields import router as fields_router
@@ -398,10 +648,12 @@ def _add_trainer_routes(app: FastAPI):
     from .routes.webui_state import router as webui_state_router
 
     for router in (
+        global_router,
         models_router,
         datasets_router,
         caption_filters_router,
         checkpoints_router,
+        cloud_router,
         configs_router,
         lycoris_router,
         prompt_libraries_router,
@@ -417,6 +669,11 @@ def _add_trainer_routes(app: FastAPI):
         version_router,
     ):
         _include_router_if_present(router)
+
+    # Register cloud exception handlers for automatic CloudError -> HTTP response conversion
+    from .services.cloud.exceptions import register_exception_handlers
+
+    register_exception_handlers(app)
 
     logger.info("Added trainer routes")
 
@@ -451,15 +708,4 @@ def create_unified_app() -> FastAPI:
     app.state.callback_service = callback_service
     app.state.mode = ServerMode.UNIFIED
 
-    # Configure webhook handler to use direct event store in unified mode
-    _configure_unified_webhooks(app)
-
     return app
-
-
-def _configure_unified_webhooks(app: FastAPI):
-    """Configure webhooks to use direct event store in unified mode."""
-
-    # This will be implemented to intercept webhook calls
-    # and write directly to event store when target is localhost
-    pass

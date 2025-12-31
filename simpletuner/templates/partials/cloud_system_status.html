@@ -1,0 +1,247 @@
+<!-- partials/cloud_system_status.html - System health and Replicate status -->
+
+<div class="cloud-card mb-4">
+    <div class="cloud-card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="fas fa-server me-2"></i>System Status</h6>
+        <div class="d-flex gap-1">
+            <button class="btn btn-sm btn-outline-info py-0 px-2"
+                    @click="runDeepHealthCheck()"
+                    :disabled="healthCheck.loading"
+                    title="Run deep health check">
+                <i class="fas fa-stethoscope" :class="{'fa-spin': healthCheck.loading}"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                    @click="loadSystemStatus(); loadHealthCheck()"
+                    :disabled="systemStatus.loading || healthCheck.loading"
+                    title="Refresh status">
+                <i class="fas fa-sync-alt" :class="{'fa-spin': systemStatus.loading || healthCheck.loading}"></i>
+            </button>
+        </div>
+    </div>
+    <div class="cloud-card-body">
+        <!-- Health Check Section -->
+        <div class="health-section mb-3" x-show="healthCheck.status || healthCheck.loading">
+            <!-- Overall Status -->
+            <div class="d-flex align-items-center justify-content-between mb-2" x-show="healthCheck.status">
+                <div class="d-flex align-items-center">
+                    <span class="status-dot me-2" :class="'bg-' + getHealthStatusColor(healthCheck.status)"></span>
+                    <span :class="'text-' + getHealthStatusColor(healthCheck.status)"
+                          x-text="healthCheck.status === 'healthy' ? 'Healthy' : (healthCheck.status === 'degraded' ? 'Degraded' : 'Unhealthy')"></span>
+                </div>
+                <span class="small text-muted" x-show="healthCheck.uptime_seconds">
+                    <i class="fas fa-clock me-1"></i>
+                    <span x-text="formatUptime(healthCheck.uptime_seconds)"></span>
+                </span>
+            </div>
+
+            <!-- Component Statuses -->
+            <div class="component-list small" x-show="healthCheck.components.length > 0">
+                <template x-for="comp in healthCheck.components" :key="comp.name">
+                    <div class="d-flex align-items-center justify-content-between py-1 border-bottom border-secondary">
+                        <span class="text-muted" x-text="comp.name"></span>
+                        <span class="badge" :class="'bg-' + getHealthStatusColor(comp.status)"
+                              x-text="comp.status"></span>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Health Error -->
+            <div class="text-danger small mt-2" x-show="healthCheck.error">
+                <i class="fas fa-exclamation-triangle me-1"></i>
+                <span x-text="healthCheck.error"></span>
+            </div>
+        </div>
+
+        <hr class="border-secondary my-2" x-show="healthCheck.status">
+
+        <!-- Loading -->
+        <template x-if="systemStatus.loading && systemStatus.operational === null">
+            <div class="text-center text-muted">
+                <i class="fas fa-spinner fa-spin me-1"></i> Checking...
+            </div>
+        </template>
+
+        <!-- Error -->
+        <template x-if="systemStatus.error && systemStatus.operational === null">
+            <div class="text-center text-warning small">
+                <i class="fas fa-exclamation-triangle me-1"></i>
+                <span x-text="systemStatus.error"></span>
+            </div>
+        </template>
+
+        <!-- Operational -->
+        <template x-if="systemStatus.operational === true">
+            <div>
+                <div class="d-flex align-items-center justify-content-center mb-2">
+                    <span class="status-dot bg-success me-2"></span>
+                    <span class="text-success">All Systems Operational</span>
+                </div>
+                <!-- Scheduled maintenance notice -->
+                <template x-if="systemStatus.scheduled_maintenances.length > 0">
+                    <div class="small text-info mt-2">
+                        <i class="fas fa-calendar-alt me-1"></i>
+                        <span x-text="systemStatus.scheduled_maintenances.length"></span> scheduled maintenance(s)
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <!-- Issues detected -->
+        <template x-if="systemStatus.operational === false">
+            <div>
+                <div class="d-flex align-items-center justify-content-center mb-2">
+                    <span class="status-dot bg-warning me-2"></span>
+                    <span class="text-warning">Issues Detected</span>
+                </div>
+                <!-- Ongoing incidents -->
+                <template x-if="systemStatus.ongoing_incidents.length > 0">
+                    <div class="small text-danger mt-2">
+                        <i class="fas fa-exclamation-circle me-1"></i>
+                        <span x-text="systemStatus.ongoing_incidents.length"></span> ongoing incident(s)
+                    </div>
+                </template>
+                <!-- In-progress maintenance -->
+                <template x-if="systemStatus.in_progress_maintenances.length > 0">
+                    <div class="small text-info mt-1">
+                        <i class="fas fa-wrench me-1"></i>
+                        <span x-text="systemStatus.in_progress_maintenances.length"></span> maintenance in progress
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <!-- Status page link -->
+        <template x-if="systemStatus.status_page_url && systemStatus.operational !== null">
+            <div class="text-center mt-2">
+                <a :href="systemStatus.status_page_url" target="_blank" class="small text-muted">
+                    <i class="fas fa-external-link-alt me-1"></i>Status Page
+                </a>
+            </div>
+        </template>
+
+        <!-- Prometheus Metrics (admin only) -->
+        <div class="prometheus-section mt-3" x-show="hasAdminAccess">
+            <button class="btn btn-sm btn-outline-secondary w-100 d-flex align-items-center justify-content-between"
+                    @click="togglePrometheusViewer()">
+                <span><i class="fas fa-chart-line me-1"></i>Prometheus Metrics</span>
+                <i class="fas" :class="prometheusMetrics.visible ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+            </button>
+
+            <div class="prometheus-viewer mt-2" x-show="prometheusMetrics.visible" x-transition>
+                <!-- Loading -->
+                <div class="text-center text-muted py-2" x-show="prometheusMetrics.loading">
+                    <i class="fas fa-spinner fa-spin me-1"></i>Loading metrics...
+                </div>
+
+                <!-- Error -->
+                <div class="text-danger small py-2" x-show="prometheusMetrics.error">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    <span x-text="prometheusMetrics.error"></span>
+                </div>
+
+                <!-- Metrics Summary -->
+                <div class="metrics-summary mb-2" x-show="prometheusMetrics.raw && !prometheusMetrics.loading">
+                    <div class="d-flex flex-wrap gap-3 small">
+                        <div x-show="prometheusMetrics.parsed.uptime">
+                            <span class="text-muted">Uptime:</span>
+                            <span x-text="formatUptime(prometheusMetrics.parsed.uptime)"></span>
+                        </div>
+                        <div x-show="prometheusMetrics.parsed.totalJobs !== null">
+                            <span class="text-muted">Total Jobs:</span>
+                            <span x-text="prometheusMetrics.parsed.totalJobs"></span>
+                        </div>
+                        <div x-show="prometheusMetrics.parsed.activeJobs !== null">
+                            <span class="text-muted">Active:</span>
+                            <span class="text-success" x-text="prometheusMetrics.parsed.activeJobs"></span>
+                        </div>
+                        <div x-show="prometheusMetrics.parsed.totalCost !== null">
+                            <span class="text-muted">Cost:</span>
+                            <span class="text-warning" x-text="'$' + prometheusMetrics.parsed.totalCost.toFixed(2)"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Raw Metrics -->
+                <div class="raw-metrics-container" x-show="prometheusMetrics.raw && !prometheusMetrics.loading">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small text-muted">Raw Metrics</span>
+                        <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                                @click="copyPrometheusMetrics()"
+                                title="Copy to clipboard">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                    <pre class="raw-metrics small mb-0" x-text="prometheusMetrics.raw"></pre>
+                </div>
+
+                <!-- Refresh -->
+                <div class="text-end mt-2" x-show="!prometheusMetrics.loading">
+                    <button class="btn btn-sm btn-outline-secondary py-0 px-2"
+                            @click="loadPrometheusMetrics()">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    animation: pulse 2s infinite;
+}
+
+.status-dot.bg-success {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+}
+
+.status-dot.bg-warning {
+    box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7);
+    animation: pulse-warning 1s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+@keyframes pulse-warning {
+    0% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7); }
+    70% { box-shadow: 0 0 0 6px rgba(234, 179, 8, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+}
+
+.raw-metrics {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    max-height: 200px;
+    overflow: auto;
+    font-size: 0.7rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.component-list {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+}
+
+.prometheus-section {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 0.75rem;
+}
+
+.metrics-summary {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.75rem;
+}
+</style>

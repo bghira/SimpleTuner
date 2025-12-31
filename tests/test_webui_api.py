@@ -255,6 +255,24 @@ class WebUIRoutesTestCase(_WebUIBaseTestCase):
         response = self.client.get("/web/datasets/new")
         self.assertLess(response.status_code, 500)
 
+    def test_trainer_tabs_users(self) -> None:
+        """Users tab renders the admin panel for user management."""
+        response = self.client.get("/web/trainer/tabs/users")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Manage Users", response.text)
+
+    def test_trainer_tabs_notifications(self) -> None:
+        """Notifications tab renders the notifications panel."""
+        response = self.client.get("/web/trainer/tabs/notifications")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Notifications", response.text)
+
+    def test_trainer_tabs_quotas(self) -> None:
+        """Quotas tab renders the quotas management panel."""
+        response = self.client.get("/web/trainer/tabs/quotas")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Quotas", response.text)
+
 
 class TrainingAPITestCase(_WebUIBaseTestCase):
     """Test training control API endpoints."""

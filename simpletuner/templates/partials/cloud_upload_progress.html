@@ -1,0 +1,77 @@
+<!-- partials/cloud_upload_progress.html - Data upload progress indicator -->
+<template x-if="uploadProgress.active || uploadProgress.error">
+    <div class="cloud-card mb-3 mb-lg-4">
+        <div class="cloud-card-header">
+            <h6 class="mb-0 d-flex align-items-center">
+                <i class="fas me-2"
+                   :class="{
+                       'fa-search': uploadProgress.stage === 'scanning' && !uploadProgress.error,
+                       'fa-box': uploadProgress.stage === 'packaging' && !uploadProgress.error,
+                       'fa-cloud-upload-alt': uploadProgress.stage === 'uploading' && !uploadProgress.error,
+                       'fa-check-circle text-success': uploadProgress.stage === 'complete',
+                       'fa-exclamation-circle text-danger': uploadProgress.error
+                   }"></i>
+                <span x-text="uploadProgress.error ? 'Upload Failed' : getUploadStageTitle(uploadProgress.stage)"></span>
+                <span class="spinner-border spinner-border-sm ms-2"
+                      x-show="uploadProgress.active && !uploadProgress.error && uploadProgress.stage !== 'complete'"
+                      style="width: 0.875rem; height: 0.875rem;"></span>
+            </h6>
+        </div>
+        <div class="cloud-card-body">
+            <!-- Progress bar (only show when we have actual progress) -->
+            <template x-if="uploadProgress.total > 0">
+                <div class="progress mb-2" style="height: 6px;">
+                    <div class="progress-bar progress-bar-striped"
+                         :class="{ 'progress-bar-animated': uploadProgress.stage !== 'complete' }"
+                         :style="'width: ' + uploadProgress.percent + '%'"></div>
+                </div>
+            </template>
+
+            <!-- Indeterminate progress for scanning phase -->
+            <template x-if="uploadProgress.stage === 'scanning' && uploadProgress.total === 0">
+                <div class="progress mb-2" style="height: 6px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                         style="width: 100%;"></div>
+                </div>
+            </template>
+
+            <!-- Status message (the detailed message from the backend) -->
+            <div class="small text-muted text-center" style="font-size: 0.75rem;">
+                <span x-text="uploadProgress.message || 'Processing...'"></span>
+            </div>
+
+            <!-- Stats row (only for packaging/uploading with known totals) -->
+            <template x-if="uploadProgress.total > 0 && uploadProgress.stage !== 'scanning'">
+                <div class="d-flex justify-content-between small text-muted cloud-upload-stats mt-2" style="font-size: 0.7rem;">
+                    <span x-text="formatBytes(uploadProgress.current) + ' / ' + formatBytes(uploadProgress.total)"></span>
+                    <span x-text="uploadProgress.percent.toFixed(0) + '%'"></span>
+                </div>
+            </template>
+
+            <!-- Error display with retry/dismiss -->
+            <template x-if="uploadProgress.error">
+                <div class="mt-2">
+                    <div class="alert alert-danger py-1 px-2 mb-2" style="font-size: 0.75rem;">
+                        <i class="fas fa-exclamation-circle me-1"></i>
+                        <span x-text="uploadProgress.error"></span>
+                    </div>
+                    <div class="d-flex gap-2 justify-content-center">
+                        <button type="button"
+                                class="btn btn-sm btn-outline-primary"
+                                @click="retryUpload()"
+                                :disabled="submitting">
+                            <i class="fas fa-redo me-1"></i>
+                            Retry Upload
+                        </button>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                @click="dismissUploadError()">
+                            <i class="fas fa-times me-1"></i>
+                            Dismiss
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+</template>

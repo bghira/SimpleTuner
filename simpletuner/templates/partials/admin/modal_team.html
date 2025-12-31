@@ -1,0 +1,43 @@
+<!-- Team Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': teamFormOpen }" tabindex="-1"
+     x-show="teamFormOpen" @keydown.escape="teamFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="editingTeam ? 'Edit Team' : 'Create Team'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="teamFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small">Name</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="teamForm.name" required placeholder="e.g., NLP Team">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Slug (URL-safe ID)</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="teamForm.slug" required placeholder="e.g., nlp"
+                           pattern="^[a-z0-9-]+$" :disabled="editingTeam">
+                    <div class="form-text small">Unique within this organization</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Description</label>
+                    <textarea class="form-control form-control-sm bg-dark text-light border-secondary"
+                              x-model="teamForm.description" rows="2" placeholder="(optional)"></textarea>
+                </div>
+                <div class="form-check" x-show="editingTeam">
+                    <input class="form-check-input" type="checkbox" id="team-is-active" x-model="teamForm.is_active">
+                    <label class="form-check-label small" for="team-is-active">Active</label>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="teamFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveTeam()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="editingTeam ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="teamFormOpen" @click="teamFormOpen = false"></div>

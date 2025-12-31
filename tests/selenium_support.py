@@ -270,6 +270,23 @@ def configure_home(temp_path: Path) -> None:
 import unittest
 
 
+def _is_browser_available(browser: str = "chrome") -> bool:
+    """Check if the browser driver is available without hanging."""
+    import shutil
+
+    if browser == "chrome":
+        # Check for chromedriver
+        if not shutil.which("chromedriver") and not shutil.which("chromium-browser"):
+            return False
+    elif browser == "firefox":
+        if not shutil.which("geckodriver") and not shutil.which("firefox"):
+            return False
+    return True
+
+
+_SELENIUM_ENABLED = os.environ.get("SIMPLETUNER_SELENIUM_TESTS", "0").upper() in ["1", "TRUE"]
+
+
 class SeleniumTestCase(unittest.TestCase):
     """Base class that mirrors the old pytest Selenium fixtures."""
 
@@ -280,6 +297,14 @@ class SeleniumTestCase(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        # Skip Selenium tests unless explicitly enabled via environment variable
+        if not _SELENIUM_ENABLED:
+            raise unittest.SkipTest("Selenium tests disabled (set SIMPLETUNER_SELENIUM_TESTS=1 to enable)")
+
+        # Skip if no browser is available
+        if not any(_is_browser_available(b) for b in cls.BROWSERS):
+            raise unittest.SkipTest("No browser driver available for Selenium tests")
+
         super().setUpClass()
         cls.home_path = ensure_global_home()
         cls.base_url = ensure_test_server(cls.home_path)

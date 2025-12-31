@@ -1,0 +1,175 @@
+<!-- Channel Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': channelFormOpen }" tabindex="-1"
+     x-show="channelFormOpen" @keydown.escape="channelFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="editingChannel ? 'Edit Notification Channel' : 'Create Notification Channel'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="channelFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <form @submit.prevent="saveChannel()">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label small">Channel Name</label>
+                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                   x-model="channelForm.name" required placeholder="My Email Channel">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Type</label>
+                            <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                    x-model="channelForm.channel_type" :disabled="editingChannel">
+                                <option value="email">Email (SMTP)</option>
+                                <option value="slack">Slack</option>
+                                <option value="webhook">Webhook</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">Enabled</label>
+                            <div class="form-check form-switch mt-1">
+                                <input class="form-check-input" type="checkbox" x-model="channelForm.is_enabled">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Email Settings -->
+                    <template x-if="channelForm.channel_type === 'email'">
+                        <div>
+                            <h6 class="text-muted mb-3"><i class="fas fa-envelope me-2"></i>SMTP Settings</h6>
+                            <div class="row mb-3">
+                                <div class="col-md-8">
+                                    <label class="form-label small">SMTP Host</label>
+                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           x-model="channelForm.smtp_host" placeholder="smtp.gmail.com">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">Port</label>
+                                    <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           x-model.number="channelForm.smtp_port" placeholder="587">
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label small">Username</label>
+                                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           x-model="channelForm.smtp_username" placeholder="user@example.com">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small" x-text="editingChannel ? 'Password (leave empty to keep)' : 'Password'"></label>
+                                    <input type="password" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           x-model="channelForm.smtp_password" :placeholder="editingChannel ? '••••••••' : 'App password'">
+                                </div>
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-md-8">
+                                    <label class="form-label small">From Address</label>
+                                    <input type="email" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                           x-model="channelForm.from_address" placeholder="noreply@example.com">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">Use TLS</label>
+                                    <div class="form-check form-switch mt-1">
+                                        <input class="form-check-input" type="checkbox" x-model="channelForm.smtp_use_tls">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- IMAP Settings (optional) -->
+                            <div class="border-top border-secondary pt-3 mt-3">
+                                <div class="d-flex align-items-center mb-3">
+                                    <div class="form-check form-switch me-3">
+                                        <input class="form-check-input" type="checkbox" id="imapEnabled" x-model="channelForm.imap_enabled">
+                                        <label class="form-check-label small" for="imapEnabled">
+                                            <i class="fas fa-reply me-1"></i>Enable IMAP for Email Replies
+                                        </label>
+                                    </div>
+                                    <span class="badge bg-info small">Mobile Approvals</span>
+                                </div>
+                                <div x-show="channelForm.imap_enabled" x-transition class="ps-3 border-start border-info">
+                                    <p class="text-muted small mb-2">
+                                        With IMAP enabled, you can approve or reject jobs by replying to notification emails.
+                                        Reply "ok" to approve or "no" to reject.
+                                    </p>
+                                    <div class="row mb-2">
+                                        <div class="col-md-8">
+                                            <label class="form-label small">IMAP Host</label>
+                                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   x-model="channelForm.imap_host" placeholder="imap.gmail.com">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label small">Port</label>
+                                            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   x-model.number="channelForm.imap_port" placeholder="993">
+                                        </div>
+                                    </div>
+                                    <div class="row mb-2">
+                                        <div class="col-md-6">
+                                            <label class="form-label small">IMAP Username</label>
+                                            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   x-model="channelForm.imap_username" placeholder="Same as SMTP if empty">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label small">IMAP Password</label>
+                                            <input type="password" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   x-model="channelForm.imap_password" placeholder="Same as SMTP if empty">
+                                        </div>
+                                    </div>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" x-model="channelForm.imap_use_ssl">
+                                        <label class="form-check-label small">Use SSL</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Slack Settings -->
+                    <template x-if="channelForm.channel_type === 'slack'">
+                        <div>
+                            <h6 class="text-muted mb-3"><i class="fab fa-slack me-2"></i>Slack Settings</h6>
+                            <div class="mb-3">
+                                <label class="form-label small">Webhook URL</label>
+                                <input type="url" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                       x-model="channelForm.slack_webhook_url"
+                                       placeholder="https://hooks.slack.com/services/...">
+                                <div class="form-text text-muted small">
+                                    Create an incoming webhook in your Slack workspace settings.
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Webhook Settings -->
+                    <template x-if="channelForm.channel_type === 'webhook'">
+                        <div>
+                            <h6 class="text-muted mb-3"><i class="fas fa-globe me-2"></i>Webhook Settings</h6>
+                            <div class="mb-3">
+                                <label class="form-label small">Webhook URL</label>
+                                <input type="url" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                       x-model="channelForm.webhook_url"
+                                       placeholder="https://your-server.com/webhook">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small">Secret Key (optional)</label>
+                                <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                                       x-model="channelForm.webhook_secret"
+                                       placeholder="HMAC signing key">
+                                <div class="form-text text-muted small">
+                                    If provided, requests will include an HMAC-SHA256 signature header.
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </form>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="channelFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveChannel()" :disabled="saving">
+                    <span x-show="saving"><i class="fas fa-spinner fa-spin me-1"></i></span>
+                    <span x-text="editingChannel ? 'Save Changes' : 'Create Channel'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="channelFormOpen" @click="channelFormOpen = false"></div>
