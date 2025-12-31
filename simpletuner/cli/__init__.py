@@ -48,6 +48,9 @@ def create_parser() -> argparse.ArgumentParser:
     # --- server command ---
     _add_server_parser(subparsers)
 
+    # --- shutdown command ---
+    _add_shutdown_parser(subparsers)
+
     # --- cloud command ---
     from .cloud import add_cloud_parser
 
@@ -246,6 +249,35 @@ Examples:
         "-e",
         help="Environment to auto-start training with",
     )
+
+
+def _add_shutdown_parser(subparsers):
+    """Add the shutdown command parser."""
+    shutdown_parser = subparsers.add_parser(
+        "shutdown",
+        help="Shutdown the running server",
+        description="Gracefully shutdown the SimpleTuner server.",
+    )
+    shutdown_parser.set_defaults(func=_cmd_shutdown)
+
+
+def _cmd_shutdown(args) -> int:
+    """Shutdown the running server."""
+    from .cloud.api import cloud_api_request
+
+    print("Sending shutdown request to server...")
+    try:
+        result = cloud_api_request("POST", "/shutdown")
+        if result.get("status") == "shutting_down":
+            print("Server is shutting down gracefully.")
+            return 0
+        else:
+            print(f"Unexpected response: {result}")
+            return 1
+    except SystemExit:
+        # cloud_api_request calls sys.exit on connection errors
+        print("Could not connect to server. Is it running?")
+        return 1
 
 
 def _add_jobs_parser(subparsers):
