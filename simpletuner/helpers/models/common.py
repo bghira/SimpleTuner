@@ -1572,8 +1572,9 @@ class ModelFoundation(ABC):
             return decoded.unsqueeze(1)
         if decoded.ndim == 5:
             # Check if (B, C, T, H, W) and convert to (B, T, C, H, W)
-            # Heuristic: channel dim is typically 3 or 4, frame count is larger
-            if decoded.shape[1] in (3, 4) and decoded.shape[2] > 4:
+            # Heuristic: channel dim is typically 3 or 4, and the temporal
+            # dimension is not larger than the spatial dimensions (H, W).
+            if decoded.shape[1] in (3, 4) and decoded.shape[2] <= decoded.shape[3] and decoded.shape[2] <= decoded.shape[4]:
                 return decoded.permute(0, 2, 1, 3, 4)
         return decoded
 
