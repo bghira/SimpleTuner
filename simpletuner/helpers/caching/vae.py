@@ -360,7 +360,7 @@ class VAECache(WebhookMixin):
             from diffusers import AutoencoderDC as AutoencoderClass
         elif StateTracker.get_args().model_family == "ltxvideo":
             from simpletuner.helpers.models.ltxvideo.autoencoder import AutoencoderKLLTXVideo as AutoencoderClass
-        elif StateTracker.get_args().model_family == "wan":
+        elif StateTracker.get_args().model_family in ["wan", "wan_s2v"]:
             from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
@@ -488,6 +488,7 @@ class VAECache(WebhookMixin):
         if StateTracker.get_model_family() in [
             "ltxvideo",
             "wan",
+            "wan_s2v",
             "sanavideo",
             "kandinsky5-video",
             "hunyuanvideo",
@@ -572,7 +573,7 @@ class VAECache(WebhookMixin):
             }
             logger.debug(f"Video latent processing results: {output_cache_entry}")
             output_cache_entry["latents"] = latents_uncached
-        elif StateTracker.get_model_family() in ["wan", "sanavideo"]:
+        elif StateTracker.get_model_family() in ["wan", "wan_s2v", "sanavideo"]:
             logger.debug(
                 "Shape for Wan VAE encode: %s with latents_mean: %s and latents_std: %s",
                 latents_uncached.shape,
@@ -707,7 +708,7 @@ class VAECache(WebhookMixin):
                 )
                 latents_uncached = self.model.post_vae_encode_transform_sample(latents_uncached)
 
-                if StateTracker.get_model_family() in ["wan", "sanavideo"]:
+                if StateTracker.get_model_family() in ["wan", "wan_s2v", "sanavideo"]:
                     if hasattr(latents_uncached, "latent_dist"):
                         latents_uncached = latents_uncached.latent_dist.parameters
                     latents_uncached = self.process_video_latents(latents_uncached)

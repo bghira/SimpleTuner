@@ -1140,7 +1140,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         raise ValueError("--ramtorch cannot be used together with --enable_group_offload.")
 
     if args.validation_guidance_skip_layers is not None:
-        if args.model_family not in ["sd3", "wan"]:
+        if args.model_family not in ["sd3", "wan", "wan_s2v"]:
             raise ValueError("Currently, skip-layer guidance is not supported for {}".format(args.model_family))
         try:
             import json

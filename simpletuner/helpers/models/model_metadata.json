@@ -234,6 +234,14 @@
             "flash"
         ]
     },
+    "wan_s2v": {
+        "class_name": "WanS2V",
+        "module_path": "simpletuner.helpers.models.wan_s2v.model",
+        "name": "WanS2V",
+        "flavour_choices": [
+            "s2v-14b-2.2"
+        ]
+    },
     "cosmos": {
         "class_name": "Cosmos2Image",
         "module_path": "simpletuner.helpers.models.cosmos.model",

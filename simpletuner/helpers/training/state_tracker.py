@@ -583,6 +583,25 @@ class StateTracker:
         return cls.data_backends[data_backend_id].get("conditioning_data", [])
 
     @classmethod
+    def set_s2v_datasets(cls, data_backend_id: str, s2v_backend_ids: list[str]):
+        """Link audio datasets for S2V (Speech-to-Video) training."""
+        cls.data_backends[data_backend_id]["s2v_data"] = [cls.data_backends[x] for x in s2v_backend_ids]
+
+    @classmethod
+    def get_s2v_datasets(cls, data_backend_id: str) -> list[dict]:
+        """Get linked S2V audio datasets for a video dataset."""
+        return cls.data_backends[data_backend_id].get("s2v_data", [])
+
+    @classmethod
+    def get_s2v_mappings(cls) -> list[tuple[str, str]]:
+        """Get all S2V dataset mappings (video_dataset_id, audio_dataset_id)."""
+        s2v_mappings = []
+        for data_backend_id, data_backend in cls.data_backends.items():
+            s2v = data_backend.get("s2v_data", [])
+            s2v_mappings.extend((data_backend_id, x["id"]) for x in s2v)
+        return s2v_mappings
+
+    @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
         return cls.data_backends.get(data_backend_id, {}).get("config", {})
 

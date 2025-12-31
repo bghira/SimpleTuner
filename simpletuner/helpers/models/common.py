@@ -78,6 +78,7 @@ flow_matching_model_families = [
     "sana",
     "ltxvideo",
     "wan",
+    "wan_s2v",
     "sd3",
     "chroma",
     "hunyuanvideo",

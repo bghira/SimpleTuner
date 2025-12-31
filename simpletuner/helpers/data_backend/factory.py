@@ -445,6 +445,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["disable_validation"] = backend.get("disable_validation", False)
     if "conditioning_data" in backend:
         output["config"]["conditioning_data"] = backend["conditioning_data"]
+    if "s2v_datasets" in backend:
+        output["config"]["s2v_datasets"] = backend["s2v_datasets"]
     if "source_dataset_id" in backend:
         output["config"]["source_dataset_id"] = backend["source_dataset_id"]
     if not is_audio_dataset:
@@ -1291,6 +1293,17 @@ class FactoryRegistry:
             return False
         try:
             result = self.model.requires_conditioning_dataset()
+        except AttributeError:
+            return False
+
+        return result if isinstance(result, bool) else False
+
+    def _requires_s2v_datasets(self) -> bool:
+        """Return whether the active model requires S2V audio datasets."""
+        if self.model is None:
+            return False
+        try:
+            result = self.model.requires_s2v_datasets()
         except AttributeError:
             return False
 
@@ -2255,6 +2268,7 @@ class FactoryRegistry:
         requirement_result = self._evaluate_distiller_requirements(data_backend_config)
         relax_primary_requirement = self._should_relax_primary_dataset_requirement(requirement_result)
         has_conditioning_dataset = self._connect_conditioning_datasets(data_backend_config)
+        has_s2v_dataset = self._connect_s2v_datasets(data_backend_config)
 
         declared_backends = getattr(self, "_declared_data_backends", None)
         if total_data_backends_seen == 0:
@@ -2278,6 +2292,13 @@ class FactoryRegistry:
         requires_conditioning_dataset = self._requires_conditioning_dataset()
         if not has_conditioning_dataset and requires_conditioning_dataset:
             raise ValueError("Model requires a conditioning dataset, but none was found in the data backend config file.")
+
+        requires_s2v_datasets = self._requires_s2v_datasets()
+        if not has_s2v_dataset and requires_s2v_datasets:
+            raise ValueError(
+                "Model requires S2V audio datasets (s2v_datasets), but none was found in the data backend config file. "
+                "Add s2v_datasets = ['your_audio_dataset_id'] to your video dataset configuration."
+            )
 
         # Validate conditioning_type for edit models
         self._validate_edit_model_conditioning_type(data_backend_config)
@@ -3394,6 +3415,34 @@ class FactoryRegistry:
                 info_log(f"(id={backend['id']}) Connected conditioning datasets: {backend_conditionings}")
 
         return has_conditioning_dataset
+
+    def _connect_s2v_datasets(self, data_backend_config: List[Dict[str, Any]]) -> bool:
+        """Connect S2V (Speech-to-Video) audio datasets to their main video datasets."""
+        has_s2v_dataset = False
+        available_audio = {
+            backend_id
+            for backend_id, backend_obj in self.data_backends.items()
+            if backend_obj.get("dataset_type") == "audio"
+        }
+        for backend in data_backend_config:
+            dataset_type = backend.get("dataset_type", "image")
+            if dataset_type != "video":
+                continue
+            if backend.get("disabled", False) or backend.get("disable", False):
+                continue
+            backend_s2v = backend.get("s2v_datasets", [])
+            if isinstance(backend_s2v, str):
+                backend_s2v = [backend_s2v]
+            for x in backend_s2v:
+                if x not in available_audio:
+                    raise ValueError(f"S2V audio dataset {x} not found in available audio backends: {available_audio}.")
+
+            if backend_s2v:
+                has_s2v_dataset = True
+                StateTracker.set_s2v_datasets(backend["id"], backend_s2v)
+                info_log(f"(id={backend['id']}) Connected S2V audio datasets: {backend_s2v}")
+
+        return has_s2v_dataset
 
     def synchronize_conditioning_settings(self) -> None:
         """
