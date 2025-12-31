@@ -294,7 +294,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Disable validation loss computation on eval datasets",
             tooltip="Skip computing loss on evaluation datasets during training. CLIP scoring (if enabled) still runs.",
             importance=ImportanceLevel.ADVANCED,
-            order=0,
+            order=2,
         )
     )
 
