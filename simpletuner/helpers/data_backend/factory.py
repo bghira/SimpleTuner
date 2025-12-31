@@ -2638,6 +2638,8 @@ class FactoryRegistry:
             "video",
             "conditioning_data",
             "conditioning",
+            "start_step",
+            "start_epoch",
             "hash_filenames",  # always enabled, not user-configurable
         ]
         _latest_config_version = latest_config_version()
