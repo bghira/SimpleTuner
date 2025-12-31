@@ -1761,10 +1761,15 @@ class Validation:
 
         epoch_step_ready = False
         num_steps_per_epoch = getattr(self.config, "num_update_steps_per_epoch", None)
-        if num_steps_per_epoch is not None and self.current_epoch_step is not None:
+        if num_steps_per_epoch is not None and self.current_epoch_step is not None and self.current_epoch_step > 0:
             try:
                 steps_per_epoch_int = int(num_steps_per_epoch)
-                epoch_step_ready = self.current_epoch_step >= max(steps_per_epoch_int - 1, 0)
+                if steps_per_epoch_int > 0:
+                    # Calculate epoch-relative step to handle epoch boundaries correctly.
+                    # This converts global step to position within the current epoch (1-indexed).
+                    # Example with 244 steps/epoch: step 244 -> 244, step 245 -> 1, step 488 -> 244
+                    epoch_relative_step = ((self.current_epoch_step - 1) % steps_per_epoch_int) + 1
+                    epoch_step_ready = epoch_relative_step == steps_per_epoch_int
             except (TypeError, ValueError):
                 epoch_step_ready = False
 
