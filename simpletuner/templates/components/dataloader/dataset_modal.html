@@ -44,7 +44,8 @@
             <div class="modal-tabs">
                 <button type="button"
                         :class="{'active': modalTab === 'basic'}"
-                        @click="modalTab = 'basic'">
+                        @click="modalTab = 'basic'"
+                        x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds' && editingDataset.dataset_type !== 'audio'">
                     <i class="fas fa-sliders-h"></i>
                     <span>Basic</span>
                 </button>
@@ -59,7 +60,7 @@
                         x-show="editingDataset.dataset_type !== 'text_embeds' && editingDataset.dataset_type !== 'image_embeds' && editingDataset.dataset_type !== 'conditioning'"
                         @click="modalTab = 'captions'">
                     <i class="fas fa-comment-alt"></i>
-                    <span>Captions</span>
+                    <span>Captions & Metadata</span>
                 </button>
                 <button type="button"
                         :class="{'active': modalTab === 'video'}"
