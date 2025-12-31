@@ -30,7 +30,7 @@ from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, RMSNorm
-from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils import USE_PEFT_BACKEND, deprecate, logging, scale_lora_layers, unscale_lora_layers
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
@@ -327,6 +327,32 @@ def apply_rotary_emb_qwen(
         return x_out.type_as(x)
 
 
+def compute_text_seq_len_from_mask(
+    encoder_hidden_states: torch.Tensor, encoder_hidden_states_mask: Optional[torch.Tensor]
+) -> Tuple[int, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """
+    Compute text sequence length without assuming contiguous masks. Returns length for RoPE and a normalized bool mask.
+    """
+    batch_size, text_seq_len = encoder_hidden_states.shape[:2]
+    if encoder_hidden_states_mask is None:
+        return text_seq_len, None, None
+
+    if encoder_hidden_states_mask.shape[:2] != (batch_size, text_seq_len):
+        raise ValueError(
+            f"`encoder_hidden_states_mask` shape {encoder_hidden_states_mask.shape} must match "
+            f"(batch_size, text_seq_len)=({batch_size}, {text_seq_len})."
+        )
+
+    if encoder_hidden_states_mask.dtype != torch.bool:
+        encoder_hidden_states_mask = encoder_hidden_states_mask.to(torch.bool)
+
+    position_ids = torch.arange(text_seq_len, device=encoder_hidden_states.device, dtype=torch.long)
+    active_positions = torch.where(encoder_hidden_states_mask, position_ids, position_ids.new_zeros(()))
+    has_active = encoder_hidden_states_mask.any(dim=1)
+    per_sample_len = torch.where(has_active, active_positions.max(dim=1).values + 1, torch.as_tensor(text_seq_len))
+    return text_seq_len, per_sample_len, encoder_hidden_states_mask
+
+
 class QwenTimestepProjEmbeddings(nn.Module):
     def __init__(self, embedding_dim: int, enable_time_sign_embed: bool = False):
         super().__init__()
@@ -379,8 +405,8 @@ class QwenEmbedRope(nn.Module):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
-        pos_index = torch.arange(4096)
-        neg_index = torch.arange(4096).flip(0) * -1 - 1
+        pos_index = torch.arange(8192)
+        neg_index = torch.arange(8192).flip(0) * -1 - 1
         self.pos_freqs = torch.cat(
             [
                 self.rope_params(pos_index, self.axes_dim[0], self.theta),
@@ -412,14 +438,31 @@ class QwenEmbedRope(nn.Module):
         freqs = torch.polar(torch.ones_like(freqs), freqs)
         return freqs
 
-    def forward(self, video_fhw, txt_seq_lens, device):
+    def forward(
+        self,
+        video_fhw: Union[Tuple[int, int, int], List[Tuple[int, int, int]]],
+        txt_seq_lens: Union[int, torch.Tensor, List[int]],
+        device: torch.device = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Args: video_fhw: [frame, height, width] a list of 3 integers representing the shape of the video Args:
-        txt_length: [bs] a list of 1 integers representing the length of the text
+        Args:
+            video_fhw (`Tuple[int, int, int]` or `List[Tuple[int, int, int]]`):
+                A list of 3 integers [frame, height, width] representing the shape of the video.
+            txt_seq_lens (`int`, `torch.Tensor`, or `List[int]`):
+                The text sequence length(s) for RoPE computation. If a list is provided, the maximum
+                value is used. Can be an int, list of ints, or scalar tensor (for torch.compile).
+            device: (`torch.device`, *optional*):
+                The device on which to perform the RoPE computation.
         """
-        if self.pos_freqs.device != device:
-            self.pos_freqs = self.pos_freqs.to(device)
-            self.neg_freqs = self.neg_freqs.to(device)
+        # Move to device unconditionally to avoid graph breaks in torch.compile
+        self.pos_freqs = self.pos_freqs.to(device)
+        self.neg_freqs = self.neg_freqs.to(device)
+
+        # Compute max text sequence length
+        if isinstance(txt_seq_lens, list):
+            max_txt_seq_len = max(txt_seq_lens)
+        else:
+            max_txt_seq_len = txt_seq_lens
 
         if isinstance(video_fhw, list):
             video_fhw = video_fhw[0]
@@ -446,8 +489,9 @@ class QwenEmbedRope(nn.Module):
             else:
                 max_vid_index = max(height, width, max_vid_index)
 
-        max_len = max(txt_seq_lens)
-        txt_freqs = self.pos_freqs[max_vid_index : max_vid_index + max_len, ...]
+        max_txt_seq_len_int = int(max_txt_seq_len)
+        # Create device-specific copy for text freqs without modifying self.pos_freqs
+        txt_freqs = self.pos_freqs.to(device)[max_vid_index : max_vid_index + max_txt_seq_len_int, ...]
         vid_freqs = torch.cat(vid_freqs, dim=0)
 
         return vid_freqs, txt_freqs
@@ -943,6 +987,11 @@ class QwenImageTransformer2DModel(
                 Mask of the input conditions.
             timestep ( `torch.LongTensor`):
                 Used to indicate denoising step.
+            img_shapes (`List[Tuple[int, int, int]]`, *optional*):
+                Image shapes for RoPE computation.
+            txt_seq_lens (`List[int]`, *optional*, **Deprecated**):
+                Deprecated parameter. Use `encoder_hidden_states_mask` instead. If provided, the maximum value will be
+                used to compute RoPE sequence length.
             attention_kwargs (`dict`, *optional*):
                 A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
                 `self.processor` in
@@ -955,6 +1004,16 @@ class QwenImageTransformer2DModel(
             If `return_dict` is True, an [`~models.transformer_2d.Transformer2DModelOutput`] is returned, otherwise a
             `tuple` where the first element is the sample tensor.
         """
+        if txt_seq_lens is not None:
+            deprecate(
+                "txt_seq_lens",
+                "0.39.0",
+                "Passing `txt_seq_lens` is deprecated and will be removed in version 0.39.0. "
+                "Please use `txt_seq_len` instead (singular, not plural). "
+                "The new parameter accepts a single int or tensor value instead of a list.",
+                standard_warn=False,
+            )
+
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
             lora_scale = attention_kwargs.pop("scale", 1.0)
@@ -994,6 +1053,11 @@ class QwenImageTransformer2DModel(
         encoder_hidden_states = self.txt_norm(encoder_hidden_states)
         encoder_hidden_states = self.txt_in(encoder_hidden_states)
 
+        # Use the encoder_hidden_states sequence length for RoPE computation and normalize mask
+        text_seq_len, _, encoder_hidden_states_mask = compute_text_seq_len_from_mask(
+            encoder_hidden_states, encoder_hidden_states_mask
+        )
+
         if guidance is not None:
             guidance = guidance.to(hidden_states.dtype) * 1000
 
@@ -1003,7 +1067,7 @@ class QwenImageTransformer2DModel(
             else self.time_text_embed(timestep, guidance, hidden_states, timestep_sign=timestep_sign)
         )
 
-        image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens, device=hidden_states.device)
+        image_rotary_emb = self.pos_embed(img_shapes, txt_seq_lens=text_seq_len, device=hidden_states.device)
 
         # TREAD initialization
         routes = self._tread_routes or []
@@ -1015,6 +1079,16 @@ class QwenImageTransformer2DModel(
         musubi_offload_active = False
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
+
+        # Construct joint attention mask once to avoid reconstructing in every block
+        # This eliminates 60 GPU syncs during training while maintaining torch.compile compatibility
+        block_attention_kwargs = attention_kwargs.copy() if attention_kwargs is not None else {}
+        if encoder_hidden_states_mask is not None:
+            # Build joint mask: [text_mask, all_ones_for_image]
+            batch_size, image_seq_len = hidden_states.shape[:2]
+            image_mask = torch.ones((batch_size, image_seq_len), dtype=torch.bool, device=hidden_states.device)
+            joint_attention_mask = torch.cat([encoder_hidden_states_mask, image_mask], dim=1)
+            block_attention_kwargs["attention_mask"] = joint_attention_mask
 
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
@@ -1066,7 +1140,7 @@ class QwenImageTransformer2DModel(
                             encoder_hidden_states_mask=ehsm,
                             temb=t,
                             image_rotary_emb=ire,
-                            joint_attention_kwargs=None,
+                            joint_attention_kwargs=block_attention_kwargs,
                             modulate_index=mod_idx,
                         )
 
@@ -1076,7 +1150,7 @@ class QwenImageTransformer2DModel(
                     create_custom_forward(block, modulate_index),
                     hidden_states,
                     encoder_hidden_states,
-                    encoder_hidden_states_mask,
+                    None,  # Don't pass encoder_hidden_states_mask (using attention_mask instead)
                     temb,
                     image_rotary_emb,
                 )
@@ -1085,10 +1159,10 @@ class QwenImageTransformer2DModel(
                 encoder_hidden_states, hidden_states = block(
                     hidden_states=hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
-                    encoder_hidden_states_mask=encoder_hidden_states_mask,
+                    encoder_hidden_states_mask=None,  # Don't pass (using attention_mask instead)
                     temb=temb,
                     image_rotary_emb=image_rotary_emb,
-                    joint_attention_kwargs=attention_kwargs,
+                    joint_attention_kwargs=block_attention_kwargs,
                     modulate_index=modulate_index,
                 )
 
