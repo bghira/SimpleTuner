@@ -215,14 +215,6 @@
             "ti2v-5b-2.2"
         ]
     },
-    "wan_s2v": {
-        "class_name": "WanS2V",
-        "module_path": "simpletuner.helpers.models.wan_s2v.model",
-        "name": "Wan S2V",
-        "flavour_choices": [
-            "s2v-14b-2.2"
-        ]
-    },
     "lumina2": {
         "class_name": "Lumina2",
         "module_path": "simpletuner.helpers.models.lumina2.model",
@@ -240,6 +232,14 @@
             "base",
             "hd",
             "flash"
+        ]
+    },
+    "wan_s2v": {
+        "class_name": "WanS2V",
+        "module_path": "simpletuner.helpers.models.wan_s2v.model",
+        "name": "WanS2V",
+        "flavour_choices": [
+            "s2v-14b-2.2"
         ]
     },
     "cosmos": {
