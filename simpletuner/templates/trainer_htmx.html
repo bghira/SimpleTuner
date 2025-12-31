@@ -6582,13 +6582,6 @@ function trainerComponent() {
                     </ul>
                 </div>
 
-                <div class="training-status-pill" x-show="isTraining" x-transition>
-                    <i class="fas fa-cog fa-spin"></i>
-                    <span>Training</span>
-                    <span class="badge bg-info text-dark" x-text="`${trainingProgress.percent || 0}%`"></span>
-                    <span class="text-muted"
-                          x-text="`Step ${trainingProgress.step || 0}`"></span>
-                </div>
             </div>
         </div>
 

@@ -558,25 +558,6 @@
     }
 }
 
-/* Training Status Pill */
-.training-status-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    background: var(--field-bg);
-    border: 1px solid var(--border-soft);
-    border-radius: 999px;
-    padding: 0.35rem 0.75rem;
-    font-size: 0.85rem;
-    color: var(--text-primary);
-    box-shadow: var(--shadow-training-pill);
-    margin-left: 1rem;
-}
-
-.training-status-pill i {
-    color: var(--accent-cyan);
-}
-
 /* Onboarding Overlay & Modal */
 .onboarding-overlay {
     position: fixed;

@@ -1334,6 +1334,19 @@
                     if (derivedStatus === 'starting' || derivedStatus === 'initializing') {
                         setStatus('Initialising', payload.severity);
                         setTrainingState('starting', { job_id: jobId });
+                        // Update training-status div with starting message
+                        const trainingStatusEl = document.getElementById('training-status');
+                        if (trainingStatusEl) {
+                            const configName = payload.config_name || '';
+                            const displayName = configName ? ` (${configName})` : '';
+                            trainingStatusEl.innerHTML = `
+                                <div class="alert alert-info">
+                                    <h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6>
+                                    <p>Your training job is being initialized.${displayName}</p>
+                                    <p class="mb-0"><small>Job ID: ${jobId || 'pending'}</small></p>
+                                </div>
+                            `;
+                        }
                         if (normalizedProgress && !normalizedProgress.reset) {
                             syncTrainerProgress(normalizedProgress, jobId, { revealCard: false, forceStartup: true });
                         }

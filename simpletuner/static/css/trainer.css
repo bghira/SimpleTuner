@@ -909,18 +909,6 @@ body {
         margin-left: 2px !important;
     }
 
-    /* Training status pill - compact */
-    .training-status-pill {
-        font-size: 0.75rem;
-        padding: 0.25rem 0.5rem;
-        margin-left: auto;
-        flex-shrink: 0;
-    }
-
-    .training-status-pill span:not(.badge) {
-        display: none;
-    }
-
     /* Sidebar improvements for small screens */
     .sidebar {
         width: 85vw;
@@ -1510,10 +1498,6 @@ body {
         padding: 0.3rem 0.4rem !important;
         min-width: 32px;
         font-size: 0.8rem;
-    }
-
-    .training-status-pill {
-        display: none !important;
     }
 }
 
@@ -2159,22 +2143,6 @@ optgroup option {
     align-items: center;
     gap: var(--spacing-xs-sm);
     color: var(--text-secondary);
-}
-
-.training-status-pill {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs-sm);
-    padding: var(--spacing-xs-sm) var(--spacing-sm-md);
-    border-radius: var(--radius-sm-md);
-    background: rgba(59, 130, 246, 0.12);
-    color: var(--text-primary);
-    font-size: 0.8125rem;
-}
-
-.training-status-pill span:last-child {
-    color: var(--text-secondary);
-    font-size: 0.75rem;
 }
 
 .startup-progress-alert .startup-progress-list {
