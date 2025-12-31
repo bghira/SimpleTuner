@@ -244,26 +244,6 @@ class FieldService:
                 order=31,
             ),
             SectionLayout(
-                id="checkpointing",
-                title="Checkpointing",
-                icon="fas fa-save",
-                match_sections=("checkpointing", "training_config"),
-                match_subsections=(None,),
-                subsection_override="",
-                order=12,
-            ),
-            SectionLayout(
-                id="checkpointing_advanced",
-                title="",
-                icon="",
-                advanced=True,
-                parent="checkpointing",
-                match_section="checkpointing",
-                match_subsections=("advanced",),
-                subsection_override="advanced_checkpointing",
-                order=12,
-            ),
-            SectionLayout(
                 id="other",
                 title="Other Settings",
                 icon="fas fa-sliders-h",
@@ -571,6 +551,26 @@ class FieldService:
                 match_subsections=("advanced",),
                 subsection_override="advanced",
                 order=41,
+            ),
+            SectionLayout(
+                id="checkpointing",
+                title="Checkpointing",
+                icon="fas fa-save",
+                match_sections=("checkpointing", "training_config"),
+                match_subsections=(None,),
+                subsection_override="",
+                order=15,
+            ),
+            SectionLayout(
+                id="checkpointing_advanced",
+                title="",
+                icon="",
+                advanced=True,
+                parent="checkpointing",
+                match_section="checkpointing",
+                match_subsections=("advanced",),
+                subsection_override="advanced_checkpointing",
+                order=16,
             ),
         ),
         "validation": (
@@ -915,7 +915,11 @@ class FieldService:
         """Check whether the selected model supports text encoder training."""
         model_class = self._get_model_class(config_values)
         if not model_class:
-            logger.warning(f"Could not get model class for config: {config_values}")
+            # Only warn if a model_family was specified but we couldn't resolve it
+            # (blank configs intentionally have no model_family)
+            model_family = config_values.get("model_family") or config_values.get("--model_family")
+            if model_family:
+                logger.warning(f"Could not get model class for config: {config_values}")
             return False
 
         return bool(getattr(model_class, "SUPPORTS_TEXT_ENCODER_TRAINING", False))

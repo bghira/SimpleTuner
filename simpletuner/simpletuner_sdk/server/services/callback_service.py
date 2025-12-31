@@ -18,6 +18,63 @@ from .sse_manager import get_sse_manager
 
 logger = logging.getLogger(__name__)
 
+
+def _update_job_store_status(job_id: str | None, status: str) -> None:
+    """Update job status in unified JobStore for local jobs.
+
+    This is called when training completes or fails via webhook callbacks,
+    ensuring local job status is properly reflected in the Job Queue.
+    """
+    if not job_id:
+        return
+
+    try:
+        from datetime import datetime, timezone
+
+        from .cloud.base import CloudJobStatus
+        from .cloud.container import get_job_store
+
+        job_store = get_job_store()
+
+        # Map callback status to CloudJobStatus
+        if status in {"completed", "success"}:
+            new_status = CloudJobStatus.COMPLETED.value
+        elif status in {"failed", "error"}:
+            new_status = CloudJobStatus.FAILED.value
+        elif status in {"cancelled", "stopped"}:
+            new_status = CloudJobStatus.CANCELLED.value
+        else:
+            return  # Don't update for other statuses
+
+        updates = {
+            "status": new_status,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(job_store.update_job(job_id, updates))
+        except RuntimeError:
+            # No running event loop, use thread
+            import threading
+
+            def _update():
+                try:
+                    asyncio.run(job_store.update_job(job_id, updates))
+                except Exception as thread_exc:
+                    # Best-effort background update - log the failure but don't propagate.
+                    # During testing, the database or logger may be unavailable during cleanup,
+                    # so we wrap logging in its own try/except to prevent traceback noise.
+                    try:
+                        logger.debug("Background job update failed: %s", thread_exc)
+                    except Exception:
+                        pass
+
+            threading.Thread(target=_update, daemon=True).start()
+    except Exception as exc:
+        logger.debug("Failed to update job status in JobStore: %s", exc)
+
+
 _default_service: CallbackService | None = None
 _service_lock = Lock()
 
@@ -358,6 +415,8 @@ class CallbackService:
         if job_id:
             self._job_status[job_id] = "completed"
         self._clear_startup_stages()
+        # Update unified JobStore for Job Queue visibility
+        _update_job_store_status(job_id, "completed")
 
     def _handle_error_event(self, event: CallbackEvent, job_id: str | None) -> None:
         APIState.set_state("training_status", "error")
@@ -369,6 +428,8 @@ class CallbackService:
         current_job = APIState.get_state("current_job_id")
         if job_id and current_job == job_id:
             APIState.set_state("current_job_id", None)
+        # Update unified JobStore for Job Queue visibility
+        _update_job_store_status(job_id, "failed")
 
     def _update_training_state(self, event: CallbackEvent) -> None:
         job_id = self._derive_job_id(event)
@@ -395,6 +456,8 @@ class CallbackService:
                     APIState.set_state("training_progress", progress_state)
                 self._clear_startup_stages()
                 self._update_startup_stage(event.stage, job_id=job_id, job_changed=job_changed)
+                # Update unified JobStore for Job Queue visibility
+                _update_job_store_status(job_id, "completed")
                 return
 
             # For all other stages, just update the stage tracking

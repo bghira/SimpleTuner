@@ -1,0 +1,56 @@
+<!-- Rule Form Modal -->
+<div class="modal fade" :class="{ 'show d-block': ruleFormOpen }" tabindex="-1"
+     x-show="ruleFormOpen" @keydown.escape="ruleFormOpen = false">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" x-text="editingRule ? 'Edit Resource Rule' : 'Create Resource Rule'"></h6>
+                <button type="button" class="btn-close btn-close-white" @click="ruleFormOpen = false"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small">Name</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="ruleForm.name" required placeholder="e.g., Team X Configs">
+                </div>
+                <div class="row mb-3">
+                    <div class="col-6">
+                        <label class="form-label small">Resource Type</label>
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary" x-model="ruleForm.resource_type">
+                            <option value="config">Config</option>
+                            <option value="hardware">Hardware</option>
+                            <option value="provider">Provider</option>
+                            <option value="output_path">Output Path</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">Action</label>
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary" x-model="ruleForm.action">
+                            <option value="allow">Allow</option>
+                            <option value="deny">Deny</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Pattern (glob)</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="ruleForm.pattern" required placeholder="e.g., team-x-*">
+                    <div class="form-text small">Use * as wildcard</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Description</label>
+                    <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary"
+                           x-model="ruleForm.description" placeholder="(optional)">
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2">
+                <button type="button" class="btn btn-secondary btn-sm" @click="ruleFormOpen = false">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" @click="saveRule()" :disabled="saving">
+                    <i class="fas fa-spinner fa-spin me-1" x-show="saving"></i>
+                    <span x-text="editingRule ? 'Update' : 'Create'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-backdrop fade show" x-show="ruleFormOpen" @click="ruleFormOpen = false"></div>

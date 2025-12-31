@@ -1,0 +1,78 @@
+<!-- Admin - Levels Tab -->
+<div x-show="activeTab === 'levels'" x-transition>
+    <!-- Levels Hint -->
+    <div class="admin-hint admin-hint-inline" x-show="hints.levels" x-transition>
+        <div class="d-flex justify-content-between align-items-start">
+            <div class="small">
+                <i class="fas fa-lightbulb text-warning me-2"></i>
+                <strong>Access Levels:</strong>
+                Levels group permissions together. Built-in levels: <code>viewer</code> (read-only), <code>researcher</code> (submit jobs),
+                <code>lead</code> (approve requests), <code>admin</code> (full access). Higher <strong>priority</strong> levels take precedence.
+                Assign <strong>resource rules</strong> to levels to control which configs, hardware, or providers users can access.
+            </div>
+            <button class="btn btn-sm btn-link text-muted p-0 ms-2" @click="dismissHint('levels')"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
+    <div class="admin-toolbar">
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="text-muted small">
+                <i class="fas fa-info-circle me-1"></i>
+                Click <i class="fas fa-shield-alt"></i> to assign resource rules, <i class="fas fa-key"></i> for permissions
+            </div>
+            <button class="btn btn-sm btn-primary" @click="showCreateLevelForm()">
+                <i class="fas fa-plus me-1"></i>Add Level
+            </button>
+        </div>
+    </div>
+
+    <div class="admin-table-container">
+        <table class="table table-dark table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Level</th>
+                    <th style="width: 100px;">Priority</th>
+                    <th class="d-none d-md-table-cell">Rules</th>
+                    <th class="d-none d-md-table-cell">Permissions</th>
+                    <th style="width: 180px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-if="levelsLoading">
+                    <tr><td colspan="5" class="text-center py-4"><i class="fas fa-spinner fa-spin me-2"></i>Loading...</td></tr>
+                </template>
+                <template x-for="level in levels" :key="level.id">
+                    <tr>
+                        <td>
+                            <div class="fw-medium" x-text="level.name"></div>
+                            <div class="text-muted small" x-text="level.description || '(no description)'"></div>
+                        </td>
+                        <td><span class="badge bg-secondary" x-text="level.priority"></span></td>
+                        <td class="d-none d-md-table-cell">
+                            <span class="text-muted small"><span x-text="(level.rule_ids || []).length"></span> rule(s)</span>
+                        </td>
+                        <td class="d-none d-md-table-cell">
+                            <span class="text-muted small"><span x-text="(level.permission_names || []).length"></span> permission(s)</span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-info" @click="openLevelRules(level)" title="Manage Resource Rules">
+                                    <i class="fas fa-shield-alt"></i>
+                                </button>
+                                <button class="btn btn-outline-secondary" @click="openLevelPermissions(level)" title="Manage Permissions">
+                                    <i class="fas fa-key"></i>
+                                </button>
+                                <button class="btn btn-outline-primary" @click="showEditLevelForm(level)" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" @click="deleteLevel(level)" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</div>

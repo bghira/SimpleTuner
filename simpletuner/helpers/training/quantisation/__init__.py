@@ -339,6 +339,8 @@ def _sdnq_model(
         return model
 
     try:
+        # Silence sdnq startup logs
+        logging.getLogger("sdnq").setLevel(logging.WARNING)
         from sdnq.common import use_torch_compile as sdnq_triton_available
         from sdnq.training import sdnq_training_post_load_quant
     except ImportError as e:

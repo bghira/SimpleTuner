@@ -1,0 +1,299 @@
+{
+    "flux2": {
+        "class_name": "Flux2",
+        "module_path": "simpletuner.helpers.models.flux2.model",
+        "name": "Flux.2",
+        "flavour_choices": [
+            "dev"
+        ]
+    },
+    "sana": {
+        "class_name": "Sana",
+        "module_path": "simpletuner.helpers.models.sana.model",
+        "name": "Sana",
+        "flavour_choices": [
+            "sana1.5-4.8b-1024",
+            "sana1.5-1.6b-1024",
+            "sana1.0-1.6b-2048",
+            "sana1.0-1.6b-1024",
+            "sana1.0-600m-1024",
+            "sana1.0-600m-512"
+        ]
+    },
+    "kandinsky5_image": {
+        "class_name": "Kandinsky5Image",
+        "module_path": "simpletuner.helpers.models.kandinsky5_image.model",
+        "name": "Kandinsky5-Image",
+        "flavour_choices": [
+            "t2i-lite-sft",
+            "t2i-lite-pretrain",
+            "i2i-lite-sft",
+            "i2i-lite-pretrain"
+        ]
+    },
+    "hidream": {
+        "class_name": "HiDream",
+        "module_path": "simpletuner.helpers.models.hidream.model",
+        "name": "HiDream",
+        "flavour_choices": [
+            "dev",
+            "full",
+            "fast"
+        ]
+    },
+    "qwen_image": {
+        "class_name": "QwenImage",
+        "module_path": "simpletuner.helpers.models.qwen_image.model",
+        "name": "Qwen-Image",
+        "flavour_choices": [
+            "v1.0",
+            "edit-v1",
+            "edit-v2",
+            "edit-v2+",
+            "edit-v3"
+        ]
+    },
+    "z_image_omni": {
+        "class_name": "ZImageOmni",
+        "module_path": "simpletuner.helpers.models.z_image_omni.model",
+        "name": "Z-Image Omni",
+        "flavour_choices": [
+            "base",
+            "edit"
+        ]
+    },
+    "ace_step": {
+        "class_name": "ACEStep",
+        "module_path": "simpletuner.helpers.models.ace_step.model",
+        "name": "ACE-Step",
+        "flavour_choices": [
+            "base"
+        ]
+    },
+    "omnigen": {
+        "class_name": "OmniGen",
+        "module_path": "simpletuner.helpers.models.omnigen.model",
+        "name": "OmniGen",
+        "flavour_choices": [
+            "v1"
+        ]
+    },
+    "hunyuanvideo": {
+        "class_name": "HunyuanVideo",
+        "module_path": "simpletuner.helpers.models.hunyuanvideo.model",
+        "name": "HunyuanVideo",
+        "flavour_choices": [
+            "t2v-480p",
+            "t2v-720p",
+            "t2v-480p-distilled",
+            "i2v-480p",
+            "i2v-720p",
+            "i2v-480p-distilled",
+            "i2v-720p-distilled"
+        ]
+    },
+    "sd1x": {
+        "class_name": "StableDiffusion1",
+        "module_path": "simpletuner.helpers.models.sd1x.model",
+        "name": "Stable Diffusion 1.x",
+        "flavour_choices": [
+            "1.5",
+            "1.4",
+            "dreamshaper",
+            "realvis"
+        ]
+    },
+    "flux": {
+        "class_name": "Flux",
+        "module_path": "simpletuner.helpers.models.flux.model",
+        "name": "Flux.1",
+        "flavour_choices": [
+            "dev",
+            "krea",
+            "schnell",
+            "kontext",
+            "fluxbooru",
+            "libreflux"
+        ]
+    },
+    "deepfloyd": {
+        "class_name": "DeepFloydIF",
+        "module_path": "simpletuner.helpers.models.deepfloyd.model",
+        "name": "DeepFloyd IF",
+        "flavour_choices": [
+            "i-medium-400m",
+            "i-large-900m",
+            "i-xlarge-4.3b",
+            "ii-medium-450m",
+            "ii-large-1.2b"
+        ]
+    },
+    "stable_cascade": {
+        "class_name": "StableCascadeStageC",
+        "module_path": "simpletuner.helpers.models.stable_cascade.model",
+        "name": "Stable Cascade (Stage C)",
+        "flavour_choices": [
+            "stage-c",
+            "stage-c-lite"
+        ]
+    },
+    "longcat_image": {
+        "class_name": "LongCatImage",
+        "module_path": "simpletuner.helpers.models.longcat_image.model",
+        "name": "LongCat-Image",
+        "flavour_choices": [
+            "final",
+            "dev",
+            "edit"
+        ]
+    },
+    "ltxvideo": {
+        "class_name": "LTXVideo",
+        "module_path": "simpletuner.helpers.models.ltxvideo.model",
+        "name": "LTXVideo",
+        "flavour_choices": [
+            "0.9.5",
+            "0.9.0"
+        ]
+    },
+    "longcat_video": {
+        "class_name": "LongCatVideo",
+        "module_path": "simpletuner.helpers.models.longcat_video.model",
+        "name": "LongCat-Video",
+        "flavour_choices": [
+            "final"
+        ]
+    },
+    "pixart": {
+        "class_name": "PixartSigma",
+        "module_path": "simpletuner.helpers.models.pixart.model",
+        "name": "PixArt Sigma",
+        "flavour_choices": [
+            "900M-1024-v0.6",
+            "900M-1024-v0.7-stage1",
+            "900M-1024-v0.7-stage2",
+            "600M-512",
+            "600M-1024",
+            "600M-2048"
+        ]
+    },
+    "z_image": {
+        "class_name": "ZImage",
+        "module_path": "simpletuner.helpers.models.z_image.model",
+        "name": "Z-Image",
+        "flavour_choices": [
+            "turbo",
+            "turbo-ostris-v2",
+            "ostris-de-turbo"
+        ]
+    },
+    "sdxl": {
+        "class_name": "SDXL",
+        "module_path": "simpletuner.helpers.models.sdxl.model",
+        "name": "Stable Diffusion XL",
+        "flavour_choices": [
+            "base-1.0",
+            "refiner-1.0",
+            "base-0.9",
+            "refiner-0.9"
+        ]
+    },
+    "wan": {
+        "class_name": "Wan",
+        "module_path": "simpletuner.helpers.models.wan.model",
+        "name": "Wan",
+        "flavour_choices": [
+            "t2v-480p-1.3b-2.1",
+            "t2v-480p-14b-2.1",
+            "i2v-14b-2.1",
+            "i2v-14b-2.1-720p",
+            "i2v-14b-2.2-high",
+            "i2v-14b-2.2-low",
+            "flf2v-14b-2.1",
+            "vace-1.3b-2.1",
+            "vace-14b-2.1",
+            "ti2v-5b-2.2"
+        ]
+    },
+    "lumina2": {
+        "class_name": "Lumina2",
+        "module_path": "simpletuner.helpers.models.lumina2.model",
+        "name": "Lumina-T2I",
+        "flavour_choices": [
+            "2.0",
+            "neta-lumina"
+        ]
+    },
+    "chroma": {
+        "class_name": "Chroma",
+        "module_path": "simpletuner.helpers.models.chroma.model",
+        "name": "Chroma 1",
+        "flavour_choices": [
+            "base",
+            "hd",
+            "flash"
+        ]
+    },
+    "cosmos": {
+        "class_name": "Cosmos2Image",
+        "module_path": "simpletuner.helpers.models.cosmos.model",
+        "name": "Cosmos (T2I)",
+        "flavour_choices": [
+            "2b",
+            "14b"
+        ]
+    },
+    "kolors": {
+        "class_name": "Kolors",
+        "module_path": "simpletuner.helpers.models.kolors.model",
+        "name": "Kwai Kolors",
+        "flavour_choices": [
+            "1.0"
+        ]
+    },
+    "kandinsky5_video": {
+        "class_name": "Kandinsky5Video",
+        "module_path": "simpletuner.helpers.models.kandinsky5_video.model",
+        "name": "Kandinsky5-Video",
+        "flavour_choices": [
+            "t2v-lite-sft-5s",
+            "t2v-lite-pretrain-5s",
+            "t2v-lite-sft-10s",
+            "t2v-lite-pretrain-10s",
+            "t2v-pro-sft-5s-hd",
+            "t2v-pro-sft-10s-hd",
+            "t2v-pro-pretrain-5s-hd",
+            "t2v-pro-pretrain-10s-hd",
+            "i2v-lite-5s",
+            "i2v-pro-sft-5s"
+        ]
+    },
+    "auraflow": {
+        "class_name": "Auraflow",
+        "module_path": "simpletuner.helpers.models.auraflow.model",
+        "name": "Auraflow",
+        "flavour_choices": [
+            "pony",
+            "v0.3",
+            "v0.2",
+            "v0.1"
+        ]
+    },
+    "sanavideo": {
+        "class_name": "SanaVideo",
+        "module_path": "simpletuner.helpers.models.sanavideo.model",
+        "name": "SanaVideo",
+        "flavour_choices": [
+            "2b-480p"
+        ]
+    },
+    "sd3": {
+        "class_name": "SD3",
+        "module_path": "simpletuner.helpers.models.sd3.model",
+        "name": "Stable Diffusion 3.x",
+        "flavour_choices": [
+            "medium",
+            "large"
+        ]
+    }
+}

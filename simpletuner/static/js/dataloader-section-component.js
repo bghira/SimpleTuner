@@ -650,6 +650,10 @@ function dataloaderSectionComponent() {
         });
         return html;
     },
+    shortenPath(path) {
+        if (!path) return '';
+        return path.split('/').slice(-2).join('/');
+    },
     escapeHtml(text) {
         const map = {
             '&': '&amp;',

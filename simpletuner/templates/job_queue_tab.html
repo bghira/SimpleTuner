@@ -1,0 +1,398 @@
+<!-- templates/job_queue_tab.html - Unified Job Queue -->
+{% from 'partials/hero_cta.html' import hero_cta %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-job-queue">
+<link rel="stylesheet" href="/static/css/job_queue.css" id="css-job-queue">
+<link rel="stylesheet" href="/static/css/hero-cta.css" id="css-hero-cta-job-queue">
+
+<div class="tab-fragment"
+     id="job-queue-tab-content"
+     data-tab-name="job_queue"
+     x-data="jobQueueManager()"
+     x-init="init()">
+
+    <!-- Hero CTA for first-time users -->
+    {{ hero_cta(
+        theme='indigo',
+        icon_class='fa-tasks',
+        icon_shape='circle',
+        title='Training Job Queue',
+        description='Monitor all your training jobs in one place. Track local and cloud jobs, view real-time progress, and manage your training pipeline.',
+        features=[
+            {'icon': 'fa-desktop', 'color': 'text-info', 'label': 'Local jobs'},
+            {'icon': 'fa-cloud', 'color': 'text-primary', 'label': 'Cloud jobs'},
+            {'icon': 'fa-chart-line', 'color': 'text-success', 'label': 'Real-time status'},
+        ],
+        show_condition='showHeroCTA',
+        dismiss_method='dismissHeroCTA()',
+        tip_text='Local training can be started from the Training, Environments, or Basic tab. Cloud jobs are submitted from the Cloud tab. All jobs appear here automatically with live status updates.'
+    ) }}
+
+    <!-- Header with filters -->
+    <div class="job-queue-header" x-show="!showHeroCTA || loaded" x-cloak>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="mb-0">
+                <i class="fas fa-tasks me-2"></i>Job Queue
+                <span class="badge bg-secondary ms-2" x-show="jobs.length > 0" x-text="jobs.length"></span>
+            </h5>
+            <div class="d-flex gap-2">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        x-show="!showHeroCTA"
+                        @click="restoreHeroCTA()"
+                        title="Show getting started guide">
+                    <i class="fas fa-question-circle me-1"></i>Help
+                </button>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="loadJobs()"
+                        :disabled="loading">
+                    <i class="fas" :class="loading ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>
+                    <span class="d-none d-sm-inline ms-1">Refresh</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="job-queue-filters">
+            <!-- Type Filter Pills -->
+            <div class="filter-group">
+                <label class="filter-label">Source</label>
+                <div class="filter-pills">
+                    <button type="button"
+                            class="filter-pill"
+                            :class="{ 'active': typeFilter === 'all' }"
+                            @click="typeFilter = 'all'; loadJobs()">
+                        All
+                    </button>
+                    <button type="button"
+                            class="filter-pill"
+                            :class="{ 'active': typeFilter === 'local' }"
+                            @click="typeFilter = 'local'; loadJobs()">
+                        <i class="fas fa-desktop me-1"></i>Local
+                    </button>
+                    <button type="button"
+                            class="filter-pill"
+                            :class="{ 'active': typeFilter === 'cloud' }"
+                            @click="typeFilter = 'cloud'; loadJobs()">
+                        <i class="fas fa-cloud me-1"></i>Cloud
+                    </button>
+                </div>
+            </div>
+
+            <!-- Provider Filter (shown when cloud is selected) -->
+            <div class="filter-group" x-show="typeFilter === 'cloud'" x-transition>
+                <label class="filter-label">Provider</label>
+                <select class="form-select form-select-sm"
+                        x-model="providerFilter"
+                        @change="loadJobs()">
+                    <option value="">All Providers</option>
+                    <option value="replicate">Replicate</option>
+                </select>
+            </div>
+
+            <!-- Status Filter -->
+            <div class="filter-group">
+                <label class="filter-label">Status</label>
+                <div class="filter-pills">
+                    <button type="button"
+                            class="filter-pill"
+                            :class="{ 'active': statusFilter === '' }"
+                            @click="statusFilter = ''; loadJobs()">
+                        All
+                    </button>
+                    <button type="button"
+                            class="filter-pill filter-running"
+                            :class="{ 'active': statusFilter === 'running' }"
+                            @click="statusFilter = 'running'; loadJobs()">
+                        <i class="fas fa-play me-1"></i>Running
+                    </button>
+                    <button type="button"
+                            class="filter-pill filter-pending"
+                            :class="{ 'active': statusFilter === 'pending' }"
+                            @click="statusFilter = 'pending'; loadJobs()">
+                        <i class="fas fa-clock me-1"></i>Pending
+                    </button>
+                    <button type="button"
+                            class="filter-pill filter-completed"
+                            :class="{ 'active': statusFilter === 'completed' }"
+                            @click="statusFilter = 'completed'; loadJobs()">
+                        <i class="fas fa-check me-1"></i>Completed
+                    </button>
+                    <button type="button"
+                            class="filter-pill filter-failed"
+                            :class="{ 'active': statusFilter === 'failed' }"
+                            @click="statusFilter = 'failed'; loadJobs()">
+                        <i class="fas fa-exclamation-circle me-1"></i>Failed
+                    </button>
+                </div>
+            </div>
+
+            <!-- Admin User Filter -->
+            <div class="filter-group" x-show="isAdmin" x-transition>
+                <label class="filter-label"><i class="fas fa-shield-alt text-warning me-1"></i>User ID</label>
+                <div class="d-flex gap-2 align-items-center">
+                    <input type="text"
+                           class="form-control form-control-sm"
+                           style="max-width: 120px;"
+                           x-model="adminUserFilter"
+                           placeholder="User ID"
+                           @input.debounce.500ms="loadJobs()">
+                    <button type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            x-show="adminUserFilter"
+                            @click="adminUserFilter = ''; loadJobs()"
+                            title="Clear filter">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content: Job List + Details -->
+    <div class="job-queue-content" x-show="!showHeroCTA || loaded" x-cloak>
+        <div class="row g-3">
+            <!-- Job List (larger) -->
+            <div class="col-lg-7 col-xl-8">
+                <!-- Loading State -->
+                <template x-if="loading && jobs.length === 0">
+                    <div class="job-queue-card">
+                        <div class="text-center py-5">
+                            <i class="fas fa-spinner fa-spin fa-2x mb-3 text-muted"></i>
+                            <p class="text-muted mb-0">Loading jobs...</p>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Empty State -->
+                <template x-if="!loading && jobs.length === 0">
+                    <div class="job-queue-card">
+                        <div class="text-center py-5">
+                            <div class="empty-icon mb-3">
+                                <i class="fas fa-inbox fa-3x text-muted"></i>
+                            </div>
+                            <h6 class="text-muted">No Jobs Found</h6>
+                            <p class="small text-muted mb-0">
+                                <template x-if="typeFilter !== 'all' || statusFilter !== ''">
+                                    <span>Try adjusting your filters or</span>
+                                </template>
+                                Start a training job from the Training tab
+                            </p>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Job List -->
+                <div class="job-queue-card" x-show="jobs.length > 0">
+                    <div class="job-queue-list">
+                        <template x-for="job in jobs" :key="job.job_id">
+                            <div class="job-queue-item"
+                                 :class="{
+                                     'selected': selectedJob && selectedJob.job_id === job.job_id,
+                                     'job-running': job.status === 'running',
+                                     'job-failed': job.status === 'failed'
+                                 }"
+                                 @click="selectJob(job)">
+                                <div class="job-item-main">
+                                    <!-- Type Icon -->
+                                    <div class="job-type-icon" :class="'job-type-' + job.job_type">
+                                        <i class="fas" :class="job.job_type === 'local' ? 'fa-desktop' : 'fa-cloud'"></i>
+                                    </div>
+
+                                    <!-- Job Info -->
+                                    <div class="job-info">
+                                        <div class="job-name" x-text="job.config_name || job.job_id.substring(0, 8)"></div>
+                                        <div class="job-meta">
+                                            <span class="job-id" x-text="job.job_id.substring(0, 8)"></span>
+                                            <span class="job-separator">•</span>
+                                            <span class="job-time" x-text="formatDate(job.created_at)"></span>
+                                            <template x-if="job.provider">
+                                                <span>
+                                                    <span class="job-separator">•</span>
+                                                    <span class="job-provider" x-text="job.provider"></span>
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Status & Actions -->
+                                <div class="job-item-right">
+                                    <span class="status-badge" :class="'status-' + job.status">
+                                        <i class="fas me-1" :class="statusIcon(job.status)"></i>
+                                        <span x-text="job.status"></span>
+                                    </span>
+                                    <template x-if="job.cost_usd">
+                                        <span class="job-cost">$<span x-text="job.cost_usd.toFixed(2)"></span></span>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Job Details Panel -->
+            <div class="col-lg-5 col-xl-4">
+                <!-- Empty State -->
+                <div class="job-queue-card" x-show="!selectedJob">
+                    <div class="text-center py-5">
+                        <div class="empty-icon mb-3">
+                            <i class="fas fa-hand-pointer fa-2x text-muted"></i>
+                        </div>
+                        <p class="text-muted small mb-0">Select a job to view details</p>
+                    </div>
+                </div>
+
+                <!-- Selected Job Details -->
+                <template x-if="selectedJob">
+                    <div class="job-queue-card job-details-card">
+                        <div class="job-details-header">
+                            <h6 class="mb-0">
+                                <i class="fas fa-info-circle me-2"></i>Job Details
+                            </h6>
+                            <button type="button" class="btn-close btn-close-white btn-sm" @click="selectedJob = null"></button>
+                        </div>
+
+                        <div class="job-details-body">
+                            <!-- Basic Info -->
+                            <div class="detail-row">
+                                <span class="detail-label">Job ID</span>
+                                <code class="detail-value" x-text="selectedJob.job_id"></code>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Type</span>
+                                <span class="detail-value">
+                                    <i class="fas me-1" :class="selectedJob.job_type === 'local' ? 'fa-desktop' : 'fa-cloud'"></i>
+                                    <span x-text="selectedJob.job_type === 'local' ? 'Local' : 'Cloud'"></span>
+                                </span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Status</span>
+                                <span class="status-badge" :class="'status-' + selectedJob.status">
+                                    <i class="fas me-1" :class="statusIcon(selectedJob.status)"></i>
+                                    <span x-text="selectedJob.status"></span>
+                                </span>
+                            </div>
+                            <template x-if="selectedJob.provider">
+                                <div class="detail-row">
+                                    <span class="detail-label">Provider</span>
+                                    <span class="detail-value" x-text="selectedJob.provider"></span>
+                                </div>
+                            </template>
+                            <template x-if="selectedJob.hardware_type">
+                                <div class="detail-row">
+                                    <span class="detail-label">Hardware</span>
+                                    <span class="detail-value" x-text="selectedJob.hardware_type"></span>
+                                </div>
+                            </template>
+                            <div class="detail-row">
+                                <span class="detail-label">Created</span>
+                                <span class="detail-value" x-text="formatDateTime(selectedJob.created_at)"></span>
+                            </div>
+                            <template x-if="selectedJob.started_at">
+                                <div class="detail-row">
+                                    <span class="detail-label">Started</span>
+                                    <span class="detail-value" x-text="formatDateTime(selectedJob.started_at)"></span>
+                                </div>
+                            </template>
+                            <template x-if="selectedJob.completed_at">
+                                <div class="detail-row">
+                                    <span class="detail-label">Completed</span>
+                                    <span class="detail-value" x-text="formatDateTime(selectedJob.completed_at)"></span>
+                                </div>
+                            </template>
+                            <template x-if="selectedJob.duration_seconds">
+                                <div class="detail-row">
+                                    <span class="detail-label">Duration</span>
+                                    <span class="detail-value" x-text="formatDuration(selectedJob.duration_seconds)"></span>
+                                </div>
+                            </template>
+                            <template x-if="selectedJob.cost_usd !== null && selectedJob.cost_usd !== undefined">
+                                <div class="detail-row">
+                                    <span class="detail-label">Cost</span>
+                                    <span class="detail-value fw-medium">$<span x-text="selectedJob.cost_usd.toFixed(2)"></span></span>
+                                </div>
+                            </template>
+
+                            <!-- Output Location -->
+                            <template x-if="selectedJob.output_url">
+                                <div class="detail-section">
+                                    <div class="detail-section-header">
+                                        <i class="fas fa-folder-open me-1"></i>Output Location
+                                    </div>
+                                    <code class="output-path" x-text="selectedJob.output_url"></code>
+                                </div>
+                            </template>
+
+                            <!-- Error Message -->
+                            <template x-if="selectedJob.error_message">
+                                <div class="detail-section error-section">
+                                    <div class="detail-section-header text-danger">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>Error
+                                    </div>
+                                    <div class="error-message" x-text="selectedJob.error_message"></div>
+                                </div>
+                            </template>
+
+                            <!-- Actions -->
+                            <div class="job-actions">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary flex-grow-1"
+                                        @click="viewLogs(selectedJob.job_id)">
+                                    <i class="fas fa-file-alt me-1"></i>View Logs
+                                </button>
+                                <template x-if="['pending', 'uploading', 'queued', 'running'].includes(selectedJob.status)">
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-danger"
+                                            @click="cancelJob(selectedJob.job_id)">
+                                        <i class="fas fa-stop me-1"></i>Cancel
+                                    </button>
+                                </template>
+                                <template x-if="['completed', 'failed', 'cancelled'].includes(selectedJob.status)">
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-danger"
+                                            @click="deleteJob(selectedJob.job_id)">
+                                        <i class="fas fa-trash me-1"></i>Delete
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logs Modal -->
+    <div class="modal fade" id="jobLogsModal" tabindex="-1" x-ref="logsModal">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content bg-dark">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">
+                        <i class="fas fa-file-alt me-2"></i>Job Logs
+                        <small class="text-muted ms-2" x-text="logsJobId"></small>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <template x-if="logsLoading">
+                        <div class="text-center py-4">
+                            <i class="fas fa-spinner fa-spin fa-lg"></i>
+                        </div>
+                    </template>
+                    <template x-if="!logsLoading && logs">
+                        <pre class="logs-content" x-text="logs"></pre>
+                    </template>
+                    <template x-if="!logsLoading && !logs">
+                        <div class="text-center py-4 text-muted">
+                            <i class="fas fa-file-alt fa-2x mb-3"></i>
+                            <p>No logs available</p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

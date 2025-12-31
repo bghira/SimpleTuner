@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -32,6 +32,41 @@ from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 from .webhook_defaults import DEFAULT_CALLBACK_URL, DEFAULT_WEBHOOK_CONFIG
 
 logger = logging.getLogger(__name__)
+
+
+def _get_job_store():
+    """Lazily import and return the AsyncJobStore singleton to avoid circular imports."""
+    from .cloud.container import get_job_store
+
+    return get_job_store()
+
+
+def _get_unified_job_class():
+    """Lazily import UnifiedJob to avoid circular imports."""
+    from .cloud.base import UnifiedJob
+
+    return UnifiedJob
+
+
+def _get_cloud_job_status():
+    """Lazily import CloudJobStatus to avoid circular imports."""
+    from .cloud.base import CloudJobStatus
+
+    return CloudJobStatus
+
+
+def _detect_local_hardware() -> str:
+    """Detect local GPU hardware for job metadata."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_name(0)
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "Apple Silicon (MPS)"
+    except Exception:
+        pass
+    return "CPU"
 
 
 _PROMPT_LIBRARY_RUNTIME_ROOT = Path(tempfile.gettempdir()) / "simpletuner_prompt_libraries"
@@ -986,9 +1021,13 @@ def validate_training_config(
     )
 
 
-def start_training_job(runtime_config: Dict[str, Any]) -> str:
-    """Submit a training job via the process keeper and return the job identifier."""
+def start_training_job(runtime_config: Dict[str, Any], env_name: Optional[str] = None) -> str:
+    """Submit a training job via the process keeper and return the job identifier.
 
+    Args:
+        runtime_config: The training configuration dictionary.
+        env_name: Optional environment/config directory name for display purposes.
+    """
     job_id = str(uuid.uuid4())[:8]
 
     runtime_payload = dict(runtime_config)
@@ -1012,6 +1051,31 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
     except Exception:
         defaults = WebUIDefaults()
     configs_dir = getattr(defaults, "configs_dir", None)
+
+    # Resolve relative paths in config (data_backend_config, etc.)
+    if configs_dir:
+        from ..utils.paths import resolve_config_path
+
+        configs_path = Path(configs_dir).expanduser()
+        for key in ("data_backend_config", "--data_backend_config"):
+            if key in runtime_payload and runtime_payload[key]:
+                raw_path = runtime_payload[key]
+                # Skip if already absolute
+                if not Path(raw_path).is_absolute():
+                    resolved = resolve_config_path(
+                        raw_path,
+                        config_dir=configs_path,
+                        check_cwd_first=False,
+                    )
+                    if resolved:
+                        runtime_payload[key] = str(resolved)
+                        # Keep both forms in sync
+                        other_key = "--data_backend_config" if key == "data_backend_config" else "data_backend_config"
+                        runtime_payload[other_key] = str(resolved)
+                    else:
+                        raise FileNotFoundError(f"Data backend config file {raw_path} not found.")
+                break
+
     try:
         _prepare_user_prompt_library(runtime_payload, job_id=job_id, configs_dir=configs_dir)
     except FileNotFoundError:
@@ -1048,6 +1112,60 @@ def start_training_job(runtime_config: Dict[str, Any]) -> str:
 
     process_keeper.submit_job(job_id, run_trainer_job, job_config)
 
+    # Track local job in unified JobStore for Job Queue visibility
+    try:
+        UnifiedJob = _get_unified_job_class()
+        CloudJobStatus = _get_cloud_job_status()
+        job_store = _get_job_store()
+
+        config_name = (
+            env_name
+            or runtime_config.get("--model_alias")
+            or runtime_config.get("model_alias")
+            or runtime_config.get("--tracker_run_name")
+            or runtime_config.get("tracker_run_name")
+            or "local"
+        )
+        output_url = runtime_config.get("--output_dir") or runtime_config.get("output_dir")
+
+        local_job = UnifiedJob.create_local(
+            job_id=job_id,
+            config_name=config_name,
+            hardware_type=_detect_local_hardware(),
+        )
+        local_job.output_url = output_url
+        local_job.status = CloudJobStatus.RUNNING.value
+        local_job.started_at = datetime.now(timezone.utc).isoformat()
+
+        # Store run name in metadata for display in job list
+        run_name = (
+            runtime_config.get("--tracker_run_name")
+            or runtime_config.get("tracker_run_name")
+            or runtime_config.get("--model_alias")
+            or runtime_config.get("model_alias")
+        )
+        if run_name:
+            local_job.metadata["run_name"] = run_name
+
+        # Store job asynchronously (fire-and-forget)
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(job_store.add_job(local_job))
+        except RuntimeError:
+            # No running event loop, use sync approach via thread
+            import threading
+
+            def _add_job():
+                import asyncio as aio
+
+                aio.run(job_store.add_job(local_job))
+
+            threading.Thread(target=_add_job, daemon=True).start()
+    except Exception as exc:
+        logger.warning("Failed to track local job in JobStore: %s", exc)
+
     APIState.set_state("current_job_id", job_id)
     return job_id
 
@@ -1063,6 +1181,42 @@ def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: 
         APIState.set_state("training_status", status)
         if clear_job_id:
             APIState.set_state("current_job_id", None)
+
+        # Update job status in JobStore
+        try:
+            CloudJobStatus = _get_cloud_job_status()
+            job_store = _get_job_store()
+
+            # Map termination status to CloudJobStatus
+            if status in {"stopped", "cancelled"}:
+                new_status = CloudJobStatus.CANCELLED.value
+            elif status in {"failed", "error"}:
+                new_status = CloudJobStatus.FAILED.value
+            else:
+                new_status = CloudJobStatus.CANCELLED.value
+
+            updates = {
+                "status": new_status,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(job_store.update_job(job_id, updates))
+            except RuntimeError:
+                import threading
+
+                def _update_job():
+                    import asyncio as aio
+
+                    aio.run(job_store.update_job(job_id, updates))
+
+                threading.Thread(target=_update_job, daemon=True).start()
+        except Exception as exc:
+            logger.warning("Failed to update job status in JobStore: %s", exc)
+
     return terminated
 
 

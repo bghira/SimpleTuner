@@ -238,6 +238,16 @@ async def get_field_metadata(
             # Keep default choices if checkpoint loading fails
             pass
 
+    # Handle dynamic loading for data_backend_config field
+    if field_name == "data_backend_config":
+        try:
+            dataset_choices = build_data_backend_choices()
+            if dataset_choices:
+                field_data["choices"] = dataset_choices
+        except Exception:
+            # Keep default choices if loading fails
+            pass
+
     return field_data
 
 

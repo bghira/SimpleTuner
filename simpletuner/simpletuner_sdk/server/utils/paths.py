@@ -93,6 +93,44 @@ def get_static_directory() -> Path:
     return simpletuner_package / subpath
 
 
+def get_avatars_directory() -> Path:
+    """Get the avatars directory for user-uploaded content.
+
+    Returns:
+        Path to the avatars directory (in user's SimpleTuner data directory)
+    """
+    env_override = os.environ.get("SIMPLETUNER_AVATARS_DIR")
+    if env_override:
+        avatars_dir = Path(env_override).expanduser()
+        avatars_dir.mkdir(parents=True, exist_ok=True)
+        return avatars_dir
+
+    # Check standard SimpleTuner data directories
+    candidate_roots = []
+    if Path("/workspace").exists():
+        candidate_roots.append(Path("/workspace/simpletuner"))
+    if Path("/notebooks").exists():
+        candidate_roots.append(Path("/notebooks/simpletuner"))
+    candidate_roots.append(Path.home() / ".simpletuner")
+
+    for root in candidate_roots:
+        if root.exists():
+            avatars_dir = root / "data" / "avatars"
+            avatars_dir.mkdir(parents=True, exist_ok=True)
+            return avatars_dir
+
+    # Fall back to first candidate
+    if candidate_roots:
+        avatars_dir = candidate_roots[0] / "data" / "avatars"
+        avatars_dir.mkdir(parents=True, exist_ok=True)
+        return avatars_dir
+
+    # Ultimate fallback
+    avatars_dir = Path.home() / ".simpletuner" / "data" / "avatars"
+    avatars_dir.mkdir(parents=True, exist_ok=True)
+    return avatars_dir
+
+
 def resolve_config_path(
     path: Union[str, Path],
     config_dir: Optional[Union[str, Path]] = None,

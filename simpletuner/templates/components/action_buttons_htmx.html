@@ -10,7 +10,7 @@
     {% set btn_size = '' %}
 {% endif %}
 
-<div class="{{ wrapper_classes }}" id="action-buttons" data-placement="{{ placement }}">
+<div class="{{ wrapper_classes }}" id="action-buttons" data-placement="{{ placement }}" x-data>
     <!-- Action Buttons -->
     <div class="btn-group" role="group">
         <!-- Validate Button -->
@@ -50,6 +50,8 @@
                 hx-target="#training-status"
                 hx-swap="innerHTML"
                 hx-indicator="#run-spinner"
+                x-bind:disabled="$store.trainer?.activeTab === 'cloud'"
+                x-bind:title="$store.trainer?.activeTab === 'cloud' ? 'Use Cloud tab to submit jobs' : 'Start training'"
                 hx-on::before-request="this.disabled = true; document.getElementById('cancelBtn').disabled = false; const validationEl = document.getElementById('validation-results'); if(validationEl) validationEl.innerHTML = '';"
                 hx-on::after-request="window.__handleTrainerRunAfterRequest?.(this, event)">
             <i class="fas fa-play"></i>

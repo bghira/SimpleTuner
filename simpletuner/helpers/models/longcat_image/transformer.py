@@ -6,11 +6,12 @@ import torch.nn.functional as F
 from accelerate.logging import get_logger
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
-from diffusers.models.embeddings import FluxPosEmbed, TimestepEmbedding, Timesteps
+from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.transformers.transformer_flux import (
     AdaLayerNormContinuous,
+    FluxPosEmbed,
     FluxSingleTransformerBlock,
     FluxTransformerBlock,
 )

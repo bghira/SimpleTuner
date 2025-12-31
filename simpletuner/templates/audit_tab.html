@@ -1,0 +1,467 @@
+<!-- templates/audit_tab.html - Audit Log Page -->
+{% from 'partials/hero_cta.html' import hero_cta, integration_card %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-audit">
+<link rel="stylesheet" href="/static/css/audit.css" id="css-audit">
+
+<div class="tab-fragment"
+     id="audit-tab-content"
+     data-tab-name="audit"
+     x-data="auditLogComponent()"
+     x-init="init()">
+
+    <!-- Page Header -->
+    <div class="audit-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1"><i class="fas fa-scroll me-2"></i>Audit Log</h4>
+                <p class="text-muted small mb-0">Security events, user actions, and system activity</p>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-sm btn-outline-secondary"
+                        x-show="!showHeroCTA"
+                        @click="restoreHeroCTA()"
+                        title="Show getting started guide">
+                    <i class="fas fa-question-circle me-1"></i>Help
+                </button>
+                <div class="audit-chain-status" x-show="chainVerified !== null">
+                    <span class="badge" :class="chainVerified ? 'bg-success' : 'bg-danger'">
+                        <i class="fas me-1" :class="chainVerified ? 'fa-link' : 'fa-unlink'"></i>
+                        <span x-text="chainVerified ? 'Chain Valid' : 'Chain Broken'"></span>
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hero CTA for first-time users -->
+    {% call hero_cta(
+        theme='amber',
+        icon_class='fa-shield-alt',
+        icon_shape='circle',
+        title='Security Audit Log',
+        description='Track every action in your training environment. View login attempts, permission changes, job submissions, and system events with cryptographic chain verification.',
+        features=[
+            {'icon': 'fa-fingerprint', 'color': 'text-warning', 'label': 'Tamper-proof chain'},
+            {'icon': 'fa-search', 'color': 'text-info', 'label': 'Advanced filtering'},
+            {'icon': 'fa-file-export', 'color': 'text-success', 'label': 'Export to SIEM'},
+        ],
+        show_condition='showHeroCTA',
+        dismiss_method='dismissHeroCTA()',
+        tip_text='Each audit entry is cryptographically linked to prevent tampering. Use "Verify Chain" to validate integrity.'
+    ) %}
+        <div class="hero-integrations">
+            {{ integration_card(
+                icon='fa-database',
+                title='Elasticsearch / Kibana',
+                description='Forward audit logs to your ELK stack for centralized monitoring and dashboards.',
+                link_url='https://github.com/bghira/SimpleTuner/blob/main/documentation/experimental/cloud/AUDIT.md',
+                link_text='Setup Guide'
+            ) }}
+            {{ integration_card(
+                icon='fa-cloud-upload-alt',
+                title='SIEM Integration',
+                description='Export logs in JSON format for Splunk, Datadog, or your preferred security platform.',
+                button_text='Configure Export',
+                button_action="showExportModal(); dismissHeroCTA();"
+            ) }}
+        </div>
+    {% endcall %}
+
+    <!-- Main Dashboard -->
+    <div class="audit-dashboard" x-show="!showHeroCTA || loaded" x-cloak>
+
+        <!-- Stats Bar -->
+        <div class="audit-stats-bar">
+            <div class="stat-item">
+                <span class="stat-value" x-text="stats.total_entries || 0"></span>
+                <span class="stat-label">Total Events</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-value" x-text="stats.last_24h || 0"></span>
+                <span class="stat-label">24h Activity</span>
+            </div>
+            <div class="stat-item clickable"
+                 :class="{ 'active': securityOnly }"
+                 @click="toggleSecurityOnly()"
+                 title="Click to filter security events only">
+                <span class="stat-value" :class="{ 'text-danger': stats.security_events_24h > 0 }"
+                      x-text="stats.security_events_24h || 0"></span>
+                <span class="stat-label">Security Events</span>
+            </div>
+            <div class="stat-item" x-show="stats.failed_logins_24h > 0">
+                <span class="stat-value text-warning" x-text="stats.failed_logins_24h"></span>
+                <span class="stat-label">Failed Logins</span>
+            </div>
+            <div class="stat-item" x-show="stats.first_entry">
+                <span class="stat-value small" x-text="formatDate(stats.first_entry)"></span>
+                <span class="stat-label">Oldest Entry</span>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="audit-toolbar">
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+                <!-- Event Type Filter -->
+                <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                        style="max-width: 180px;"
+                        x-model="filters.event_type"
+                        @change="applyFilters()">
+                    <option value="">All Event Types</option>
+                    <template x-for="et in eventTypes" :key="et.value">
+                        <option :value="et.value" x-text="et.name"></option>
+                    </template>
+                </select>
+
+                <!-- Actor Search -->
+                <div class="input-group input-group-sm" style="max-width: 200px;">
+                    <span class="input-group-text bg-dark border-secondary">
+                        <i class="fas fa-user text-muted"></i>
+                    </span>
+                    <input type="text"
+                           class="form-control bg-dark text-light border-secondary"
+                           placeholder="Actor / Username..."
+                           x-model="filters.actor"
+                           @keyup.enter="applyFilters()"
+                           @keyup.debounce.500ms="applyFilters()">
+                </div>
+
+                <!-- Target Filter -->
+                <div class="input-group input-group-sm" style="max-width: 180px;">
+                    <span class="input-group-text bg-dark border-secondary">
+                        <i class="fas fa-bullseye text-muted"></i>
+                    </span>
+                    <input type="text"
+                           class="form-control bg-dark text-light border-secondary"
+                           placeholder="Target ID..."
+                           x-model="filters.target_id"
+                           @keyup.enter="applyFilters()"
+                           @keyup.debounce.500ms="applyFilters()">
+                </div>
+
+                <!-- Date Range -->
+                <div class="input-group input-group-sm" style="max-width: 160px;">
+                    <span class="input-group-text bg-dark border-secondary">
+                        <i class="fas fa-calendar text-muted"></i>
+                    </span>
+                    <input type="date"
+                           class="form-control bg-dark text-light border-secondary"
+                           x-model="filters.since"
+                           @change="applyFilters()">
+                </div>
+                <span class="text-muted small">to</span>
+                <input type="date"
+                       class="form-control form-control-sm bg-dark text-light border-secondary"
+                       style="max-width: 140px;"
+                       x-model="filters.until"
+                       @change="applyFilters()">
+
+                <!-- Security Toggle -->
+                <button class="btn btn-sm"
+                        :class="securityOnly ? 'btn-warning' : 'btn-outline-warning'"
+                        @click="toggleSecurityOnly()"
+                        title="Show security events only">
+                    <i class="fas fa-shield-alt me-1"></i>
+                    <span class="d-none d-md-inline">Security</span>
+                </button>
+
+                <!-- Clear Filters -->
+                <button class="btn btn-sm btn-outline-secondary"
+                        @click="clearFilters()"
+                        title="Clear all filters"
+                        x-show="hasActiveFilters()">
+                    <i class="fas fa-times"></i>
+                </button>
+
+                <div class="ms-auto d-flex gap-2">
+                    <!-- Export Button -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-info dropdown-toggle"
+                                type="button"
+                                data-bs-toggle="dropdown"
+                                aria-expanded="false">
+                            <i class="fas fa-download me-1"></i>
+                            <span class="d-none d-md-inline">Export</span>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
+                            <li>
+                                <button class="dropdown-item" @click="exportLogs('json')">
+                                    <i class="fas fa-file-code me-2"></i>Export JSON
+                                </button>
+                            </li>
+                            <li>
+                                <button class="dropdown-item" @click="exportLogs('csv')">
+                                    <i class="fas fa-file-csv me-2"></i>Export CSV
+                                </button>
+                            </li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li>
+                                <button class="dropdown-item" @click="showExportModal()">
+                                    <i class="fas fa-cog me-2"></i>Configure SIEM Export
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Verify Chain -->
+                    <button class="btn btn-sm btn-outline-success"
+                            @click="verifyChain()"
+                            :disabled="verifying">
+                        <i class="fas" :class="verifying ? 'fa-spinner fa-spin' : 'fa-link'"></i>
+                        <span class="ms-1 d-none d-md-inline">Verify Chain</span>
+                    </button>
+
+                    <!-- Refresh -->
+                    <button class="btn btn-sm btn-outline-primary"
+                            @click="loadEntries()"
+                            :disabled="loading">
+                        <i class="fas" :class="loading ? 'fa-spinner fa-spin' : 'fa-sync'"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chain Verification Result -->
+        <div class="audit-verify-result" x-show="verifyResult" x-transition>
+            <div class="alert mb-0 py-2"
+                 :class="verifyResult?.valid ? 'alert-success' : 'alert-danger'">
+                <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                        <i class="fas me-2" :class="verifyResult?.valid ? 'fa-check-circle' : 'fa-exclamation-triangle'"></i>
+                        <span x-text="verifyResult?.valid ? 'Audit chain integrity verified' : 'Chain integrity check failed'"></span>
+                        <span class="small ms-2" x-show="verifyResult?.entries_checked"
+                              x-text="'(' + (verifyResult?.entries_checked || 0) + ' entries checked)'"></span>
+                    </div>
+                    <button class="btn btn-sm btn-link" @click="verifyResult = null">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <template x-if="verifyResult && !verifyResult.valid && verifyResult.broken_links?.length > 0">
+                    <div class="mt-2 small">
+                        <strong>Broken links found at entries:</strong>
+                        <span x-text="verifyResult.broken_links.map(l => l.id || l).join(', ')"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Audit Log Table -->
+        <div class="audit-table-container">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">#</th>
+                        <th style="width: 160px;">Timestamp</th>
+                        <th style="width: 140px;">Event Type</th>
+                        <th>Actor</th>
+                        <th>Action</th>
+                        <th class="d-none d-lg-table-cell">Target</th>
+                        <th style="width: 60px;">Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-if="loading && entries.length === 0">
+                        <tr>
+                            <td colspan="7" class="text-center py-4">
+                                <i class="fas fa-spinner fa-spin me-2"></i>Loading audit entries...
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-if="!loading && entries.length === 0">
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                <i class="fas fa-clipboard-list me-2"></i>No audit entries found
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="entry in entries" :key="entry.id">
+                        <tr :class="{ 'table-warning': isSecurityEvent(entry), 'table-danger': isCriticalEvent(entry) }">
+                            <td class="text-muted small" x-text="entry.id"></td>
+                            <td class="small">
+                                <span x-text="formatTimestamp(entry.timestamp)"></span>
+                            </td>
+                            <td>
+                                <span class="badge" :class="getEventTypeBadgeClass(entry.event_type)"
+                                      x-text="formatEventType(entry.event_type)"></span>
+                            </td>
+                            <td>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="text-light" x-text="entry.actor_username || 'System'"></span>
+                                    <span class="text-muted small" x-show="entry.actor_ip"
+                                          x-text="'(' + entry.actor_ip + ')'"></span>
+                                </div>
+                            </td>
+                            <td x-text="entry.action"></td>
+                            <td class="d-none d-lg-table-cell">
+                                <template x-if="entry.target_type">
+                                    <span class="text-muted small">
+                                        <span x-text="entry.target_type"></span>:<span x-text="entry.target_id"></span>
+                                    </span>
+                                </template>
+                                <template x-if="!entry.target_type">
+                                    <span class="text-muted">-</span>
+                                </template>
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-link p-0"
+                                        @click="showEntryDetails(entry)"
+                                        title="View details"
+                                        x-show="entry.details && Object.keys(entry.details).length > 0">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="audit-pagination" x-show="entries.length > 0 || offset > 0">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="text-muted small">
+                    Showing <span x-text="offset + 1"></span> - <span x-text="offset + entries.length"></span>
+                    <span x-show="hasMore"> of many</span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-secondary"
+                            :disabled="offset === 0"
+                            @click="prevPage()">
+                        <i class="fas fa-chevron-left"></i> Previous
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary"
+                            :disabled="!hasMore"
+                            @click="nextPage()">
+                        Next <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Entry Details Modal -->
+    <div class="modal fade" id="auditEntryDetailsModal" tabindex="-1" x-ref="detailsModal">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content bg-dark">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">
+                        <i class="fas fa-info-circle me-2"></i>Audit Entry Details
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" x-show="selectedEntry">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Entry ID</label>
+                            <div class="text-light" x-text="selectedEntry?.id"></div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Timestamp</label>
+                            <div class="text-light" x-text="selectedEntry?.timestamp"></div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Event Type</label>
+                            <div>
+                                <span class="badge" :class="getEventTypeBadgeClass(selectedEntry?.event_type)"
+                                      x-text="selectedEntry?.event_type"></span>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Action</label>
+                            <div class="text-light" x-text="selectedEntry?.action"></div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Actor</label>
+                            <div class="text-light">
+                                <span x-text="selectedEntry?.actor_username || 'System'"></span>
+                                <span class="text-muted small" x-show="selectedEntry?.actor_id">
+                                    (ID: <span x-text="selectedEntry?.actor_id"></span>)
+                                </span>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Actor IP</label>
+                            <div class="text-light" x-text="selectedEntry?.actor_ip || '-'"></div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Target Type</label>
+                            <div class="text-light" x-text="selectedEntry?.target_type || '-'"></div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label text-muted small">Target ID</label>
+                            <div class="text-light" x-text="selectedEntry?.target_id || '-'"></div>
+                        </div>
+                        <div class="col-12" x-show="selectedEntry?.details && Object.keys(selectedEntry.details).length > 0">
+                            <label class="form-label text-muted small">Details</label>
+                            <pre class="audit-details-json" x-text="formatDetails(selectedEntry?.details)"></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Options Modal -->
+    <div class="modal fade" id="auditExportOptionsModal" tabindex="-1" x-ref="exportModal">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content bg-dark">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">
+                        <i class="fas fa-cloud-upload-alt me-2"></i>Configure SIEM Export
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info py-2 small">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Configure automatic forwarding of audit logs to external systems.
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Export Format</label>
+                        <select class="form-select bg-dark text-light border-secondary"
+                                x-model="exportConfig.format">
+                            <option value="json">JSON (Elasticsearch, Splunk)</option>
+                            <option value="cef">CEF (Common Event Format)</option>
+                            <option value="syslog">Syslog</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Webhook URL</label>
+                        <input type="url"
+                               class="form-control bg-dark text-light border-secondary"
+                               placeholder="https://your-siem.example.com/ingest"
+                               x-model="exportConfig.webhook_url">
+                        <div class="form-text">Logs will be POSTed to this URL in real-time</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Authentication (Optional)</label>
+                        <input type="password"
+                               class="form-control bg-dark text-light border-secondary"
+                               placeholder="Bearer token or API key"
+                               x-model="exportConfig.auth_token">
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input type="checkbox" class="form-check-input" id="export-security-only"
+                               x-model="exportConfig.security_only">
+                        <label class="form-check-label" for="export-security-only">
+                            Only export security events
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" @click="saveExportConfig()">
+                        <i class="fas fa-save me-1"></i>Save Configuration
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

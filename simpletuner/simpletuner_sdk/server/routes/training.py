@@ -157,7 +157,10 @@ async def start_training(request: Request):
 
     try:
         training_service.persist_config_bundle(bundle)
-        job_id = training_service.start_training_job(bundle.complete_config)
+        job_id = training_service.start_training_job(
+            bundle.complete_config,
+            env_name=bundle.active_config,
+        )
 
         return f"""
         <div class="alert alert-info">

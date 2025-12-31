@@ -1,0 +1,402 @@
+/* Audit Log Page Styles */
+
+/* Header */
+.audit-header {
+    padding: 1rem 0;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.audit-chain-status .badge {
+    font-size: 0.75rem;
+    padding: 0.35em 0.65em;
+}
+
+/* Hero CTA */
+.audit-hero-cta {
+    position: relative;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.15) 0%, rgba(217, 119, 6, 0.08) 100%);
+    border: 1px solid rgba(245, 158, 11, 0.2);
+    border-radius: 1rem;
+    padding: 2.5rem 2rem;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.hero-dismiss-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: transparent;
+    border: none;
+    color: #64748b;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.hero-dismiss-btn:hover {
+    color: #94a3b8;
+}
+
+.hero-content {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.hero-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 1.5rem;
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    color: white;
+    box-shadow: 0 8px 32px rgba(245, 158, 11, 0.3);
+}
+
+.hero-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #f8fafc;
+    margin-bottom: 0.75rem;
+}
+
+.hero-description {
+    font-size: 1rem;
+    color: #94a3b8;
+    max-width: 550px;
+    margin: 0 auto 1.5rem;
+    line-height: 1.6;
+}
+
+.hero-features {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin-bottom: 2rem;
+    flex-wrap: wrap;
+}
+
+.hero-feature {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: #e2e8f0;
+}
+
+.hero-feature i {
+    font-size: 1rem;
+}
+
+/* Integration cards */
+.hero-integrations {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+    text-align: left;
+}
+
+.integration-card {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.integration-icon {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    background: rgba(99, 102, 241, 0.2);
+    border-radius: 0.375rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    color: #818cf8;
+}
+
+.integration-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.integration-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #e2e8f0;
+    margin-bottom: 0.25rem;
+}
+
+.integration-desc {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+}
+
+.integration-link {
+    font-size: 0.8rem;
+    color: #818cf8;
+    text-decoration: none;
+}
+
+.integration-link:hover {
+    color: #a5b4fc;
+    text-decoration: underline;
+}
+
+/* Hero tip */
+.hero-tip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: #64748b;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 0.375rem;
+    margin-top: 1rem;
+}
+
+/* Stats Bar */
+.audit-stats-bar {
+    display: flex;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+    flex-wrap: wrap;
+}
+
+.audit-stats-bar .stat-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 1rem;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    min-width: 80px;
+}
+
+.audit-stats-bar .stat-item:last-child {
+    border-right: none;
+}
+
+.audit-stats-bar .stat-item.clickable {
+    cursor: pointer;
+    padding: 0.5rem 1rem;
+    margin: -0.25rem 0;
+    border-radius: 0.25rem;
+    transition: background 0.2s ease;
+}
+
+.audit-stats-bar .stat-item.clickable:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.audit-stats-bar .stat-item.clickable.active {
+    background: rgba(245, 158, 11, 0.15);
+}
+
+.audit-stats-bar .stat-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #e2e8f0;
+}
+
+.audit-stats-bar .stat-value.small {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.audit-stats-bar .stat-label {
+    font-size: 0.7rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+/* Toolbar */
+.audit-toolbar {
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+/* Verification result */
+.audit-verify-result {
+    margin-bottom: 1rem;
+}
+
+/* Table */
+.audit-table-container {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.audit-table-container table {
+    margin-bottom: 0;
+}
+
+.audit-table-container thead th {
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    padding: 0.75rem;
+}
+
+.audit-table-container tbody td {
+    padding: 0.6rem 0.75rem;
+    vertical-align: middle;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 0.85rem;
+}
+
+.audit-table-container tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.audit-table-container tbody tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.audit-table-container tbody tr.table-warning {
+    background: rgba(245, 158, 11, 0.1);
+}
+
+.audit-table-container tbody tr.table-warning:hover {
+    background: rgba(245, 158, 11, 0.15);
+}
+
+.audit-table-container tbody tr.table-danger {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.audit-table-container tbody tr.table-danger:hover {
+    background: rgba(239, 68, 68, 0.15);
+}
+
+/* Pagination */
+.audit-pagination {
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: none;
+    border-radius: 0 0 0.5rem 0.5rem;
+}
+
+/* Details modal */
+.audit-details-json {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.375rem;
+    padding: 1rem;
+    font-size: 0.8rem;
+    color: #a5b4fc;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Dropdown menu dark theme */
+.audit-toolbar .dropdown-menu-dark {
+    background: #1e293b;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.audit-toolbar .dropdown-menu-dark .dropdown-item {
+    color: #e2e8f0;
+}
+
+.audit-toolbar .dropdown-menu-dark .dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.audit-toolbar .dropdown-menu-dark .dropdown-divider {
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Mobile responsive */
+@media (max-width: 767.98px) {
+    .audit-hero-cta {
+        padding: 1.5rem 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .hero-icon {
+        width: 60px;
+        height: 60px;
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .hero-title {
+        font-size: 1.25rem;
+    }
+
+    .hero-description {
+        font-size: 0.875rem;
+    }
+
+    .hero-features {
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .hero-feature {
+        font-size: 0.8rem;
+    }
+
+    .hero-integrations {
+        grid-template-columns: 1fr;
+    }
+
+    .audit-stats-bar {
+        padding: 0.5rem;
+        gap: 0.5rem;
+    }
+
+    .audit-stats-bar .stat-item {
+        padding: 0 0.5rem;
+        min-width: 60px;
+    }
+
+    .audit-stats-bar .stat-value {
+        font-size: 1rem;
+    }
+
+    .audit-toolbar {
+        padding: 0.5rem;
+    }
+
+    .audit-table-container thead th {
+        font-size: 0.65rem;
+        padding: 0.5rem;
+    }
+
+    .audit-table-container tbody td {
+        padding: 0.5rem;
+        font-size: 0.8rem;
+    }
+}

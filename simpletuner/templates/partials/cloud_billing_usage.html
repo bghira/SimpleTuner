@@ -1,0 +1,19 @@
+<!-- partials/cloud_billing_usage.html - Billing link (API requires browser session) -->
+
+<div class="cloud-card mb-3 mb-lg-4">
+    <div class="cloud-card-header py-2">
+        <h6 class="mb-0"><i class="fas fa-receipt me-2"></i>Usage History</h6>
+    </div>
+    <div class="cloud-card-body text-center py-3">
+        <template x-if="isActiveProviderConfigured()">
+            <div>
+                <a href="https://replicate.com/account/billing" target="_blank" class="btn btn-sm btn-outline-secondary">
+                    <i class="fas fa-external-link-alt me-1"></i>View Invoices
+                </a>
+            </div>
+        </template>
+        <template x-if="!isActiveProviderConfigured()">
+            <div class="text-muted small">Configure provider first</div>
+        </template>
+    </div>
+</div>

@@ -1334,6 +1334,19 @@
                     if (derivedStatus === 'starting' || derivedStatus === 'initializing') {
                         setStatus('Initialising', payload.severity);
                         setTrainingState('starting', { job_id: jobId });
+                        // Update training-status div with starting message
+                        const trainingStatusEl = document.getElementById('training-status');
+                        if (trainingStatusEl) {
+                            const configName = payload.config_name || '';
+                            const displayName = configName ? ` (${configName})` : '';
+                            trainingStatusEl.innerHTML = `
+                                <div class="alert alert-info">
+                                    <h6><i class="fas fa-cog fa-spin"></i> Training Starting</h6>
+                                    <p>Your training job is being initialized.${displayName}</p>
+                                    <p class="mb-0"><small>Job ID: ${jobId || 'pending'}</small></p>
+                                </div>
+                            `;
+                        }
                         if (normalizedProgress && !normalizedProgress.reset) {
                             syncTrainerProgress(normalizedProgress, jobId, { revealCard: false, forceStartup: true });
                         }
@@ -1523,13 +1536,8 @@
         trackListener('validation_complete', validationCompleteHandler);
 
         var notificationHandler = function(data) {
-            const notifyMessage = data?.headline || data?.body || data?.message;
-            if (!notifyMessage) {
-                return;
-            }
-            if (window.showToast) {
-                window.showToast(notifyMessage, mapSeverityToBootstrap(data?.severity));
-            }
+            // Notifications are displayed in the event dock, not as toasts
+            // Toast notifications are reserved for errors and important alerts
         };
         trackListener('notification', notificationHandler);
 

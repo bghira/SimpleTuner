@@ -1,0 +1,49 @@
+<!-- partials/cloud_git_hint.html - Dismissible explainer for git version control -->
+<template x-if="!hints.git_dismissed">
+    <div class="cloud-card mb-3 mb-lg-4 border-secondary border-opacity-50" style="background: rgba(100, 116, 139, 0.05);">
+        <div class="cloud-card-header d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 text-secondary"><i class="fas fa-code-branch me-2"></i>Version Control (Optional)</h6>
+            <button type="button"
+                    class="btn btn-sm btn-outline-secondary py-0 px-2"
+                    @click="dismissHint('git')"
+                    title="I understand, hide this">
+                <i class="fas fa-times me-1" style="font-size: 0.65rem;"></i>
+                <span style="font-size: 0.7rem;">Hide</span>
+            </button>
+        </div>
+        <div class="cloud-card-body py-2">
+            <p class="small mb-2" style="font-size: 0.8rem;">
+                <strong>What's the Git Mirror tab for?</strong>
+            </p>
+
+            <p class="small text-muted mb-2" style="font-size: 0.75rem;">
+                SimpleTuner can optionally track your training configurations with git so you can:
+            </p>
+
+            <ul class="small text-muted mb-2" style="font-size: 0.75rem; padding-left: 1.25rem;">
+                <li>See exactly what settings produced each trained model</li>
+                <li>Roll back to previous configurations</li>
+                <li>Sync configs across machines</li>
+            </ul>
+
+            <p class="small text-muted mb-3" style="font-size: 0.75rem;">
+                <i class="fas fa-info-circle me-1"></i>
+                <strong>This is completely optional.</strong> You can submit cloud jobs without setting up version control.
+            </p>
+
+            <div class="d-flex gap-2">
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="document.querySelector('[data-tab=git_mirror]')?.click()">
+                    <i class="fas fa-cog me-1"></i>Configure Git
+                </button>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="dismissHint('git')"
+                        title="I understand, hide this">
+                    <i class="fas fa-check me-1"></i>Got it
+                </button>
+            </div>
+        </div>
+    </div>
+</template>

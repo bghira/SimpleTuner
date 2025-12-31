@@ -56,7 +56,7 @@ async def save_prompt_library(filename: str, payload: PromptLibraryPayload) -> D
     entries: Dict[str, object] = {}
     for key, value in payload.entries.items():
         if isinstance(value, PromptLibraryEntryModel):
-            entries[key] = value.dict(exclude_none=True)
+            entries[key] = value.model_dump(exclude_none=True)
         else:
             entries[key] = value
     result = _call_service(service.save_library, filename, entries, payload.previous_filename)

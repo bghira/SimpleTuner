@@ -1,0 +1,190 @@
+<!-- templates/quotas_tab.html - Quotas Management -->
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-quotas">
+<link rel="stylesheet" href="/static/css/admin.css" id="css-admin-quotas">
+
+<div class="tab-fragment"
+     id="quotas-tab-content"
+     data-tab-name="quotas"
+     x-data="{ ...adminPanelComponent(), activeTab: 'quotas' }"
+     x-init="init()">
+
+    <!-- Page Header -->
+    <div class="admin-header">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div>
+                <h4 class="mb-1"><i class="fas fa-tachometer-alt me-2"></i>Quotas</h4>
+                <p class="text-muted small mb-0">Manage spending limits, job quotas, and resource constraints</p>
+            </div>
+            <div class="d-flex gap-2 align-items-center">
+                <button class="btn btn-sm btn-outline-secondary"
+                        x-show="hints.quotas === false"
+                        @click="hints.quotas = true"
+                        title="Show hint">
+                    <i class="fas fa-question-circle me-1"></i>Show Hint
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quotas Hint (reformatted) -->
+    <div class="admin-hint" x-show="hints.quotas" x-transition>
+        <div class="admin-hint-content">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <h6 class="mb-2"><i class="fas fa-lightbulb text-warning me-2"></i>About Quotas</h6>
+                    <p class="small mb-2">
+                        Limit spending and job submissions. Quotas can be global, per-level, or per-user.
+                        User-specific quotas take highest priority.
+                    </p>
+                    <div class="row g-3 small">
+                        <div class="col-md-6">
+                            <strong>Quota Types:</strong>
+                            <ul class="mb-0 ps-3 mt-1">
+                                <li><code>COST_MONTHLY</code> / <code>COST_DAILY</code> - USD limits</li>
+                                <li><code>CONCURRENT_JOBS</code> - Max simultaneous jobs</li>
+                                <li><code>JOBS_PER_DAY</code> / <code>JOBS_PER_HOUR</code> - Rate limits</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Actions When Exceeded:</strong>
+                            <ul class="mb-0 ps-3 mt-1">
+                                <li><strong>BLOCK</strong> - Reject the job</li>
+                                <li><strong>WARN</strong> - Allow with warning</li>
+                                <li><strong>REQUIRE_APPROVAL</strong> - Queue for approval</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-link text-muted" @click="hints.quotas = false" title="Dismiss">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="admin-stats-bar">
+        <div class="stat-item">
+            <span class="stat-value" x-text="quotas.length"></span>
+            <span class="stat-label">Quotas</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="quotas.filter(q => q.target_type === 'global').length"></span>
+            <span class="stat-label">Global</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="quotas.filter(q => q.target_type === 'level').length"></span>
+            <span class="stat-label">Per-Level</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-value" x-text="quotas.filter(q => q.target_type === 'user').length"></span>
+            <span class="stat-label">Per-User</span>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="admin-content">
+        <!-- User Quota Status Lookup -->
+        <div class="card bg-dark border-secondary mb-3">
+            <div class="card-header py-2 border-secondary d-flex justify-content-between align-items-center">
+                <span class="small fw-medium"><i class="fas fa-user-check me-2"></i>User Quota Status</span>
+            </div>
+            <div class="card-body py-2">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label small mb-1">Select User</label>
+                        <select class="form-select form-select-sm bg-dark text-light border-secondary"
+                                x-model="quotaLookupUserId"
+                                @change="lookupUserQuotas()">
+                            <option value="">-- Select a user --</option>
+                            <template x-for="u in users" :key="u.id">
+                                <option :value="u.id" x-text="u.display_name || u.username + ' (' + u.email + ')'"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="col-md-8">
+                        <template x-if="quotaLookupLoading">
+                            <div class="text-muted small"><i class="fas fa-spinner fa-spin me-2"></i>Loading quota status...</div>
+                        </template>
+                        <template x-if="!quotaLookupLoading && quotaLookupUserId && quotaLookupResult">
+                            <div class="d-flex align-items-center gap-3">
+                                <span class="badge" :class="quotaLookupResult.can_submit ? 'bg-success' : 'bg-danger'">
+                                    <i class="fas" :class="quotaLookupResult.can_submit ? 'fa-check' : 'fa-ban'"></i>
+                                    <span x-text="quotaLookupResult.can_submit ? 'Can Submit' : 'Blocked'"></span>
+                                </span>
+                                <button class="btn btn-sm btn-outline-info" @click="quotaLookupDetailOpen = true"
+                                        x-show="quotaLookupResult.statuses && quotaLookupResult.statuses.length > 0">
+                                    <i class="fas fa-list me-1"></i>View Details
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <!-- Blocking reasons -->
+                <template x-if="quotaLookupResult && quotaLookupResult.blocking_reasons && quotaLookupResult.blocking_reasons.length > 0">
+                    <div class="mt-2">
+                        <template x-for="reason in quotaLookupResult.blocking_reasons" :key="reason">
+                            <div class="text-danger small"><i class="fas fa-exclamation-triangle me-1"></i><span x-text="reason"></span></div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <div class="admin-toolbar">
+            <button class="btn btn-sm btn-primary" @click="showCreateQuotaForm()">
+                <i class="fas fa-plus me-1"></i>Add Quota
+            </button>
+        </div>
+
+        <div class="admin-table-container">
+            <table class="table table-dark table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Target</th>
+                        <th>Limit</th>
+                        <th>Action</th>
+                        <th style="width: 100px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-if="quotasLoading">
+                        <tr><td colspan="5" class="text-center py-4"><i class="fas fa-spinner fa-spin me-2"></i>Loading...</td></tr>
+                    </template>
+                    <template x-if="!quotasLoading && quotas.length === 0">
+                        <tr>
+                            <td colspan="5" class="text-center py-4 text-muted">
+                                <i class="fas fa-tachometer-alt me-2"></i>No quotas configured
+                                <div class="mt-2 small">Default limits apply: 5 concurrent jobs, 20/day, $500/month</div>
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-for="quota in quotas" :key="quota.id">
+                        <tr>
+                            <td><span class="fw-medium" x-text="getQuotaTypeName(quota.quota_type)"></span></td>
+                            <td>
+                                <span class="badge bg-secondary" x-text="quota.target_type"></span>
+                                <span class="small ms-1" x-show="quota.target_id" x-text="quota.target_name || quota.target_id"></span>
+                            </td>
+                            <td><span class="fw-medium" x-text="quota.limit_value"></span></td>
+                            <td><span class="badge" :class="getQuotaActionClass(quota.action)" x-text="quota.action"></span></td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-primary" @click="showEditQuotaForm(quota)" title="Edit"><i class="fas fa-edit"></i></button>
+                                    <button class="btn btn-outline-danger" @click="deleteQuota(quota)" title="Delete"><i class="fas fa-trash"></i></button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Include modals from admin -->
+    {% include 'partials/admin/modal_entity_quota.html' %}
+    {% include 'partials/admin/modal_user_quota_status.html' %}
+
+</div><!-- /.tab-fragment -->

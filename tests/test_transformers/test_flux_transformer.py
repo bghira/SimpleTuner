@@ -684,7 +684,7 @@ class TestFluxTransformer2DModel(TransformerBaseTest):
 
     def create_test_model(self):
         """Create a test model with mocked dependencies."""
-        with patch("diffusers.models.embeddings.FluxPosEmbed"):
+        with patch("diffusers.models.transformers.transformer_flux.FluxPosEmbed"):
             with patch("diffusers.models.embeddings.CombinedTimestepTextProjEmbeddings"):
                 with patch("diffusers.models.normalization.AdaLayerNormContinuous"):
                     with patch("simpletuner.helpers.models.flux.transformer.FluxTransformerBlock"):
@@ -706,7 +706,7 @@ class TestFluxTransformer2DModel(TransformerBaseTest):
         config_with_guidance = self.config.copy()
         config_with_guidance["guidance_embeds"] = True
 
-        with patch("diffusers.models.embeddings.FluxPosEmbed"):
+        with patch("diffusers.models.transformers.transformer_flux.FluxPosEmbed"):
             with patch("diffusers.models.embeddings.CombinedTimestepGuidanceTextProjEmbeddings"):
                 with patch("diffusers.models.normalization.AdaLayerNormContinuous"):
                     with patch("simpletuner.helpers.models.flux.transformer.FluxTransformerBlock"):
@@ -912,7 +912,7 @@ class TestFluxTransformer2DModel(TransformerBaseTest):
             config.update(typo_config)
 
             with self.assertRaises((TypeError, AttributeError)):
-                with patch("diffusers.models.embeddings.FluxPosEmbed"):
+                with patch("diffusers.models.transformers.transformer_flux.FluxPosEmbed"):
                     with patch("diffusers.models.embeddings.CombinedTimestepTextProjEmbeddings"):
                         with patch("diffusers.models.normalization.AdaLayerNormContinuous"):
                             with patch("simpletuner.helpers.models.flux.transformer.FluxTransformerBlock"):
@@ -942,7 +942,7 @@ class TestFluxTransformerIntegration(TransformerBaseTest):
             "pooled_projection_dim": 256,
         }
 
-        with patch("diffusers.models.embeddings.FluxPosEmbed"):
+        with patch("diffusers.models.transformers.transformer_flux.FluxPosEmbed"):
             with patch("diffusers.models.embeddings.CombinedTimestepTextProjEmbeddings"):
                 with patch("diffusers.models.normalization.AdaLayerNormContinuous"):
                     with patch("simpletuner.helpers.models.flux.transformer.FluxTransformerBlock"):

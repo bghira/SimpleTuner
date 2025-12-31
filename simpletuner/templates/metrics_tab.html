@@ -1,0 +1,379 @@
+<!-- templates/metrics_tab.html - Metrics & Observability Dashboard -->
+{% from 'partials/hero_cta.html' import hero_cta, template_buttons, integration_card %}
+<!-- CSS auto cache-busted by autoCacheBustCSS() on HTMX load -->
+<link rel="stylesheet" href="/static/css/form-sections.css" id="css-form-sections-metrics">
+<link rel="stylesheet" href="/static/css/metrics.css" id="css-metrics">
+
+{% set metrics_ctx = metrics_settings | default({}) %}
+
+<div class="tab-fragment"
+     id="metrics-tab-content"
+     data-tab-name="metrics"
+     x-data='metricsComponent({{ metrics_ctx | tojson | safe }})'
+     x-init="init()">
+
+    <!-- Hero CTA (shown when Prometheus not configured) -->
+    <template x-if="!prometheusEnabled && !heroDismissed">
+        {% call hero_cta(
+            theme='indigo',
+            icon_class='fa-chart-line',
+            icon_shape='circle',
+            title='Metrics & Observability',
+            description='Export metrics to Prometheus for monitoring dashboards. Track jobs, costs, health, and security events in Grafana, Datadog, or any Prometheus-compatible system.',
+            features=[
+                {'icon': 'fa-tasks', 'color': 'text-primary', 'label': 'Job & Cost Tracking'},
+                {'icon': 'fa-heartbeat', 'color': 'text-success', 'label': 'Health Monitoring'},
+                {'icon': 'fa-shield-alt', 'color': 'text-warning', 'label': 'Security Metrics'},
+                {'icon': 'fa-plug', 'color': 'text-info', 'label': 'Grafana Ready'},
+            ],
+            show_condition='true',
+            dismiss_method='dismissHero()',
+            tip_text='Metrics are available at <code>/api/metrics/prometheus</code>'
+        ) %}
+            {{ template_buttons([
+                {'label': 'Minimal', 'icon': 'fa-feather', 'action': "applyTemplate('minimal')", 'title': 'Just job counts - lightweight monitoring'},
+                {'label': 'Standard', 'icon': 'fa-check-circle', 'action': "applyTemplate('standard')", 'title': 'Jobs, HTTP metrics, and health checks', 'class': 'btn-primary'},
+                {'label': 'Security', 'icon': 'fa-lock', 'action': "applyTemplate('security')", 'title': 'Include rate limiting, audit, and approvals'},
+                {'label': 'Full', 'icon': 'fa-th', 'action': "applyTemplate('full')", 'title': 'All available metrics'},
+            ]) }}
+            <div class="hero-integrations">
+                {{ integration_card(
+                    icon='fa-chart-bar',
+                    title='Grafana',
+                    description='Create dashboards with job metrics, cost tracking, and health status'
+                ) }}
+                {{ integration_card(
+                    icon='fa-bell',
+                    title='Alerting',
+                    description='Set up alerts for job failures, cost limits, and rate limit violations'
+                ) }}
+            </div>
+        {% endcall %}
+    </template>
+
+    <!-- Main Configuration Panel (shown when configured or after CTA dismissed) -->
+    <div class="metrics-dashboard"
+         x-show="prometheusEnabled || heroDismissed"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 transform translate-y-4"
+         x-transition:enter-end="opacity-100 transform translate-y-0"
+         x-cloak>
+
+        <!-- Stats Bar -->
+        <div class="metrics-stats-bar">
+            <div class="stat-item">
+                <div class="stat-value" :class="prometheusEnabled ? 'text-success' : 'text-muted'">
+                    <i :class="prometheusEnabled ? 'fas fa-check-circle' : 'fas fa-times-circle'"></i>
+                </div>
+                <div class="stat-label">Prometheus</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" x-text="selectedCategories.length"></div>
+                <div class="stat-label">Categories</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" x-text="previewMetricCount || '—'"></div>
+                <div class="stat-label">Metrics</div>
+            </div>
+            <div class="stat-item clickable" @click="copyEndpointUrl()" title="Click to copy URL">
+                <div class="stat-value small text-info">/api/metrics/prometheus</div>
+                <div class="stat-label">Endpoint <i class="fas fa-copy ms-1"></i></div>
+            </div>
+        </div>
+
+        <div class="row g-3">
+            <!-- Left Column -->
+            <div class="col-lg-6">
+                <!-- Circuit Breaker Status (at the top) -->
+                <div class="metrics-card mb-3">
+                    <div class="metrics-card-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="fas fa-shield-alt me-2"></i>Circuit Breakers</h5>
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    @click="loadCircuitBreakers()"
+                                    :disabled="circuitBreakersLoading"
+                                    title="Refresh">
+                                <i class="fas" :class="circuitBreakersLoading ? 'fa-spinner fa-spin' : 'fa-sync'"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="metrics-card-body">
+                        <!-- Empty state -->
+                        <template x-if="!circuitBreakersLoading && circuitBreakers.length === 0">
+                            <div class="text-center text-muted small py-2">
+                                <i class="fas fa-check-circle me-1 text-success"></i>
+                                All services healthy - no circuit breakers active
+                            </div>
+                        </template>
+
+                        <!-- Circuit breaker list -->
+                        <template x-if="circuitBreakers.length > 0">
+                            <div class="circuit-breaker-list">
+                                <template x-for="breaker in circuitBreakers" :key="breaker.name">
+                                    <div class="circuit-breaker-item d-flex align-items-center justify-content-between py-2 border-bottom border-secondary">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <i :class="getCircuitBreakerIcon(breaker.state)"></i>
+                                            <span class="small" x-text="breaker.name"></span>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-3">
+                                            <span class="badge"
+                                                  :class="{
+                                                      'bg-success': breaker.state === 'closed',
+                                                      'bg-warning': breaker.state === 'half_open',
+                                                      'bg-danger': breaker.state === 'open'
+                                                  }"
+                                                  x-text="getCircuitBreakerLabel(breaker.state)">
+                                            </span>
+                                            <span class="small text-muted" x-show="breaker.failure_count > 0">
+                                                <i class="fas fa-times me-1"></i><span x-text="breaker.failure_count"></span>
+                                            </span>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+
+                        <div class="small text-muted mt-2">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Circuit breakers protect against cascading failures
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prometheus Configuration (collapsible) -->
+                <div class="metrics-card">
+                    <div class="metrics-card-header collapsed"
+                         data-bs-toggle="collapse"
+                         data-bs-target="#prometheusConfig"
+                         style="cursor: pointer;">
+                        <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>Prometheus Export</h5>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge" :class="prometheusEnabled ? 'bg-success' : 'bg-secondary'"
+                                  x-text="prometheusEnabled ? 'Enabled' : 'Disabled'"></span>
+                            <i class="fas fa-chevron-down"></i>
+                        </div>
+                    </div>
+                    <div class="collapse" id="prometheusConfig">
+                    <div class="metrics-card-body">
+                        <!-- Enable/Disable Toggle -->
+                        <div class="form-check form-switch mb-3">
+                            <input type="checkbox"
+                                   class="form-check-input"
+                                   id="prometheusEnabled"
+                                   x-model="prometheusEnabled"
+                                   @change="saveConfig()">
+                            <label class="form-check-label" for="prometheusEnabled">
+                                Enable Prometheus Metrics Export
+                            </label>
+                        </div>
+                        <!-- Quick Templates -->
+                        <div class="mb-3">
+                            <label class="form-label small text-muted">Quick Setup</label>
+                            <div class="btn-group btn-group-sm w-100" role="group">
+                                <template x-for="template in templates" :key="template.id">
+                                    <button type="button"
+                                            class="btn btn-outline-secondary"
+                                            :class="{ 'active': isTemplateActive(template.id) }"
+                                            @click="applyTemplate(template.id)"
+                                            :title="template.description"
+                                            x-text="template.name.replace(' (Recommended)', '')">
+                                    </button>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Category Selection -->
+                        <div class="mb-3">
+                            <label class="form-label small text-muted">Metric Categories</label>
+                            <div class="category-list">
+                                <template x-for="category in categories" :key="category.id">
+                                    <div class="category-item"
+                                         :class="{ 'active': selectedCategories.includes(category.id), 'expanded': expandedCategory === category.id }">
+                                        <div class="d-flex align-items-start gap-2">
+                                            <div class="form-check flex-grow-1">
+                                                <input type="checkbox"
+                                                       class="form-check-input"
+                                                       :id="'cat-' + category.id"
+                                                       :value="category.id"
+                                                       x-model="selectedCategories"
+                                                       @change="saveConfig()">
+                                                <label class="form-check-label" :for="'cat-' + category.id">
+                                                    <span class="category-name" x-text="category.name"></span>
+                                                    <span class="category-desc text-muted small" x-text="category.description"></span>
+                                                </label>
+                                            </div>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-link text-muted p-0"
+                                                    x-show="category.metrics.length > 2"
+                                                    @click.stop="toggleCategoryExpand(category.id)"
+                                                    :title="expandedCategory === category.id ? 'Collapse' : 'Show all metrics'">
+                                                <i class="fas" :class="expandedCategory === category.id ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                                            </button>
+                                        </div>
+                                        <!-- Collapsed view: show 2 metrics + count -->
+                                        <div class="category-metrics text-muted small" x-show="expandedCategory !== category.id">
+                                            <template x-for="metric in category.metrics.slice(0, 2)" :key="metric">
+                                                <code class="me-1" x-text="metric.replace('simpletuner_', '')"></code>
+                                            </template>
+                                            <span class="text-info"
+                                                  x-show="category.metrics.length > 2"
+                                                  x-text="'+' + (category.metrics.length - 2) + ' more'"
+                                                  @click="toggleCategoryExpand(category.id)"
+                                                  style="cursor: pointer;"></span>
+                                        </div>
+                                        <!-- Expanded view: show all metrics -->
+                                        <div class="category-metrics-expanded text-muted small" x-show="expandedCategory === category.id" x-transition>
+                                            <template x-for="metric in category.metrics" :key="metric">
+                                                <code class="me-1 mb-1 d-inline-block" x-text="metric.replace('simpletuner_', '')"></code>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Endpoint Info -->
+                        <div class="endpoint-info">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <code class="flex-grow-1">/api/metrics/prometheus</code>
+                                <div class="btn-group btn-group-sm">
+                                    <button type="button"
+                                            class="btn btn-outline-info"
+                                            @click="testScrape()"
+                                            :disabled="testingScrape || !prometheusEnabled"
+                                            title="Test scrape endpoint">
+                                        <i class="fas" :class="testingScrape ? 'fa-spinner fa-spin' : 'fa-flask'"></i>
+                                        <span class="ms-1 d-none d-md-inline">Test</span>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline-secondary"
+                                            @click="copyEndpointUrl()"
+                                            title="Copy full URL">
+                                        <i class="fas fa-copy"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <!-- Scrape Result -->
+                            <template x-if="scrapeResult">
+                                <div class="small mt-2 p-2 rounded"
+                                     :class="scrapeResult.success ? 'bg-success bg-opacity-10 text-success' : 'bg-danger bg-opacity-10 text-danger'">
+                                    <template x-if="scrapeResult.success">
+                                        <span>
+                                            <i class="fas fa-check-circle me-1"></i>
+                                            <span x-text="scrapeResult.metric_count"></span> metrics,
+                                            <span x-text="(scrapeResult.size_bytes / 1024).toFixed(1)"></span> KB,
+                                            <span x-text="scrapeResult.latency_ms"></span>ms
+                                        </span>
+                                    </template>
+                                    <template x-if="!scrapeResult.success">
+                                        <span>
+                                            <i class="fas fa-times-circle me-1"></i>
+                                            <span x-text="scrapeResult.error"></span>
+                                        </span>
+                                    </template>
+                                </div>
+                            </template>
+                            <div class="small text-muted mt-2">
+                                <i class="fas fa-info-circle me-1"></i>
+                                Add to Prometheus <code>scrape_configs</code>
+                            </div>
+                        </div>
+                    </div>
+                    </div><!-- /collapse -->
+                </div>
+
+                <!-- Tensorboard Placeholder -->
+                <div class="metrics-card mt-3 disabled-card">
+                    <div class="metrics-card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-chart-area me-2"></i>Tensorboard
+                            <span class="badge bg-secondary ms-2">Coming Soon</span>
+                        </h5>
+                    </div>
+                    <div class="metrics-card-body text-muted">
+                        <p class="mb-2 small">
+                            Real-time training metrics from running jobs will be available here in a future update.
+                        </p>
+                        <ul class="small mb-0">
+                            <li>Loss curves and learning rate schedules</li>
+                            <li>Validation metrics and sample images</li>
+                            <li>GPU utilization and memory usage</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Preview Panel -->
+            <div class="col-lg-6">
+                <div class="metrics-card">
+                    <div class="metrics-card-header">
+                        <h5 class="mb-0"><i class="fas fa-eye me-2"></i>Export Preview</h5>
+                        <button type="button"
+                                class="btn btn-sm btn-outline-secondary"
+                                @click="refreshPreview()"
+                                :disabled="loadingPreview">
+                            <i class="fas" :class="loadingPreview ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>
+                        </button>
+                    </div>
+                    <div class="metrics-card-body p-0">
+                        <div class="preview-container">
+                            <template x-if="previewError">
+                                <div class="alert alert-warning m-3 small">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <span x-text="previewError"></span>
+                                </div>
+                            </template>
+                            <template x-if="!previewError && previewContent">
+                                <pre class="preview-content"><code x-text="previewContent"></code></pre>
+                            </template>
+                            <template x-if="!previewError && !previewContent && !loadingPreview">
+                                <div class="text-center text-muted py-5">
+                                    <i class="fas fa-chart-bar fa-3x mb-3 opacity-25"></i>
+                                    <p class="small mb-0">Click refresh to load preview</p>
+                                </div>
+                            </template>
+                            <template x-if="loadingPreview">
+                                <div class="text-center text-muted py-5">
+                                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                    <p class="small mt-2 mb-0">Loading metrics...</p>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Prometheus Config Example -->
+                <div class="metrics-card mt-3">
+                    <div class="metrics-card-header collapsed" data-bs-toggle="collapse" data-bs-target="#prometheusExample" style="cursor: pointer;">
+                        <h5 class="mb-0"><i class="fas fa-code me-2"></i>Prometheus Config</h5>
+                        <i class="fas fa-chevron-down"></i>
+                    </div>
+                    <div class="collapse" id="prometheusExample">
+                        <div class="metrics-card-body p-0">
+<pre class="config-example"><code>scrape_configs:
+  - job_name: 'simpletuner'
+    static_configs:
+      - targets: ['localhost:8080']
+    metrics_path: '/api/metrics/prometheus'
+    scrape_interval: 30s</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast for copy feedback -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1050">
+        <div class="toast align-items-center text-white bg-success border-0"
+             x-ref="copyToast"
+             role="alert">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <i class="fas fa-check me-2"></i>Copied to clipboard!
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+            </div>
+        </div>
+    </div>
+</div>

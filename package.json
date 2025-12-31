@@ -1,0 +1,14 @@
+{
+  "name": "simpletuner-js-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JavaScript tests for SimpleTuner web UI components",
+  "scripts": {
+    "test": "jest --config tests/js/jest.config.js",
+    "test:coverage": "jest --config tests/js/jest.config.js --coverage"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  }
+}

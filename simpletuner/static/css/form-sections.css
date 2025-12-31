@@ -1069,3 +1069,30 @@
         margin: 0.5rem 0 !important;
     }
 }
+
+/* Standardized CTA Hints (matches Admin/Cloud style) */
+.cta-hint {
+    background: rgba(59, 130, 246, 0.08);
+    border-left: 3px solid #3b82f6;
+    padding: 1rem 1.5rem;
+    margin: 0;
+    position: relative;
+    animation: fadeIn 0.3s ease-in-out;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cta-hint-content {
+    max-width: 100%;
+}
+
+.cta-hint-close {
+    color: rgba(255, 255, 255, 0.4);
+    transition: color 0.2s;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+.cta-hint-close:hover {
+    color: #fff;
+}

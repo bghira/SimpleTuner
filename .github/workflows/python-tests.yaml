@@ -1,4 +1,4 @@
-name: Python Unit Tests
+name: Unit Tests
 
 on:
   push:
@@ -9,24 +9,39 @@ on:
       - main
 
 jobs:
-  build:
+  python-tests:
+    name: Python Tests
     runs-on: ubuntu-latest
 
     steps:
-    # - name: Maximize build space
-    #   uses: AdityaGarg8/remove-unwanted-software@v4.1
-    #   with:
-    #     remove-android: 'true'
-
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
-        python-version: 3.12
+        python-version: '3.12'
 
     - name: Install Dependencies
       run: python -m pip install --upgrade pip && pip install -e .[test]
 
     - name: Run Tests
       run: python -m unittest discover -v tests/
+
+  js-tests:
+    name: JavaScript Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install Dependencies
+      run: npm ci
+
+    - name: Run Tests
+      run: npm test
